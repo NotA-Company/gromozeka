@@ -96,6 +96,7 @@ class GromozekBot:
             return yc_model
         except Exception as e:
             logger.error(f"Failed to initialize Yandex Cloud ML model: {e}")
+            sys.exit(1)
             
     def _init_database(self) -> DatabaseWrapper:
         """Initialize database connection."""
@@ -222,7 +223,7 @@ class GromozekBot:
         reqMessages = [
             {
                 "role": "system",
-                "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea",
+                "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование",
             },
         ]
 
@@ -249,7 +250,13 @@ class GromozekBot:
         
         #response = mlRet.
 
-        await update.message.reply_text(reply)
+        try:
+            await update.message.reply_markdown(reply, reply_to_message_id=update.message.message_id)
+            logger.info(f"Replied to message from {user.id}: {message_text[:50]}...")
+        except Exception as e:
+            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
+            # Probably error in markdown formatting, fallback to raw text
+            await update.message.reply_text(reply, reply_to_message_id=update.message.message_id)
         logger.info(f"Handled message from {user.id}: {message_text[:50]}...")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
