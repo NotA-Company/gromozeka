@@ -43,7 +43,7 @@ class GromozekBot:
         self.db = self._init_database()
         self.application = None
         self.ycML = self._init_yc_ml_sdk()
-        self.ycModel = self.ycML.models.completions("yandexgpt").configure(temperature=0.5)
+        self.ycModel = self._init_ycModel()
 
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Load configuration from TOML file."""
@@ -85,6 +85,18 @@ class GromozekBot:
             logger.error(f"Failed to initialize Yandex Cloud ML SDK: {e}")
             sys.exit(1)
 
+    def _init_ycModel(self):
+        """Initialize Yandex Cloud ML model."""
+        yc_ml_config = self.config.get("yc-ml", {})
+        model_id = yc_ml_config.get("model_id", "yandexgpt-5-lite")
+
+        try:
+            yc_model = self.ycML.models.completions(model_id).configure(temperature=yc_ml_config.get("temperature", 0.5))
+            logger.info(f"Yandex Cloud ML model initialized: {model_id}")
+            return yc_model
+        except Exception as e:
+            logger.error(f"Failed to initialize Yandex Cloud ML model: {e}")
+            
     def _init_database(self) -> DatabaseWrapper:
         """Initialize database connection."""
         db_config = self.config.get("database", {})
