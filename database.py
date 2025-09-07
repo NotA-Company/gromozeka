@@ -83,6 +83,7 @@ class DatabaseWrapper:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
                     message_text TEXT,
+                    reply_text TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
@@ -139,14 +140,14 @@ class DatabaseWrapper:
             logger.error(f"Failed to get setting {key}: {e}")
             return default
     
-    def save_message(self, user_id: int, message_text: str) -> bool:
+    def save_message(self, user_id: int, message_text: str, reply_text: str = '') -> bool:
         """Save a message to the database."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO messages (user_id, message_text)
-                    VALUES (?, ?)
-                """, (user_id, message_text))
+                    INSERT INTO messages (user_id, message_text, reply_text)
+                    VALUES (?, ?, ?)
+                """, (user_id, message_text, reply_text))
                 return True
         except Exception as e:
             logger.error(f"Failed to save message from user {user_id}: {e}")
