@@ -1,0 +1,15 @@
+[bot]
+# Your Telegram bot token from @BotFather
+token = "YOUR_BOT_TOKEN_HERE"
+
+[database]
+# Database configuration
+path = "bot_data.db"
+# Connection pool settings
+max_connections = 5
+timeout = 30
+
+[logging]
+# Logging configuration
+level = "INFO"
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
