@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     """Manages database initialization and configuration for Gromozeka bot."""
-    
+
     def __init__(self, config: Dict[str, Any]):
         """Initialize DatabaseManager with database configuration."""
         self.config = config
         self.db = self._init_database()
-    
+
     def _init_database(self) -> DatabaseWrapper:
         """Initialize database connection."""
         db_path = self.config.get("path", "bot_data.db")
@@ -31,7 +31,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
             sys.exit(1)
-    
+
     def get_database(self) -> DatabaseWrapper:
         """Get the database wrapper instance."""
         return self.db

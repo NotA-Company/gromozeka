@@ -5,24 +5,19 @@ import logging
 import sys
 from pathlib import Path
 from typing import Dict, Any
-
-try:
-    import tomli
-except ImportError:
-    print("Error: tomli library not found. Please install it with: pip install tomli")
-    sys.exit(1)
+import tomli
 
 logger = logging.getLogger(__name__)
 
 
 class ConfigManager:
     """Manages configuration loading and validation for Gromozeka bot."""
-    
+
     def __init__(self, config_path: str = "config.toml"):
         """Initialize ConfigManager with config file path."""
         self.config_path = config_path
         self.config = self._load_config()
-    
+
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from TOML file."""
         config_file = Path(self.config_path)
@@ -45,27 +40,27 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Failed to load configuration: {e}")
             sys.exit(1)
-    
-    def get(self, key: str, default=None):
+
+    def get(self, key: str, default=None) -> Any:
         """Get configuration value by key."""
         return self.config.get(key, default)
-    
+
     def get_bot_config(self) -> Dict[str, Any]:
         """Get bot-specific configuration."""
-        return self.config.get("bot", {})
-    
+        return self.get("bot", {})
+
     def get_database_config(self) -> Dict[str, Any]:
         """Get database-specific configuration."""
-        return self.config.get("database", {})
-    
+        return self.get("database", {})
+
     def get_logging_config(self) -> Dict[str, Any]:
         """Get logging-specific configuration."""
-        return self.config.get("logging", {})
-    
+        return self.get("logging", {})
+
     def get_yc_ml_config(self) -> Dict[str, Any]:
         """Get Yandex Cloud ML-specific configuration."""
-        return self.config.get("yc-ml", {})
-    
+        return self.get("yc-ml", {})
+
     def get_bot_token(self) -> str:
         """Get bot token from configuration."""
         token = self.get_bot_config().get("token", "")

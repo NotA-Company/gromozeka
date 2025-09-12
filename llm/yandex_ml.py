@@ -13,13 +13,13 @@ logger = logging.getLogger(__name__)
 
 class YandexMLManager:
     """Manages Yandex Cloud ML SDK initialization and model configuration."""
-    
+
     def __init__(self, config: Dict[str, Any]):
         """Initialize YandexMLManager with ML configuration."""
         self.config = config
         self.yc_ml = self._init_yc_ml_sdk()
         self.yc_model = self._init_yc_model()
-    
+
     def _init_yc_ml_sdk(self):
         """Initialize Yandex Cloud ML SDK."""
         folder_id = self.config.get("folder_id")
@@ -49,11 +49,11 @@ class YandexMLManager:
         except Exception as e:
             logger.error(f"Failed to initialize Yandex Cloud ML model: {e}")
             sys.exit(1)
-    
+
     def get_model(self):
         """Get the configured Yandex Cloud ML model."""
         return self.yc_model
-    
+
     def get_sdk(self):
         """Get the Yandex Cloud ML SDK instance."""
         return self.yc_ml
