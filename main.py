@@ -32,21 +32,23 @@ class GromozekBot:
         """Initialize bot with all components."""
         # Initialize configuration
         self.config_manager = ConfigManager(config_path)
-        
+
         # Initialize logging with config
         init_logger(self.config_manager.get_logging_config())
-        
+
         # Initialize database
         self.database_manager = DatabaseManager(self.config_manager.get_database_config())
-        
+
         # Initialize LLM
         self.llm_manager = YandexMLManager(self.config_manager.get_yc_ml_config())
-        
+
         # Initialize bot application
         self.bot_app = BotApplication(
+            config_manager=self.config_manager,
             bot_token=self.config_manager.get_bot_token(),
             database=self.database_manager.get_database(),
-            llm_model=self.llm_manager.get_model()
+            llm_model=self.llm_manager.get_model(),
+
         )
 
     def run(self):
@@ -84,7 +86,7 @@ def parse_arguments():
 
 def daemonize(pid_file: str):
     """Fork the process to run in background, dood!
-    
+
     Uses the double fork pattern to create a proper daemon process.
     For detailed explanation, see: docs/reports/double-fork-daemon-pattern.md
     """
@@ -124,7 +126,7 @@ def daemonize(pid_file: str):
     # Redirect standard file descriptors
     sys.stdout.flush()
     sys.stderr.flush()
-    
+
     # Redirect to /dev/null
     with open(os.devnull, 'r') as dev_null_r:
         os.dup2(dev_null_r.fileno(), sys.stdin.fileno())
@@ -136,12 +138,12 @@ def daemonize(pid_file: str):
 def main():
     """Main entry point."""
     args = parse_arguments()
-    
+
     try:
         # Fork to background if daemon mode requested
         if args.daemon:
             daemonize(args.pid_file)
-        
+
         # Initialize bot with custom config path
         bot = GromozekBot(config_path=args.config)
         bot.run()

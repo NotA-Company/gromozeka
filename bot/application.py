@@ -6,6 +6,9 @@ import sys
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+from config.manager import ConfigManager
+from database.wrapper import DatabaseWrapper
+
 from .handlers import BotHandlers
 
 logger = logging.getLogger(__name__)
@@ -13,15 +16,16 @@ logger = logging.getLogger(__name__)
 
 class BotApplication:
     """Manages Telegram bot application setup and execution."""
-    
-    def __init__(self, bot_token: str, database, llm_model):
+
+    def __init__(self, config_manager: ConfigManager, bot_token: str, database: DatabaseWrapper, llm_model):
         """Initialize bot application with token, database, and LLM model."""
+        self.config_manager = config_manager
         self.bot_token = bot_token
         self.database = database
         self.llm_model = llm_model
         self.application = None
         self.handlers = BotHandlers(database, llm_model)
-    
+
     def setup_handlers(self):
         """Set up bot command and message handlers."""
         if not self.application:
@@ -41,7 +45,7 @@ class BotApplication:
         self.application.add_error_handler(self.handlers.error_handler)
 
         logger.info("Bot handlers configured successfully")
-    
+
     def run(self):
         """Start the bot."""
         if self.bot_token in ["", "YOUR_BOT_TOKEN_HERE"]:
