@@ -81,9 +81,27 @@ class DatabaseWrapper:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    message_text TEXT,
+                    user_id INTEGER NOT NULL,
+                    message_text TEXT NOT NULL,
                     reply_text TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            """)
+
+            # Chat messages table for storing detailed chat message information
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TIMESTAMP NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    user_name TEXT NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    reply_id INTEGER,
+                    thread_id INTEGER,
+                    message_text TEXT NOT NULL,
+                    message_type TEXT DEFAULT 'text' NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
@@ -166,6 +184,40 @@ class DatabaseWrapper:
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get messages for user {user_id}: {e}")
+            return []
+
+    def save_chat_message(self, date, chatId: int, userId: int, userName: str, messageId: int,
+                         replyId: Optional[int] = None, threadId: Optional[int] = None,
+                         messageText: str = '', messageType: str = 'text') -> bool:
+        """Save a chat message with detailed information."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO chat_messages
+                    (date, chat_id, user_id, user_name, message_id, reply_id, thread_id, message_text, message_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (date, chatId, userId, userName, messageId, replyId, threadId, messageText, messageType))
+                return True
+        except Exception as e:
+            logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
+            return False
+
+    def get_chat_messages_since(self, chatId: int, sinceDateTime, threadId: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get chat messages from a specific chat newer than the given date."""
+        logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime}")
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT * FROM chat_messages
+                    WHERE
+                        chat_id = ?
+                        AND date > ?
+                        AND ((? IS NULL) OR (thread_id = ?)
+                    ORDER BY date ASC
+                """, (chatId, sinceDateTime, threadId, threadId))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get chat messages for chat {chatId} since {sinceDateTime}: {e}")
             return []
 
     def close(self):

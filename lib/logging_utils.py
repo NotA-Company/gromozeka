@@ -59,5 +59,9 @@ def init_logger(logging_config: Dict[str, Any]) -> None:
     # Set higher logging level for httpx to avoid all GET and POST requests being logged
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
+    # Set higher logging level for external components
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("telegram").setLevel(logging.INFO)
+
     logger.info(f"Logging configured: level={log_level}, format='{log_format}'" +
                (f", file={log_file}" if log_file else ""))
