@@ -204,7 +204,7 @@ class DatabaseWrapper:
 
     def get_chat_messages_since(self, chatId: int, sinceDateTime, threadId: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get chat messages from a specific chat newer than the given date."""
-        logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime}")
+        logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
@@ -212,12 +212,12 @@ class DatabaseWrapper:
                     WHERE
                         chat_id = ?
                         AND date > ?
-                        AND ((? IS NULL) OR (thread_id = ?)
+                        AND ((? IS NULL) OR (thread_id = ?))
                     ORDER BY date ASC
                 """, (chatId, sinceDateTime, threadId, threadId))
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Failed to get chat messages for chat {chatId} since {sinceDateTime}: {e}")
+            logger.error(f"Failed to get chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId}): {e}")
             return []
 
     def close(self):
