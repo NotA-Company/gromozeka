@@ -3,7 +3,9 @@ Gromozeka - A minimal Telegram bot with TOML configuration and SQLite database.
 """
 from __future__ import annotations
 
+import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, Any
@@ -40,11 +42,70 @@ class GromozekBot:
 
     def __init__(self, config_path: str = "config.toml"):
         self.config = self._load_config(config_path)
+        self._init_logger()
         self.db = self._init_database()
         self.application = None
         self.ycML = self._init_yc_ml_sdk()
         self.ycModel = self._init_ycModel()
 
+
+    def _init_logger(self) -> None:
+        """Configure logging from config file settings."""
+        logging_config = self.config.get("logging", {})
+        
+        # Get log level from config (default to INFO)
+        log_level = logging_config.get("level", "INFO").upper()
+        try:
+            level = getattr(logging, log_level)
+        except AttributeError:
+            logger.warning(f"Invalid log level '{log_level}', using INFO")
+            level = logging.INFO
+        
+        # Get log format from config (use existing default if not specified)
+        log_format = logging_config.get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        
+        # Get log file path from config (optional)
+        log_file = logging_config.get("file")
+        
+        # Configure root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(level)
+        
+        # Clear existing handlers to avoid duplicates
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        
+        # Create formatter
+        formatter = logging.Formatter(log_format)
+        
+        # Add console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+        
+        # Add file handler if specified
+        if log_file:
+            try:
+                # Create log directory if it doesn't exist
+                log_path = Path(log_file)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                file_handler = logging.FileHandler(log_file)
+                file_handler.setLevel(level)
+                file_handler.setFormatter(formatter)
+                root_logger.addHandler(file_handler)
+                logger.info(f"Logging to file: {log_file}")
+            except Exception as e:
+                logger.error(f"Failed to setup file logging: {e}")
+        
+        # Set higher logging level for httpx to avoid all GET and POST requests being logged
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        
+        logger.info(f"Logging configured: level={log_level}, format='{log_format}'" +
+                   (f", file={log_file}" if log_file else ""))
+        
+        
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Load configuration from TOML file."""
         config_file = Path(config_path)
@@ -285,9 +346,9 @@ class GromozekBot:
 
     def run(self):
         """Start the bot."""
-        token = self.config["bot"]["token"]
+        token = self.config.get("bot", {}).get("token", "")
 
-        if token == "YOUR_BOT_TOKEN_HERE":
+        if token in ["", "YOUR_BOT_TOKEN_HERE"]:
             logger.error("Please set your bot token in config.toml!")
             sys.exit(1)
 
@@ -303,10 +364,96 @@ class GromozekBot:
         self.application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Gromozeka - A minimal Telegram bot with TOML configuration and SQLite database, dood!"
+    )
+    parser.add_argument(
+        "-c", "--config",
+        default="config.toml",
+        help="Path to configuration file (default: config.toml)"
+    )
+    parser.add_argument(
+        "-d", "--daemon",
+        action="store_true",
+        help="Run bot in background (daemon mode), dood!"
+    )
+    parser.add_argument(
+        "--pid-file",
+        default="gromozeka.pid",
+        help="PID file path for daemon mode (default: gromozeka.pid)"
+    )
+    args = parser.parse_args()
+    # Convert relative paths to absolute paths before daemon mode changes working directory
+    args.config = os.path.abspath(args.config)
+    args.pid_file = os.path.abspath(args.pid_file)
+
+    return args
+
+
+def daemonize(pid_file: str):
+    """Fork the process to run in background, dood!
+    
+    Uses the double fork pattern to create a proper daemon process.
+    For detailed explanation, see: docs/reports/double-fork-daemon-pattern.md
+    """
+    try:
+        # First fork
+        pid = os.fork()
+        if pid > 0:
+            # Parent process, exit
+            sys.exit(0)
+    except OSError as e:
+        logger.error(f"First fork failed: {e}")
+        sys.exit(1)
+
+    # Decouple from parent environment
+    os.chdir("/")
+    os.setsid()
+    os.umask(0)
+
+    try:
+        # Second fork
+        pid = os.fork()
+        if pid > 0:
+            # Parent process, exit
+            sys.exit(0)
+    except OSError as e:
+        logger.error(f"Second fork failed: {e}")
+        sys.exit(1)
+
+    # Write PID file
+    try:
+        with open(pid_file, 'w') as f:
+            f.write(str(os.getpid()))
+        logger.info(f"Daemon started with PID {os.getpid()}, dood!")
+    except Exception as e:
+        logger.error(f"Failed to write PID file: {e}")
+
+    # Redirect standard file descriptors
+    sys.stdout.flush()
+    sys.stderr.flush()
+    
+    # Redirect to /dev/null
+    with open(os.devnull, 'r') as dev_null_r:
+        os.dup2(dev_null_r.fileno(), sys.stdin.fileno())
+    with open(os.devnull, 'w') as dev_null_w:
+        os.dup2(dev_null_w.fileno(), sys.stdout.fileno())
+        os.dup2(dev_null_w.fileno(), sys.stderr.fileno())
+
+
 def main():
     """Main entry point."""
+    args = parse_arguments()
+    
     try:
-        bot = GromozekBot()
+        # Fork to background if daemon mode requested
+        if args.daemon:
+            daemonize(args.pid_file)
+        
+        # Initialize bot with custom config path
+        bot = GromozekBot(config_path=args.config)
         bot.run()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
