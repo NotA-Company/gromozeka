@@ -11,5 +11,16 @@ timeout = 30
 
 [logging]
 # Logging configuration
-level = "INFO"
+level = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Optional: log to file (uncomment to enable)
+# file = "logs/gromozeka.log"
+
+[yc-ml]
+# Yandex Cloud ML configuration
+folder_id = "YOUR_FOLDER_ID_HERE"
+model_id = "yandexgpt-5-lite"
+temperature = 0.5
+# Optional: specify yc profile (uncomment if needed)
+# yc_profile = "your-profile-name"
+
