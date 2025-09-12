@@ -76,3 +76,62 @@ This file records architectural and implementation decisions using a list format
   - `handle_message()`: Added checks for user, message, and message.text
 * Used early return pattern (`if not condition: return`) for clean null handling
 * Maintained all existing functionality while improving type safety
+
+[2025-09-12 23:18:00] - Added Command Line Argument Parsing and Daemon Support
+
+## Decision
+
+* Implemented comprehensive command line argument parsing with argparse
+* Added daemon/background forking functionality for Unix-like systems
+* Enhanced main() function to support custom configuration files and daemon mode
+
+## Rationale 
+
+* Command line arguments provide flexibility for deployment and testing scenarios
+* Custom config file support allows multiple bot instances with different configurations
+* Daemon mode enables running the bot as a background service without terminal attachment
+* PID file support allows proper process management in daemon mode
+* Windows compatibility check prevents daemon mode on unsupported platforms
+
+## Implementation Details
+
+* Added argparse import and os import for system operations
+* Created parse_arguments() function with three command line options:
+  - `-c/--config`: Custom configuration file path (default: config.toml)
+  - `-d/--daemon`: Run in background daemon mode
+  - `--pid-file`: Specify PID file location for daemon mode (default: gromozeka.pid)
+* Implemented daemonize() function with proper Unix double-fork pattern:
+  - First fork to detach from parent process
+  - Session leader creation and working directory change
+  - Second fork to prevent zombie processes
+  - PID file creation for process tracking
+  - Standard file descriptor redirection to /dev/null
+* Updated main() function to use argument parsing and conditional daemon forking
+* Added Windows platform check to prevent daemon mode on unsupported systems
+* Maintained all existing bot functionality while adding new deployment options
+
+[2025-09-12 23:34:51] - Implemented Configurable Logging System
+
+## Decision
+
+* Implemented comprehensive logging configuration system in `_init_logger()` method
+* Added support for configurable log levels, formats, and file logging
+* Updated configuration example with new logging options including Yandex Cloud ML settings
+
+## Rationale 
+
+* Configurable logging is essential for production deployment and debugging
+* File logging allows persistent log storage for monitoring and troubleshooting
+* Different log levels enable appropriate verbosity for development vs production environments
+* Centralized logging configuration through TOML config maintains consistency with existing architecture
+
+## Implementation Details
+
+* Enhanced `_init_logger()` method to read logging configuration from config file
+* Supported log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL with validation
+* Configurable log format string with sensible default
+* Optional file logging with automatic directory creation
+* Proper handler management to avoid duplicate log entries
+* Maintained existing httpx logging level override to reduce noise
+* Updated config.toml.example with comprehensive logging and yc-ml sections
+* Added error handling for invalid log levels and file creation failures
