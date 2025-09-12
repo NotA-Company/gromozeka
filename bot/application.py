@@ -37,8 +37,12 @@ class BotApplication:
         self.application.add_handler(CommandHandler("help", self.handlers.help_command))
         self.application.add_handler(CommandHandler("stats", self.handlers.stats_command))
         self.application.add_handler(CommandHandler("echo", self.handlers.echo_command))
+        self.application.add_handler(CommandHandler("summary", self.handlers.summary_command))
 
         # Message handler for regular text messages
+        # See
+        # https://docs.python-telegram-bot.org/en/stable/telegram.ext.filters.html#module-telegram.ext.filters
+        # for more information about filters
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handlers.handle_message))
 
         # Error handler

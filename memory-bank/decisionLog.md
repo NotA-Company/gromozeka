@@ -164,3 +164,28 @@ This file records architectural and implementation decisions using a list format
 * Preserved all command-line arguments and daemon functionality
 * All imports tested and verified working correctly
 * Maintained backward compatibility with existing configuration files
+
+[2025-09-12 23:12:32] - Implemented Missing Database Method for Chat Message Retrieval
+
+## Decision
+
+* Implemented `get_chat_messages_newer_than()` method in DatabaseWrapper class
+* Method retrieves chat messages from specific chat newer than given date
+* Resolves TODO in bot/handlers.py that was calling non-existent database method
+
+## Rationale 
+
+* The bot handlers were trying to call `self.db.get_chat_messages_newer_than()` but this method didn't exist
+* This method is needed for LLM integration to get recent chat messages for context
+* Consistent with existing database wrapper patterns and error handling
+* Supports the bot's ability to provide summaries of recent chat activity
+
+## Implementation Details
+
+* Added method to DatabaseWrapper class in database/wrapper.py
+* Method takes chat_id (int) and since_date parameters
+* Queries chat_messages table with WHERE clause for chat_id and date filtering
+* Orders results by date ASC to get chronological message flow
+* Returns List[Dict[str, Any]] consistent with other database methods
+* Includes proper error handling and logging like other database methods
+* Uses existing cursor context manager pattern for transaction safety

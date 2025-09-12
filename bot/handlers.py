@@ -1,8 +1,12 @@
 """
 Telegram bot command handlers for Gromozeka.
 """
+import datetime
+import json
 import logging
-from telegram import Update
+
+from telegram import Chat, Update
+from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 from database.wrapper import DatabaseWrapper
@@ -12,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 class BotHandlers:
     """Contains all bot command and message handlers."""
-    
+
     def __init__(self, database: DatabaseWrapper, llm_model):
         """Initialize handlers with database and LLM model."""
         self.db = database
         self.llm_model = llm_model
-    
+
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
         user = update.effective_user
@@ -52,7 +56,7 @@ class BotHandlers:
         if not update.message:
             logging.error("Message undefined")
             return
-            
+
         help_text = (
             "🤖 *Gromozeka Bot Help*\n\n"
             "*Commands:*\n"
@@ -98,23 +102,231 @@ class BotHandlers:
         if not update.message:
             logging.error("Message undefined")
             return
-            
+
         if context.args:
             echo_text = " ".join(context.args)
             await update.message.reply_text(f"🔄 Echo: {echo_text}")
         else:
             await update.message.reply_text("Please provide a message to echo!\nUsage: /echo <your message>")
 
+    async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /summary command."""
+        chat = update.effective_chat
+        if not chat:
+            logging.error("Chat undefined")
+            return
+
+        message = update.message
+        if not message:
+            logging.error("Message undefined")
+            return
+        chatType = chat.type
+
+        if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
+            await message.reply_text(
+                "This command is only available in groups and supergroups for now.",
+                reply_to_message_id=message.message_id,
+            )
+            return
+
+        user = message.from_user
+        if not user:
+            logging.error("User undefined")
+            return
+
+        chat = message.chat
+        if not chat:
+            logging.error("Chat undefined")
+            return
+
+        today = datetime.datetime.now(datetime.timezone.utc)
+        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        messages = self.db.get_chat_messages_since(
+            chatId=chat.id,
+            sinceDateTime=datetime.datetime.combine(today, datetime.time.min),
+            threadId=message.message_thread_id,
+        )
+
+        logging.debug(f"Messages: {messages}")
+
+        reqMessages = [
+            {
+                "role": "system",
+                "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование.",
+            },
+        ]
+
+        parsedMessages = []
+
+        for msg in messages:
+            parsedMessages.append({
+                # date, chat_id, user_id, user_name, message_id, reply_id, thread_id, message_text, message_type
+                "date": msg["date"],
+                "sender": msg["user_name"],
+                "message_id": msg["message_id"],
+                "reply_id": msg["reply_id"],
+                "text": msg["message_text"]
+            })
+
+        reqMessages.append({
+                "role": "user",
+                "text": f"Твоя задача - суммаризировать сообщения за день. Далее идёт список сообщений в JSON формате: {json.dumps(parsedMessages)}",
+            })
+
+        logging.debug(f"LLM Request messages: {reqMessages}")
+        mlRet = self.llm_model.run(reqMessages)
+        logging.debug(f"LLM Response: {mlRet}")
+        llmResponse = mlRet.alternatives[0].text
+
+        try:
+            await message.reply_text(
+                llmResponse,
+                parse_mode="Markdown",
+                reply_to_message_id=message.message_id,
+                message_thread_id=message.message_thread_id,
+            )
+        except Exception as e:
+            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
+            await message.reply_text(
+                llmResponse,
+                reply_to_message_id=message.message_id,
+                message_thread_id=message.message_thread_id,
+            )
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
-        user = update.effective_user
-        if not user or not update.message:
-            logging.error("User or message undefined")
+        # logging.debug(f"Handling SOME message: {update}")
+        chat = update.effective_chat
+        if not chat:
+            logging.error("Chat undefined")
             return
-            
-        message_text = update.message.text
+        chatType = chat.type
+
+        match chatType:
+            case Chat.PRIVATE:
+                return await self.handle_private_message(update, context)
+            case Chat.GROUP:
+                return await self.handle_group_message(update, context)
+            case Chat.SUPERGROUP:
+                return await self.handle_group_message(update, context)
+            case Chat.CHANNEL:
+                logging.error(f"Unsupported chat type: {chatType}")
+            case _:
+                logging.error(f"Unsupported chat type: {chatType}")
+
+    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logging.debug(f"Handling group message: {update}")
+        message = update.message
+        if not message:
+            # Not new message, ignore
+            # logging.error("Message undefined")
+            return
+
+        user = message.from_user
+        if not user:
+            logging.error("User undefined")
+            return
+
+        chat = message.chat
+        if not chat:
+            logging.error("Chat undefined")
+            return
+
+        logging.debug(f"Message from {user.id} ({user.username}) in {chat.id} ({chat.title})")
+
+        messageText = message.text
+        if not messageText:
+            # Probably not a text message, ignore but log it for now
+            logging.error(f"Message text undefined: {message}")
+            return
+
+        replyId = None
+        if message.reply_to_message:
+            replyId = message.reply_to_message.message_id
+
+        self.db.save_chat_message(
+            date=message.date,
+            chatId=chat.id,
+            userId=user.id,
+            userName=user.username or user.first_name,
+            messageId=message.message_id,
+            replyId=replyId,
+            threadId=message.message_thread_id,
+            messageText=messageText,
+            messageType='text', # In future we'll support not only text messages, but photos, stickers and something else. Or not
+        )
+
+        # TODO: Add support of handle answering to bot's message, handle whole thread
+
+        # TODO: Move this to separate function + handle whole thread if any
+        # If our bot has mentioned, answer somehow
+        # logger.debug(f"Bot is: {context.bot.bot} {context.bot.username}")
+        myUsername = context.bot.username
+        mentionedMe = False
+
+        for entity in message.entities:
+            if entity.type == MessageEntityType.MENTION:
+                mention_text = messageText[entity.offset:entity.offset + entity.length]
+
+                # Проверяем, совпадает ли упоминание с именем бота
+                if mention_text == f"@{myUsername}":
+                    mentionedMe = True
+                    break
+
+        if not mentionedMe:
+            return
+
+        req_messages = [
+            {
+                "role": "system",
+                # TODO: Allow chat admin to configure system prompt. Also move default system prompt to config
+                "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование",
+            },
+            {
+                "role": "user",
+                "text": messageText,
+            },
+        ]
+
+        logging.debug(f"LLM Request messages: {req_messages}")
+        ml_ret = self.llm_model.run(req_messages)
+        logging.debug(f"LLM Response: {ml_ret}")
+        LLMReply = ml_ret.alternatives[0].text
+
+        try:
+            await message.reply_markdown(
+                LLMReply,
+                reply_to_message_id=message.message_id,
+                message_thread_id=message.message_thread_id,
+            )
+            logger.info(f"Replied to message from {user.id}: {messageText[:50]}...")
+        except Exception as e:
+            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
+            # Probably error in markdown formatting, fallback to raw text
+            await message.reply_text(
+                LLMReply,
+                reply_to_message_id=message.message_id,
+                message_thread_id=message.message_thread_id,
+            )
+        logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
+
+    async def handle_private_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.message
+        if not message:
+            # Not new message, ignore
+            # logging.error("Message undefined")
+            return
+
+        user = update.effective_user
+        if not user:
+            logging.error("User undefined")
+            return
+
+        message_text = message.text
         if not message_text:
-            logging.error("Message text undefined")
+            # Probasbly not a text message, ignore but log it for now
+            logging.error(f"Message text undefined: {message}")
             return
 
         # Save user and message to database
@@ -124,42 +336,44 @@ class BotHandlers:
             first_name=user.first_name,
             last_name=user.last_name
         )
+
         messages = self.db.get_user_messages(user.id, limit=10)
         req_messages = [
             {
                 "role": "system",
+                #TODO: Allow user to configure system prompt. Also move default system prompt to config
                 "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование",
             },
         ]
 
-        for message in reversed(messages):
+        for msg in reversed(messages):
             req_messages.append({
                 "role": "user",
-                "text": message["message_text"],
+                "text": msg["message_text"],
             })
             if message["reply_text"]:
                 req_messages.append({
                     "role": "assistant",
-                    "text": message["reply_text"],
+                    "text": msg["reply_text"],
                 })
         req_messages.append({
             "role": "user",
             "text": message_text,
         })
-        
-        logging.info(f"LLM Request messages: {req_messages}")
+
+        logging.debug(f"LLM Request messages: {req_messages}")
         ml_ret = self.llm_model.run(req_messages)
-        logging.info(f"LLM Response: {ml_ret}")
+        logging.debug(f"LLM Response: {ml_ret}")
         reply = ml_ret.alternatives[0].text
         self.db.save_message(user.id, message_text, reply_text=reply)
 
         try:
-            await update.message.reply_markdown(reply, reply_to_message_id=update.message.message_id)
+            await message.reply_markdown(reply, reply_to_message_id=message.message_id)
             logger.info(f"Replied to message from {user.id}: {message_text[:50]}...")
         except Exception as e:
             logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
             # Probably error in markdown formatting, fallback to raw text
-            await update.message.reply_text(reply, reply_to_message_id=update.message.message_id)
+            await message.reply_text(reply, reply_to_message_id=message.message_id)
         logger.info(f"Handled message from {user.id}: {message_text[:50]}...")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
