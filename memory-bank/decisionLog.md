@@ -135,3 +135,32 @@ This file records architectural and implementation decisions using a list format
 * Maintained existing httpx logging level override to reduce noise
 * Updated config.toml.example with comprehensive logging and yc-ml sections
 * Added error handling for invalid log levels and file creation failures
+
+[2025-09-12 23:08:30] - Modular Architecture Refactoring Completed
+
+## Decision
+
+* Successfully refactored monolithic main.py into a clean modular architecture
+* Separated concerns into dedicated directories: lib/, bot/, config/, database/, llm/
+* Created specialized manager classes for each component
+* Maintained all existing functionality while improving code organization
+
+## Rationale 
+
+* Monolithic single-file architecture was becoming difficult to maintain and extend
+* Separation of concerns improves code readability, testability, and maintainability
+* Modular structure allows for easier unit testing of individual components
+* Clear directory structure makes it easier for new developers to understand the codebase
+* Component isolation reduces coupling and improves code reusability
+
+## Implementation Details
+
+* Created lib/ directory with logging utilities (lib/logging_utils.py)
+* Created bot/ directory with handlers (bot/handlers.py) and application logic (bot/application.py)
+* Created config/ directory with ConfigManager class (config/manager.py) for centralized configuration
+* Created database/ directory with DatabaseManager (database/manager.py) and moved existing wrapper
+* Created llm/ directory with YandexMLManager (llm/yandex_ml.py) for LLM integration
+* Refactored main.py to orchestrate all components through clean interfaces
+* Preserved all command-line arguments and daemon functionality
+* All imports tested and verified working correctly
+* Maintained backward compatibility with existing configuration files
