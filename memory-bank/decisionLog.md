@@ -189,3 +189,55 @@ This file records architectural and implementation decisions using a list format
 * Returns List[Dict[str, Any]] consistent with other database methods
 * Includes proper error handling and logging like other database methods
 * Uses existing cursor context manager pattern for transaction safety
+
+[2025-09-13 14:18:27] - Implemented Missing get_chat_message_by_message_id Database Method
+
+## Decision
+
+* Implemented `get_chat_message_by_message_id()` method in DatabaseWrapper class
+* Method retrieves specific chat message by message_id, chat_id, and optional thread_id
+* Resolves TODO in bot/handlers.py that was calling non-existent database method
+
+## Rationale 
+
+* The bot handlers were trying to call `self.db.get_chat_message_by_message_id()` but this method didn't exist
+* This method is needed for reply message handling to get the parent message being replied to
+* Consistent with existing database wrapper patterns and error handling
+* Supports the bot's ability to track message threads and reply chains
+
+## Implementation Details
+
+* Added method to DatabaseWrapper class in database/wrapper.py
+* Method takes chat_id (int), thread_id (Optional[int]), and message_id (int) parameters
+* Queries chat_messages table with WHERE clause for chat_id, message_id, and optional thread_id filtering
+* Uses proper NULL handling for thread_id with `((? IS NULL) OR (thread_id = ?))` pattern
+* Returns Optional[Dict[str, Any]] consistent with other database methods
+* Includes proper error handling and logging like other database methods
+* Uses existing cursor context manager pattern for transaction safety
+* Added LIMIT 1 for performance since message_id should be unique per chat
+
+[2025-09-13 14:25:55] - Implemented Missing get_chat_messages_by_root_id Database Method
+
+## Decision
+
+* Implemented `get_chat_messages_by_root_id()` method in DatabaseWrapper class
+* Fixed attribute access bug in bot handlers for dictionary-based database results
+* Completed TODO implementation for bot message thread handling
+
+## Rationale 
+
+* The bot handlers were calling `self.db.get_chat_messages_by_root_id()` but this method didn't exist
+* This method is needed for LLM integration to get all messages in a conversation thread by root message ID
+* The handler code was incorrectly accessing dictionary values as object attributes
+* Consistent with existing database wrapper patterns and error handling
+
+## Implementation Details
+
+* Added method to DatabaseWrapper class in database/wrapper.py
+* Method takes chatId (int), rootMessageId (int), and optional threadId parameters
+* Queries chat_messages table with WHERE clause for chat_id, root_message_id, and optional thread_id filtering
+* Orders results by date ASC to get chronological message flow for LLM context
+* Returns List[Dict[str, Any]] consistent with other database methods
+* Fixed bot/handlers.py to use dictionary access: `storedMsg["message_category"]` and `storedMsg["message_text"]`
+* Includes proper error handling and logging like other database methods
+* Uses existing cursor context manager pattern for transaction safety
