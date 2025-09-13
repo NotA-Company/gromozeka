@@ -243,9 +243,9 @@ class BotHandlers:
         batchLength = len(parsedMessages) // batchesCount
 
         resMessages = []
-        startPos = 0
+        startPos: int = 0
         while startPos < len(parsedMessages):
-            currentBatchLen = min(batchLength, len(parsedMessages) - startPos)
+            currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
             batchSummarized = False
             while not batchSummarized:
                 tryMessages = parsedMessages[startPos:startPos+currentBatchLen]
@@ -262,7 +262,7 @@ class BotHandlers:
                     if currentBatchLen == 1:
                         resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: Bats has too many tokens ({tokensCount})")
                         break
-                    currentBatchLen //= (tokensCount / maxTokens)
+                    currentBatchLen = int(currentBatchLen // (tokensCount / maxTokens))
                     currentBatchLen -= 2
                     if currentBatchLen < 1:
                         currentBatchLen = 1
