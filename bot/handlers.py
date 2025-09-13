@@ -207,12 +207,11 @@ class BotHandlers:
 
         logger.debug(f"Messages: {messages}")
 
-        reqMessages = [
-            {
-                "role": "system",
-                "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование.",
-            },
-        ]
+        systemMessage = {
+            "role": "system",
+            "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование.",
+        }
+        userMessageText = "Твоя задача - суммаризировать сообщения за день. Далее идёт список сообщений в JSON формате:"
 
         parsedMessages = []
 
@@ -226,41 +225,79 @@ class BotHandlers:
                 "text": msg["message_text"]
             })
 
-        reqMessages.append({
+        reqMessages = [
+            systemMessage,
+            {
                 "role": "user",
-                "text": f"Твоя задача - суммаризировать сообщения за день. Далее идёт список сообщений в JSON формате: {json.dumps(parsedMessages)}",
-            })
+                "text": f"{userMessageText} {json.dumps(parsedMessages)}",
+            },
+        ]
 
-        logger.debug(f"LLM Request messages: {reqMessages}")
-        mlRet: Any = None
-        try:
-            mlRet = self.llm_model.run(reqMessages)
-            logger.debug(f"LLM Response: {mlRet}")
-        except Exception as e:
-            logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
-            await message.reply_text(
-                f"Error while sending LLM request {type(e).__name__}",
-                reply_to_message_id=ensuredMessage.messageId,
-                message_thread_id=ensuredMessage.threadId,
-            )
-            return
-        
-        llmResponse = mlRet.alternatives[0].text
+        # TODO: Move to config or ask from model somehow
+        maxTokens = 32768
+        tokens = self.llm_model.tokenize(reqMessages)
+        tokensCount = len(tokens)
 
-        try:
-            await message.reply_text(
-                llmResponse,
-                parse_mode="Markdown",
-                reply_to_message_id=message.message_id,
-                message_thread_id=ensuredMessage.threadId,
-            )
-        except Exception as e:
-            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-            await message.reply_text(
-                llmResponse,
-                reply_to_message_id=message.message_id,
-                message_thread_id=ensuredMessage.threadId,
-            )
+        # -256 to ensure everything will be ok
+        batchesCount = tokensCount // (maxTokens - 256) + 1
+        batchLength = len(parsedMessages) // batchesCount
+
+        resMessages = []
+        startPos = 0
+        while startPos < len(parsedMessages):
+            currentBatchLen = min(batchLength, len(parsedMessages) - startPos)
+            batchSummarized = False
+            while not batchSummarized:
+                tryMessages = parsedMessages[startPos:startPos+currentBatchLen]
+                reqMessages = [
+                    systemMessage,
+                    {
+                        "role": "user",
+                        "text": f"{userMessageText} {json.dumps(tryMessages)}",
+                    },
+                ]
+                tokens = self.llm_model.tokenize(reqMessages)
+                tokensCount = len(tokens)
+                if tokensCount > maxTokens:
+                    if currentBatchLen == 1:
+                        resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: Bats has too many tokens ({tokensCount})")
+                        break
+                    currentBatchLen //= (tokensCount / maxTokens)
+                    currentBatchLen -= 2
+                    if currentBatchLen < 1:
+                        currentBatchLen = 1
+                    continue
+                batchSummarized = True
+
+                mlRet: Any = None
+                try:
+                    logger.debug(f"LLM Request messages: {reqMessages}")
+                    mlRet = self.llm_model.run(reqMessages)
+                    logger.debug(f"LLM Response: {mlRet}")
+                except Exception as e:
+                    logger.error(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}")
+                    resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}")
+                    break
+
+                resMessages.append(mlRet.alternatives[0].text)
+
+            startPos += currentBatchLen
+
+        for msg in resMessages:
+            try:
+                await message.reply_text(
+                    msg,
+                    parse_mode="Markdown",
+                    reply_to_message_id=message.message_id,
+                    message_thread_id=ensuredMessage.threadId,
+                )
+            except Exception as e:
+                logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
+                await message.reply_text(
+                    msg,
+                    reply_to_message_id=message.message_id,
+                    message_thread_id=ensuredMessage.threadId,
+                )
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
