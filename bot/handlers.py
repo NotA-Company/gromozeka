@@ -176,7 +176,8 @@ class BotHandlers:
                             "message_id": msg["message_id"],
                             "reply_id": msg["reply_id"],
                             "text": msg["message_text"],
-                        }
+                        },
+                        ensure_ascii=False,
                     ),
                 }
             )

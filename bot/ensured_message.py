@@ -41,7 +41,7 @@ Raises:
     ValueError: If the message's user or chat information is missing.
 """
 class EnsuredMessage:
-    
+
     def __init__(self, message: Message):
         self._message = message
 
@@ -85,17 +85,20 @@ class EnsuredMessage:
 
     def getBaseMessage(self) -> Message:
         return self._message
-    
+
     def __str__(self) -> str:
-        return json.dumps({
-            "user.id": self.user.id,
-            "chat.id": self.chat.id,
-            "messageId": self.messageId,
-            "date": self.date.isoformat(),
-            "messageType": self.messageType,
-            "messageText": self.messageText,
-            "replyId": self.replyId,
-            "isReply": self.isReply,
-            "threadId": self.threadId,
-            "isTopicMessage": self.isTopicMessage,
-        })
+        return json.dumps(
+            {
+                "user.id": self.user.id,
+                "chat.id": self.chat.id,
+                "messageId": self.messageId,
+                "date": self.date.isoformat(),
+                "messageType": self.messageType,
+                "messageText": self.messageText,
+                "replyId": self.replyId,
+                "isReply": self.isReply,
+                "threadId": self.threadId,
+                "isTopicMessage": self.isTopicMessage,
+            },
+            ensure_ascii=False,
+        )
