@@ -42,12 +42,15 @@ class EnsuredMessage:
             self.messageText = message.text
 
         self.replyId: Optional[int] = None
+        self.replyText: Optional[str] = None
         self.isReply = False
         if message.reply_to_message:
             # If reply_to_message is message about creating topic, then it isn't reply
             if message.reply_to_message.forum_topic_created is None:
                 self.replyId = message.reply_to_message.message_id
                 self.isReply = True
+                if message.reply_to_message.text:
+                    self.replyText = message.reply_to_message.text
 
         self.threadId: Optional[int] = None
         self.isTopicMessage = message.is_topic_message == True if message.is_topic_message is not None else False
@@ -175,14 +178,14 @@ class BotHandlers:
         if not message:
             logger.error("Message undefined")
             return
-        
+
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
             ensuredMessage = EnsuredMessage(message)
         except Exception as e:
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
-        
+
         chat = ensuredMessage.chat
         chatType = chat.type
 
@@ -437,12 +440,22 @@ class BotHandlers:
                 "role": "system",
                 # TODO: Allow chat admin to configure system prompt. Also move default system prompt to config
                 "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование",
-            },
+            }
+        ]
+
+        if ensuredMessage.replyText:
+            req_messages.append(
+                {
+                    "role": "user",
+                    "text": ensuredMessage.replyText,
+                }
+            )
+        req_messages.append(
             {
                 "role": "user",
                 "text": messageText,
-            },
-        ]
+            }
+        )
 
         if not await self._send_llm_chat_message(ensuredMessage, req_messages, self.llm_model):
             logger.error("Failed to send LLM reply")
