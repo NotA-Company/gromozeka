@@ -16,9 +16,9 @@ from .ensured_message import EnsuredMessage
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PRIVATE_SYSTEM_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование"
-DEFAULT_SUMMARISATION_SYSTEM_PROMPT = """Суммаризируй пользовательские сообщения, предоставленные в JSON формате."""
-DEFAULT_CHAT_SYSTEM_PROMPT = """Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование"""
+DEFAULT_PRIVATE_SYSTEM_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
+DEFAULT_SUMMARISATION_SYSTEM_PROMPT = """Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."""
+DEFAULT_CHAT_SYSTEM_PROMPT = """Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."""
 
 class BotHandlers:
     """Contains all bot command and message handlers."""
@@ -192,6 +192,8 @@ class BotHandlers:
         # -256 to ensure everything will be ok
         batchesCount = tokensCount // (maxTokens - 256) + 1
         batchLength = len(parsedMessages) // batchesCount
+
+        logger.debug(f"Summarisation: total tokens: {tokensCount}, max tokens: {maxTokens}, messages count: {len(parsedMessages)}, batches count: {batchesCount}, batch length: {batchLength}")
 
         resMessages = []
         startPos: int = 0
