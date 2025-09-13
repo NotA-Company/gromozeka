@@ -12,78 +12,22 @@ from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 from database.wrapper import DatabaseWrapper
+from .ensured_message import EnsuredMessage
 
 logger = logging.getLogger(__name__)
 
-
-class EnsuredMessage:
-    
-    def __init__(self, message: Message):
-        self._message = message
-
-        if not message.from_user:
-            raise ValueError("Message User undefined")
-
-        self.user = message.from_user
-
-        if not message.chat:
-            raise ValueError("Message Chat undefined")
-        self.chat = message.chat
-
-        self.messageId = message.message_id
-        self.date = message.date
-        self.messageText = ""
-        self.messageType = "text"
-        if not message.text:
-            # Probably not a text message, ignore but log it for now
-            logger.error(f"Message text undefined: {message}")
-            self.messageType = "unknown"
-        else:
-            self.messageText = message.text
-
-        self.replyId: Optional[int] = None
-        self.replyText: Optional[str] = None
-        self.isReply = False
-        if message.reply_to_message:
-            # If reply_to_message is message about creating topic, then it isn't reply
-            if message.reply_to_message.forum_topic_created is None:
-                self.replyId = message.reply_to_message.message_id
-                self.isReply = True
-                if message.reply_to_message.text:
-                    self.replyText = message.reply_to_message.text
-
-        self.threadId: Optional[int] = None
-        self.isTopicMessage = message.is_topic_message == True if message.is_topic_message is not None else False
-        if self.isTopicMessage:
-            self.threadId = message.message_thread_id
-
-        logger.debug(f"Ensured Message: {self}")
-
-    def getBaseMessage(self) -> Message:
-        return self._message
-    
-    def __str__(self) -> str:
-        return json.dumps({
-            "user.id": self.user.id,
-            "chat.id": self.chat.id,
-            "messageId": self.messageId,
-            "date": self.date.isoformat(),
-            "messageType": self.messageType,
-            "messageText": self.messageText,
-            "replyId": self.replyId,
-            "isReply": self.isReply,
-            "threadId": self.threadId,
-            "isTopicMessage": self.isTopicMessage,
-        })
-
+DEFAULT_PRIVATE_SYSTEM_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование"
+DEFAULT_SUMMARISATION_SYSTEM_PROMPT = """Суммаризируй пользовательские сообщения, предоставленные в JSON формате."""
+DEFAULT_CHAT_SYSTEM_PROMPT = """Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование"""
 
 class BotHandlers:
     """Contains all bot command and message handlers."""
 
-    def __init__(self, database: DatabaseWrapper, llm_model):
+    def __init__(self, database: DatabaseWrapper, llm_model, llm_manager):
         """Initialize handlers with database and LLM model."""
         self.db = database
         self.llm_model = llm_model
+        self.llm_manager = llm_manager
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
@@ -93,11 +37,11 @@ class BotHandlers:
             return
 
         # Save user to database
-        self.db.save_user(
-            user_id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name
+        self.db.saveUser(
+            userId=user.id,
+            userName=user.username,
+            firstName=user.first_name,
+            lastName=user.last_name
         )
 
         welcome_message = (
@@ -145,7 +89,7 @@ class BotHandlers:
 
         # Get user data from database
         user_data = self.db.get_user(user.id)
-        messages = self.db.get_user_messages(user.id, limit=100)
+        messages = self.db.getUserMessages(user.id, limit=100)
 
         if user_data:
             stats_text = (
@@ -179,6 +123,13 @@ class BotHandlers:
             logger.error("Message undefined")
             return
 
+        maxBatches: Optional[int] = None
+        if context.args:
+            try:
+                maxBatches = int(context.args[0])
+            except ValueError:
+                logger.error(f"Invalid argument: '{context.args[0]}' is not a valid number.")     
+
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
             ensuredMessage = EnsuredMessage(message)
@@ -199,7 +150,7 @@ class BotHandlers:
         today = datetime.datetime.now(datetime.timezone.utc)
         today = today.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        messages = self.db.get_chat_messages_since(
+        messages = self.db.getChatMessageSince(
             chatId=chat.id,
             sinceDateTime=datetime.datetime.combine(today, datetime.time.min),
             threadId=ensuredMessage.threadId,
@@ -209,29 +160,28 @@ class BotHandlers:
 
         systemMessage = {
             "role": "system",
-            "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование.",
+            "text": DEFAULT_SUMMARISATION_SYSTEM_PROMPT,
         }
-        userMessageText = "Твоя задача - суммаризировать сообщения за день. Далее идёт список сообщений в JSON формате:"
-
         parsedMessages = []
 
         for msg in messages:
-            parsedMessages.append({
-                # date, chat_id, user_id, user_name, message_id, reply_id, thread_id, message_text, message_type
-                "date": msg["date"],
-                "sender": msg["user_name"],
-                "message_id": msg["message_id"],
-                "reply_id": msg["reply_id"],
-                "text": msg["message_text"]
-            })
+            parsedMessages.append(
+                {
+                    "role": "user",
+                    "text": json.dumps(
+                        {
+                            # date, chat_id, user_id, user_name, message_id, reply_id, thread_id, message_text, message_type
+                            "date": msg["date"],
+                            "sender": msg["user_name"],
+                            "message_id": msg["message_id"],
+                            "reply_id": msg["reply_id"],
+                            "text": msg["message_text"],
+                        }
+                    ),
+                }
+            )
 
-        reqMessages = [
-            systemMessage,
-            {
-                "role": "user",
-                "text": f"{userMessageText} {json.dumps(parsedMessages)}",
-            },
-        ]
+        reqMessages = [systemMessage] + parsedMessages
 
         # TODO: Move to config or ask from model somehow
         maxTokens = 32768
@@ -244,18 +194,13 @@ class BotHandlers:
 
         resMessages = []
         startPos: int = 0
+        batchN = 0
         while startPos < len(parsedMessages):
             currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
             batchSummarized = False
             while not batchSummarized:
                 tryMessages = parsedMessages[startPos:startPos+currentBatchLen]
-                reqMessages = [
-                    systemMessage,
-                    {
-                        "role": "user",
-                        "text": f"{userMessageText} {json.dumps(tryMessages)}",
-                    },
-                ]
+                reqMessages = [systemMessage] + tryMessages
                 tokens = self.llm_model.tokenize(reqMessages)
                 tokensCount = len(tokens)
                 if tokensCount > maxTokens:
@@ -282,22 +227,32 @@ class BotHandlers:
                 resMessages.append(mlRet.alternatives[0].text)
 
             startPos += currentBatchLen
+            batchN += 1
+            if maxBatches and batchN >= maxBatches:
+                break
 
         for msg in resMessages:
+            replyKwargs = {
+                "text": msg,
+                "reply_to_message_id": ensuredMessage.messageId,
+                "message_thread_id": ensuredMessage.threadId,
+            }
+            replyMessage: Optional[Message] = None
             try:
-                await message.reply_text(
-                    msg,
+                replyMessage = await message.reply_text(
                     parse_mode="Markdown",
-                    reply_to_message_id=message.message_id,
-                    message_thread_id=ensuredMessage.threadId,
+                    **replyKwargs,
                 )
             except Exception as e:
                 logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-                await message.reply_text(
-                    msg,
-                    reply_to_message_id=message.message_id,
-                    message_thread_id=ensuredMessage.threadId,
-                )
+                replyMessage = await message.reply_text(**replyKwargs)
+
+            if replyMessage:
+                try:
+                    ensuredReplyMessage = EnsuredMessage(replyMessage)
+                    self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
+                except Exception as e:
+                    logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
@@ -320,7 +275,7 @@ class BotHandlers:
             case _:
                 logger.error(f"Unsupported chat type: {chatType}")
 
-    def _save_chat_message(self, message: EnsuredMessage, messageCategory: str = 'user') -> bool:
+    def _saveChatMessage(self, message: EnsuredMessage, messageCategory: str = 'user') -> bool:
         """Save a chat message to the database."""
         # TODO: messageCategory - make enum
 
@@ -378,28 +333,25 @@ class BotHandlers:
         LLMReply = ml_ret.alternatives[0].text
 
         replyMessage = None
+        replyKwargs = {
+            "text": LLMReply,
+            "reply_to_message_id": ensuredMessage.messageId,
+            "message_thread_id": ensuredMessage.threadId,
+        }
         try:
             logger.warning(f"Sending LLM reply to {ensuredMessage}")
-            replyMessage = await ensuredMessage.getBaseMessage().reply_markdown(
-                LLMReply,
-                reply_to_message_id=ensuredMessage.messageId,
-                message_thread_id=ensuredMessage.threadId,
-            )
+            replyMessage = await ensuredMessage.getBaseMessage().reply_text(parse_mode='Markdown',**replyKwargs)
         except Exception as e:
             logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
             # Probably error in markdown formatting, fallback to raw text
-            replyMessage = await ensuredMessage.getBaseMessage().reply_text(
-                LLMReply,
-                reply_to_message_id=ensuredMessage.messageId,
-                message_thread_id=ensuredMessage.threadId,
-            )
+            replyMessage = await ensuredMessage.getBaseMessage().reply_text(**replyKwargs)
         if replyMessage is None:
             logger.error("Error while sending LLM reply")
             return False
 
         try:
             ensuredReplyMessage = EnsuredMessage(replyMessage)
-            self._save_chat_message(ensuredReplyMessage, messageCategory='bot')
+            self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
             return True
         except Exception as e:
             logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
@@ -429,7 +381,7 @@ class BotHandlers:
 
         messageText = ensuredMessage.messageText
 
-        if not self._save_chat_message(ensuredMessage, messageCategory='user'):
+        if not self._saveChatMessage(ensuredMessage, messageCategory='user'):
             logger.error("Failed to save chat message")
 
         # Check if message is a reply to our message
@@ -455,7 +407,7 @@ class BotHandlers:
                     {
                         "role": "system",
                         # TODO: Allow chat admin to configure system prompt. Also move default system prompt to config
-                        "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование",
+                        "text": DEFAULT_CHAT_SYSTEM_PROMPT,
                     },
                 ]
                 for storedMsg in storedMessages:
@@ -497,7 +449,7 @@ class BotHandlers:
             {
                 "role": "system",
                 # TODO: Allow chat admin to configure system prompt. Also move default system prompt to config
-                "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование",
+                "text": DEFAULT_CHAT_SYSTEM_PROMPT,
             }
         ]
 
@@ -527,63 +479,70 @@ class BotHandlers:
             # logger.error("Message undefined")
             return
 
-        user = update.effective_user
-        if not user:
-            logger.error("User undefined")
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
             return
 
-        message_text = message.text
-        if not message_text:
-            # Probasbly not a text message, ignore but log it for now
-            logger.error(f"Message text undefined: {message}")
-            return
+        user = ensuredMessage.user
 
         # Save user and message to database
-        self.db.save_user(
-            user_id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name
+        self.db.saveUser(
+            userId=user.id,
+            userName=user.username,
+            firstName=user.first_name,
+            lastName=user.last_name
         )
 
-        messages = self.db.get_user_messages(user.id, limit=10)
-        req_messages = [
+        messages = self.db.getUserMessages(user.id, limit=10)
+        reqMessages = [
             {
                 "role": "system",
                 #TODO: Allow user to configure system prompt. Also move default system prompt to config
-                "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование",
+                "text": DEFAULT_PRIVATE_SYSTEM_PROMPT,
             },
         ]
 
         for msg in reversed(messages):
-            req_messages.append({
+            reqMessages.append({
                 "role": "user",
                 "text": msg["message_text"],
             })
             if message["reply_text"]:
-                req_messages.append({
+                reqMessages.append({
                     "role": "assistant",
                     "text": msg["reply_text"],
                 })
-        req_messages.append({
+        reqMessages.append({
             "role": "user",
-            "text": message_text,
+            "text": ensuredMessage.messageText,
         })
 
-        logger.debug(f"LLM Request messages: {req_messages}")
-        ml_ret = self.llm_model.run(req_messages)
-        logger.debug(f"LLM Response: {ml_ret}")
-        reply = ml_ret.alternatives[0].text
-        self.db.save_message(user.id, message_text, reply_text=reply)
-
+        logger.debug(f"LLM Request messages: {reqMessages}")
+        reply = ""
         try:
-            await message.reply_markdown(reply, reply_to_message_id=message.message_id)
-            logger.info(f"Replied to message from {user.id}: {message_text[:50]}...")
+            mlRet = self.llm_model.run(reqMessages)
+            logger.debug(f"LLM Response: {mlRet}")
+            reply = mlRet.alternatives[0].text
+        except Exception as e:
+            logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
+            reply = f"Error while running LLM: {type(e).__name__}#{e}"
+
+        self.db.savePrivateMessage(user.id, ensuredMessage.messageText, reply_text=reply)
+
+        replyKwargs = {
+            "text": reply,
+            "reply_to_message_id": ensuredMessage.messageId,
+        }
+        try:
+            await message.reply_text(parse_mode='Markdown', **replyKwargs)
         except Exception as e:
             logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
             # Probably error in markdown formatting, fallback to raw text
-            await message.reply_text(reply, reply_to_message_id=message.message_id)
-        logger.info(f"Handled message from {user.id}: {message_text[:50]}...")
+            await message.reply_text(**replyKwargs)
+        logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
