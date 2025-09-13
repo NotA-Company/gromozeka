@@ -100,8 +100,10 @@ class DatabaseWrapper:
                     message_id INTEGER NOT NULL,
                     reply_id INTEGER,
                     thread_id INTEGER,
+                    root_message_id INTEGER,
                     message_text TEXT NOT NULL,
                     message_type TEXT DEFAULT 'text' NOT NULL,
+                    message_category TEXT DEFAULT 'user' NOT NULL, 
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
@@ -188,15 +190,15 @@ class DatabaseWrapper:
 
     def save_chat_message(self, date, chatId: int, userId: int, userName: str, messageId: int,
                          replyId: Optional[int] = None, threadId: Optional[int] = None,
-                         messageText: str = '', messageType: str = 'text') -> bool:
+                         messageText: str = '', messageType: str = 'text', messageCategory: str = 'user', rootMessageId: Optional[int] = None) -> bool:
         """Save a chat message with detailed information."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
                     INSERT INTO chat_messages
-                    (date, chat_id, user_id, user_name, message_id, reply_id, thread_id, message_text, message_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (date, chatId, userId, userName, messageId, replyId, threadId, messageText, messageType))
+                    (date, chat_id, user_id, user_name, message_id, reply_id, thread_id, message_text, message_type, message_category, root_message_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (date, chatId, userId, userName, messageId, replyId, threadId, messageText, messageType, messageCategory, rootMessageId))
                 return True
         except Exception as e:
             logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
@@ -218,6 +220,43 @@ class DatabaseWrapper:
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId}): {e}")
+            return []
+
+    def get_chat_message_by_message_id(self, chat_id: int, message_id: int, thread_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Get a specific chat message by message_id, chat_id, and optional thread_id."""
+        logger.debug(f"Getting chat message for chat {chat_id}, thread {thread_id}, message_id {message_id}")
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT * FROM chat_messages
+                    WHERE
+                        chat_id = ?
+                        AND message_id = ?
+                        AND ((? IS NULL) OR (thread_id = ?))
+                    LIMIT 1
+                """, (chat_id, message_id, thread_id, thread_id))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get chat message for chat {chat_id}, thread {thread_id}, message_id {message_id}: {e}")
+            return None
+
+    def get_chat_messages_by_root_id(self, chatId: int, rootMessageId: int, threadId: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get all chat messages in a conversation thread by root message ID."""
+        logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT * FROM chat_messages
+                    WHERE
+                        chat_id = ?
+                        AND root_message_id = ?
+                        AND ((? IS NULL) OR (thread_id = ?))
+                    ORDER BY date ASC
+                """, (chatId, rootMessageId, threadId, threadId))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}: {e}")
             return []
 
     def close(self):

@@ -5,13 +5,41 @@ import datetime
 import json
 import logging
 
-from telegram import Chat, Update
+from typing import Any, Dict, List, Optional
+
+from telegram import Chat, Update, Message
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 from database.wrapper import DatabaseWrapper
 
 logger = logging.getLogger(__name__)
+
+
+class EnsuredMessage:
+    
+    def __init__(self, message: Message):
+        self._message = message
+
+        if not message.from_user:
+            raise ValueError("Message User undefined")
+
+        self.user = message.from_user
+
+        if not message.chat:
+            raise ValueError("Message Chat undefined")
+        self.chat = message.chat
+
+        self.messageText = ""
+        self.messageType = "text"
+        if not message.text:
+            # Probably not a text message, ignore but log it for now
+            logger.error(f"Message text undefined: {message}")
+            self.messageType = "unknown"
+        else:
+            self.messageText = message.text
+
+        logger.debug(f"Message with type {self.messageType} from {self.user.id} ({self.user.username}) in {self.chat.id} ({self.chat.title})")
 
 
 class BotHandlers:
@@ -26,7 +54,7 @@ class BotHandlers:
         """Handle the /start command."""
         user = update.effective_user
         if not user or not update.message:
-            logging.error("User or message undefined")
+            logger.error("User or message undefined")
             return
 
         # Save user to database
@@ -54,7 +82,7 @@ class BotHandlers:
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /help command."""
         if not update.message:
-            logging.error("Message undefined")
+            logger.error("Message undefined")
             return
 
         help_text = (
@@ -77,7 +105,7 @@ class BotHandlers:
         """Handle the /stats command."""
         user = update.effective_user
         if not user or not update.message:
-            logging.error("User or message undefined")
+            logger.error("User or message undefined")
             return
 
         # Get user data from database
@@ -100,7 +128,7 @@ class BotHandlers:
     async def echo_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /echo command."""
         if not update.message:
-            logging.error("Message undefined")
+            logger.error("Message undefined")
             return
 
         if context.args:
@@ -113,12 +141,12 @@ class BotHandlers:
         """Handle the /summary command."""
         chat = update.effective_chat
         if not chat:
-            logging.error("Chat undefined")
+            logger.error("Chat undefined")
             return
 
         message = update.message
         if not message:
-            logging.error("Message undefined")
+            logger.error("Message undefined")
             return
         chatType = chat.type
 
@@ -131,12 +159,12 @@ class BotHandlers:
 
         user = message.from_user
         if not user:
-            logging.error("User undefined")
+            logger.error("User undefined")
             return
 
         chat = message.chat
         if not chat:
-            logging.error("Chat undefined")
+            logger.error("Chat undefined")
             return
 
         today = datetime.datetime.now(datetime.timezone.utc)
@@ -145,10 +173,10 @@ class BotHandlers:
         messages = self.db.get_chat_messages_since(
             chatId=chat.id,
             sinceDateTime=datetime.datetime.combine(today, datetime.time.min),
-            threadId=message.message_thread_id,
+            #threadId=message.message_thread_id,
         )
 
-        logging.debug(f"Messages: {messages}")
+        logger.debug(f"Messages: {messages}")
 
         reqMessages = [
             {
@@ -174,9 +202,9 @@ class BotHandlers:
                 "text": f"Твоя задача - суммаризировать сообщения за день. Далее идёт список сообщений в JSON формате: {json.dumps(parsedMessages)}",
             })
 
-        logging.debug(f"LLM Request messages: {reqMessages}")
+        logger.debug(f"LLM Request messages: {reqMessages}")
         mlRet = self.llm_model.run(reqMessages)
-        logging.debug(f"LLM Response: {mlRet}")
+        logger.debug(f"LLM Response: {mlRet}")
         llmResponse = mlRet.alternatives[0].text
 
         try:
@@ -184,22 +212,22 @@ class BotHandlers:
                 llmResponse,
                 parse_mode="Markdown",
                 reply_to_message_id=message.message_id,
-                message_thread_id=message.message_thread_id,
+                #message_thread_id=message.message_thread_id,
             )
         except Exception as e:
             logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
             await message.reply_text(
                 llmResponse,
                 reply_to_message_id=message.message_id,
-                message_thread_id=message.message_thread_id,
+                #message_thread_id=message.message_thread_id,
             )
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
-        # logging.debug(f"Handling SOME message: {update}")
+        # logger.debug(f"Handling SOME message: {update}")
         chat = update.effective_chat
         if not chat:
-            logging.error("Chat undefined")
+            logger.error("Chat undefined")
             return
         chatType = chat.type
 
@@ -211,39 +239,34 @@ class BotHandlers:
             case Chat.SUPERGROUP:
                 return await self.handle_group_message(update, context)
             case Chat.CHANNEL:
-                logging.error(f"Unsupported chat type: {chatType}")
+                logger.error(f"Unsupported chat type: {chatType}")
             case _:
-                logging.error(f"Unsupported chat type: {chatType}")
+                logger.error(f"Unsupported chat type: {chatType}")
 
-    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        logging.debug(f"Handling group message: {update}")
-        message = update.message
-        if not message:
-            # Not new message, ignore
-            # logging.error("Message undefined")
-            return
+    def _save_chat_message(self, message: Message, ensuredMessage: EnsuredMessage, messageCategory: str = 'user') -> bool:
+        """Save a chat message to the database."""
+        # TODO: messageCategory - make enum
 
-        user = message.from_user
-        if not user:
-            logging.error("User undefined")
-            return
+        user = ensuredMessage.user
+        chat = ensuredMessage.chat
 
-        chat = message.chat
-        if not chat:
-            logging.error("Chat undefined")
-            return
+        if ensuredMessage.messageType != 'text':
+            logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
+            return False
 
-        logging.debug(f"Message from {user.id} ({user.username}) in {chat.id} ({chat.title})")
-
-        messageText = message.text
-        if not messageText:
-            # Probably not a text message, ignore but log it for now
-            logging.error(f"Message text undefined: {message}")
-            return
+        messageText = ensuredMessage.messageText
 
         replyId = None
+        rootMessageId = message.message_id
         if message.reply_to_message:
             replyId = message.reply_to_message.message_id
+            parentMsg = self.db.get_chat_message_by_message_id(
+                chat_id=chat.id,
+                message_id=replyId,
+                #thread_id=message.message_thread_id,
+            )
+            if parentMsg:
+                rootMessageId = parentMsg["root_message_id"]
 
         self.db.save_chat_message(
             date=message.date,
@@ -255,9 +278,117 @@ class BotHandlers:
             threadId=message.message_thread_id,
             messageText=messageText,
             messageType='text', # In future we'll support not only text messages, but photos, stickers and something else. Or not
+            messageCategory=messageCategory,
+            rootMessageId=rootMessageId,
         )
 
-        # TODO: Add support of handle answering to bot's message, handle whole thread
+        return True
+
+    async def _send_llm_chat_message(self, message: Message, messagesHistory: List[Dict[str, str]], llmModel) -> bool:
+        """Send a chat message to the LLM model."""
+        logger.debug(f"LLM Request messages: {messagesHistory}")
+        ml_ret = llmModel.run(messagesHistory)
+        logger.debug(f"LLM Response: {ml_ret}")
+        LLMReply = ml_ret.alternatives[0].text
+
+        replyMessage = None
+        try:
+            logger.warning(f"Sending LLM reply to {message}")
+            replyMessage = await message.reply_markdown(
+                LLMReply,
+                reply_to_message_id=message.message_id,
+                #message_thread_id=message.message_thread_id,
+            )
+        except Exception as e:
+            logger.error(f"Error while sending LLM reply: reply_to_message_id={message.message_id}, message_thread_id={message.message_thread_id}")
+            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
+            # Probably error in markdown formatting, fallback to raw text
+            replyMessage = await message.reply_text(
+                LLMReply,
+                reply_to_message_id=message.message_id,
+                #message_thread_id=message.message_thread_id,
+            )
+        if replyMessage is None:
+            logger.error("Error while sending LLM reply")
+            return False
+
+        try:
+            ensuredReplyMessage = EnsuredMessage(replyMessage)
+            self._save_chat_message(replyMessage, ensuredReplyMessage, messageCategory='bot')
+            return True
+        except Exception as e:
+            logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
+            return False
+
+    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.debug(f"Handling group message: {update}")
+        message = update.message
+        if not message:
+            # Not new message, ignore
+            # logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        user = ensuredMessage.user
+        chat = ensuredMessage.chat
+
+        if ensuredMessage.messageType != 'text':
+            logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
+            return
+
+        messageText = ensuredMessage.messageText
+
+        if not self._save_chat_message(message, ensuredMessage, messageCategory='user'):
+            logger.error("Failed to save chat message")
+
+        # Check if message is a reply to our message
+        if message.reply_to_message:
+            parentId = message.reply_to_message.message_id
+
+            storedMsg = self.db.get_chat_message_by_message_id(
+                chat_id=chat.id,
+                message_id=parentId,
+                #thread_id=message.message_thread_id,
+            )
+            if storedMsg is None:
+                logger.error("Failed to get parent message")
+                return
+            if storedMsg["message_category"] == "bot":
+                storedMessages = self.db.get_chat_messages_by_root_id(
+                    chatId=chat.id, 
+                    rootMessageId=storedMsg["root_message_id"],
+                    #threadId=message.message_thread_id,
+                )
+
+                req_messages = [
+                    {
+                        "role": "system",
+                        # TODO: Allow chat admin to configure system prompt. Also move default system prompt to config
+                        "text": "Ты - Prinny - вайбовый, но умный пингвин из Disgaea. При ответе ты можешь использовать Markdown форматирование",
+                    },
+                ]
+                for storedMsg in storedMessages:
+                    req_messages.append(
+                        {
+                            "role": "user" if storedMsg["message_category"] == "user" else "assistant",
+                            "text": storedMsg["message_text"],
+                        }
+                    )
+
+                if not await self._send_llm_chat_message(
+                    message, req_messages, self.llm_model
+                ):
+                    logger.error("Failed to send LLM reply")
+
+                logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
+                # TODO: Move to separate method
+                return
 
         # TODO: Move this to separate function + handle whole thread if any
         # If our bot has mentioned, answer somehow
@@ -289,44 +420,27 @@ class BotHandlers:
             },
         ]
 
-        logging.debug(f"LLM Request messages: {req_messages}")
-        ml_ret = self.llm_model.run(req_messages)
-        logging.debug(f"LLM Response: {ml_ret}")
-        LLMReply = ml_ret.alternatives[0].text
+        if not await self._send_llm_chat_message(message, req_messages, self.llm_model):
+            logger.error("Failed to send LLM reply")
 
-        try:
-            await message.reply_markdown(
-                LLMReply,
-                reply_to_message_id=message.message_id,
-                message_thread_id=message.message_thread_id,
-            )
-            logger.info(f"Replied to message from {user.id}: {messageText[:50]}...")
-        except Exception as e:
-            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-            # Probably error in markdown formatting, fallback to raw text
-            await message.reply_text(
-                LLMReply,
-                reply_to_message_id=message.message_id,
-                message_thread_id=message.message_thread_id,
-            )
         logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
 
     async def handle_private_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if not message:
             # Not new message, ignore
-            # logging.error("Message undefined")
+            # logger.error("Message undefined")
             return
 
         user = update.effective_user
         if not user:
-            logging.error("User undefined")
+            logger.error("User undefined")
             return
 
         message_text = message.text
         if not message_text:
             # Probasbly not a text message, ignore but log it for now
-            logging.error(f"Message text undefined: {message}")
+            logger.error(f"Message text undefined: {message}")
             return
 
         # Save user and message to database
@@ -361,9 +475,9 @@ class BotHandlers:
             "text": message_text,
         })
 
-        logging.debug(f"LLM Request messages: {req_messages}")
+        logger.debug(f"LLM Request messages: {req_messages}")
         ml_ret = self.llm_model.run(req_messages)
-        logging.debug(f"LLM Response: {ml_ret}")
+        logger.debug(f"LLM Response: {ml_ret}")
         reply = ml_ret.alternatives[0].text
         self.db.save_message(user.id, message_text, reply_text=reply)
 
