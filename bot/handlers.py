@@ -138,22 +138,35 @@ class BotHandlers:
             return
 
         chat = ensuredMessage.chat
+        chatId = chat.id
+        threadId = ensuredMessage.threadId
         chatType = chat.type
 
         if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
-            await message.reply_text(
-                "This command is only available in groups and supergroups for now.",
-                reply_to_message_id=message.message_id,
-            )
-            return
+            localChatId = None
+            if context.args and len(context.args) >= 2:
+                try:
+                    localChatId = int(context.args[1])
+                except ValueError:
+                    logger.error(f"Invalid argument: '{context.args[1]}' is not a valid number.")
+                
+            if localChatId is None:
+                await message.reply_text(
+                    "This command is only available in groups and supergroups for now.",
+                    reply_to_message_id=message.message_id,
+                )
+                return
+            else:
+                chatId = localChatId
+                threadId = None
 
         today = datetime.datetime.now(datetime.timezone.utc)
         today = today.replace(hour=0, minute=0, second=0, microsecond=0)
 
         messages = self.db.getChatMessageSince(
-            chatId=chat.id,
+            chatId=chatId,
             sinceDateTime=datetime.datetime.combine(today, datetime.time.min),
-            threadId=ensuredMessage.threadId,
+            threadId=threadId,
         )
 
         logger.debug(f"Messages: {messages}")
