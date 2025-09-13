@@ -232,8 +232,19 @@ class BotHandlers:
             })
 
         logger.debug(f"LLM Request messages: {reqMessages}")
-        mlRet = self.llm_model.run(reqMessages)
-        logger.debug(f"LLM Response: {mlRet}")
+        mlRet: Any = None
+        try:
+            mlRet = self.llm_model.run(reqMessages)
+            logger.debug(f"LLM Response: {mlRet}")
+        except Exception as e:
+            logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
+            await message.reply_text(
+                f"Error while sending LLM request: {type(e).__name__}#{e}",
+                reply_to_message_id=ensuredMessage.messageId,
+                message_thread_id=ensuredMessage.threadId,
+            )
+            return
+        
         llmResponse = mlRet.alternatives[0].text
 
         try:
@@ -315,8 +326,18 @@ class BotHandlers:
     async def _send_llm_chat_message(self, ensuredMessage: EnsuredMessage, messagesHistory: List[Dict[str, str]], llmModel) -> bool:
         """Send a chat message to the LLM model."""
         logger.debug(f"LLM Request messages: {messagesHistory}")
-        ml_ret = llmModel.run(messagesHistory)
-        logger.debug(f"LLM Response: {ml_ret}")
+        ml_ret: Any = None
+        try:
+            ml_ret = llmModel.run(messagesHistory)
+            logger.debug(f"LLM Response: {ml_ret}")
+        except Exception as e:
+            logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
+            await ensuredMessage.getBaseMessage().reply_text(
+                f"Error while sending LLM request: {type(e).__name__}#{e}",
+                reply_to_message_id=ensuredMessage.messageId,
+                message_thread_id=ensuredMessage.threadId,
+            )
+            return False
         LLMReply = ml_ret.alternatives[0].text
 
         replyMessage = None
