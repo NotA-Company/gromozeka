@@ -109,8 +109,8 @@ class DatabaseWrapper:
                 )
             """)
 
-    def save_user(self, user_id: int, username: Optional[str] = None,
-                  first_name: Optional[str] = None, last_name: Optional[str] = None) -> bool:
+    def saveUser(self, userId: int, userName: Optional[str] = None,
+                  firstName: Optional[str] = None, lastName: Optional[str] = None) -> bool:
         """Save or update user information."""
         try:
             with self.get_cursor() as cursor:
@@ -118,10 +118,10 @@ class DatabaseWrapper:
                     INSERT OR REPLACE INTO users
                     (user_id, username, first_name, last_name, updated_at)
                     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (user_id, username, first_name, last_name))
+                """, (userId, userName, firstName, lastName))
                 return True
         except Exception as e:
-            logger.error(f"Failed to save user {user_id}: {e}")
+            logger.error(f"Failed to save user {userId}: {e}")
             return False
 
     def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
@@ -160,7 +160,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to get setting {key}: {e}")
             return default
 
-    def save_message(self, user_id: int, message_text: str, reply_text: str = '') -> bool:
+    def savePrivateMessage(self, user_id: int, message_text: str, reply_text: str = '') -> bool:
         """Save a message to the database."""
         try:
             with self.get_cursor() as cursor:
@@ -173,7 +173,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to save message from user {user_id}: {e}")
             return False
 
-    def get_user_messages(self, user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+    def getUserMessages(self, userId: int, limit: int = 10) -> List[Dict[str, Any]]:
         """Get recent messages from a user."""
         try:
             with self.get_cursor() as cursor:
@@ -182,10 +182,10 @@ class DatabaseWrapper:
                     WHERE user_id = ?
                     ORDER BY created_at DESC
                     LIMIT ?
-                """, (user_id, limit))
+                """, (userId, limit))
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Failed to get messages for user {user_id}: {e}")
+            logger.error(f"Failed to get messages for user {userId}: {e}")
             return []
 
     def save_chat_message(self, date, chatId: int, userId: int, userName: str, messageId: int,
@@ -204,7 +204,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
             return False
 
-    def get_chat_messages_since(self, chatId: int, sinceDateTime, threadId: Optional[int] = None) -> List[Dict[str, Any]]:
+    def getChatMessageSince(self, chatId: int, sinceDateTime, threadId: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get chat messages from a specific chat newer than the given date."""
         logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:

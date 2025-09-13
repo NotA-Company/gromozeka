@@ -48,7 +48,7 @@ class GromozekBot:
             bot_token=self.config_manager.get_bot_token(),
             database=self.database_manager.get_database(),
             llm_model=self.llm_manager.get_model(),
-
+            llm_manager=self.llm_manager,
         )
 
     def run(self):
