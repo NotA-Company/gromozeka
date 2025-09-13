@@ -17,14 +17,15 @@ logger = logging.getLogger(__name__)
 class BotApplication:
     """Manages Telegram bot application setup and execution."""
 
-    def __init__(self, config_manager: ConfigManager, bot_token: str, database: DatabaseWrapper, llm_model):
+    def __init__(self, config_manager: ConfigManager, bot_token: str, database: DatabaseWrapper, llm_model, llm_manager):
         """Initialize bot application with token, database, and LLM model."""
         self.config_manager = config_manager
         self.bot_token = bot_token
         self.database = database
         self.llm_model = llm_model
+        self.llm_manager = llm_manager
         self.application = None
-        self.handlers = BotHandlers(database, llm_model)
+        self.handlers = BotHandlers(database, llm_model, llm_manager)
 
     def setup_handlers(self):
         """Set up bot command and message handlers."""
