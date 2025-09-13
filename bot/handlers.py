@@ -239,7 +239,7 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
             await message.reply_text(
-                f"Error while sending LLM request: {type(e).__name__}#{e}",
+                f"Error while sending LLM request {type(e).__name__}",
                 reply_to_message_id=ensuredMessage.messageId,
                 message_thread_id=ensuredMessage.threadId,
             )
@@ -333,7 +333,7 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
             await ensuredMessage.getBaseMessage().reply_text(
-                f"Error while sending LLM request: {type(e).__name__}#{e}",
+                f"Error while sending LLM request: {type(e).__name__}",
                 reply_to_message_id=ensuredMessage.messageId,
                 message_thread_id=ensuredMessage.threadId,
             )
