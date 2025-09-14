@@ -159,11 +159,11 @@ class AbstractModel(ABC):
             Dictionary with model metadata
         """
         return {
+            "provider": self.provider.__class__.__name__,
             "model_id": self.modelId,
             "model_version": self.modelVersion,
             "temperature": self.temperature,
             "context_size": self.contextSize,
-            "provider": self.provider.__class__.__name__
         }
 
     def __str__(self) -> str:

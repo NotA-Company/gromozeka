@@ -2,9 +2,11 @@
 Telegram bot command handlers for Gromozeka.
 """
 import datetime
+from enum import StrEnum
 import json
 import logging
 
+import time
 from typing import Any, Dict, List, Optional
 
 from telegram import Chat, Update, Message
@@ -23,21 +25,31 @@ DEFAULT_PRIVATE_SYSTEM_PROMPT = "Ты - Принни: вайбовый, но у�
 DEFAULT_CHAT_SYSTEM_PROMPT =  "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
 ROBOT_EMOJI = "🤖"
 
+class ChatSettingsEnum(StrEnum):
+    """Enum for chat settings."""
+    SUMMARY_MODEL = "summary_model"
+    CHAT_MODEL = "chat_model"
+    SUMMARY_SYSTEM_PROMPT = "summary_system_prompt"
+    CHAT_SYSTEM_PROMPT = "chat_system_prompt"
+    ALLOW_ADMIN_CHANGE_SETTINGS = "allow_admin_change_settings"
+
+    def __str__(self):
+        return str(self.value)
+
 class BotHandlers:
     """Contains all bot command and message handlers."""
 
-    def __init__(self, config: Dict[str, Any], database: DatabaseWrapper, llm_manager: LLMManager):
+    def __init__(self, config: Dict[str, Any], database: DatabaseWrapper, llmManager: LLMManager):
         """Initialize handlers with database and LLM model."""
         self.config = config
         self.db = database
-        self.llm_manager = llm_manager
-        self.llm_model = llm_manager.getModel("yandexgpt-lite")
+        self.llmManager = llmManager
 
         modelDefaults = self.config.get("models", {})
         self.defaultModels = {
             "private": modelDefaults.get("private", "yandexgpt-lite"),
-            "summary": modelDefaults.get("private", "yandexgpt-lite"),
-            "chat": modelDefaults.get("private", "yandexgpt-lite"),
+            "summary": modelDefaults.get("summary", "yandexgpt-lite"),
+            "chat": modelDefaults.get("chat", "yandexgpt-lite"),
             "fallback": modelDefaults.get("fallback", "yandexgpt-lite"),
             "summary-fallback": modelDefaults.get("summary-fallback", "yandexgpt-lite"),
         }
@@ -47,20 +59,26 @@ class BotHandlers:
             "summary": promptsDefaults.get("summary", DEFAULT_SUMMARISATION_SYSTEM_PROMPT),
             "chat": promptsDefaults.get("chat", DEFAULT_CHAT_SYSTEM_PROMPT),
         }
+        self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
+        self.cache = {
+            "chats": {},
+        }
+        self.defaultAdminCanChangeSettings = bool(self.config.get("allow_admin_change_channel_settings", False))
 
     def getSummarySystemPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for summarising messages."""
         if not chatId:
             return self.defaultPrompts["summary"]
-        # TODO: Try to get it from the database
-        return self.defaultPrompts["summary"]
+        
+        chatSettings = self.getChatSettings(chatId)
+        return chatSettings.get(ChatSettingsEnum.SUMMARY_SYSTEM_PROMPT, self.defaultPrompts["summary"])
 
     def getChatSystemPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for chatting."""
         if not chatId:
             return self.defaultPrompts["chat"]
-        # TODO: Try to get it from the database
-        return self.defaultPrompts["chat"]
+        chatSettings = self.getChatSettings(chatId)
+        return chatSettings.get(ChatSettingsEnum.CHAT_SYSTEM_PROMPT, self.defaultPrompts["chat"])
 
     def getPrivateSystemPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for private messages."""
@@ -74,10 +92,10 @@ class BotHandlers:
 
         modelName = self.defaultModels["summary"]
         if chatId:
-           # TODO: Try to get it from the database
-           pass
+           chatSettings = self.getChatSettings(chatId)
+           modelName = chatSettings.get(ChatSettingsEnum.SUMMARY_MODEL, modelName)
 
-        ret = self.llm_manager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
@@ -87,10 +105,10 @@ class BotHandlers:
         """Get the model for chatting."""
         modelName = self.defaultModels["chat"]
         if chatId:
-           # TODO: Try to get it from the database
-           pass
+           chatSettings = self.getChatSettings(chatId)
+           modelName = chatSettings.get(ChatSettingsEnum.CHAT_MODEL, modelName)
 
-        ret = self.llm_manager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
@@ -103,7 +121,7 @@ class BotHandlers:
            # TODO: Try to get it from the database
            pass
 
-        ret = self.llm_manager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
@@ -112,7 +130,7 @@ class BotHandlers:
     def getFallbackModel(self) -> AbstractModel:
         """Get the model for fallback messages."""
         modelName = self.defaultModels["fallback"]
-        ret = self.llm_manager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
@@ -121,11 +139,56 @@ class BotHandlers:
     def getFallbackSummaryModel(self) -> AbstractModel:
         """Get the model for fallback messages."""
         modelName = self.defaultModels["summary-fallback"]
-        ret = self.llm_manager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
         return ret
+
+    def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[str, Any]:
+        """Get the chat settings for the given chat."""
+        defaultChatSettings = {
+            ChatSettingsEnum.SUMMARY_MODEL: self.defaultModels["summary"],
+            ChatSettingsEnum.CHAT_MODEL: self.defaultModels["chat"],
+            ChatSettingsEnum.SUMMARY_SYSTEM_PROMPT: self.defaultPrompts["summary"],
+            ChatSettingsEnum.CHAT_SYSTEM_PROMPT: self.defaultPrompts["chat"],
+            ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS: str(self.defaultAdminCanChangeSettings),
+        }
+        if chatId not in self.cache["chats"]:
+            self.cache["chats"][chatId] = {}
+
+        if 'settings' not in self.cache["chats"][chatId]:
+            self.cache["chats"][chatId]['settings'] = self.db.getChatSettings(chatId)
+
+        if returnDefault:
+            return {**defaultChatSettings, **self.cache["chats"][chatId]['settings']}
+        
+        return self.cache["chats"][chatId]['settings']
+
+    def setChatSettings(self, chatId: int, settings: Dict[str, Any]) -> None:
+        """Set the chat settings for the given chat."""
+        if chatId not in self.cache["chats"]:
+            self.cache["chats"][chatId] = {}
+
+        for key, value in settings.items():
+            self.db.setChatSetting(chatId, key, value)
+
+        if 'settings' in self.cache["chats"][chatId]:
+            self.cache["chats"][chatId].pop('settings', None)
+
+
+    def unsetChatSetting(self, chatId: int, key: str) -> None:
+        """Set the chat settings for the given chat."""
+        if chatId not in self.cache["chats"]:
+            self.cache["chats"][chatId] = {}
+
+        self.db.unsetChatSetting(chatId, key)
+
+        if 'settings' in self.cache["chats"][chatId]:
+            self.cache["chats"][chatId].pop('settings', None)
+
+
+    # COMMANDS
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
@@ -186,7 +249,7 @@ class BotHandlers:
             return
 
         # Get user data from database
-        user_data = self.db.get_user(user.id)
+        user_data = self.db.getUser(user.id)
         messages = self.db.getUserMessages(user.id, limit=100)
 
         if user_data:
@@ -368,6 +431,8 @@ class BotHandlers:
                     self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
                 except Exception as e:
                     logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
+            
+            time.sleep(1)
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
@@ -406,15 +471,15 @@ class BotHandlers:
         replyId = message.replyId
         rootMessageId = message.messageId
         if message.isReply and replyId:
-            parentMsg = self.db.get_chat_message_by_message_id(
-                chat_id=chat.id,
-                message_id=replyId,
-                thread_id=message.threadId,
+            parentMsg = self.db.getChatMessageByMessageId(
+                chatId=chat.id,
+                messageId=replyId,
+                threadId=message.threadId,
             )
             if parentMsg:
                 rootMessageId = parentMsg["root_message_id"]
 
-        self.db.save_chat_message(
+        self.db.saveChatMessage(
             date=message.date,
             chatId=chat.id,
             userId=user.id,
@@ -458,7 +523,7 @@ class BotHandlers:
             "message_thread_id": ensuredMessage.threadId,
         }
         try:
-            logger.warning(f"Sending LLM reply to {ensuredMessage}")
+            logger.debug(f"Sending LLM reply to {ensuredMessage}")
             replyMessage = await ensuredMessage.getBaseMessage().reply_text(parse_mode='Markdown',**replyKwargs)
         except Exception as e:
             logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
@@ -507,16 +572,16 @@ class BotHandlers:
         if ensuredMessage.isReply and ensuredMessage.replyId is not None:
             parentId = ensuredMessage.replyId
 
-            storedMsg = self.db.get_chat_message_by_message_id(
-                chat_id=chat.id,
-                message_id=parentId,
-                thread_id=ensuredMessage.threadId,
+            storedMsg = self.db.getChatMessageByMessageId(
+                chatId=chat.id,
+                messageId=parentId,
+                threadId=ensuredMessage.threadId,
             )
             if storedMsg is None:
                 logger.error("Failed to get parent message")
                 return
             if storedMsg["message_category"] == "bot":
-                storedMessages = self.db.get_chat_messages_by_root_id(
+                storedMessages = self.db.getChatMessagesByRootId(
                     chatId=chat.id,
                     rootMessageId=storedMsg["root_message_id"],
                     threadId=ensuredMessage.threadId,
@@ -661,6 +726,233 @@ class BotHandlers:
             await message.reply_text(**replyKwargs)
         logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
 
+    async def models_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /models command."""
+        modelsPerMessage = 4
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        #user = ensuredMessage.user
+        #chat = ensuredMessage.chat
+        replyKwargs = {
+            "reply_to_message_id": ensuredMessage.messageId,
+            "message_thread_id": ensuredMessage.threadId,
+            "parse_mode": "Markdown",
+        }
+        
+        replyText = "*Доступные модели:*\n\n"
+
+        for i, modelName in enumerate(self.llmManager.listModels()):
+            modelData = self.llmManager.getModelInfo(modelName)
+            if modelData is None:
+                modelData = {}
+            modelKeyI18n = {
+                "model_id": "ID Модели",
+                "model_version": "Версия",
+                "temperature": "Температура",
+                "context_size": "Размер контекста",
+                "provider": "Провайдер",
+            }
+            replyText += f"*Модель: {modelName}*\n```{modelName}\n"
+            for k, v in modelData.items():
+                replyText += f"{modelKeyI18n.get(k, k)}: {v}\n"
+            
+            replyText += "```\n\n"
+
+            if i % modelsPerMessage == (modelsPerMessage - 1):
+                await message.reply_text(replyText, **replyKwargs)
+                replyText = ""
+                time.sleep(0.5)
+
+        if replyText:
+            await message.reply_text(replyText, **replyKwargs)        
+
+    async def chat_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /settings command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+        
+        replyKwargs = {
+            "reply_to_message_id": ensuredMessage.messageId,
+            "message_thread_id": ensuredMessage.threadId,
+            "parse_mode": "Markdown",
+        }
+        
+        #user = ensuredMessage.user
+        chat = ensuredMessage.chat
+        chatType = chat.type
+
+        if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
+            await message.reply_text(
+                "This command is only available in groups and supergroups for now.",
+                **replyKwargs,
+            )
+            return
+        
+        resp = f"Настройки чата *#{chat.id}*:\n\n"
+        chatSettings = self.getChatSettings(chat.id)
+        for k, v in chatSettings.items():
+            resp += f"`{k}`: ```{k}\n{v}\n```\n"
+        await message.reply_text(resp, **replyKwargs)
+
+    async def set_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /set <key> <value> command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+        
+        replyKwargs = {
+            "reply_to_message_id": ensuredMessage.messageId,
+            "message_thread_id": ensuredMessage.threadId,
+            "parse_mode": "Markdown",
+        }
+        
+        user = ensuredMessage.user
+        chat = ensuredMessage.chat
+        chatType = chat.type
+
+        if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
+            await message.reply_text(
+                "This command is only available in groups and supergroups for now.",
+                **replyKwargs,
+            )
+            return
+
+        if not user.username:
+            await message.reply_text(
+                "You need to have a username to change chat settings.",
+                **replyKwargs,
+            )
+            return
+        
+        if not context.args or len(context.args) < 2:
+            await message.reply_text(
+                "You need to specify a key and a value to change chat settings.",
+                **replyKwargs,
+            )
+            return
+        
+        chatSettings = self.getChatSettings(chat.id)
+        adminAllowedChangeSettings = chatSettings.get(ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS, str(self.defaultAdminCanChangeSettings))
+        adminAllowedChangeSettings = adminAllowedChangeSettings.lower() == "true"
+
+        allowedUsers = self.botOwners[:]
+        if adminAllowedChangeSettings:
+            for admin in await chat.get_administrators():
+                logger.debug(f"Got admin for chat {chat.id}: {admin}")
+                username = admin.user.username
+                if username:
+                    allowedUsers.append(username.lower())
+
+        if user.username.lower() not in allowedUsers:
+            await message.reply_text(
+                "You are not allowed to change chat settings.",
+                **replyKwargs,
+            )
+            return
+        
+        key = context.args[0]
+        value = " ".join(context.args[1:])
+        self.setChatSettings(chat.id, {key: value})
+
+        await message.reply_text(f"Готово, теперь `{key}` = `{value}`", **replyKwargs)
+
+    async def unset_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /unset <key> command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+        
+        replyKwargs = {
+            "reply_to_message_id": ensuredMessage.messageId,
+            "message_thread_id": ensuredMessage.threadId,
+            "parse_mode": "Markdown",
+        }
+        
+        user = ensuredMessage.user
+        chat = ensuredMessage.chat
+        chatType = chat.type
+
+        if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
+            await message.reply_text(
+                "This command is only available in groups and supergroups for now.",
+                **replyKwargs,
+            )
+            return
+
+        if not user.username:
+            await message.reply_text(
+                "You need to have a username to change chat settings.",
+                **replyKwargs,
+            )
+            return
+        
+        if not context.args or len(context.args) < 1:
+            await message.reply_text(
+                "You need to specify a key and a value to change chat settings.",
+                **replyKwargs,
+            )
+            return
+        
+        chatSettings = self.getChatSettings(chat.id)
+        adminAllowedChangeSettings = chatSettings.get(ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS, str(self.defaultAdminCanChangeSettings))
+        adminAllowedChangeSettings = adminAllowedChangeSettings.lower() == "true"
+
+        allowedUsers = self.botOwners[:]
+        if adminAllowedChangeSettings:
+            for admin in await chat.get_administrators():
+                logger.debug(f"Got admin for chat {chat.id}: {admin}")
+                username = admin.user.username
+                if username:
+                    allowedUsers.append(username.lower())
+
+        if user.username.lower() not in allowedUsers:
+            await message.reply_text(
+                "You are not allowed to change chat settings.",
+                **replyKwargs,
+            )
+            return
+        
+        key = context.args[0]
+        value = " ".join(context.args[1:])
+        self.unsetChatSetting(chat.id, key)
+
+        await message.reply_text(f"Готово, теперь `{key}` сброшено в значение по умолчанию", **replyKwargs)
+    
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
         logger.error(f"Exception while handling an update: {context.error}")
