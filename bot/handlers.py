@@ -221,6 +221,7 @@ class BotHandlers:
             if parentMsg:
                 rootMessageId = parentMsg["root_message_id"]
 
+        self.db.updateChatUser(chatId=chat.id, userId=user.id, username=user.username or user.first_name)
         self.db.saveChatMessage(
             date=message.date,
             chatId=chat.id,
