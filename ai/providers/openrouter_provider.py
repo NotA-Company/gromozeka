@@ -5,16 +5,17 @@ import logging
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
 
-from ..abstract import AbstractModel, AbstractLLMProvider, ModelMessage, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel, ModelMessage, ModelResultStatus, ModelRunResult
+from .basic_openai_provider import BasicOpenAIModel, BasicOpenAIProvider
 
 logger = logging.getLogger(__name__)
 
 
-class OpenrouterModel(AbstractModel):
+class OpenrouterModel(BasicOpenAIModel):
     """OpenRouter model implementation, dood!"""
 
     def __init__(
-        self, 
+        self,
         provider: "OpenrouterProvider",
         modelId: str,
         modelVersion: str,
@@ -23,87 +24,35 @@ class OpenrouterModel(AbstractModel):
         openAiClient: OpenAI,
     ):
         """Initialize OpenRouter model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize)
-        self._client = openAiClient
-        self._modelURL = "TODO" #f"gpt://{folderId}/{modelId}/{modelVersion}"
+        super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient)
 
-    def run(self, messages: List[ModelMessage]) -> Any:
-        """Run the OpenRouter model with given messages, dood!
+    def _getModelId(self) -> str:
+        """Get the model name for OpenRouter API calls, dood!"""
+        return self.modelId
         
-        Args:
-            messages: List of message dictionaries with role and content
-            
-        Returns:
-            Model response
-        """
-        if not self._client:
-            raise RuntimeError("OpenRouter client not initialized, dood!")
-
-        try:
-            # Use OpenAI-compatible API through OpenRouter
-            response = self._client.chat.completions.create(
-                #extra_headers={
-                #    "HTTP-Referer": "<YOUR_SITE_URL>",  # Optional. Site URL for rankings on openrouter.ai.
-                #    "X-Title": "<YOUR_SITE_NAME>",  # Optional. Site title for rankings on openrouter.ai.
-                #},
-                model=self.model_id,
-                messages=[message.toDict('content') for message in messages], # type: ignore
-                temperature=self.temperature,
-                # max_tokens=min(4096, self.context_size)  # Reasonable default
-            )
-
-            #TODO: Set proper status
-            status = ModelResultStatus.FINAL
-            resText = response.choices[0].message.content
-            if resText is None:
-                resText = ""
-                status = ModelResultStatus.UNKNOWN
-            return ModelRunResult(response, status, resText)
-
-        except Exception as e:
-            logger.error(f"Error running OpenRouter model {self.model_id}: {e}")
-            raise
+    def _getExtraParams(self) -> Dict[str, Any]:
+        """Get OpenRouter-specific extra parameters, dood!"""
+        return {
+            "extra_headers": {
+                # "HTTP-Referer": "<YOUR_SITE_URL>",  # Optional. Site URL for rankings on openrouter.ai.
+                "X-Title": "Gromozeka",  # Optional. Site title for rankings on openrouter.ai.
+            },
+            # "max_tokens": min(4096, self.context_size)  # Reasonable default
+        }
 
 
-class OpenrouterProvider(AbstractLLMProvider):
+class OpenrouterProvider(BasicOpenAIProvider):
     """OpenRouter provider implementation, dood!"""
     
     def __init__(self, config: Dict[str, Any]):
         """Initialize OpenRouter provider, dood!"""
         super().__init__(config)
-        self._client: Optional[OpenAI] = None
-        self._initClient()
         
-    def _initClient(self):
-        """Initialize OpenAI client for OpenRouter, dood!"""
-        try:
-            api_key = self.config.get("api_key")
-            
-            if not api_key:
-                raise ValueError("api_key is required for OpenRouter provider, dood!")
-                
-            # OpenRouter endpoint
-            base_url = "https://openrouter.ai/api/v1"
-            
-            self._client = OpenAI(
-                api_key=api_key,
-                base_url=base_url
-            )
-            
-            logger.info("OpenRouter provider initialized, dood!")
-            
-        except ImportError:
-            logger.error("openai package not available, dood!")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to initialize OpenRouter client: {e}")
-            raise
-            
-    def get_openai_client(self):
-        """Get the OpenAI client instance configured for OpenRouter, dood!"""
-        return self._client
+    def _getBaseUrl(self) -> str:
+        """Get the OpenRouter base URL, dood!"""
+        return "https://openrouter.ai/api/v1"
         
-    def addModel(
+    def _createModelInstance(
         self,
         name: str,
         modelId: str,
@@ -111,28 +60,15 @@ class OpenrouterProvider(AbstractLLMProvider):
         temperature: float,
         contextSize: int
     ) -> AbstractModel:
-        """Add an OpenRouter model, dood!"""
-        if name in self.models:
-            logger.warning(f"Model {name} already exists in OpenRouter provider, dood!")
-            return self.models[name]
-        
+        """Create an OpenRouter model instance, dood!"""
         if not self._client:
             raise RuntimeError("OpenRouter client not initialized, dood!")
             
-        try:
-            model = OpenrouterModel(
-                provider=self,
-                modelId=modelId,
-                modelVersion=modelVersion,
-                temperature=temperature,
-                contextSize=contextSize,
-                openAiClient=self._client
-            )
-            
-            self.models[name] = model
-            logger.info(f"Added OpenRouter model {name} ({modelId}), dood!")
-            return model
-            
-        except Exception as e:
-            logger.error(f"Failed to add OpenRouter model {name}: {e}")
-            raise
+        return OpenrouterModel(
+            provider=self,
+            modelId=modelId,
+            modelVersion=modelVersion,
+            temperature=temperature,
+            contextSize=contextSize,
+            openAiClient=self._client
+        )
