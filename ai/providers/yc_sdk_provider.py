@@ -4,7 +4,7 @@ Yandex Cloud SDK provider for LLM models, dood!
 import logging
 from typing import Dict, List, Any
 
-from ..abstract import AbstractModel, AbstractLLMProvider
+from ..abstract import AbstractModel, AbstractLLMProvider, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,10 @@ class YcSdkModel(AbstractModel):
             logger.error(f"Failed to initialize YC SDK model {self.model_id}: {e}")
             raise
             
-    def run(self, messages: List[Dict[str, str]]) -> Any:
+    def _statusToModelRunResultStatus(self, status: int) -> ModelResultStatus:
+        return ModelResultStatus(status)
+
+    def run(self, messages: List[Dict[str, str]]) -> ModelRunResult:
         """Run the YC SDK model with given messages, dood!
         
         Args:
@@ -58,7 +61,7 @@ class YcSdkModel(AbstractModel):
             # Convert messages to YC SDK format if needed
             # For now, pass through as-is
             result = self._yc_model.run(messages)
-            return result
+            return ModelRunResult(result, self._statusToModelRunResultStatus(result.status), result.alternatives[0].text)
             
         except Exception as e:
             logger.error(f"Error running YC SDK model {self.model_id}: {e}")

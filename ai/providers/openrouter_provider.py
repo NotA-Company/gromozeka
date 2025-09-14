@@ -5,7 +5,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
 
-from ..abstract import AbstractModel, AbstractLLMProvider
+from ..abstract import AbstractModel, AbstractLLMProvider, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,13 @@ class OpenrouterModel(AbstractModel):
                 # max_tokens=min(4096, self.context_size)  # Reasonable default
             )
 
-            return response.choices[0].message.content
+            #TODO: Set proper status
+            status = ModelResultStatus.FINAL
+            resText = response.choices[0].message.content
+            if resText is None:
+                resText = ""
+                status = ModelResultStatus.UNKNOWN
+            return ModelRunResult(response, status, resText)
 
         except Exception as e:
             logger.error(f"Error running OpenRouter model {self.model_id}: {e}")

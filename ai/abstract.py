@@ -2,10 +2,38 @@
 Abstract base class for LLM models, dood!
 """
 from abc import ABC, abstractmethod
+from enum import Enum
 import json
 from typing import Dict, List, Any, Optional
 import tiktoken
 
+class ModelResultStatus(Enum):
+    """Status of model run"""
+    #: the status is not specified
+    UNSPECIFIED = 0
+    #: the alternative is partially complete
+    PARTIAL = 1
+    #: the alternative is truncated but considered final
+    TRUNCATED_FINAL = 2
+    #: the alternative is complete and final
+    FINAL = 3
+    #: the alternative has been filtered for content
+    CONTENT_FILTER = 4
+    #: the alternative involves tool calls
+    TOOL_CALLS = 5
+    #: represents an unknown status (-1)
+    UNKNOWN = -1
+
+
+class ModelRunResult:
+    """Unified Result of model run"""
+    def __init__(self, rawResult: Any, status: ModelResultStatus, resultText: str):
+        self.status = status
+        self.resultText = resultText
+        self.result = rawResult
+
+    def to_json(self) -> str:
+        return json.dumps(self.result)
 
 class AbstractModel(ABC):
     """Abstract base class for all LLM models, dood!"""
@@ -37,7 +65,7 @@ class AbstractModel(ABC):
         self.tokensCountCoeff = 1.1
 
     @abstractmethod
-    def run(self, messages: List[Dict[str, str]]) -> Any:
+    def run(self, messages: List[Dict[str, str]]) -> ModelRunResult:
         """Run the model with given messages, dood!
 
         Args:

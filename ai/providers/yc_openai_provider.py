@@ -5,7 +5,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
 
-from ..abstract import AbstractModel,  AbstractLLMProvider
+from ..abstract import AbstractModel, AbstractLLMProvider, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,13 @@ class YcOpenaiModel(AbstractModel):
             #for chunk in response:
             #   if chunk.choices[0].delta.content is not None:
             #       print(chunk.choices[0].delta.content, end="")
-            return response.choices[0].message.content
+            #TODO: Set proper status
+            status = ModelResultStatus.FINAL
+            resText = response.choices[0].message.content
+            if resText is None:
+                resText = ""
+                status = ModelResultStatus.UNKNOWN
+            return ModelRunResult(response, status, resText)
             
         except Exception as e:
             logger.error(f"Error running YC OpenAI model {self.model_id}: {e}")
