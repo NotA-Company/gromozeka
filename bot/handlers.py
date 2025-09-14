@@ -737,7 +737,8 @@ class BotHandlers:
         if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
             localChatId = None
             userName = ensuredMessage.user.username
-            if userName and userName in self.botOwners:
+            logger.debug(f"User {userName} called summarisation in private chat. Bot owners are {self.botOwners}")
+            if userName and userName.lower() in self.botOwners:
                 if context.args and len(context.args) >= 2:
                     try:
                         localChatId = int(context.args[1])
