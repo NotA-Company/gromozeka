@@ -32,6 +32,7 @@ class ChatSettingsEnum(StrEnum):
     SUMMARY_SYSTEM_PROMPT = "summary_system_prompt"
     CHAT_SYSTEM_PROMPT = "chat_system_prompt"
     ALLOW_ADMIN_CHANGE_SETTINGS = "allow_admin_change_settings"
+    CUSTOM_MENTIONS = "custom_mentions"
 
     def __str__(self):
         return str(self.value)
@@ -45,16 +46,16 @@ class BotHandlers:
         self.db = database
         self.llmManager = llmManager
 
-        modelDefaults = self.config.get("models", {})
-        self.defaultModels = {
+        modelDefaults: Dict[str, str] = self.config.get("models", {})
+        self.defaultModels: Dict[str, str] = {
             "private": modelDefaults.get("private", "yandexgpt-lite"),
             "summary": modelDefaults.get("summary", "yandexgpt-lite"),
             "chat": modelDefaults.get("chat", "yandexgpt-lite"),
             "fallback": modelDefaults.get("fallback", "yandexgpt-lite"),
             "summary-fallback": modelDefaults.get("summary-fallback", "yandexgpt-lite"),
         }
-        promptsDefaults = self.config.get("prompts", {})
-        self.defaultPrompts = {
+        promptsDefaults: Dict[str, str] = self.config.get("prompts", {})
+        self.defaultPrompts: Dict[str, str] = {
             "private": promptsDefaults.get("private", DEFAULT_PRIVATE_SYSTEM_PROMPT),
             "summary": promptsDefaults.get("summary", DEFAULT_SUMMARISATION_SYSTEM_PROMPT),
             "chat": promptsDefaults.get("chat", DEFAULT_CHAT_SYSTEM_PROMPT),
@@ -64,6 +65,7 @@ class BotHandlers:
             "chats": {},
         }
         self.defaultAdminCanChangeSettings = bool(self.config.get("allow_admin_change_channel_settings", False))
+        self.defaultCustomMentions = [str(v).lower() for v in self.config.get("custom_mentions", [])]
 
     ###
     # Helpers for getting needed Models or Prompts
@@ -152,7 +154,7 @@ class BotHandlers:
     # Chat settings Managenent
     ###
 
-    def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[str, Any]:
+    def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[ChatSettingsEnum, str]:
         """Get the chat settings for the given chat."""
         defaultChatSettings = {
             ChatSettingsEnum.SUMMARY_MODEL: self.defaultModels["summary"],
@@ -160,6 +162,7 @@ class BotHandlers:
             ChatSettingsEnum.SUMMARY_SYSTEM_PROMPT: self.defaultPrompts["summary"],
             ChatSettingsEnum.CHAT_SYSTEM_PROMPT: self.defaultPrompts["chat"],
             ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS: str(self.defaultAdminCanChangeSettings),
+            ChatSettingsEnum.CUSTOM_MENTIONS: ", ".join(self.defaultCustomMentions),
         }
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
@@ -399,7 +402,7 @@ class BotHandlers:
             return
 
         user = ensuredMessage.user
-        chat = ensuredMessage.chat
+        #chat = ensuredMessage.chat
 
         if ensuredMessage.messageType != 'text':
             logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
@@ -411,8 +414,11 @@ class BotHandlers:
             logger.error("Failed to save chat message")
 
         # Check if message is a reply to our message
-        done = await self.handleGroupReply(update, context, ensuredMessage)
-        if done:
+        if await self.handleGroupReply(update, context, ensuredMessage):
+            return
+        
+        # Check if we was custom-mentioned
+        if await self.handleGroupCustomMention(update, context, ensuredMessage):
             return
 
         # If our bot has mentioned, answer somehow
@@ -564,6 +570,52 @@ class BotHandlers:
 
         return True
 
+    async def handleGroupCustomMention(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
+        """
+        Check if bot has been mentioned in the message
+        """
+
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        customMentions = [v.strip().lower() for v in chatSettings[ChatSettingsEnum.CUSTOM_MENTIONS].split(",")]
+        myUserName = "@" +context.bot.username.lower()
+        messageText = ensuredMessage.messageText
+
+        # Remove leading @username from messageText if any
+        if messageText.lower().startswith(myUserName):
+            messageText = messageText[len(myUserName):].lstrip()
+
+        messageTextLower = messageText.lower()
+        found = False
+        for mention in customMentions:
+            if messageTextLower.startswith(mention):
+                # If we found a mention, remove it from the messageText
+                # also remove leading spaces, and punctiation if any
+                logger.debug(f"Found mention: {mention} in message {messageText}")
+                messageText = messageText[len(mention):].lstrip("\t\n\r ,.:")
+                found = True
+                break
+            
+        if not found:
+            return False
+        
+        # TODO: Add custom actions
+
+        reqMessages = [
+            {
+                "role": "system",
+                "text": self.getChatSystemPrompt(ensuredMessage.chat.id),
+            },
+            {
+                "role": "user",
+                "text": messageText,
+            }
+        ]
+
+        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
+            logger.error("Failed to send LLM reply")
+            return False
+        
+        return True
     ###
     # COMMANDS Handlers
     ###
