@@ -57,10 +57,6 @@ class ConfigManager:
         """Get logging-specific configuration."""
         return self.get("logging", {})
 
-    def get_yc_ml_config(self) -> Dict[str, Any]:
-        """Get Yandex Cloud ML-specific configuration."""
-        return self.get("yc-ml", {})
-
     def get_models_config(self) -> Dict[str, Any]:
         """Get models configuration for LLM manager, dood!"""
         return self.get("models", {})

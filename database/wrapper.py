@@ -103,7 +103,7 @@ class DatabaseWrapper:
                     root_message_id INTEGER,
                     message_text TEXT NOT NULL,
                     message_type TEXT DEFAULT 'text' NOT NULL,
-                    message_category TEXT DEFAULT 'user' NOT NULL, 
+                    message_category TEXT DEFAULT 'user' NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )

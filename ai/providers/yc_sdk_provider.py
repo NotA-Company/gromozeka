@@ -64,6 +64,12 @@ class YcSdkModel(AbstractModel):
             logger.error(f"Error running YC SDK model {self.model_id}: {e}")
             raise
 
+    #def getEstimateTokensCount(self, data: Any) -> int:
+    #    if not self._yc_model:
+    #        raise RuntimeError("Model not initialized, dood!")
+    #    tokens = self._yc_model.tokenize(data)
+    #    return len(tokens)
+
 
 class YcSdkProvider(AbstractLLMProvider):
     """Yandex Cloud SDK provider implementation, dood!"""
