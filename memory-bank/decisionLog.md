@@ -241,3 +241,35 @@ This file records architectural and implementation decisions using a list format
 * Fixed bot/handlers.py to use dictionary access: `storedMsg["message_category"]` and `storedMsg["message_text"]`
 * Includes proper error handling and logging like other database methods
 * Uses existing cursor context manager pattern for transaction safety
+
+[2025-09-14 03:33:00] - Implemented Comprehensive LLM Management System
+
+## Decision
+
+* Created new AI module with LLMManager class for managing multiple LLM providers and models
+* Implemented AbstractLLMProvider and AbstractModel base classes for extensible architecture
+* Created scaffold providers for yc-sdk, yc-openai, and openrouter based on config.toml.example
+* Replaced single YandexMLManager with flexible multi-provider LLMManager in main.py
+
+## Rationale 
+
+* The existing single YandexMLManager was limited to one provider and inflexible for multiple models
+* New architecture supports multiple LLM providers (Yandex Cloud SDK, Yandex Cloud OpenAI, OpenRouter)
+* Abstract base classes enable easy addition of new providers without code changes
+* Configuration-driven model initialization allows dynamic model management
+* Backward compatibility maintained through default model selection for existing bot functionality
+
+## Implementation Details
+
+* Created ai/ directory with modular structure:
+  - AbstractModel: Base class for all models with run() method and metadata
+  - AbstractLLMProvider: Base class for providers with model management methods
+  - LLMManager: Central coordinator for providers and models with listModels, getModel, getModelInfo methods
+* Implemented three provider scaffolds:
+  - YcSdkProvider: Uses yandex_cloud_ml_sdk for native Yandex Cloud integration
+  - YcOpenaiProvider: Uses OpenAI-compatible API for Yandex Cloud models
+  - OpenrouterProvider: Uses OpenRouter API for accessing various LLM models
+* Updated ConfigManager with get_models_config() method for new configuration structure
+* Modified main.py to use LLMManager instead of YandexMLManager with backward compatibility
+* All providers support temperature, context_size, and model versioning configuration
+* Error handling and logging implemented throughout the system for production reliability

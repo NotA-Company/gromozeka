@@ -61,6 +61,10 @@ class ConfigManager:
         """Get Yandex Cloud ML-specific configuration."""
         return self.get("yc-ml", {})
 
+    def get_models_config(self) -> Dict[str, Any]:
+        """Get models configuration for LLM manager, dood!"""
+        return self.get("models", {})
+
     def get_bot_token(self) -> str:
         """Get bot token from configuration."""
         token = self.get_bot_config().get("token", "")
