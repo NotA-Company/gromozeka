@@ -8,6 +8,11 @@ private="yandexgpt-lite"
 chat="yandexgpt-lite"
 fallback="openrouter-deepseek-chat-v3.1-free"
 
+[bot.prompts]
+summary="Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
+private="Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
+chat="Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
+
 [database]
 # Database configuration
 path = "bot_data.db"

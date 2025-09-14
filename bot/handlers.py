@@ -18,9 +18,9 @@ from .ensured_message import EnsuredMessage
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SUMMARISATION_SYSTEM_PROMPT = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
 DEFAULT_PRIVATE_SYSTEM_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
-DEFAULT_SUMMARISATION_SYSTEM_PROMPT = """Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."""
-DEFAULT_CHAT_SYSTEM_PROMPT = """Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."""
+DEFAULT_CHAT_SYSTEM_PROMPT =  "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
 ROBOT_EMOJI = "🤖"
 
 class BotHandlers:
@@ -40,27 +40,33 @@ class BotHandlers:
             "chat": modelDefaults.get("private", "yandexgpt-lite"),
             "fallback": modelDefaults.get("fallback", "yandexgpt-lite"),
         }
+        promptsDefaults = self.config.get("prompts", {})
+        self.defaultPrompts = {
+            "private": promptsDefaults.get("private", DEFAULT_PRIVATE_SYSTEM_PROMPT),
+            "summary": promptsDefaults.get("summary", DEFAULT_SUMMARISATION_SYSTEM_PROMPT),
+            "chat": promptsDefaults.get("chat", DEFAULT_CHAT_SYSTEM_PROMPT),
+        }
 
     def getSummarySystemPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for summarising messages."""
         if not chatId:
-            return DEFAULT_SUMMARISATION_SYSTEM_PROMPT
+            return self.defaultPrompts["summary"]
         # TODO: Try to get it from the database
-        return DEFAULT_SUMMARISATION_SYSTEM_PROMPT
+        return self.defaultPrompts["summary"]
 
     def getChatSystemPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for chatting."""
         if not chatId:
-            return DEFAULT_CHAT_SYSTEM_PROMPT
+            return self.defaultPrompts["chat"]
         # TODO: Try to get it from the database
-        return DEFAULT_CHAT_SYSTEM_PROMPT
+        return self.defaultPrompts["chat"]
 
     def getPrivateSystemPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for private messages."""
         if not chatId:
-            return DEFAULT_PRIVATE_SYSTEM_PROMPT
+            return self.defaultPrompts["private"]
         # TODO: Try to get it from the database
-        return DEFAULT_PRIVATE_SYSTEM_PROMPT
+        return self.defaultPrompts["private"]
 
     def getSummaryModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for summarising messages."""
@@ -320,7 +326,9 @@ class BotHandlers:
                     logger.error(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}")
                     resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}")
                     break
-
+                respText = mlRet.resultText
+                if mlRet.isFallback:
+                    respText = f"{ROBOT_EMOJI} {respText}"
                 resMessages.append(mlRet.resultText)
 
             startPos += currentBatchLen
