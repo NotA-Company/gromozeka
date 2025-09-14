@@ -3,9 +3,9 @@
 token = "YOUR_BOT_TOKEN_HERE"
 
 [bot.models]
-summary="yandexgpt"
-private="yandexgpt-lite"
-chat="yandexgpt-lite"
+summary="openrouter-gemma-3-27b-it-free"
+private="openrouter-gemma-3-12b-it-free"
+chat="openrouter-gemma-3-12b-it-free"
 fallback="openrouter-deepseek-chat-v3.1-free"
 
 [bot.prompts]
@@ -116,3 +116,19 @@ model_id = "deepseek/deepseek-chat-v3.1:free"
 model_version = "latest"
 temparature = 0.3
 context = 64000
+
+[[models.models]]
+name = "openrouter-gemma-3-27b-it-free"
+provider = "openrouter"
+model_id = "google/gemma-3-27b-it:free"
+model_version = "latest"
+temparature = 0.3
+context = 96000
+
+[[models.models]]
+name = "openrouter-gemma-3-12b-it-free"
+provider = "openrouter"
+model_id = "google/gemma-3-12b-it:free"
+model_version = "latest"
+temparature = 0.3
+context = 32768
