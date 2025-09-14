@@ -25,17 +25,13 @@ class OpenrouterModel(BasicOpenAIModel):
     ):
         """Initialize OpenRouter model, dood!"""
         super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient)
-
-    def _getModelId(self) -> str:
-        """Get the model name for OpenRouter API calls, dood!"""
-        return self.modelId
         
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get OpenRouter-specific extra parameters, dood!"""
         return {
             "extra_headers": {
-                # "HTTP-Referer": "<YOUR_SITE_URL>",  # Optional. Site URL for rankings on openrouter.ai.
-                "X-Title": "Gromozeka",  # Optional. Site title for rankings on openrouter.ai.
+                "HTTP-Referer": "https://sourcecraft.dev/notacompany/gromozeka",  # Optional. Site URL for rankings on openrouter.ai.
+                "X-Title": "Gromozeka AI Bot",  # Optional. Site title for rankings on openrouter.ai.
             },
             # "max_tokens": min(4096, self.context_size)  # Reasonable default
         }
