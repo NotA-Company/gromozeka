@@ -6,6 +6,7 @@ token = "YOUR_BOT_TOKEN_HERE"
 summary="yandexgpt"
 private="yandexgpt-lite"
 chat="yandexgpt-lite"
+fallback="openrouter-deepseek-chat-v3.1-free"
 
 [database]
 # Database configuration
@@ -50,7 +51,7 @@ context = 32768
 name = "yandexgpt-lite"
 provider = "yc-sdk"
 model_id = "yandexgpt-5-lite"
-model_version="rc"
+model_version="latest"
 temperature = 0.5
 context = 32768
 
@@ -94,3 +95,19 @@ model_id = "anthropic/claude-sonnet-4"
 model_version = "latest"
 temparature = 0.3
 context = 256000
+
+[[models.models]]
+name = "openrouter-deepseek-chat-v3.1"
+provider = "openrouter"
+model_id = "deepseek/deepseek-chat-v3.1"
+model_version = "latest"
+temparature = 0.3
+context = 163840
+
+[[models.models]]
+name = "openrouter-deepseek-chat-v3.1-free"
+provider = "openrouter"
+model_id = "deepseek/deepseek-chat-v3.1:free"
+model_version = "latest"
+temparature = 0.3
+context = 64000
