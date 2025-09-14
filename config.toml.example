@@ -7,6 +7,7 @@ summary="openrouter-gemma-3-27b-it-free"
 private="openrouter-gemma-3-12b-it-free"
 chat="openrouter-gemma-3-12b-it-free"
 fallback="openrouter-deepseek-chat-v3.1-free"
+summary-fallback = "openrouter-deepseek-chat-v3.1-free"
 
 [bot.prompts]
 summary="Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
@@ -132,3 +133,11 @@ model_id = "google/gemma-3-12b-it:free"
 model_version = "latest"
 temparature = 0.3
 context = 32768
+
+[[models.models]]
+name = "openrouter-qwen-turbo"
+provider = "openrouter"
+model_id = "qwen/qwen-turbo"
+model_version = "latest"
+temparature = 0.3
+context = 1000000
