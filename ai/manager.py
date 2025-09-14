@@ -14,27 +14,27 @@ logger = logging.getLogger(__name__)
 
 class LLMManager:
     """Manager for LLM providers and models, dood!"""
-    
+
     def __init__(self, config: Dict[str, Any]):
         """Initialize LLM manager with configuration, dood!
-        
+
         Args:
             config: Configuration dictionary with providers and models
         """
         self.config = config
         self.providers: Dict[str, AbstractLLMProvider] = {}
         self.modelRegistry: Dict[str, str] = {}  # model_name -> provider_name
-        
+
         # Initialize providers
         self._initProviders()
-        
+
         # Add models from config
         self._initModels()
-        
+
     def _initProviders(self):
         """Initialize known providers from config, dood!"""
         providers_config = self.config.get("providers", {})
-        
+
         # Initialize yc-sdk provider
         if "yc-sdk" in providers_config:
             try:
@@ -42,7 +42,7 @@ class LLMManager:
                 logger.info("Initialized yc-sdk provider, dood!")
             except Exception as e:
                 logger.error(f"Failed to initialize yc-sdk provider: {e}")
-                
+
         # Initialize yc-openai provider
         if "yc-openai" in providers_config:
             try:
@@ -50,7 +50,7 @@ class LLMManager:
                 logger.info("Initialized yc-openai provider, dood!")
             except Exception as e:
                 logger.error(f"Failed to initialize yc-openai provider: {e}")
-                
+
         # Initialize openrouter provider
         if "openrouter" in providers_config:
             try:
@@ -58,11 +58,11 @@ class LLMManager:
                 logger.info("Initialized openrouter provider, dood!")
             except Exception as e:
                 logger.error(f"Failed to initialize openrouter provider: {e}")
-                
+
     def _initModels(self):
         """Initialize models from config, dood!"""
         modelsConfig = self.config.get("models", [])
-        
+
         for modelConfig in modelsConfig:
             try:
                 name = modelConfig["name"]
@@ -71,11 +71,11 @@ class LLMManager:
                 modelVersion = modelConfig.get("model_version", "latest")
                 temperature = modelConfig.get("temperature", 0.5)
                 contextSize = modelConfig.get("context", 32768)
-                
+
                 if providerName not in self.providers:
                     logger.warning(f"Provider {providerName} not available for model {name}, dood!")
                     continue
-                    
+
                 provider = self.providers[providerName]
                 provider.addModel(
                     name=name,
@@ -84,66 +84,66 @@ class LLMManager:
                     temperature=temperature,
                     contextSize=contextSize
                 )
-                
+
                 self.modelRegistry[name] = providerName
                 logger.info(f"Added model {name} to provider {providerName}, dood!")
-                
+
             except Exception as e:
                 logger.error(f"Failed to initialize model {modelConfig.get('name', 'unknown')}: {e}")
-                
+
     def listModels(self) -> List[str]:
         """List all available models across all providers, dood!
-        
+
         Returns:
             List of model names
         """
         return list(self.modelRegistry.keys())
-        
+
     def getModel(self, name: str) -> Optional[AbstractModel]:
         """Get a model by name, dood!
-        
+
         Args:
             name: Model name
-            
+
         Returns:
             Model instance or None if not found
         """
         providerName = self.modelRegistry.get(name)
         if not providerName:
             return None
-            
+
         provider = self.providers.get(providerName)
         if not provider:
             return None
-            
+
         return provider.getModel(name)
-        
+
     def getModelInfo(self, name: str) -> Optional[Dict[str, Any]]:
         """Get information about a specific model, dood!
-        
+
         Args:
             name: Model name
-            
+
         Returns:
             Model information dictionary or None if not found
         """
         model = self.getModel(name)
         return model.getInfo() if model else None
-        
+
     def getProvider(self, name: str) -> Optional[AbstractLLMProvider]:
         """Get a provider by name, dood!
-        
+
         Args:
             name: Provider name
-            
+
         Returns:
             Provider instance or None if not found
         """
         return self.providers.get(name)
-        
+
     def listProviders(self) -> List[str]:
         """List all available providers, dood!
-        
+
         Returns:
             List of provider names
         """
