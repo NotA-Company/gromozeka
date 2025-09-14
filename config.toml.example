@@ -1,12 +1,15 @@
 [bot]
 # Your Telegram bot token from @BotFather
 token = "YOUR_BOT_TOKEN_HERE"
+bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
+allow_admin_change_channel_settings = true
+
 
 [bot.models]
-summary="openrouter-gemma-3-27b-it-free"
-private="openrouter-gemma-3-12b-it-free"
-chat="openrouter-gemma-3-12b-it-free"
-fallback="openrouter-deepseek-chat-v3.1-free"
+summary          = "openrouter-gemma-3-27b-it-free"
+private          = "openrouter-gemma-3-12b-it-free"
+chat             = "openrouter-gemma-3-12b-it-free"
+fallback         = "openrouter-deepseek-chat-v3.1-free"
 summary-fallback = "openrouter-deepseek-chat-v3.1-free"
 
 [bot.prompts]
@@ -48,7 +51,7 @@ api_key = "API_KEY"
 [[models.models]]
 name = "yandexgpt"
 provider = "yc-sdk"
-model_id = "yandexgpt-5.1"
+model_id = "yandexgpt"
 model_version = "rc"
 temperature = 0.5
 context = 32768
@@ -56,8 +59,8 @@ context = 32768
 [[models.models]]
 name = "yandexgpt-lite"
 provider = "yc-sdk"
-model_id = "yandexgpt-5-lite"
-model_version="latest"
+model_id = "yandexgpt-lite"
+model_version="rc"
 temperature = 0.5
 context = 32768
 
