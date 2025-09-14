@@ -39,9 +39,10 @@ class YandexMLManager:
     def _init_yc_model(self):
         """Initialize Yandex Cloud ML model."""
         model_id = self.config.get("model_id", "yandexgpt-5-lite")
+        model_version = self.config.get("model_version", "latest")
 
         try:
-            yc_model = self.yc_ml.models.completions(model_id).configure(
+            yc_model = self.yc_ml.models.completions(model_id, model_version=model_version).configure(
                 temperature=self.config.get("temperature", 0.5)
             )
             logger.info(f"Yandex Cloud ML model initialized: {model_id}")

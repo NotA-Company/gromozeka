@@ -11,9 +11,10 @@ import sys
 
 from config.manager import ConfigManager
 from database.manager import DatabaseManager
-from llm.yandex_ml import YandexMLManager
+from ai.manager import LLMManager
 from bot.application import BotApplication
 from lib.logging_utils import init_logger
+from llm.yandex_ml import YandexMLManager
 
 # Configure basic logging first
 logging.basicConfig(
@@ -39,15 +40,17 @@ class GromozekBot:
         # Initialize database
         self.database_manager = DatabaseManager(self.config_manager.get_database_config())
 
-        # Initialize LLM
-        self.llm_manager = YandexMLManager(self.config_manager.get_yc_ml_config())
+        # Initialize LLM Manager
+        self.llm_manager = LLMManager(self.config_manager.get_models_config())
+
+        self.yc_llm_manager = YandexMLManager(self.config_manager.get_yc_ml_config())
 
         # Initialize bot application
         self.bot_app = BotApplication(
             config_manager=self.config_manager,
             bot_token=self.config_manager.get_bot_token(),
             database=self.database_manager.get_database(),
-            llm_model=self.llm_manager.get_model(),
+            llm_model=self.yc_llm_manager.get_model(),
             llm_manager=self.llm_manager,
         )
 
