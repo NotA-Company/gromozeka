@@ -206,7 +206,7 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get setting {key}: {e}")
             return default
-        
+
     def getSettings(self) -> Dict[str, str]:
         """Get all configuration settings."""
         try:
@@ -255,10 +255,10 @@ class DatabaseWrapper:
                 today = today.replace(hour=0, minute=0, second=0, microsecond=0)
                 cursor.execute("""
                     INSERT INTO chat_messages
-                    (date, chat_id, user_id, user_name, message_id, 
-                        reply_id, thread_id, message_text, message_type, 
+                    (date, chat_id, user_id, user_name, message_id,
+                        reply_id, thread_id, message_text, message_type,
                         message_category, root_message_id)
-                    VALUES 
+                    VALUES
                     (?, ?, ?, ?, ?,
                         ?, ?, ?, ?,
                         ?, ?)
@@ -365,13 +365,13 @@ class DatabaseWrapper:
                         (?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(chat_id, user_id) DO UPDATE SET
                         username = excluded.username,
-                        updated_at = CURRENT_TIMESTAMP 
+                        updated_at = CURRENT_TIMESTAMP
                 """, (username, chatId, userId))
                 return True
         except Exception as e:
             logger.error(f"Failed to update username for user {userId} in chat {chatId}: {e}")
             return False
-        
+
     def getChatUser(self, chatId: int, userId: int) -> Optional[Dict[str, Any]]:
         """Get the username of a user in a chat."""
         try:
@@ -388,7 +388,7 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get username for user {userId} in chat {chatId}: {e}")
             return None
-        
+
     def getChatUsers(self, chatId: int, limit: int = 10, seenSince: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         """Get the usernames of all users in a chat."""
         try:
@@ -404,7 +404,7 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get usernames for chat {chatId}: {e}")
             return []
-        
+
     def setChatSetting(self, chatId: int, key: str, value: Any) -> bool:
         """Set a setting for a chat."""
         try:
@@ -419,7 +419,7 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to set setting {key} for chat {chatId}: {e}")
             return False
-        
+
     def unsetChatSetting(self, chatId: int, key: str) -> bool:
         """UnSet a setting for a chat."""
         try:
@@ -432,8 +432,8 @@ class DatabaseWrapper:
                 return True
         except Exception as e:
             logger.error(f"Failed to unset setting {key} for chat {chatId}: {e}")
-            return False    
-        
+            return False
+
     def getChatSetting(self, chatId: int, setting: str) -> Optional[str]:
         """Get a setting for a chat."""
         try:
@@ -450,7 +450,7 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get setting {setting} for chat {chatId}: {e}")
             return None
-        
+
     def getChatSettings(self, chatId: int) -> Dict[str, str]:
         """Get all settings for a chat."""
         try:

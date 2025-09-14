@@ -65,11 +65,14 @@ class BotHandlers:
         }
         self.defaultAdminCanChangeSettings = bool(self.config.get("allow_admin_change_channel_settings", False))
 
+    ###
+    # Helpers for getting needed Models or Prompts
+    ###
     def getSummarySystemPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for summarising messages."""
         if not chatId:
             return self.defaultPrompts["summary"]
-        
+
         chatSettings = self.getChatSettings(chatId)
         return chatSettings.get(ChatSettingsEnum.SUMMARY_SYSTEM_PROMPT, self.defaultPrompts["summary"])
 
@@ -92,8 +95,8 @@ class BotHandlers:
 
         modelName = self.defaultModels["summary"]
         if chatId:
-           chatSettings = self.getChatSettings(chatId)
-           modelName = chatSettings.get(ChatSettingsEnum.SUMMARY_MODEL, modelName)
+            chatSettings = self.getChatSettings(chatId)
+            modelName = chatSettings.get(ChatSettingsEnum.SUMMARY_MODEL, modelName)
 
         ret = self.llmManager.getModel(modelName)
         if ret is None:
@@ -105,8 +108,8 @@ class BotHandlers:
         """Get the model for chatting."""
         modelName = self.defaultModels["chat"]
         if chatId:
-           chatSettings = self.getChatSettings(chatId)
-           modelName = chatSettings.get(ChatSettingsEnum.CHAT_MODEL, modelName)
+            chatSettings = self.getChatSettings(chatId)
+            modelName = chatSettings.get(ChatSettingsEnum.CHAT_MODEL, modelName)
 
         ret = self.llmManager.getModel(modelName)
         if ret is None:
@@ -118,8 +121,8 @@ class BotHandlers:
         """Get the model for private messages."""
         modelName = self.defaultModels["private"]
         if chatId:
-           # TODO: Try to get it from the database
-           pass
+            # TODO: Try to get it from the database
+            pass
 
         ret = self.llmManager.getModel(modelName)
         if ret is None:
@@ -145,6 +148,10 @@ class BotHandlers:
             raise ValueError(f"Model {modelName} not found")
         return ret
 
+    ###
+    # Chat settings Managenent
+    ###
+
     def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[str, Any]:
         """Get the chat settings for the given chat."""
         defaultChatSettings = {
@@ -162,7 +169,7 @@ class BotHandlers:
 
         if returnDefault:
             return {**defaultChatSettings, **self.cache["chats"][chatId]['settings']}
-        
+
         return self.cache["chats"][chatId]['settings']
 
     def setChatSettings(self, chatId: int, settings: Dict[str, Any]) -> None:
@@ -176,7 +183,6 @@ class BotHandlers:
         if 'settings' in self.cache["chats"][chatId]:
             self.cache["chats"][chatId].pop('settings', None)
 
-
     def unsetChatSetting(self, chatId: int, key: str) -> None:
         """Set the chat settings for the given chat."""
         if chatId not in self.cache["chats"]:
@@ -187,8 +193,379 @@ class BotHandlers:
         if 'settings' in self.cache["chats"][chatId]:
             self.cache["chats"][chatId].pop('settings', None)
 
+    ###
+    # Different helpers
+    ###
 
-    # COMMANDS
+    def _saveChatMessage(self, message: EnsuredMessage, messageCategory: str = 'user') -> bool:
+        """Save a chat message to the database."""
+        # TODO: messageCategory - make enum
+
+        user = message.user
+        chat = message.chat
+
+        if message.messageType != 'text':
+            logger.error(f"Unsupported message type: {message.messageType}")
+            return False
+
+        messageText = message.messageText
+
+        replyId = message.replyId
+        rootMessageId = message.messageId
+        if message.isReply and replyId:
+            parentMsg = self.db.getChatMessageByMessageId(
+                chatId=chat.id,
+                messageId=replyId,
+                threadId=message.threadId,
+            )
+            if parentMsg:
+                rootMessageId = parentMsg["root_message_id"]
+
+        self.db.saveChatMessage(
+            date=message.date,
+            chatId=chat.id,
+            userId=user.id,
+            userName=user.username or user.first_name,
+            messageId=message.messageId,
+            replyId=replyId,
+            threadId=message.threadId,
+            messageText=messageText,
+            messageType='text', # In future we'll support not only text messages, but photos, stickers and something else. Or not
+            messageCategory=messageCategory,
+            rootMessageId=rootMessageId,
+        )
+
+        return True
+
+    async def _sendLLMChatMessage(self, ensuredMessage: EnsuredMessage, messagesHistory: List[Dict[str, str]]) -> bool:
+        """Send a chat message to the LLM model."""
+        logger.debug(f"LLM Request messages: {messagesHistory}")
+        llmModel = self.getChatModel(ensuredMessage.chat.id)
+        mlRet: Optional[ModelRunResult] = None
+        try:
+            mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
+            logger.debug(f"LLM Response: {mlRet}")
+        except Exception as e:
+            logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
+            await ensuredMessage.getBaseMessage().reply_text(
+                f"Error while sending LLM request: {type(e).__name__}",
+                reply_to_message_id=ensuredMessage.messageId,
+                message_thread_id=ensuredMessage.threadId,
+            )
+            return False
+        LLMReply = mlRet.resultText
+        prefix = ""
+        if mlRet.isFallback:
+            prefix = f"{ROBOT_EMOJI} "
+
+        replyMessage = None
+        replyKwargs = {
+            "text": prefix + LLMReply,
+            "reply_to_message_id": ensuredMessage.messageId,
+            "message_thread_id": ensuredMessage.threadId,
+        }
+        try:
+            logger.debug(f"Sending LLM reply to {ensuredMessage}")
+            replyMessage = await ensuredMessage.getBaseMessage().reply_text(parse_mode='Markdown',**replyKwargs)
+        except Exception as e:
+            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
+            # Probably error in markdown formatting, fallback to raw text
+            replyMessage = await ensuredMessage.getBaseMessage().reply_text(**replyKwargs)
+        if replyMessage is None:
+            logger.error("Error while sending LLM reply")
+            return False
+
+        try:
+            ensuredReplyMessage = EnsuredMessage(replyMessage)
+            self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
+            return True
+        except Exception as e:
+            logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
+            return False
+
+    ###
+    # Handling messages
+    ###
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle regular text messages."""
+        # logger.debug(f"Handling SOME message: {update}")
+        chat = update.effective_chat
+        if not chat:
+            logger.error("Chat undefined")
+            return
+        chatType = chat.type
+
+        match chatType:
+            case Chat.PRIVATE:
+                return await self.handle_private_message(update, context)
+            case Chat.GROUP:
+                return await self.handle_group_message(update, context)
+            case Chat.SUPERGROUP:
+                return await self.handle_group_message(update, context)
+            case Chat.CHANNEL:
+                logger.error(f"Unsupported chat type: {chatType}")
+            case _:
+                logger.error(f"Unsupported chat type: {chatType}")
+
+    async def handle_private_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.message
+        if not message:
+            # Not new message, ignore
+            # logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        user = ensuredMessage.user
+
+        # Save user and message to database
+        self.db.saveUser(
+            userId=user.id,
+            userName=user.username,
+            firstName=user.first_name,
+            lastName=user.last_name
+        )
+
+        messages = self.db.getUserMessages(user.id, limit=10)
+        reqMessages = [
+            {
+                "role": "system",
+                "text": self.getPrivateSystemPrompt(chatId=user.id),
+            },
+        ]
+
+        for msg in reversed(messages):
+            reqMessages.append({
+                "role": "user",
+                "text": msg["message_text"],
+            })
+            if message["reply_text"]:
+                reqMessages.append({
+                    "role": "assistant",
+                    "text": msg["reply_text"],
+                })
+        reqMessages.append({
+            "role": "user",
+            "text": ensuredMessage.messageText,
+        })
+
+        logger.debug(f"LLM Request messages: {reqMessages}")
+        reply = ""
+        llmModel = self.getPrivateModel(chatId=user.id)
+        try:
+            mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
+            logger.debug(f"LLM Response: {mlRet}")
+            reply = mlRet.resultText
+            if mlRet.isFallback:
+                reply = f"{ROBOT_EMOJI} {reply}"
+        except Exception as e:
+            logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
+            reply = f"Error while running LLM: {type(e).__name__}#{e}"
+
+        self.db.savePrivateMessage(user.id, ensuredMessage.messageText, reply_text=reply)
+
+        replyKwargs = {
+            "text": reply,
+            "reply_to_message_id": ensuredMessage.messageId,
+        }
+        try:
+            await message.reply_text(parse_mode='Markdown', **replyKwargs)
+        except Exception as e:
+            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
+            # Probably error in markdown formatting, fallback to raw text
+            await message.reply_text(**replyKwargs)
+        logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
+
+    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.debug(f"Handling group message: {update}")
+        message = update.message
+        if not message:
+            # Not new message, ignore
+            # logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        user = ensuredMessage.user
+        chat = ensuredMessage.chat
+
+        if ensuredMessage.messageType != 'text':
+            logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
+            return
+
+        messageText = ensuredMessage.messageText
+
+        if not self._saveChatMessage(ensuredMessage, messageCategory='user'):
+            logger.error("Failed to save chat message")
+
+        # Check if message is a reply to our message
+        done = await self.handleGroupReply(update, context, ensuredMessage)
+        if done:
+            return
+
+        # If our bot has mentioned, answer somehow
+        await self.handleGroupMention(update, context, ensuredMessage)
+
+        logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
+
+    async def handleGroupReply(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
+        """
+        Check if message is a reply to our message and handle it
+        """
+        if not ensuredMessage.isReply or ensuredMessage.replyId is None:
+            return False
+
+        message = ensuredMessage.getBaseMessage()
+        isReplyToMyMessage = False
+        if (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == context.bot.id
+        ):
+            isReplyToMyMessage = True
+
+        if not isReplyToMyMessage:
+            return False
+
+        parentId = ensuredMessage.replyId
+        chat = ensuredMessage.chat
+
+        storedMessages: List[Dict[str, Any]] = []
+
+        storedMsg = self.db.getChatMessageByMessageId(
+            chatId=chat.id,
+            messageId=parentId,
+            threadId=ensuredMessage.threadId,
+        )
+        if storedMsg is None:
+            logger.error("Failed to get parent message")
+            storedMessages.append({
+                "message_category": "bot",
+                "message_text": ensuredMessage.replyText or ""
+            })
+            storedMessages.append({
+                "message_category": "user",
+                "message_text": ensuredMessage.messageText
+            })
+        else:
+            if storedMsg["message_category"] != "bot":
+                return False
+
+            storedMessages: List[Dict[str, Any]] = self.db.getChatMessagesByRootId(
+                chatId=chat.id,
+                rootMessageId=storedMsg["root_message_id"],
+                threadId=ensuredMessage.threadId,
+            )
+
+        reqMessages = [
+            {
+                "role": "system",
+                "text": self.getChatSystemPrompt(chat.id),
+            },
+        ]
+        for storedMsg in storedMessages:
+            reqMessages.append(
+                {
+                    "role": (
+                        "user"
+                        if storedMsg["message_category"] == "user"
+                        else "assistant"
+                    ),
+                    "text": storedMsg["message_text"],
+                }
+            )
+
+        if message.quote and message.quote.text:
+            reqMessages[-1]["text"] = f"<quote>{message.quote.text}</quote>\n\n{reqMessages[-1]["text"]}"
+
+        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
+            logger.error("Failed to send LLM reply")
+
+        return True
+
+    async def handleGroupMention(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
+        """
+        Check if bot has been mentioned in the message
+        """
+        # TODO: Should I handle whole thread if any?
+
+        # logger.debug(f"Bot is: {context.bot.bot} {context.bot.username}")
+        myUsername = context.bot.username.lower()
+        mentionedMe = False
+        message = ensuredMessage.getBaseMessage()
+        messageText = ensuredMessage.messageText
+
+        for entity in message.entities:
+            if entity.type == MessageEntityType.MENTION:
+                mentionText = messageText[entity.offset:entity.offset + entity.length]
+
+                # Проверяем, совпадает ли упоминание с именем бота
+                if mentionText.lower() == f"@{myUsername}":
+                    mentionedMe = True
+                    break
+
+        if not mentionedMe:
+            return False
+
+        reqMessages = [
+            {
+                "role": "system",
+                "text": self.getChatSystemPrompt(ensuredMessage.chat.id),
+            }
+        ]
+
+        isReplyToMyMessage = False
+        if (
+            ensuredMessage.replyId
+            and message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == context.bot.id
+        ):
+            isReplyToMyMessage = True
+
+        if ensuredMessage.replyText:
+            reqMessages.append(
+                {
+                    "role": "assistant" if isReplyToMyMessage else "user",
+                    "text": ensuredMessage.replyText,
+                }
+            )
+
+        if message.quote and message.quote.text:
+            reqMessages.append(
+                {
+                    "role": "user",
+                    "text": f"<quote>{message.quote.text}</quote>\n\n{messageText}",
+                }
+            )
+        else:
+            reqMessages.append(
+                {
+                    "role": "user",
+                    "text": messageText,
+                }
+            )
+
+        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
+            logger.error("Failed to send LLM reply")
+            return False
+
+        return True
+
+    ###
+    # COMMANDS Handlers
+    ###
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
@@ -431,300 +808,8 @@ class BotHandlers:
                     self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
                 except Exception as e:
                     logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-            
+
             time.sleep(1)
-
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle regular text messages."""
-        # logger.debug(f"Handling SOME message: {update}")
-        chat = update.effective_chat
-        if not chat:
-            logger.error("Chat undefined")
-            return
-        chatType = chat.type
-
-        match chatType:
-            case Chat.PRIVATE:
-                return await self.handle_private_message(update, context)
-            case Chat.GROUP:
-                return await self.handle_group_message(update, context)
-            case Chat.SUPERGROUP:
-                return await self.handle_group_message(update, context)
-            case Chat.CHANNEL:
-                logger.error(f"Unsupported chat type: {chatType}")
-            case _:
-                logger.error(f"Unsupported chat type: {chatType}")
-
-    def _saveChatMessage(self, message: EnsuredMessage, messageCategory: str = 'user') -> bool:
-        """Save a chat message to the database."""
-        # TODO: messageCategory - make enum
-
-        user = message.user
-        chat = message.chat
-
-        if message.messageType != 'text':
-            logger.error(f"Unsupported message type: {message.messageType}")
-            return False
-
-        messageText = message.messageText
-
-        replyId = message.replyId
-        rootMessageId = message.messageId
-        if message.isReply and replyId:
-            parentMsg = self.db.getChatMessageByMessageId(
-                chatId=chat.id,
-                messageId=replyId,
-                threadId=message.threadId,
-            )
-            if parentMsg:
-                rootMessageId = parentMsg["root_message_id"]
-
-        self.db.saveChatMessage(
-            date=message.date,
-            chatId=chat.id,
-            userId=user.id,
-            userName=user.username or user.first_name,
-            messageId=message.messageId,
-            replyId=replyId,
-            threadId=message.threadId,
-            messageText=messageText,
-            messageType='text', # In future we'll support not only text messages, but photos, stickers and something else. Or not
-            messageCategory=messageCategory,
-            rootMessageId=rootMessageId,
-        )
-
-        return True
-
-    async def _sendLLMChatMessage(self, ensuredMessage: EnsuredMessage, messagesHistory: List[Dict[str, str]]) -> bool:
-        """Send a chat message to the LLM model."""
-        logger.debug(f"LLM Request messages: {messagesHistory}")
-        llmModel = self.getChatModel(ensuredMessage.chat.id)
-        mlRet: Optional[ModelRunResult] = None
-        try:
-            mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
-            logger.debug(f"LLM Response: {mlRet}")
-        except Exception as e:
-            logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
-            await ensuredMessage.getBaseMessage().reply_text(
-                f"Error while sending LLM request: {type(e).__name__}",
-                reply_to_message_id=ensuredMessage.messageId,
-                message_thread_id=ensuredMessage.threadId,
-            )
-            return False
-        LLMReply = mlRet.resultText
-        prefix = ""
-        if mlRet.isFallback:
-            prefix = f"{ROBOT_EMOJI} "
-
-        replyMessage = None
-        replyKwargs = {
-            "text": prefix + LLMReply,
-            "reply_to_message_id": ensuredMessage.messageId,
-            "message_thread_id": ensuredMessage.threadId,
-        }
-        try:
-            logger.debug(f"Sending LLM reply to {ensuredMessage}")
-            replyMessage = await ensuredMessage.getBaseMessage().reply_text(parse_mode='Markdown',**replyKwargs)
-        except Exception as e:
-            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-            # Probably error in markdown formatting, fallback to raw text
-            replyMessage = await ensuredMessage.getBaseMessage().reply_text(**replyKwargs)
-        if replyMessage is None:
-            logger.error("Error while sending LLM reply")
-            return False
-
-        try:
-            ensuredReplyMessage = EnsuredMessage(replyMessage)
-            self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
-            return True
-        except Exception as e:
-            logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-            return False
-
-    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        logger.debug(f"Handling group message: {update}")
-        message = update.message
-        if not message:
-            # Not new message, ignore
-            # logger.error("Message undefined")
-            return
-
-        ensuredMessage : Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        user = ensuredMessage.user
-        chat = ensuredMessage.chat
-
-        if ensuredMessage.messageType != 'text':
-            logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
-            return
-
-        messageText = ensuredMessage.messageText
-
-        if not self._saveChatMessage(ensuredMessage, messageCategory='user'):
-            logger.error("Failed to save chat message")
-
-        # Check if message is a reply to our message
-        if ensuredMessage.isReply and ensuredMessage.replyId is not None:
-            parentId = ensuredMessage.replyId
-
-            storedMsg = self.db.getChatMessageByMessageId(
-                chatId=chat.id,
-                messageId=parentId,
-                threadId=ensuredMessage.threadId,
-            )
-            if storedMsg is None:
-                logger.error("Failed to get parent message")
-                return
-            if storedMsg["message_category"] == "bot":
-                storedMessages = self.db.getChatMessagesByRootId(
-                    chatId=chat.id,
-                    rootMessageId=storedMsg["root_message_id"],
-                    threadId=ensuredMessage.threadId,
-                )
-
-                req_messages = [
-                    {
-                        "role": "system",
-                        "text": self.getChatSystemPrompt(chat.id),
-                    },
-                ]
-                for storedMsg in storedMessages:
-                    req_messages.append(
-                        {
-                            "role": "user" if storedMsg["message_category"] == "user" else "assistant",
-                            "text": storedMsg["message_text"],
-                        }
-                    )
-
-                if not await self._sendLLMChatMessage(ensuredMessage, req_messages):
-                    logger.error("Failed to send LLM reply")
-
-                logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
-                # TODO: Move to separate method
-                return
-
-        # TODO: Move this to separate function + handle whole thread if any
-        # If our bot has mentioned, answer somehow
-        # logger.debug(f"Bot is: {context.bot.bot} {context.bot.username}")
-        myUsername = context.bot.username
-        mentionedMe = False
-
-        for entity in message.entities:
-            if entity.type == MessageEntityType.MENTION:
-                mention_text = messageText[entity.offset:entity.offset + entity.length]
-
-                # Проверяем, совпадает ли упоминание с именем бота
-                if mention_text == f"@{myUsername}":
-                    mentionedMe = True
-                    break
-
-        if not mentionedMe:
-            return
-
-        req_messages = [
-            {
-                "role": "system",
-                "text": self.getChatSystemPrompt(chat.id),
-            }
-        ]
-
-        if ensuredMessage.replyText:
-            req_messages.append(
-                {
-                    "role": "user",
-                    "text": ensuredMessage.replyText,
-                }
-            )
-        req_messages.append(
-            {
-                "role": "user",
-                "text": messageText,
-            }
-        )
-
-        if not await self._sendLLMChatMessage(ensuredMessage, req_messages):
-            logger.error("Failed to send LLM reply")
-
-        logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
-
-    async def handle_private_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        message = update.message
-        if not message:
-            # Not new message, ignore
-            # logger.error("Message undefined")
-            return
-
-        ensuredMessage : Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        user = ensuredMessage.user
-
-        # Save user and message to database
-        self.db.saveUser(
-            userId=user.id,
-            userName=user.username,
-            firstName=user.first_name,
-            lastName=user.last_name
-        )
-
-        messages = self.db.getUserMessages(user.id, limit=10)
-        reqMessages = [
-            {
-                "role": "system",
-                "text": self.getPrivateSystemPrompt(chatId=user.id),
-            },
-        ]
-
-        for msg in reversed(messages):
-            reqMessages.append({
-                "role": "user",
-                "text": msg["message_text"],
-            })
-            if message["reply_text"]:
-                reqMessages.append({
-                    "role": "assistant",
-                    "text": msg["reply_text"],
-                })
-        reqMessages.append({
-            "role": "user",
-            "text": ensuredMessage.messageText,
-        })
-
-        logger.debug(f"LLM Request messages: {reqMessages}")
-        reply = ""
-        llmModel = self.getPrivateModel(chatId=user.id)
-        try:
-            mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
-            logger.debug(f"LLM Response: {mlRet}")
-            reply = mlRet.resultText
-            if mlRet.isFallback:
-                reply = f"{ROBOT_EMOJI} {reply}"
-        except Exception as e:
-            logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
-            reply = f"Error while running LLM: {type(e).__name__}#{e}"
-
-        self.db.savePrivateMessage(user.id, ensuredMessage.messageText, reply_text=reply)
-
-        replyKwargs = {
-            "text": reply,
-            "reply_to_message_id": ensuredMessage.messageId,
-        }
-        try:
-            await message.reply_text(parse_mode='Markdown', **replyKwargs)
-        except Exception as e:
-            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-            # Probably error in markdown formatting, fallback to raw text
-            await message.reply_text(**replyKwargs)
-        logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
 
     async def models_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /models command."""
@@ -741,14 +826,14 @@ class BotHandlers:
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        #user = ensuredMessage.user
-        #chat = ensuredMessage.chat
+        # user = ensuredMessage.user
+        # chat = ensuredMessage.chat
         replyKwargs = {
             "reply_to_message_id": ensuredMessage.messageId,
             "message_thread_id": ensuredMessage.threadId,
             "parse_mode": "Markdown",
         }
-        
+
         replyText = "*Доступные модели:*\n\n"
 
         for i, modelName in enumerate(self.llmManager.listModels()):
@@ -765,7 +850,7 @@ class BotHandlers:
             replyText += f"*Модель: {modelName}*\n```{modelName}\n"
             for k, v in modelData.items():
                 replyText += f"{modelKeyI18n.get(k, k)}: {v}\n"
-            
+
             replyText += "```\n\n"
 
             if i % modelsPerMessage == (modelsPerMessage - 1):
@@ -774,7 +859,7 @@ class BotHandlers:
                 time.sleep(0.5)
 
         if replyText:
-            await message.reply_text(replyText, **replyKwargs)        
+            await message.reply_text(replyText, **replyKwargs)
 
     async def chat_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /settings command."""
@@ -789,14 +874,14 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         replyKwargs = {
             "reply_to_message_id": ensuredMessage.messageId,
             "message_thread_id": ensuredMessage.threadId,
             "parse_mode": "Markdown",
         }
-        
-        #user = ensuredMessage.user
+
+        # user = ensuredMessage.user
         chat = ensuredMessage.chat
         chatType = chat.type
 
@@ -806,7 +891,7 @@ class BotHandlers:
                 **replyKwargs,
             )
             return
-        
+
         resp = f"Настройки чата *#{chat.id}*:\n\n"
         chatSettings = self.getChatSettings(chat.id)
         for k, v in chatSettings.items():
@@ -826,13 +911,13 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         replyKwargs = {
             "reply_to_message_id": ensuredMessage.messageId,
             "message_thread_id": ensuredMessage.threadId,
             "parse_mode": "Markdown",
         }
-        
+
         user = ensuredMessage.user
         chat = ensuredMessage.chat
         chatType = chat.type
@@ -850,14 +935,14 @@ class BotHandlers:
                 **replyKwargs,
             )
             return
-        
+
         if not context.args or len(context.args) < 2:
             await message.reply_text(
                 "You need to specify a key and a value to change chat settings.",
                 **replyKwargs,
             )
             return
-        
+
         chatSettings = self.getChatSettings(chat.id)
         adminAllowedChangeSettings = chatSettings.get(ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS, str(self.defaultAdminCanChangeSettings))
         adminAllowedChangeSettings = adminAllowedChangeSettings.lower() == "true"
@@ -876,7 +961,7 @@ class BotHandlers:
                 **replyKwargs,
             )
             return
-        
+
         key = context.args[0]
         value = " ".join(context.args[1:])
         self.setChatSettings(chat.id, {key: value})
@@ -896,13 +981,13 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         replyKwargs = {
             "reply_to_message_id": ensuredMessage.messageId,
             "message_thread_id": ensuredMessage.threadId,
             "parse_mode": "Markdown",
         }
-        
+
         user = ensuredMessage.user
         chat = ensuredMessage.chat
         chatType = chat.type
@@ -920,14 +1005,14 @@ class BotHandlers:
                 **replyKwargs,
             )
             return
-        
+
         if not context.args or len(context.args) < 1:
             await message.reply_text(
                 "You need to specify a key and a value to change chat settings.",
                 **replyKwargs,
             )
             return
-        
+
         chatSettings = self.getChatSettings(chat.id)
         adminAllowedChangeSettings = chatSettings.get(ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS, str(self.defaultAdminCanChangeSettings))
         adminAllowedChangeSettings = adminAllowedChangeSettings.lower() == "true"
@@ -946,13 +1031,13 @@ class BotHandlers:
                 **replyKwargs,
             )
             return
-        
+
         key = context.args[0]
         value = " ".join(context.args[1:])
         self.unsetChatSetting(chat.id, key)
 
         await message.reply_text(f"Готово, теперь `{key}` сброшено в значение по умолчанию", **replyKwargs)
-    
+
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
         logger.error(f"Exception while handling an update: {context.error}")
