@@ -1,0 +1,1 @@
+* Use `./venv/bin/python3` in case of you want to run python

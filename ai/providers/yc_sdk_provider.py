@@ -32,14 +32,14 @@ class YcSdkModel(AbstractModel):
         try:
             # Create and configure the model
             self._yc_model = self.ycSDK.models.completions(
-                self.model_id, 
-                model_version=self.model_version
+                self.modelId, 
+                model_version=self.modelVersion
             ).configure(temperature=self.temperature)
             
-            logger.info(f"Initialized YC SDK model {self.model_id}, dood!")
+            logger.info(f"Initialized YC SDK model {self.modelId}, dood!")
             
         except Exception as e:
-            logger.error(f"Failed to initialize YC SDK model {self.model_id}: {e}")
+            logger.error(f"Failed to initialize YC SDK model {self.modelId}: {e}")
             raise
             
     def _statusToModelRunResultStatus(self, status: int) -> ModelResultStatus:
@@ -64,7 +64,7 @@ class YcSdkModel(AbstractModel):
             return ModelRunResult(result, self._statusToModelRunResultStatus(result.status), result.alternatives[0].text)
             
         except Exception as e:
-            logger.error(f"Error running YC SDK model {self.model_id}: {e}")
+            logger.error(f"Error running YC SDK model {self.modelId}: {e}")
             raise
 
     #def getEstimateTokensCount(self, data: Any) -> int:

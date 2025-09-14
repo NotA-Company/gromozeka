@@ -108,7 +108,7 @@ class BotHandlers:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
         return ret
-    
+
     def getFallbackModel(self) -> AbstractModel:
         """Get the model for fallback messages."""
         modelName = self.defaultModels["fallback"]
@@ -117,7 +117,7 @@ class BotHandlers:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
         return ret
-    
+
     def getFallbackSummaryModel(self) -> AbstractModel:
         """Get the model for fallback messages."""
         modelName = self.defaultModels["summary-fallback"]

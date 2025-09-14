@@ -5,103 +5,67 @@ import logging
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
 
-from ..abstract import AbstractModel, AbstractLLMProvider, ModelMessage, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel, ModelMessage, ModelResultStatus, ModelRunResult
+from .basic_openai_provider import BasicOpenAIModel, BasicOpenAIProvider
 
 logger = logging.getLogger(__name__)
 
+# See
+# https://yandex.cloud/ru/docs/foundation-models/concepts/openai-compatibility  
+# For compatibility details
 
-class YcOpenaiModel(AbstractModel):
+class YcOpenaiModel(BasicOpenAIModel):
     """Yandex Cloud OpenAI-compatible model implementation, dood!"""
     
     def __init__(
-        self, 
+        self,
         provider: "YcOpenaiProvider",
         modelId: str,
         modelVersion: str,
         temperature: float,
-        contextSize: int,
-        folderId: str,
+        contextSize: int,        
         openAiClient: OpenAI,
+        folderId: str,
     ):
         """Initialize YC OpenAI model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize)
-        self._client = openAiClient
+        super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient)
         self._folderId = folderId
         self._modelURL = f"gpt://{folderId}/{modelId}/{modelVersion}"
             
-    def run(self, messages: List[ModelMessage]) -> Any:
-        """Run the YC OpenAI model with given messages, dood!
+    def _getModelId(self) -> str:
+        """Get the YC-specific model URL, dood!"""
+        return self._modelURL
         
-        Args:
-            messages: List of message dictionaries with role and content
-            
-        Returns:
-            Model response
-        """
-
-        # https://yandex.cloud/ru/docs/foundation-models/concepts/openai-compatibility  
-        try:
-            # Use OpenAI-compatible API
-            response = self._client.chat.completions.create(
-                model=self._modelURL,
-                messages=[message.toDict('content') for message in messages], # type: ignore
-                max_tokens=2000,
-                temperature=self.temperature,
-                #stream=True,
-            )
-            
-            #for chunk in response:
-            #   if chunk.choices[0].delta.content is not None:
-            #       print(chunk.choices[0].delta.content, end="")
-            #TODO: Set proper status
-            status = ModelResultStatus.FINAL
-            resText = response.choices[0].message.content
-            if resText is None:
-                resText = ""
-                status = ModelResultStatus.UNKNOWN
-            return ModelRunResult(response, status, resText)
-            
-        except Exception as e:
-            logger.error(f"Error running YC OpenAI model {self.model_id}: {e}")
-            raise
+    def _getExtraParams(self) -> Dict[str, Any]:
+        """Get YC-specific extra parameters, dood!"""
+        return {
+            # "max_tokens": 2000,
+            # "stream": True,  # Commented out for now
+        }
 
 
-class YcOpenaiProvider(AbstractLLMProvider):
+class YcOpenaiProvider(BasicOpenAIProvider):
     """Yandex Cloud OpenAI-compatible provider implementation, dood!"""
     
     def __init__(self, config: Dict[str, Any]):
         """Initialize YC OpenAI provider, dood!"""
-        super().__init__(config)
-        self._client : Optional[OpenAI] = None
         self._folderId = str(config.get("folder_id", ""))
-        self._init_client()
+        super().__init__(config)
         
-    def _init_client(self):
-        """Initialize OpenAI client for Yandex Cloud, dood!"""
-        try:
-            apiKey = self.config.get("api_key")
-            
-            if not self._folderId or not apiKey:
-                raise ValueError("folder_id and api_key are required for YC OpenAI provider, dood!")
-                
-            # Yandex Cloud OpenAI-compatible endpoint
-            baseURL = f"https://llm.api.cloud.yandex.net/v1"
-            
-            self._client = OpenAI(
-                api_key=apiKey,
-                base_url=baseURL,
-            )
-            
-            logger.info("YC OpenAI provider initialized, dood!")
-            
-        except ImportError:
-            logger.error("openai package not available, dood!")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to initialize YC OpenAI client: {e}")
-            raise
+    def _getBaseUrl(self) -> str:
+        """Get the Yandex Cloud OpenAI-compatible base URL, dood!"""
+        return "https://llm.api.cloud.yandex.net/v1"
         
-    def addModel(
+    def _getApiKey(self) -> str:
+        """Get the API key and validate folder_id, dood!"""
+        apiKey = self.config.get("api_key")
+        
+        if not self._folderId or not apiKey:
+            raise ValueError("folder_id and api_key are required for YC OpenAI provider, dood!")
+            
+        return apiKey
+        
+    def _createModelInstance(
         self,
         name: str,
         modelId: str,
@@ -109,29 +73,16 @@ class YcOpenaiProvider(AbstractLLMProvider):
         temperature: float,
         contextSize: int
     ) -> AbstractModel:
-        """Add a YC OpenAI model, dood!"""
-        if name in self.models:
-            logger.warning(f"Model {name} already exists in YC OpenAI provider, dood!")
-            return self.models[name]
-        
+        """Create a YC OpenAI model instance, dood!"""
         if not self._client:
-            raise ValueError("YC OpenAI client not initialized, dood!" )
+            raise ValueError("YC OpenAI client not initialized, dood!")
             
-        try:
-            model = YcOpenaiModel(
-                provider=self,
-                modelId=modelId,
-                modelVersion=modelVersion,
-                temperature=temperature,
-                contextSize=contextSize,
-                folderId=self._folderId,
-                openAiClient=self._client
-            )
-            
-            self.models[name] = model
-            logger.info(f"Added YC OpenAI model {name} ({modelId}), dood!")
-            return model
-            
-        except Exception as e:
-            logger.error(f"Failed to add YC OpenAI model {name}: {e}")
-            raise
+        return YcOpenaiModel(
+            provider=self,
+            modelId=modelId,
+            modelVersion=modelVersion,
+            temperature=temperature,
+            contextSize=contextSize,
+            openAiClient=self._client,
+            folderId=self._folderId,
+        )
