@@ -11,6 +11,8 @@ from telegram import Chat, Update, Message
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
+from ai.abstract import AbstractModel
+from ai.manager import LLMManager
 from database.wrapper import DatabaseWrapper
 from .ensured_message import EnsuredMessage
 
@@ -23,11 +25,80 @@ DEFAULT_CHAT_SYSTEM_PROMPT = """Ты - Принни: вайбовый, но ум
 class BotHandlers:
     """Contains all bot command and message handlers."""
 
-    def __init__(self, database: DatabaseWrapper, llm_model, llm_manager):
+    def __init__(self, config: Dict[str, Any], database: DatabaseWrapper, llm_manager: LLMManager):
         """Initialize handlers with database and LLM model."""
+        self.config = config
         self.db = database
-        self.llm_model = llm_model
         self.llm_manager = llm_manager
+        self.llm_model = llm_manager.getModel("yandexgpt-lite")
+
+        modelDefaults = self.config.get("models", {})
+        self.defaultModels = {
+            "private": modelDefaults.get("private", "yandexgpt-lite"),
+            "summary": modelDefaults.get("private", "yandexgpt-lite"),
+            "chat": modelDefaults.get("private", "yandexgpt-lite"),
+        }
+
+    def getSummarySystemPrompt(self, chatId: Optional[int] = None) -> str:
+        """Get the system prompt for summarising messages."""
+        if not chatId:
+            return DEFAULT_SUMMARISATION_SYSTEM_PROMPT
+        # TODO: Try to get it from the database
+        return DEFAULT_SUMMARISATION_SYSTEM_PROMPT
+
+    def getChatSystemPrompt(self, chatId: Optional[int] = None) -> str:
+        """Get the system prompt for chatting."""
+        if not chatId:
+            return DEFAULT_CHAT_SYSTEM_PROMPT
+        # TODO: Try to get it from the database
+        return DEFAULT_CHAT_SYSTEM_PROMPT
+
+    def getPrivateSystemPrompt(self, chatId: Optional[int] = None) -> str:
+        """Get the system prompt for private messages."""
+        if not chatId:
+            return DEFAULT_PRIVATE_SYSTEM_PROMPT
+        # TODO: Try to get it from the database
+        return DEFAULT_PRIVATE_SYSTEM_PROMPT
+
+    def getSummaryModel(self, chatId: Optional[int] = None) -> AbstractModel:
+        """Get the model for summarising messages."""
+
+        modelName = self.defaultModels["summary"]
+        if chatId:
+           # TODO: Try to get it from the database
+           pass
+
+        ret = self.llm_manager.getModel(modelName)
+        if ret is None:
+            logger.error(f"Model {modelName} not found")
+            raise ValueError(f"Model {modelName} not found")
+        return ret
+
+    def getChatModel(self, chatId: Optional[int] = None) -> AbstractModel:
+        """Get the model for chatting."""
+        modelName = self.defaultModels["chat"]
+        if chatId:
+           # TODO: Try to get it from the database
+           pass
+
+        ret = self.llm_manager.getModel(modelName)
+        if ret is None:
+            logger.error(f"Model {modelName} not found")
+            raise ValueError(f"Model {modelName} not found")
+        return ret
+
+    def getPrivateModel(self, chatId: Optional[int] = None) -> AbstractModel:
+        """Get the model for private messages."""
+        modelName = self.defaultModels["private"]
+        if chatId:
+           # TODO: Try to get it from the database
+           pass
+
+        ret = self.llm_manager.getModel(modelName)
+        if ret is None:
+            logger.error(f"Model {modelName} not found")
+            raise ValueError(f"Model {modelName} not found")
+        return ret
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
@@ -128,7 +199,7 @@ class BotHandlers:
             try:
                 maxBatches = int(context.args[0])
             except ValueError:
-                logger.error(f"Invalid argument: '{context.args[0]}' is not a valid number.")     
+                logger.error(f"Invalid argument: '{context.args[0]}' is not a valid number.")
 
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
@@ -149,7 +220,7 @@ class BotHandlers:
                     localChatId = int(context.args[1])
                 except ValueError:
                     logger.error(f"Invalid argument: '{context.args[1]}' is not a valid number.")
-                
+
             if localChatId is None:
                 await message.reply_text(
                     "This command is only available in groups and supergroups for now.",
@@ -173,7 +244,7 @@ class BotHandlers:
 
         systemMessage = {
             "role": "system",
-            "text": DEFAULT_SUMMARISATION_SYSTEM_PROMPT,
+            "text": self.getSummarySystemPrompt(chatId=chatId),
         }
         parsedMessages = []
 
@@ -197,16 +268,16 @@ class BotHandlers:
 
         reqMessages = [systemMessage] + parsedMessages
 
+        llmModel = self.getSummaryModel(chatId=chatId)
         # TODO: Move to config or ask from model somehow
-        maxTokens = 32768
-        tokens = self.llm_model.tokenize(reqMessages)
-        tokensCount = len(tokens)
+        maxTokens = llmModel.getInfo()["context_size"]
+        tokensCount = llmModel.getEstimateTokensCount(reqMessages)
 
-        # -256 to ensure everything will be ok
-        batchesCount = tokensCount // (maxTokens - 256) + 1
+        # -256 or *0.9 to ensure everything will be ok
+        batchesCount = tokensCount // max(maxTokens - 256, maxTokens * 0.9) + 1
         batchLength = len(parsedMessages) // batchesCount
 
-        logger.debug(f"Summarisation: total tokens: {tokensCount}, max tokens: {maxTokens}, messages count: {len(parsedMessages)}, batches count: {batchesCount}, batch length: {batchLength}")
+        logger.debug(f"Summarisation: estimated total tokens: {tokensCount}, max tokens: {maxTokens}, messages count: {len(parsedMessages)}, batches count: {batchesCount}, batch length: {batchLength}")
 
         resMessages = []
         startPos: int = 0
@@ -217,8 +288,7 @@ class BotHandlers:
             while not batchSummarized:
                 tryMessages = parsedMessages[startPos:startPos+currentBatchLen]
                 reqMessages = [systemMessage] + tryMessages
-                tokens = self.llm_model.tokenize(reqMessages)
-                tokensCount = len(tokens)
+                tokensCount = llmModel.getEstimateTokensCount(reqMessages)
                 if tokensCount > maxTokens:
                     if currentBatchLen == 1:
                         resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: Bats has too many tokens ({tokensCount})")
@@ -233,7 +303,7 @@ class BotHandlers:
                 mlRet: Any = None
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
-                    mlRet = self.llm_model.run(reqMessages)
+                    mlRet = llmModel.run(reqMessages)
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
                     logger.error(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}")
@@ -331,13 +401,14 @@ class BotHandlers:
 
         return True
 
-    async def _send_llm_chat_message(self, ensuredMessage: EnsuredMessage, messagesHistory: List[Dict[str, str]], llmModel) -> bool:
+    async def _sendLLMChatMessage(self, ensuredMessage: EnsuredMessage, messagesHistory: List[Dict[str, str]]) -> bool:
         """Send a chat message to the LLM model."""
         logger.debug(f"LLM Request messages: {messagesHistory}")
-        ml_ret: Any = None
+        llmModel = self.getChatModel(ensuredMessage.chat.id)
+        mlRet: Any = None
         try:
-            ml_ret = llmModel.run(messagesHistory)
-            logger.debug(f"LLM Response: {ml_ret}")
+            mlRet = llmModel.run(messagesHistory)
+            logger.debug(f"LLM Response: {mlRet}")
         except Exception as e:
             logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
             await ensuredMessage.getBaseMessage().reply_text(
@@ -346,7 +417,7 @@ class BotHandlers:
                 message_thread_id=ensuredMessage.threadId,
             )
             return False
-        LLMReply = ml_ret.alternatives[0].text
+        LLMReply = mlRet.alternatives[0].text
 
         replyMessage = None
         replyKwargs = {
@@ -414,7 +485,7 @@ class BotHandlers:
                 return
             if storedMsg["message_category"] == "bot":
                 storedMessages = self.db.get_chat_messages_by_root_id(
-                    chatId=chat.id, 
+                    chatId=chat.id,
                     rootMessageId=storedMsg["root_message_id"],
                     threadId=ensuredMessage.threadId,
                 )
@@ -422,8 +493,7 @@ class BotHandlers:
                 req_messages = [
                     {
                         "role": "system",
-                        # TODO: Allow chat admin to configure system prompt. Also move default system prompt to config
-                        "text": DEFAULT_CHAT_SYSTEM_PROMPT,
+                        "text": self.getChatSystemPrompt(chat.id),
                     },
                 ]
                 for storedMsg in storedMessages:
@@ -434,9 +504,7 @@ class BotHandlers:
                         }
                     )
 
-                if not await self._send_llm_chat_message(
-                    ensuredMessage, req_messages, self.llm_model
-                ):
+                if not await self._sendLLMChatMessage(ensuredMessage, req_messages):
                     logger.error("Failed to send LLM reply")
 
                 logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
@@ -464,8 +532,7 @@ class BotHandlers:
         req_messages = [
             {
                 "role": "system",
-                # TODO: Allow chat admin to configure system prompt. Also move default system prompt to config
-                "text": DEFAULT_CHAT_SYSTEM_PROMPT,
+                "text": self.getChatSystemPrompt(chat.id),
             }
         ]
 
@@ -483,7 +550,7 @@ class BotHandlers:
             }
         )
 
-        if not await self._send_llm_chat_message(ensuredMessage, req_messages, self.llm_model):
+        if not await self._sendLLMChatMessage(ensuredMessage, req_messages):
             logger.error("Failed to send LLM reply")
 
         logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
@@ -516,8 +583,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                #TODO: Allow user to configure system prompt. Also move default system prompt to config
-                "text": DEFAULT_PRIVATE_SYSTEM_PROMPT,
+                "text": self.getPrivateSystemPrompt(chatId=user.id),
             },
         ]
 
@@ -538,8 +604,9 @@ class BotHandlers:
 
         logger.debug(f"LLM Request messages: {reqMessages}")
         reply = ""
+        llmModel = self.getPrivateModel(chatId=user.id)
         try:
-            mlRet = self.llm_model.run(reqMessages)
+            mlRet = llmModel.run(reqMessages)
             logger.debug(f"LLM Response: {mlRet}")
             reply = mlRet.alternatives[0].text
         except Exception as e:

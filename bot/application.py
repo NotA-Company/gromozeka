@@ -3,9 +3,11 @@ Telegram bot application setup and management for Gromozeka.
 """
 import logging
 import sys
+from typing import Any, Dict
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+from ai.manager import LLMManager
 from config.manager import ConfigManager
 from database.wrapper import DatabaseWrapper
 
@@ -17,17 +19,16 @@ logger = logging.getLogger(__name__)
 class BotApplication:
     """Manages Telegram bot application setup and execution."""
 
-    def __init__(self, config_manager: ConfigManager, bot_token: str, database: DatabaseWrapper, llm_model, llm_manager):
+    def __init__(self, config: Dict[str, Any], botToken: str, database: DatabaseWrapper, llmManager: LLMManager):
         """Initialize bot application with token, database, and LLM model."""
-        self.config_manager = config_manager
-        self.bot_token = bot_token
+        self.config = config
+        self.botToken = botToken
         self.database = database
-        self.llm_model = llm_model
-        self.llm_manager = llm_manager
+        self.llmManager = llmManager
         self.application = None
-        self.handlers = BotHandlers(database, llm_model, llm_manager)
+        self.handlers = BotHandlers(config, database, llmManager)
 
-    def setup_handlers(self):
+    def setupHandlers(self):
         """Set up bot command and message handlers."""
         if not self.application:
             logger.error("Application not initialized!")
@@ -53,15 +54,15 @@ class BotApplication:
 
     def run(self):
         """Start the bot."""
-        if self.bot_token in ["", "YOUR_BOT_TOKEN_HERE"]:
+        if self.botToken in ["", "YOUR_BOT_TOKEN_HERE"]:
             logger.error("Please set your bot token in config.toml!")
             sys.exit(1)
 
         # Create application
-        self.application = Application.builder().token(self.bot_token).build()
+        self.application = Application.builder().token(self.botToken).build()
 
         # Setup handlers
-        self.setup_handlers()
+        self.setupHandlers()
 
         logger.info("Starting Gromozeka bot, dood!")
 
