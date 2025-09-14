@@ -27,11 +27,11 @@ class ModelMessage:
         if content is None:
             raise ValueError('No content found in message')
         return cls(d['role'], content, contentKey)
-    
+
     @classmethod
     def fromDictList(cls, l: List[Dict[str, Any]]) -> List['ModelMessage']:
         return [cls.fromDict(d) for d in l]
-    
+
     def toDict(self, contentKey: Optional[str] = None) -> Dict[str, Any]:
         if contentKey is None:
             contentKey = self.contentKey
@@ -39,7 +39,7 @@ class ModelMessage:
             'role': self.role,
             contentKey: self.content
         }
-    
+
     def __str__(self) -> str:
         return json.dumps(self.toDict(), ensure_ascii=False)
 
@@ -74,7 +74,7 @@ class ModelRunResult:
 
     def to_json(self) -> str:
         return json.dumps(self.result, ensure_ascii=False)
-    
+
     def __str__(self) -> str:
         return "ModelRunResult(" + json.dumps({
             "status": self.status.name,
@@ -104,10 +104,10 @@ class AbstractModel(ABC):
             context_size: Maximum context size in tokens
         """
         self.provider = provider
-        self.model_id = modelId
-        self.model_version = modelVersion
+        self.modelId = modelId
+        self.modelVersion = modelVersion
         self.temperature = temperature
-        self.context_size = contextSize
+        self.contextSize = contextSize
 
         self.tiktokenEncoding = "o200k_base"
         self.tokensCountCoeff = 1.1
@@ -129,10 +129,10 @@ class AbstractModel(ABC):
         try:
             ret = self.run(messages)
             if ret.status in [ModelResultStatus.UNSPECIFIED, ModelResultStatus.CONTENT_FILTER, ModelResultStatus.UNKNOWN]:
-                raise Exception(f"Model {self.model_id} returned status {ret.status.name}")
+                raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
             return ret
         except Exception as e:
-            logger.error(f"Error running model {self.model_id}: {e}")
+            logger.error(f"Error running model {self.modelId}: {e}")
             ret = fallbackModel.run(messages)
             ret.setFallback(True)
             return ret
@@ -159,16 +159,16 @@ class AbstractModel(ABC):
             Dictionary with model metadata
         """
         return {
-            "model_id": self.model_id,
-            "model_version": self.model_version,
+            "model_id": self.modelId,
+            "model_version": self.modelVersion,
             "temperature": self.temperature,
-            "context_size": self.context_size,
+            "context_size": self.contextSize,
             "provider": self.provider.__class__.__name__
         }
 
     def __str__(self) -> str:
         """String representation of the model, dood!"""
-        return f"{self.model_id}@{self.model_version} (provider: {self.provider.__class__.__name__})"
+        return f"{self.modelId}@{self.modelVersion} (provider: {self.provider.__class__.__name__})"
 
 
 class AbstractLLMProvider(ABC):

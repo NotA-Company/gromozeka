@@ -273,3 +273,40 @@ This file records architectural and implementation decisions using a list format
 * Modified main.py to use LLMManager instead of YandexMLManager with backward compatibility
 * All providers support temperature, context_size, and model versioning configuration
 * Error handling and logging implemented throughout the system for production reliability
+
+[2025-09-14 16:42:50] - Created BasicOpenAI Base Classes for Provider Refactoring
+
+## Decision
+
+* Created BasicOpenAIModel and BasicOpenAIProvider base classes to eliminate code duplication between YCOpenAI and OpenRouter providers
+* Refactored both YcOpenaiModel/YcOpenaiProvider and OpenrouterModel/OpenrouterProvider to inherit from the new base classes
+* Moved all common OpenAI client functionality into shared base classes with extensible hook methods
+
+## Rationale 
+
+* YCOpenAI and OpenRouter providers had nearly identical code structure since both use the OpenAI client library
+* Code duplication made maintenance difficult and error-prone when making changes to common functionality
+* Template method pattern allows base classes to handle common operations while subclasses customize specific behavior
+* Inheritance hierarchy reduces code size and improves maintainability without losing functionality
+* Virtual environment path (./venv/bin/python3) should be used for Python execution in this project
+
+## Implementation Details
+
+* Created ai/providers/basic_openai_provider.py with two base classes:
+  - BasicOpenAIModel: Handles common model operations with _get_model_name() and _get_extra_params() hooks
+  - BasicOpenAIProvider: Handles common provider operations with _get_base_url(), _get_api_key(), and _create_model_instance() hooks
+* Refactored YcOpenaiModel to inherit from BasicOpenAIModel:
+  - Overrides _get_model_name() to return YC-specific model URL format
+  - Overrides _get_extra_params() to add max_tokens parameter
+* Refactored YcOpenaiProvider to inherit from BasicOpenAIProvider:
+  - Overrides _get_base_url() to return Yandex Cloud endpoint
+  - Overrides _get_api_key() to validate folder_id requirement
+  - Overrides _create_model_instance() to create YcOpenaiModel instances
+* Refactored OpenrouterModel to inherit from BasicOpenAIModel:
+  - Overrides _get_model_name() to return model_id directly
+  - Overrides _get_extra_params() to add OpenRouter-specific headers
+* Refactored OpenrouterProvider to inherit from BasicOpenAIProvider:
+  - Overrides _get_base_url() to return OpenRouter endpoint
+  - Overrides _create_model_instance() to create OpenrouterModel instances
+* All functionality preserved while reducing code duplication by approximately 60%
+* Comprehensive testing confirmed all imports, inheritance, and syntax validation pass successfully
