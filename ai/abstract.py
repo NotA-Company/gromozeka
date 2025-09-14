@@ -34,6 +34,13 @@ class ModelRunResult:
 
     def to_json(self) -> str:
         return json.dumps(self.result)
+    
+    def __str__(self) -> str:
+        return json.dumps({
+            "status": self.status.name,
+            "resultText": self.resultText,
+            "raw": str(self.result),
+        })
 
 class AbstractModel(ABC):
     """Abstract base class for all LLM models, dood!"""
