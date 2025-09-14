@@ -4,8 +4,44 @@ Abstract base class for LLM models, dood!
 from abc import ABC, abstractmethod
 from enum import Enum
 import json
+import logging
 from typing import Dict, List, Any, Optional
 import tiktoken
+
+logger = logging.getLogger(__name__)
+
+class ModelMessage:
+    """Message for model"""
+    def __init__(self, role: str, content: str, contentKey: str = 'content'):
+        self.role = role
+        self.content = content
+        self.contentKey = contentKey
+
+    @classmethod
+    def fromDict(cls, d: Dict[str, Any]) -> 'ModelMessage':
+        content = d.get('content', None)
+        contentKey = 'content'
+        if content is None:
+            content = d.get('text', None)
+            contentKey = 'text'
+        if content is None:
+            raise ValueError('No content found in message')
+        return cls(d['role'], content, contentKey)
+    
+    @classmethod
+    def fromDictList(cls, l: List[Dict[str, Any]]) -> List['ModelMessage']:
+        return [cls.fromDict(d) for d in l]
+    
+    def toDict(self, contentKey: Optional[str] = None) -> Dict[str, Any]:
+        if contentKey is None:
+            contentKey = self.contentKey
+        return {
+            'role': self.role,
+            contentKey: self.content
+        }
+    
+    def __str__(self) -> str:
+        return json.dumps(self.toDict(), ensure_ascii=False)
 
 class ModelResultStatus(Enum):
     """Status of model run"""
@@ -31,16 +67,21 @@ class ModelRunResult:
         self.status = status
         self.resultText = resultText
         self.result = rawResult
+        self.isFallback = False
+
+    def setFallback(self, isFallback: bool):
+        self.isFallback = isFallback
 
     def to_json(self) -> str:
-        return json.dumps(self.result)
+        return json.dumps(self.result, ensure_ascii=False)
     
     def __str__(self) -> str:
         return "ModelRunResult(" + json.dumps({
             "status": self.status.name,
             "resultText": self.resultText,
+            "isFallback": self.isFallback,
             "raw": str(self.result),
-        }) + ")"
+        }, ensure_ascii=False) + ")"
 
 class AbstractModel(ABC):
     """Abstract base class for all LLM models, dood!"""
@@ -72,7 +113,7 @@ class AbstractModel(ABC):
         self.tokensCountCoeff = 1.1
 
     @abstractmethod
-    def run(self, messages: List[Dict[str, str]]) -> ModelRunResult:
+    def run(self, messages: List[ModelMessage]) -> ModelRunResult:
         """Run the model with given messages, dood!
 
         Args:
@@ -83,6 +124,19 @@ class AbstractModel(ABC):
         """
         pass
 
+    def runWithFallBack(self, messages: List[ModelMessage], fallbackModel: "AbstractModel") -> ModelRunResult:
+        """Run the model with given messages, dood!"""
+        try:
+            ret = self.run(messages)
+            if ret.status in [ModelResultStatus.UNSPECIFIED, ModelResultStatus.CONTENT_FILTER, ModelResultStatus.UNKNOWN]:
+                raise Exception(f"Model {self.model_id} returned status {ret.status.name}")
+            return ret
+        except Exception as e:
+            logger.error(f"Error running model {self.model_id}: {e}")
+            ret = fallbackModel.run(messages)
+            ret.setFallback(True)
+            return ret
+
 
     def getEstimateTokensCount(self, data: Any) -> int:
         """Get estimate number of tokens in given data, dood!"""
@@ -90,7 +144,7 @@ class AbstractModel(ABC):
         if isinstance(data, str):
             text = data
         else:
-            text = json.dumps(data)
+            text = json.dumps(data, ensure_ascii=False)
 
         encoder = tiktoken.get_encoding(self.tiktokenEncoding)
         tokensCount = len(encoder.encode(text))

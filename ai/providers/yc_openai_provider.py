@@ -5,7 +5,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
 
-from ..abstract import AbstractModel, AbstractLLMProvider, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel, AbstractLLMProvider, ModelMessage, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class YcOpenaiModel(AbstractModel):
         self._folderId = folderId
         self._modelURL = f"gpt://{folderId}/{modelId}/{modelVersion}"
             
-    def run(self, messages: List[Dict[str, str]]) -> Any:
+    def run(self, messages: List[ModelMessage]) -> Any:
         """Run the YC OpenAI model with given messages, dood!
         
         Args:
@@ -44,8 +44,8 @@ class YcOpenaiModel(AbstractModel):
             # Use OpenAI-compatible API
             response = self._client.chat.completions.create(
                 model=self._modelURL,
-                messages=messages, # type: ignore
-                #max_tokens=2000,
+                messages=[message.toDict('content') for message in messages], # type: ignore
+                max_tokens=2000,
                 temperature=self.temperature,
                 #stream=True,
             )
@@ -85,11 +85,11 @@ class YcOpenaiProvider(AbstractLLMProvider):
                 raise ValueError("folder_id and api_key are required for YC OpenAI provider, dood!")
                 
             # Yandex Cloud OpenAI-compatible endpoint
-            base_url = f"https://llm.api.cloud.yandex.net/v1"
+            baseURL = f"https://llm.api.cloud.yandex.net/v1"
             
             self._client = OpenAI(
                 api_key=apiKey,
-                base_url=base_url
+                base_url=baseURL,
             )
             
             logger.info("YC OpenAI provider initialized, dood!")

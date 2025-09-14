@@ -11,7 +11,7 @@ from telegram import Chat, Update, Message
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
-from ai.abstract import AbstractModel, ModelRunResult
+from ai.abstract import AbstractModel, ModelMessage, ModelRunResult
 from ai.manager import LLMManager
 from database.wrapper import DatabaseWrapper
 from .ensured_message import EnsuredMessage
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_PRIVATE_SYSTEM_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
 DEFAULT_SUMMARISATION_SYSTEM_PROMPT = """Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."""
 DEFAULT_CHAT_SYSTEM_PROMPT = """Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."""
+ROBOT_EMOJI = "🤖"
 
 class BotHandlers:
     """Contains all bot command and message handlers."""
@@ -37,6 +38,7 @@ class BotHandlers:
             "private": modelDefaults.get("private", "yandexgpt-lite"),
             "summary": modelDefaults.get("private", "yandexgpt-lite"),
             "chat": modelDefaults.get("private", "yandexgpt-lite"),
+            "fallback": modelDefaults.get("fallback", "yandexgpt-lite"),
         }
 
     def getSummarySystemPrompt(self, chatId: Optional[int] = None) -> str:
@@ -94,6 +96,15 @@ class BotHandlers:
            # TODO: Try to get it from the database
            pass
 
+        ret = self.llm_manager.getModel(modelName)
+        if ret is None:
+            logger.error(f"Model {modelName} not found")
+            raise ValueError(f"Model {modelName} not found")
+        return ret
+    
+    def getFallbackModel(self) -> AbstractModel:
+        """Get the model for fallback messages."""
+        modelName = self.defaultModels["fallback"]
         ret = self.llm_manager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
@@ -303,7 +314,7 @@ class BotHandlers:
                 mlRet: Optional[ModelRunResult] = None
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
-                    mlRet = llmModel.run(reqMessages)
+                    mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
                     logger.error(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}")
@@ -407,7 +418,7 @@ class BotHandlers:
         llmModel = self.getChatModel(ensuredMessage.chat.id)
         mlRet: Optional[ModelRunResult] = None
         try:
-            mlRet = llmModel.run(messagesHistory)
+            mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
             logger.debug(f"LLM Response: {mlRet}")
         except Exception as e:
             logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
@@ -418,10 +429,13 @@ class BotHandlers:
             )
             return False
         LLMReply = mlRet.resultText
+        prefix = ""
+        if mlRet.isFallback:
+            prefix = f"{ROBOT_EMOJI} "
 
         replyMessage = None
         replyKwargs = {
-            "text": LLMReply,
+            "text": prefix + LLMReply,
             "reply_to_message_id": ensuredMessage.messageId,
             "message_thread_id": ensuredMessage.threadId,
         }
@@ -606,9 +620,11 @@ class BotHandlers:
         reply = ""
         llmModel = self.getPrivateModel(chatId=user.id)
         try:
-            mlRet = llmModel.run(reqMessages)
+            mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
             logger.debug(f"LLM Response: {mlRet}")
             reply = mlRet.resultText
+            if mlRet.isFallback:
+                reply = f"{ROBOT_EMOJI} {reply}"
         except Exception as e:
             logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
             reply = f"Error while running LLM: {type(e).__name__}#{e}"

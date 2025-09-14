@@ -4,7 +4,7 @@ Yandex Cloud SDK provider for LLM models, dood!
 import logging
 from typing import Dict, List, Any
 
-from ..abstract import AbstractModel, AbstractLLMProvider, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel, AbstractLLMProvider, ModelMessage, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class YcSdkModel(AbstractModel):
     def _statusToModelRunResultStatus(self, status: int) -> ModelResultStatus:
         return ModelResultStatus(status)
 
-    def run(self, messages: List[Dict[str, str]]) -> ModelRunResult:
+    def run(self, messages: List[ModelMessage]) -> ModelRunResult:
         """Run the YC SDK model with given messages, dood!
         
         Args:
@@ -60,7 +60,7 @@ class YcSdkModel(AbstractModel):
         try:
             # Convert messages to YC SDK format if needed
             # For now, pass through as-is
-            result = self._yc_model.run(messages)
+            result = self._yc_model.run([message.toDict('text') for message in messages])
             return ModelRunResult(result, self._statusToModelRunResultStatus(result.status), result.alternatives[0].text)
             
         except Exception as e:

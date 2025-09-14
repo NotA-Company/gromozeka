@@ -5,7 +5,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
 
-from ..abstract import AbstractModel, AbstractLLMProvider, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel, AbstractLLMProvider, ModelMessage, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class OpenrouterModel(AbstractModel):
         self._client = openAiClient
         self._modelURL = "TODO" #f"gpt://{folderId}/{modelId}/{modelVersion}"
 
-    def run(self, messages: List[Dict[str, str]]) -> Any:
+    def run(self, messages: List[ModelMessage]) -> Any:
         """Run the OpenRouter model with given messages, dood!
         
         Args:
@@ -47,7 +47,7 @@ class OpenrouterModel(AbstractModel):
                 #    "X-Title": "<YOUR_SITE_NAME>",  # Optional. Site title for rankings on openrouter.ai.
                 #},
                 model=self.model_id,
-                messages=messages, # type: ignore
+                messages=[message.toDict('content') for message in messages], # type: ignore
                 temperature=self.temperature,
                 # max_tokens=min(4096, self.context_size)  # Reasonable default
             )
