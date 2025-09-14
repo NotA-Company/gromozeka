@@ -24,6 +24,7 @@ DEFAULT_SUMMARISATION_SYSTEM_PROMPT = "Суммаризируй пользова
 DEFAULT_PRIVATE_SYSTEM_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
 DEFAULT_CHAT_SYSTEM_PROMPT =  "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
 ROBOT_EMOJI = "🤖"
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
 class ChatSettingsEnum(StrEnum):
     """Enum for chat settings."""
@@ -802,6 +803,7 @@ class BotHandlers:
         resMessages = []
         startPos: int = 0
         batchN = 0
+        # Summarise each chunk of messages
         while startPos < len(parsedMessages):
             currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
             batchSummarized = False
@@ -838,6 +840,18 @@ class BotHandlers:
             batchN += 1
             if maxBatches and batchN >= maxBatches:
                 break
+        
+        # If any message is too long, just split it into multiple messages
+        tmpResMessages = []
+        for msg in resMessages:
+            while len(msg) > TELEGRAM_MAX_MESSAGE_LENGTH:
+                head = msg[:TELEGRAM_MAX_MESSAGE_LENGTH]
+                msg = msg[TELEGRAM_MAX_MESSAGE_LENGTH:]
+                tmpResMessages.append(head)
+            if msg:
+                tmpResMessages.append(msg)
+
+        resMessages = tmpResMessages
 
         for msg in resMessages:
             replyKwargs = {
@@ -1093,4 +1107,4 @@ class BotHandlers:
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
-        logger.error(f"Exception while handling an update: {context.error}")
+        logger.error(f"Exception while handling an update: {type(context.error).__name__}#{context.error}")
