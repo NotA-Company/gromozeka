@@ -30,11 +30,13 @@ class YcOpenaiModel(BasicOpenAIModel):
         """Initialize YC OpenAI model, dood!"""
         super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient)
         self._folderId = folderId
-        self._modelURL = f"gpt://{folderId}/{modelId}/{modelVersion}"
             
     def _getModelId(self) -> str:
         """Get the YC-specific model URL, dood!"""
-        return self._modelURL
+        if not self._folderId:
+            raise ValueError("folder_id is required for YC OpenAI provider, dood!")
+            
+        return f"gpt://{self._folderId}/{self.modelId}/{self.modelVersion}"
         
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get YC-specific extra parameters, dood!"""
@@ -55,15 +57,6 @@ class YcOpenaiProvider(BasicOpenAIProvider):
     def _getBaseUrl(self) -> str:
         """Get the Yandex Cloud OpenAI-compatible base URL, dood!"""
         return "https://llm.api.cloud.yandex.net/v1"
-        
-    def _getApiKey(self) -> str:
-        """Get the API key and validate folder_id, dood!"""
-        apiKey = self.config.get("api_key")
-        
-        if not self._folderId or not apiKey:
-            raise ValueError("folder_id and api_key are required for YC OpenAI provider, dood!")
-            
-        return apiKey
         
     def _createModelInstance(
         self,
