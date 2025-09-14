@@ -355,7 +355,7 @@ class DatabaseWrapper:
             self._local.connection.close()
 
     def updateChatUser(self, chatId: int, userId: int, username: str) -> bool:
-        """Update the username of a user in a chat."""
+        """Store user as chat member + update username and updated_at."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
