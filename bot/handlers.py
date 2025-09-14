@@ -417,7 +417,7 @@ class BotHandlers:
         # Check if message is a reply to our message
         if await self.handleGroupReply(update, context, ensuredMessage):
             return
-        
+
         # Check if we was custom-mentioned
         if await self.handleGroupCustomMention(update, context, ensuredMessage):
             return
@@ -595,10 +595,10 @@ class BotHandlers:
                 messageText = messageText[len(mention):].lstrip("\t\n\r ,.:")
                 found = True
                 break
-            
+
         if not found:
             return False
-        
+
         # TODO: Add custom actions
 
         reqMessages = [
@@ -615,7 +615,7 @@ class BotHandlers:
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
             logger.error("Failed to send LLM reply")
             return False
-        
+
         return True
     ###
     # COMMANDS Handlers
@@ -736,11 +736,19 @@ class BotHandlers:
 
         if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
             localChatId = None
-            if context.args and len(context.args) >= 2:
-                try:
-                    localChatId = int(context.args[1])
-                except ValueError:
-                    logger.error(f"Invalid argument: '{context.args[1]}' is not a valid number.")
+            userName = ensuredMessage.user.username
+            if userName and userName in self.botOwners:
+                if context.args and len(context.args) >= 2:
+                    try:
+                        localChatId = int(context.args[1])
+                    except ValueError:
+                        logger.error(f"Invalid argument: '{context.args[1]}' is not a valid number.")
+                else:
+                    await message.reply_text(
+                        "Need to provide <bulk_limit> and <chatId> for summarization in private messages",
+                        reply_to_message_id=message.message_id,
+                    )
+                    return
 
             if localChatId is None:
                 await message.reply_text(
@@ -840,7 +848,7 @@ class BotHandlers:
             batchN += 1
             if maxBatches and batchN >= maxBatches:
                 break
-        
+
         # If any message is too long, just split it into multiple messages
         tmpResMessages = []
         for msg in resMessages:
