@@ -11,7 +11,7 @@ from telegram import Chat, Update, Message
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
-from ai.abstract import AbstractModel
+from ai.abstract import AbstractModel, ModelRunResult
 from ai.manager import LLMManager
 from database.wrapper import DatabaseWrapper
 from .ensured_message import EnsuredMessage
@@ -300,7 +300,7 @@ class BotHandlers:
                     continue
                 batchSummarized = True
 
-                mlRet: Any = None
+                mlRet: Optional[ModelRunResult] = None
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
                     mlRet = llmModel.run(reqMessages)
@@ -310,7 +310,7 @@ class BotHandlers:
                     resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}")
                     break
 
-                resMessages.append(mlRet.alternatives[0].text)
+                resMessages.append(mlRet.resultText)
 
             startPos += currentBatchLen
             batchN += 1
@@ -405,7 +405,7 @@ class BotHandlers:
         """Send a chat message to the LLM model."""
         logger.debug(f"LLM Request messages: {messagesHistory}")
         llmModel = self.getChatModel(ensuredMessage.chat.id)
-        mlRet: Any = None
+        mlRet: Optional[ModelRunResult] = None
         try:
             mlRet = llmModel.run(messagesHistory)
             logger.debug(f"LLM Response: {mlRet}")
@@ -417,7 +417,7 @@ class BotHandlers:
                 message_thread_id=ensuredMessage.threadId,
             )
             return False
-        LLMReply = mlRet.alternatives[0].text
+        LLMReply = mlRet.resultText
 
         replyMessage = None
         replyKwargs = {
@@ -608,7 +608,7 @@ class BotHandlers:
         try:
             mlRet = llmModel.run(reqMessages)
             logger.debug(f"LLM Response: {mlRet}")
-            reply = mlRet.alternatives[0].text
+            reply = mlRet.resultText
         except Exception as e:
             logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
             reply = f"Error while running LLM: {type(e).__name__}#{e}"
