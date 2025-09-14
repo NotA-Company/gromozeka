@@ -2,6 +2,11 @@
 # Your Telegram bot token from @BotFather
 token = "YOUR_BOT_TOKEN_HERE"
 
+[bot.models]
+summary="yandexgpt"
+private="yandexgpt-lite"
+chat="yandexgpt-lite"
+
 [database]
 # Database configuration
 path = "bot_data.db"
@@ -16,11 +21,86 @@ format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 # Optional: log to file (uncomment to enable)
 # file = "logs/gromozeka.log"
 
+# DEPRECATED
 [yc-ml]
 # Yandex Cloud ML configuration
 folder_id = "YOUR_FOLDER_ID_HERE"
 model_id = "yandexgpt-5-lite"
+model_version="rc"
 temperature = 0.5
 # Optional: specify yc profile (uncomment if needed)
 # yc_profile = "your-profile-name"
 
+[models]
+[models.providers]
+
+[models.providers.yc-sdk]
+folder_id = "FOLDER_ID"
+# Optional: specify yc profile (uncomment if needed)
+#yc_profile = "profile-id"
+
+[models.providers.yc-openai]
+# https://yandex.cloud/ru/docs/foundation-models/operations/get-api-key
+folder_id = "FOLDER_ID"
+api_key = "API_KEY"
+
+[models.providers.openrouter]
+api_key = "API_KEY"
+
+# Possible YC Models: https://yandex.cloud/ru/docs/foundation-models/concepts/generation/models
+[[models.models]]
+name = "yandexgpt"
+provider = "yc-sdk"
+model_id = "yandexgpt-5.1"
+model_version = "rc"
+temperature = 0.5
+context = 32768
+
+[[models.models]]
+name = "yandexgpt-lite"
+provider = "yc-sdk"
+model_id = "yandexgpt-5-lite"
+model_version="rc"
+temperature = 0.5
+context = 32768
+
+[[models.models]]
+name = "yc-gpt-oss-120b"
+provider = "yc-openai"
+model_id = "gpt-oss-120b"
+model_version="latest"
+temperature = 0.5
+context = 128000
+
+[[models.models]]
+name = "yc-llama"
+provider = "yc-openai"
+model_id = "llama"
+model_version="rc"
+temperature = 0.5
+context = 8192
+
+[[models.models]]
+name = "yc-qwen3-235b-a22b-fp8"
+provider = "yc-openai"
+model_id = "qwen3-235b-a22b-fp8"
+model_version="latest"
+temperature = 0.5
+context = 256000
+
+[[models.models]]
+name = "yc-gemma-3-27b-it"
+provider = "yc-openai"
+model_id = "gemma-3-27b-it"
+model_version="latest"
+temperature = 0.5
+context = 128000
+
+# https://openrouter.ai/models
+[[models.models]]
+name = "openrouter-claude-sonnet-4"
+provider = "openrouter"
+model_id = "anthropic/claude-sonnet-4"
+model_version = "latest"
+temparature = 0.3
+context = 256000
