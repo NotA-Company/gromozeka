@@ -39,6 +39,7 @@ class BotHandlers:
             "summary": modelDefaults.get("private", "yandexgpt-lite"),
             "chat": modelDefaults.get("private", "yandexgpt-lite"),
             "fallback": modelDefaults.get("fallback", "yandexgpt-lite"),
+            "summary-fallback": modelDefaults.get("summary-fallback", "yandexgpt-lite"),
         }
         promptsDefaults = self.config.get("prompts", {})
         self.defaultPrompts = {
@@ -111,6 +112,15 @@ class BotHandlers:
     def getFallbackModel(self) -> AbstractModel:
         """Get the model for fallback messages."""
         modelName = self.defaultModels["fallback"]
+        ret = self.llm_manager.getModel(modelName)
+        if ret is None:
+            logger.error(f"Model {modelName} not found")
+            raise ValueError(f"Model {modelName} not found")
+        return ret
+    
+    def getFallbackSummaryModel(self) -> AbstractModel:
+        """Get the model for fallback messages."""
+        modelName = self.defaultModels["summary-fallback"]
         ret = self.llm_manager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
@@ -320,7 +330,7 @@ class BotHandlers:
                 mlRet: Optional[ModelRunResult] = None
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
-                    mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
+                    mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackSummaryModel())
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
                     logger.error(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}")
