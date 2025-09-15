@@ -763,18 +763,26 @@ class BotHandlers:
             await update.message.reply_text("Please provide a message to echo!\nUsage: /echo <your message>")
 
     async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /summary command."""
+        """Handle the /summary [<messages> <chunks> <chat_id>]command."""
         message = update.message
         if not message:
             logger.error("Message undefined")
             return
 
         maxBatches: Optional[int] = None
+        maxMessages: Optional[int] = None
         if context.args:
             try:
-                maxBatches = int(context.args[0])
+                maxMessages = int(context.args[0])
+                if maxMessages < 1:
+                    maxMessages = None
+
+                if len(context.args) > 1:
+                    maxBatches = int(context.args[1])
+                    if maxBatches < 1:
+                        maxBatches = None
             except ValueError:
-                logger.error(f"Invalid argument: '{context.args[0]}' is not a valid number.")
+                logger.error(f"Invalid argument: '{context.args[0:2]}' is not a valid number.")
 
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
@@ -793,11 +801,11 @@ class BotHandlers:
             userName = ensuredMessage.user.username
             logger.debug(f"User {userName} called summarisation in private chat. Bot owners are {self.botOwners}")
             if userName and userName.lower() in self.botOwners:
-                if context.args and len(context.args) >= 2:
+                if context.args and len(context.args) >= 3:
                     try:
-                        localChatId = int(context.args[1])
+                        localChatId = int(context.args[2])
                     except ValueError:
-                        logger.error(f"Invalid argument: '{context.args[1]}' is not a valid number.")
+                        logger.error(f"Invalid argument: '{context.args[2]}' is not a valid number.")
                 else:
                     await message.reply_text(
                         "Need to provide <bulk_limit> and <chatId> for summarization in private messages",
@@ -815,6 +823,7 @@ class BotHandlers:
                 chatId = localChatId
                 threadId = None
 
+        logger.debug(f"Getting summary for chat {chatId}, thread {threadId}, maxBatches {maxBatches}, maxMessages {maxMessages}")
         today = datetime.datetime.now(datetime.timezone.utc)
         today = today.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -822,6 +831,7 @@ class BotHandlers:
             chatId=chatId,
             sinceDateTime=datetime.datetime.combine(today, datetime.time.min),
             threadId=threadId,
+            limit=maxMessages,
         )
 
         logger.debug(f"Messages: {messages}")
@@ -832,7 +842,7 @@ class BotHandlers:
         }
         parsedMessages = []
 
-        for msg in messages:
+        for msg in reversed(messages):
             parsedMessages.append(
                 {
                     "role": "user",

@@ -300,20 +300,23 @@ class DatabaseWrapper:
             logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
             return False
 
-    def getChatMessageSince(self, chatId: int, sinceDateTime, threadId: Optional[int] = None) -> List[Dict[str, Any]]:
+    def getChatMessageSince(self, chatId: int, sinceDateTime, threadId: Optional[int] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get chat messages from a specific chat newer than the given date."""
         logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:
             with self.getCursor() as cursor:
-                cursor.execute("""
+                query = """
                     SELECT c.*, u.username, u.full_name  FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
                     WHERE
                         c.chat_id = ?
                         AND c.date > ?
                         AND ((? IS NULL) OR (c.thread_id = ?))
-                    ORDER BY c.date ASC
-                """, (chatId, sinceDateTime, threadId, threadId))
+                    ORDER BY c.date DESC
+                """
+                if limit is not None:
+                    query += f" LIMIT {limit}"
+                cursor.execute(query, (chatId, sinceDateTime, threadId, threadId))
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId}): {e}")
