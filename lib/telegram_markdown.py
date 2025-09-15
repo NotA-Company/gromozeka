@@ -94,14 +94,18 @@ def convertMarkdownToV2(markdown_text: str) -> str:
     # Use a placeholder to avoid conflicts with italic processing
     def replace_bold(match):
         bold_text = match.group(1)
-        return f'BOLD_PLACEHOLDER_START{bold_text}BOLD_PLACEHOLDER_END'
+        # Escape special characters inside bold text
+        escaped_bold_text = escapeMarkdownV2(bold_text, 'general')
+        return f'BOLD_PLACEHOLDER_START{escaped_bold_text}BOLD_PLACEHOLDER_END'
     
     text = re.sub(r'\*\*([^*]+?)\*\*', replace_bold, text)
     
     # Handle italic *text* -> _text_ (now safe from bold conflicts)
     def replace_italic(match):
         italic_text = match.group(1)
-        return f'_{italic_text}_'
+        # Escape special characters inside italic text
+        escaped_italic_text = escapeMarkdownV2(italic_text, 'general')
+        return f'_{escaped_italic_text}_'
     
     text = re.sub(r'\*([^*]+?)\*', replace_italic, text)
     
@@ -111,8 +115,9 @@ def convertMarkdownToV2(markdown_text: str) -> str:
     # Handle strikethrough ~~text~~ -> ~text~
     def replace_strikethrough(match):
         strike_text = match.group(1)
-        # Don't escape text inside markup - it's already being marked up
-        return f'~{strike_text}~'
+        # Escape special characters inside strikethrough text
+        escaped_strike_text = escapeMarkdownV2(strike_text, 'general')
+        return f'~{escaped_strike_text}~'
     
     text = re.sub(r'~~([^~]+?)~~', replace_strikethrough, text)
     
@@ -128,7 +133,8 @@ def convertMarkdownToV2(markdown_text: str) -> str:
     # We need to be careful not to escape characters that are part of our markup
     
     # Split text by markup patterns to identify plain text sections
-    markup_pattern = r'(\*[^*]*\*|_[^_]*_|__[^_]*__|~[^~]*~|\|\|[^|]*\|\||`[^`]*`|```[^`]*```|\[[^\]]*\]\([^)]*\)|^>[^\n]*)'
+    # Updated pattern to include block quotes properly and handle code blocks
+    markup_pattern = r'(\*[^*]*\*|_[^_]*_|__[^_]*__|~[^~]*~|\|\|[^|]*\|\||`[^`]*`|```[\s\S]*?```|\[[^\]]*\]\([^)]*\)|^>[^\n]*$)'
     parts = re.split(markup_pattern, text, flags=re.MULTILINE)
     
     result_parts = []
@@ -173,8 +179,8 @@ def validateMarkdownV2(text: str) -> Tuple[bool, List[str]]:
     # Check for properly escaped characters in different contexts
     # Look for unescaped special characters that should be escaped
     
-    # Simple check for unescaped characters in general text
-    # (This is a basic implementation - full validation would be more complex)
+    # Check for unescaped special characters outside markup contexts
+    # Characters that must be escaped: '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'
     general_special_chars = r'[_*\[\]()~`>#+=|{}.!-]'
     
     # Find positions of markup elements to exclude them from general escaping checks
@@ -183,11 +189,19 @@ def validateMarkdownV2(text: str) -> Tuple[bool, List[str]]:
         for match in re.finditer(pattern, text):
             markup_positions.append((match.start(), match.end()))
     
+    # Also find code blocks and inline code positions more precisely
+    code_block_pattern = r'```[\s\S]*?```'
+    for match in re.finditer(code_block_pattern, text):
+        markup_positions.append((match.start(), match.end()))
+    
+    inline_code_pattern = r'`[^`]*`'
+    for match in re.finditer(inline_code_pattern, text):
+        markup_positions.append((match.start(), match.end()))
+    
     # Sort positions for easier processing
     markup_positions.sort()
     
     # Check for unescaped characters outside markup
-    pos = 0
     for match in re.finditer(general_special_chars, text):
         char_pos = match.start()
         char = match.group()
@@ -207,6 +221,9 @@ def validateMarkdownV2(text: str) -> Tuple[bool, List[str]]:
             # Check if character is properly escaped
             if char_pos == 0 or text[char_pos - 1] != '\\':
                 errors.append(f"Unescaped special character '{char}' at position {char_pos}")
+            # Also check if the backslash itself is escaped (double backslash case)
+            elif char_pos >= 2 and text[char_pos - 2] == '\\':
+                errors.append(f"Unescaped special character '{char}' at position {char_pos} (backslash is escaped)")
     
     # Check for unbalanced markup
     stack = []

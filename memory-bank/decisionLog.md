@@ -347,3 +347,52 @@ This file records architectural and implementation decisions using a list format
   - Returns detailed error messages for debugging
 * All functions thoroughly tested with 27 test cases covering edge cases and complex scenarios
 * Functions integrate seamlessly with existing bot architecture and can be imported as needed
+
+[2025-09-15 22:34:30] - Fixed Telegram MarkdownV2 Escaping and Validation Issues
+
+## Decision
+
+* Fixed critical escaping issues in lib/telegram_markdown.py functions
+* Improved convertMarkdownToV2() function to properly escape all special characters in plain text
+* Enhanced validateMarkdownV2() function to accurately detect unescaped characters
+* Fixed test file import issues for proper testing
+
+## Rationale 
+
+* The original functions were not properly escaping parentheses and other special characters in plain text sections
+* Telegram's MarkdownV2 format requires escaping of '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!' characters in general text
+* The validation function was too lenient and not catching unescaped characters properly
+* Proper escaping prevents Telegram API errors when sending formatted messages
+
+## Implementation Details
+
+* Updated markup pattern regex in convertMarkdownToV2() to better identify code blocks: `r'(\*[^*]*\*|_[^_]*_|__[^_]*__|~[^~]*~|\|\|[^|]*\|\||`[^`]*`|```[\s\S]*?```|\[[^\]]*\]\([^)]*\)|^>[^\n]*$)'`
+* Enhanced validateMarkdownV2() function with more precise code block detection and improved unescaped character detection logic
+* Added proper handling for escaped backslashes in validation (double backslash case)
+* Fixed test file import path from `telegram_markdown` to `lib.telegram_markdown` with proper sys.path setup
+* All parentheses, periods, hashes, dashes and other special characters now properly escaped with backslashes
+* Validation now correctly returns True for properly escaped text and False with detailed error messages for unescaped characters
+
+[2025-09-15 22:40:10] - Fixed Parentheses Escaping Inside Markup Blocks
+
+## Decision
+
+* Fixed critical issue where parentheses and other special characters inside markup blocks (bold, italic, strikethrough) were not being escaped
+* Updated convertMarkdownToV2() function to properly escape special characters within markup content
+* All special characters now properly escaped according to Telegram MarkdownV2 specification
+
+## Rationale 
+
+* Telegram's MarkdownV2 format requires ALL special characters to be escaped, even inside markup blocks like *bold* and _italic_
+* The previous implementation was only escaping characters in plain text sections, leaving markup content unescaped
+* This caused Telegram API errors when sending messages with parentheses or other special characters inside formatted text
+* Proper escaping ensures all MarkdownV2 messages are valid and render correctly in Telegram
+
+## Implementation Details
+
+* Modified replace_bold() function to escape content: `escaped_bold_text = escapeMarkdownV2(bold_text, 'general')`
+* Modified replace_italic() function to escape content: `escaped_italic_text = escapeMarkdownV2(italic_text, 'general')`
+* Modified replace_strikethrough() function to escape content: `escaped_strike_text = escapeMarkdownV2(strike_text, 'general')`
+* Now parentheses inside markup are properly escaped: `*Bold \(text in parentheses\)*`
+* All other special characters (periods, colons, dashes, etc.) inside markup are also properly escaped
+* Test validation now correctly returns True for all properly escaped content
