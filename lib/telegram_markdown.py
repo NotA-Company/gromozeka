@@ -3,10 +3,12 @@ Telegram MarkdownV2 conversion and validation utilities.
 
 This module provides functions to convert standard Markdown to Telegram's MarkdownV2 format
 and validate MarkdownV2 text according to Telegram's specifications.
+
+For Telegram MarkdownV2 format, see https://core.telegram.org/bots/api#formatting-options
 """
 
 import re
-from typing import Optional, List, Tuple
+from typing import List, Tuple
 
 
 # Characters that must be escaped in different contexts
