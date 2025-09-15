@@ -16,7 +16,7 @@ from telegram.ext import ContextTypes
 from ai.abstract import AbstractModel, ModelMessage, ModelRunResult
 from ai.manager import LLMManager
 from database.wrapper import DatabaseWrapper
-from .ensured_message import EnsuredMessage
+from .ensured_message import EnsuredMessage, LLMMessageFormat
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ class ChatSettingsEnum(StrEnum):
     CHAT_SYSTEM_PROMPT = "chat_system_prompt"
     ALLOW_ADMIN_CHANGE_SETTINGS = "allow_admin_change_settings"
     CUSTOM_MENTIONS = "custom_mentions"
+    LLM_MESSAGE_FORMAT = "llm_message_format"
 
     def __str__(self):
         return str(self.value)
@@ -47,6 +48,7 @@ class BotHandlers:
         self.db = database
         self.llmManager = llmManager
 
+        # Init different defaults
         modelDefaults: Dict[str, str] = self.config.get("models", {})
         self.defaultModels: Dict[str, str] = {
             "private": modelDefaults.get("private", "yandexgpt-lite"),
@@ -67,6 +69,7 @@ class BotHandlers:
         }
         self.defaultAdminCanChangeSettings = bool(self.config.get("allow_admin_change_channel_settings", False))
         self.defaultCustomMentions = [str(v).lower() for v in self.config.get("custom_mentions", [])]
+        self.defaultLLMMessageFormat = self.config.get("llm_message_format", "json")
 
     ###
     # Helpers for getting needed Models or Prompts
@@ -164,6 +167,7 @@ class BotHandlers:
             ChatSettingsEnum.CHAT_SYSTEM_PROMPT: self.defaultPrompts["chat"],
             ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS: str(self.defaultAdminCanChangeSettings),
             ChatSettingsEnum.CUSTOM_MENTIONS: ", ".join(self.defaultCustomMentions),
+            ChatSettingsEnum.LLM_MESSAGE_FORMAT: self.defaultLLMMessageFormat,
         }
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
@@ -225,7 +229,12 @@ class BotHandlers:
             if parentMsg:
                 rootMessageId = parentMsg["root_message_id"]
 
-        self.db.updateChatUser(chatId=chat.id, userId=user.id, username=user.username or user.first_name)
+        self.db.updateChatUser(
+            chatId=chat.id,
+            userId=user.id,
+            username=user.name,
+            fullName=user.full_name,
+        )
         self.db.saveChatMessage(
             date=message.date,
             chatId=chat.id,
@@ -259,6 +268,13 @@ class BotHandlers:
             )
             return False
         LLMReply = mlRet.resultText
+        # If response is json, parse it
+        try:
+            jsonReply = json.loads(LLMReply.strip('`'))
+            LLMReply = jsonReply["text"].strip()
+        except Exception as e:
+            logger.debug(f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}")
+            
         prefix = ""
         if mlRet.isFallback:
             prefix = f"{ROBOT_EMOJI} "
@@ -403,7 +419,7 @@ class BotHandlers:
             return
 
         user = ensuredMessage.user
-        #chat = ensuredMessage.chat
+        # chat = ensuredMessage.chat
 
         if ensuredMessage.messageType != 'text':
             logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
@@ -446,10 +462,13 @@ class BotHandlers:
         if not isReplyToMyMessage:
             return False
 
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT])
+
         parentId = ensuredMessage.replyId
         chat = ensuredMessage.chat
 
-        storedMessages: List[Dict[str, Any]] = []
+        storedMessages: List[Dict[str, str]] = []
 
         storedMsg = self.db.getChatMessageByMessageId(
             chatId=chat.id,
@@ -458,45 +477,42 @@ class BotHandlers:
         )
         if storedMsg is None:
             logger.error("Failed to get parent message")
+            if not message.reply_to_message:
+                logger.error("message.reply_to_message is None, but should be Message()")
+                return False
+            ensuredReply = EnsuredMessage(message.reply_to_message)
             storedMessages.append({
-                "message_category": "bot",
-                "message_text": ensuredMessage.replyText or ""
+                "role": "assistant",
+                "text": ensuredReply.formatForLLM(format=llmMessageFormat)
             })
             storedMessages.append({
-                "message_category": "user",
-                "message_text": ensuredMessage.messageText
+                "role": "user",
+                "text": ensuredMessage.formatForLLM(format=llmMessageFormat)
             })
         else:
             if storedMsg["message_category"] != "bot":
                 return False
 
-            storedMessages: List[Dict[str, Any]] = self.db.getChatMessagesByRootId(
+            _storedMessages: List[Dict[str, Any]] = self.db.getChatMessagesByRootId(
                 chatId=chat.id,
                 rootMessageId=storedMsg["root_message_id"],
                 threadId=ensuredMessage.threadId,
             )
+            storedMessages = [
+                {
+                    "role": "user" if storedMsg["message_category"] == "user" else "assistant",
+                    "text": EnsuredMessage.formatDBChatMessageToLLM(storedMsg, format=llmMessageFormat),
+                }
+                for storedMsg in _storedMessages
+            ]
 
         reqMessages = [
             {
                 "role": "system",
                 "text": self.getChatSystemPrompt(chat.id),
             },
-        ]
-        for storedMsg in storedMessages:
-            reqMessages.append(
-                {
-                    "role": (
-                        "user"
-                        if storedMsg["message_category"] == "user"
-                        else "assistant"
-                    ),
-                    "text": storedMsg["message_text"],
-                }
-            )
-
-        if message.quote and message.quote.text:
-            reqMessages[-1]["text"] = f"<quote>{message.quote.text}</quote>\n\n{reqMessages[-1]["text"]}"
-
+        ] + storedMessages
+        
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
             logger.error("Failed to send LLM reply")
 
@@ -509,6 +525,8 @@ class BotHandlers:
         # TODO: Should I handle whole thread if any?
 
         # logger.debug(f"Bot is: {context.bot.bot} {context.bot.username}")
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT])
         myUsername = context.bot.username.lower()
         mentionedMe = False
         message = ensuredMessage.getBaseMessage()
@@ -542,28 +560,22 @@ class BotHandlers:
         ):
             isReplyToMyMessage = True
 
-        if ensuredMessage.replyText:
+        if ensuredMessage.replyText and message.reply_to_message:
+            ensuredReply = EnsuredMessage(message.reply_to_message)
+
             reqMessages.append(
                 {
                     "role": "assistant" if isReplyToMyMessage else "user",
-                    "text": ensuredMessage.replyText,
+                    "text": ensuredReply.formatForLLM(format=llmMessageFormat),
                 }
             )
 
-        if message.quote and message.quote.text:
-            reqMessages.append(
-                {
-                    "role": "user",
-                    "text": f"<quote>{message.quote.text}</quote>\n\n{messageText}",
-                }
-            )
-        else:
-            reqMessages.append(
-                {
-                    "role": "user",
-                    "text": messageText,
-                }
-            )
+        reqMessages.append(
+            {
+                "role": "user",
+                "text": ensuredMessage.formatForLLM(format=llmMessageFormat),
+            }
+        )
 
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
             logger.error("Failed to send LLM reply")
@@ -577,6 +589,7 @@ class BotHandlers:
         """
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT])
         customMentions = [v.strip().lower() for v in chatSettings[ChatSettingsEnum.CUSTOM_MENTIONS].split(",")]
         customMentions = [v for v in customMentions if v]
         if not customMentions:
@@ -616,7 +629,7 @@ class BotHandlers:
             },
             {
                 "role": "user",
-                "text": messageText,
+                "text": ensuredMessage.formatForLLM(format=llmMessageFormat, replaceMessageText=messageText),
             }
         ]
 
