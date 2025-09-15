@@ -829,7 +829,7 @@ class BotHandlers:
 
         messages = self.db.getChatMessageSince(
             chatId=chatId,
-            sinceDateTime=datetime.datetime.combine(today, datetime.time.min),
+            sinceDateTime=today if maxMessages is None else None,
             threadId=threadId,
             limit=maxMessages,
         )
