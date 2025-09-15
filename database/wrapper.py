@@ -105,6 +105,7 @@ class DatabaseWrapper:
                     message_text TEXT NOT NULL,
                     message_type TEXT DEFAULT 'text' NOT NULL,
                     message_category TEXT DEFAULT 'user' NOT NULL,
+                    quote_text TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -125,6 +126,7 @@ class DatabaseWrapper:
                     chat_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
                     username TEXT NOT NULL,
+                    full_name TEXT NOT NULL,
                     messages_count INTEGER DEFAULT 0 NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -245,30 +247,30 @@ class DatabaseWrapper:
             logger.error(f"Failed to get messages for user {userId}: {e}")
             return []
 
-    def saveChatMessage(self, date, chatId: int, userId: int, userName: str, messageId: int,
+    def saveChatMessage(self, date: datetime.datetime, chatId: int, userId: int, userName: str, messageId: int,
                          replyId: Optional[int] = None, threadId: Optional[int] = None,
-                         messageText: str = '', messageType: str = 'text', messageCategory: str = 'user', rootMessageId: Optional[int] = None) -> bool:
+                         messageText: str = '', messageType: str = 'text', messageCategory: str = 'user',
+                        rootMessageId: Optional[int] = None, quoteText: Optional[str] = None) -> bool:
         """Save a chat message with detailed information."""
         try:
             with self.get_cursor() as cursor:
-                today = datetime.datetime.now(datetime.timezone.utc)
-                today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+                today = date.replace(hour=0, minute=0, second=0, microsecond=0)
                 cursor.execute("""
                     INSERT INTO chat_messages
                     (date, chat_id, user_id, user_name, message_id,
                         reply_id, thread_id, message_text, message_type,
-                        message_category, root_message_id)
+                        message_category, root_message_id, quote_text)
                     VALUES
                     (?, ?, ?, ?, ?,
                         ?, ?, ?, ?,
-                        ?, ?)
+                        ?, ?, ?)
                 """, (date, chatId, userId, userName, messageId,
                       replyId, threadId, messageText, messageType,
-                      messageCategory, rootMessageId))
+                      messageCategory, rootMessageId, quoteText))
                 cursor.execute("""
                     UPDATE chat_users
                     SET messages_count = messages_count + 1,
-                               updated_at = CURRENT_TIMESTAMP
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE chat_id = ? AND user_id = ?
                 """, (chatId, userId))
 
@@ -354,19 +356,19 @@ class DatabaseWrapper:
         if hasattr(self._local, 'connection'):
             self._local.connection.close()
 
-    def updateChatUser(self, chatId: int, userId: int, username: str) -> bool:
+    def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> bool:
         """Store user as chat member + update username and updated_at."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
                     INSERT INTO chat_users
-                        (username, chat_id, user_id, updated_at)
+                        (username, chat_id, user_id, updated_at, full_name)
                     VALUES
-                        (?, ?, ?, CURRENT_TIMESTAMP)
+                        (?, ?, ?, CURRENT_TIMESTAMP, ?)
                     ON CONFLICT(chat_id, user_id) DO UPDATE SET
                         username = excluded.username,
                         updated_at = CURRENT_TIMESTAMP
-                """, (username, chatId, userId))
+                """, (username, chatId, userId, fullName))
                 return True
         except Exception as e:
             logger.error(f"Failed to update username for user {userId} in chat {chatId}: {e}")
@@ -398,6 +400,7 @@ class DatabaseWrapper:
                     WHERE
                         chat_id = ?
                         AND (? IS NULL OR seen_since < ?)
+                    ORDER BY seen_since DESC
                     LIMIT ?
                 """, (chatId, seenSince,seenSince, limit))
                 return [dict(row) for row in cursor.fetchall()]
