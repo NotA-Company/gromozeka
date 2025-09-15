@@ -247,6 +247,7 @@ class BotHandlers:
             messageType='text', # In future we'll support not only text messages, but photos, stickers and something else. Or not
             messageCategory=messageCategory,
             rootMessageId=rootMessageId,
+            quoteText=message.quoteText,
         )
 
         return True
