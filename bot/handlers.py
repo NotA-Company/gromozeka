@@ -239,7 +239,6 @@ class BotHandlers:
             date=message.date,
             chatId=chat.id,
             userId=user.id,
-            userName=user.username or user.first_name,
             messageId=message.messageId,
             replyId=replyId,
             threadId=message.threadId,
@@ -806,9 +805,9 @@ class BotHandlers:
                     "role": "user",
                     "text": json.dumps(
                         {
-                            # date, chat_id, user_id, user_name, message_id, reply_id, thread_id, message_text, message_type
+                            # date, chat_id, user_id, username, full_name, message_id, reply_id, thread_id, message_text, message_type
                             "date": msg["date"],
-                            "sender": msg["user_name"],
+                            "sender": msg["username"],
                             "message_id": msg["message_id"],
                             "reply_id": msg["reply_id"],
                             "text": msg["message_text"],

@@ -97,7 +97,6 @@ class DatabaseWrapper:
                     date TIMESTAMP NOT NULL,
                     chat_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
-                    user_name TEXT NOT NULL,
                     message_id INTEGER NOT NULL,
                     reply_id INTEGER,
                     thread_id INTEGER,
@@ -247,7 +246,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to get messages for user {userId}: {e}")
             return []
 
-    def saveChatMessage(self, date: datetime.datetime, chatId: int, userId: int, userName: str, messageId: int,
+    def saveChatMessage(self, date: datetime.datetime, chatId: int, userId: int, messageId: int,
                          replyId: Optional[int] = None, threadId: Optional[int] = None,
                          messageText: str = '', messageType: str = 'text', messageCategory: str = 'user',
                         rootMessageId: Optional[int] = None, quoteText: Optional[str] = None) -> bool:
@@ -257,14 +256,14 @@ class DatabaseWrapper:
                 today = date.replace(hour=0, minute=0, second=0, microsecond=0)
                 cursor.execute("""
                     INSERT INTO chat_messages
-                    (date, chat_id, user_id, user_name, message_id,
+                    (date, chat_id, user_id, message_id,
                         reply_id, thread_id, message_text, message_type,
                         message_category, root_message_id, quote_text)
                     VALUES
-                    (?, ?, ?, ?, ?,
+                    (?, ?, ?, ?,
                         ?, ?, ?, ?,
                         ?, ?, ?)
-                """, (date, chatId, userId, userName, messageId,
+                """, (date, chatId, userId, messageId,
                       replyId, threadId, messageText, messageType,
                       messageCategory, rootMessageId, quoteText))
                 cursor.execute("""
@@ -302,12 +301,13 @@ class DatabaseWrapper:
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
-                    SELECT * FROM chat_messages
+                    SELECT c.*, u.username, u.full_name  FROM chat_messages c
+                    JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
                     WHERE
-                        chat_id = ?
-                        AND date > ?
-                        AND ((? IS NULL) OR (thread_id = ?))
-                    ORDER BY date ASC
+                        c.chat_id = ?
+                        AND c.date > ?
+                        AND ((? IS NULL) OR (c.thread_id = ?))
+                    ORDER BY c.date ASC
                 """, (chatId, sinceDateTime, threadId, threadId))
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
@@ -320,11 +320,12 @@ class DatabaseWrapper:
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
-                    SELECT * FROM chat_messages
+                    SELECT c.*, u.username, u.full_name FROM chat_messages c
+                    JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
                     WHERE
-                        chat_id = ?
-                        AND message_id = ?
-                        AND ((? IS NULL) OR (thread_id = ?))
+                        c.chat_id = ?
+                        AND c.message_id = ?
+                        AND ((? IS NULL) OR (c.thread_id = ?))
                     LIMIT 1
                 """, (chatId, messageId, threadId, threadId))
                 row = cursor.fetchone()
@@ -339,12 +340,13 @@ class DatabaseWrapper:
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
-                    SELECT * FROM chat_messages
+                    SELECT c.*, u.username, u.full_name FROM chat_messages c
+                    JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
                     WHERE
-                        chat_id = ?
-                        AND root_message_id = ?
-                        AND ((? IS NULL) OR (thread_id = ?))
-                    ORDER BY date ASC
+                        c.chat_id = ?
+                        AND c.root_message_id = ?
+                        AND ((? IS NULL) OR (c.thread_id = ?))
+                    ORDER BY c.date ASC
                 """, (chatId, rootMessageId, threadId, threadId))
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
