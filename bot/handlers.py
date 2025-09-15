@@ -578,7 +578,10 @@ class BotHandlers:
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         customMentions = [v.strip().lower() for v in chatSettings[ChatSettingsEnum.CUSTOM_MENTIONS].split(",")]
-        myUserName = "@" +context.bot.username.lower()
+        customMentions = [v for v in customMentions if v]
+        if not customMentions:
+            return False
+        myUserName = "@" + context.bot.username.lower()
         messageText = ensuredMessage.messageText
 
         # Remove leading @username from messageText if any
@@ -591,7 +594,7 @@ class BotHandlers:
             if messageTextLower.startswith(mention):
                 # If we found a mention, remove it from the messageText
                 # also remove leading spaces, and punctiation if any
-                logger.debug(f"Found mention: {mention} in message {messageText}")
+                logger.debug(f"Found mention: '{mention}' in message {messageText}")
                 messageText = messageText[len(mention):].lstrip("\t\n\r ,.:")
                 found = True
                 break
