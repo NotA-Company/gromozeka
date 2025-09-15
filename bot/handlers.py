@@ -597,10 +597,12 @@ class BotHandlers:
             return False
         myUserName = "@" + context.bot.username.lower()
         messageText = ensuredMessage.messageText
+        matched = False
 
         # Remove leading @username from messageText if any
         if messageText.lower().startswith(myUserName):
             messageText = messageText[len(myUserName):].lstrip()
+            matched = True
 
         messageTextLower = messageText.lower()
         found = False
@@ -618,7 +620,7 @@ class BotHandlers:
                 found = True
                 break
 
-        if not found:
+        if not found and not matched:
             return False
 
         # TODO: Add custom actions
