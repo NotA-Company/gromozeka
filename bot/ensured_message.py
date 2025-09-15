@@ -130,8 +130,8 @@ class EnsuredMessage:
         match format:
             case LLMMessageFormat.JSON:
                 ret = {
-                    "login": "@" + data["user_name"],
-                    "name": data["user_name"],  # TODO: Get from DB somehow
+                    "login": data["username"],
+                    "name": data["full_name"],
                     "date": data["date"],
                     "text": messageText,
                 }
