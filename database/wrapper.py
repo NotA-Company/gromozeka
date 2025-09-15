@@ -25,9 +25,9 @@ class DatabaseWrapper:
         self.maxConnections = maxConnections
         self.timeout = timeout
         self._local = threading.local()
-        self._init_database()
+        self._initDatabase()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    def _getConnection(self) -> sqlite3.Connection:
         """Get a thread-local database connection."""
         if not hasattr(self._local, 'connection'):
             self._local.connection = sqlite3.connect(
@@ -39,9 +39,9 @@ class DatabaseWrapper:
         return self._local.connection
 
     @contextmanager
-    def get_cursor(self):
+    def getCursor(self):
         """Context manager for database operations."""
-        conn = self._get_connection()
+        conn = self._getConnection()
         cursor = conn.cursor()
         try:
             yield cursor
@@ -53,9 +53,14 @@ class DatabaseWrapper:
         finally:
             cursor.close()
 
-    def _init_database(self):
+    def close(self):
+        """Close database connections."""
+        if hasattr(self._local, 'connection'):
+            self._local.connection.close()
+
+    def _initDatabase(self):
         """Initialize the database with required tables."""
-        with self.get_cursor() as cursor:
+        with self.getCursor() as cursor:
             # Users table for storing user information
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -160,7 +165,7 @@ class DatabaseWrapper:
                   firstName: Optional[str] = None, lastName: Optional[str] = None) -> bool:
         """Save or update user information."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     INSERT OR REPLACE INTO users
                     (user_id, username, first_name, last_name, updated_at)
@@ -175,7 +180,7 @@ class DatabaseWrapper:
     def getUser(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Get user information by user_id."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
                 row = cursor.fetchone()
                 return dict(row) if row else None
@@ -186,7 +191,7 @@ class DatabaseWrapper:
     def setSetting(self, key: str, value: str) -> bool:
         """Set a configuration setting."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     INSERT OR REPLACE INTO settings
                     (key, value, updated_at)
@@ -200,7 +205,7 @@ class DatabaseWrapper:
     def getSetting(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Get a configuration setting."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
                 row = cursor.fetchone()
                 return row['value'] if row else default
@@ -211,7 +216,7 @@ class DatabaseWrapper:
     def getSettings(self) -> Dict[str, str]:
         """Get all configuration settings."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("SELECT * FROM settings")
                 return {row['key']: row['value'] for row in cursor.fetchall()}
         except Exception as e:
@@ -221,7 +226,7 @@ class DatabaseWrapper:
     def savePrivateMessage(self, user_id: int, message_text: str, reply_text: str = '') -> bool:
         """Save a message to the database."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     INSERT INTO messages (user_id, message_text, reply_text)
                     VALUES (?, ?, ?)
@@ -234,7 +239,7 @@ class DatabaseWrapper:
     def getUserMessages(self, userId: int, limit: int = 10) -> List[Dict[str, Any]]:
         """Get recent messages from a user."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     SELECT * FROM messages
                     WHERE user_id = ?
@@ -252,7 +257,7 @@ class DatabaseWrapper:
                         rootMessageId: Optional[int] = None, quoteText: Optional[str] = None) -> bool:
         """Save a chat message with detailed information."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 today = date.replace(hour=0, minute=0, second=0, microsecond=0)
                 cursor.execute("""
                     INSERT INTO chat_messages
@@ -299,7 +304,7 @@ class DatabaseWrapper:
         """Get chat messages from a specific chat newer than the given date."""
         logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     SELECT c.*, u.username, u.full_name  FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
@@ -318,7 +323,7 @@ class DatabaseWrapper:
         """Get a specific chat message by message_id, chat_id, and optional thread_id."""
         logger.debug(f"Getting chat message for chat {chatId}, thread {threadId}, message_id {messageId}")
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     SELECT c.*, u.username, u.full_name FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
@@ -338,7 +343,7 @@ class DatabaseWrapper:
         """Get all chat messages in a conversation thread by root message ID."""
         logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     SELECT c.*, u.username, u.full_name FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
@@ -353,15 +358,10 @@ class DatabaseWrapper:
             logger.error(f"Failed to get chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}: {e}")
             return []
 
-    def close(self):
-        """Close database connections."""
-        if hasattr(self._local, 'connection'):
-            self._local.connection.close()
-
     def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> bool:
         """Store user as chat member + update username and updated_at."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     INSERT INTO chat_users
                         (username, chat_id, user_id, updated_at, full_name)
@@ -379,7 +379,7 @@ class DatabaseWrapper:
     def getChatUser(self, chatId: int, userId: int) -> Optional[Dict[str, Any]]:
         """Get the username of a user in a chat."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     SELECT * FROM chat_users
                     WHERE
@@ -396,7 +396,7 @@ class DatabaseWrapper:
     def getChatUsers(self, chatId: int, limit: int = 10, seenSince: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         """Get the usernames of all users in a chat."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     SELECT * FROM chat_users
                     WHERE
@@ -407,13 +407,13 @@ class DatabaseWrapper:
                 """, (chatId, seenSince,seenSince, limit))
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Failed to get usernames for chat {chatId}: {e}")
+            logger.error(f"Failed to get users for chat {chatId}: {e}")
             return []
 
     def setChatSetting(self, chatId: int, key: str, value: Any) -> bool:
         """Set a setting for a chat."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     INSERT OR REPLACE INTO chat_settings
                         (chat_id, key, value, updated_at)
@@ -428,7 +428,7 @@ class DatabaseWrapper:
     def unsetChatSetting(self, chatId: int, key: str) -> bool:
         """UnSet a setting for a chat."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     DELETE FROM chat_settings
                     WHERE chat_id = ?
@@ -442,7 +442,7 @@ class DatabaseWrapper:
     def getChatSetting(self, chatId: int, setting: str) -> Optional[str]:
         """Get a setting for a chat."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     SELECT value FROM chat_settings
                     WHERE
@@ -459,7 +459,7 @@ class DatabaseWrapper:
     def getChatSettings(self, chatId: int) -> Dict[str, str]:
         """Get all settings for a chat."""
         try:
-            with self.get_cursor() as cursor:
+            with self.getCursor() as cursor:
                 cursor.execute("""
                     SELECT key, value FROM chat_settings
                     WHERE chat_id = ?
