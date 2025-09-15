@@ -3,7 +3,7 @@
 token = "YOUR_BOT_TOKEN_HERE"
 bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
 allow_admin_change_channel_settings = true
-mention_variants = ["Громозека", "Gro"]
+custom_mentions = ["Громозека", "Gro"]
 
 
 [bot.models]
