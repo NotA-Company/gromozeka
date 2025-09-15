@@ -840,7 +840,7 @@ class BotHandlers:
                         {
                             # date, chat_id, user_id, username, full_name, message_id, reply_id, thread_id, message_text, message_type
                             "date": msg["date"],
-                            "sender": msg["username"],
+                            "sender": msg["username"][1:],
                             "message_id": msg["message_id"],
                             "reply_id": msg["reply_id"],
                             "text": msg["message_text"],
