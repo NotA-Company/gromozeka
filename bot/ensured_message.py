@@ -1,16 +1,22 @@
 """
 EnsuredMessage: wrapper around telegram.Message
 """
+from enum import StrEnum
 import json
 import logging
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from telegram import Message
 
 
 logger = logging.getLogger(__name__)
 
+
+class LLMMessageFormat(StrEnum):
+    JSON = "json"
+    TEXT = "text"
+    
 
 """
 A class to encapsulate and ensure the presence of essential message attributes from a Telegram message.
@@ -65,9 +71,12 @@ class EnsuredMessage:
         else:
             self.messageText = message.text
 
+        # If this is reply, then set replyId and replyText
         self.replyId: Optional[int] = None
         self.replyText: Optional[str] = None
         self.isReply = False
+        self.isQuote = False
+        self.quoteText: Optional[str] = None
         if message.reply_to_message:
             # If reply_to_message is message about creating topic, then it isn't reply
             if message.reply_to_message.forum_topic_created is None:
@@ -75,7 +84,11 @@ class EnsuredMessage:
                 self.isReply = True
                 if message.reply_to_message.text:
                     self.replyText = message.reply_to_message.text
+                if message.quote and message.quote.text:
+                    self.isQuote = True
+                    self.quoteText = message.quote.text
 
+        # If this is topic message, then set threadId
         self.threadId: Optional[int] = None
         self.isTopicMessage = message.is_topic_message == True if message.is_topic_message is not None else False
         if self.isTopicMessage:
@@ -85,6 +98,53 @@ class EnsuredMessage:
 
     def getBaseMessage(self) -> Message:
         return self._message
+    
+    def formatForLLM(self, format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
+        messageText = self.messageText if replaceMessageText is None else replaceMessageText
+        match format:
+            case LLMMessageFormat.JSON:
+                ret = {
+                        "login": self.user.name,
+                        "name": self.user.full_name,
+                        "date": self.date.isoformat(),
+                        "text": messageText,
+                    }
+                if self.isQuote and self.quoteText:
+                    ret["quote"] = self.quoteText
+
+                return json.dumps(ret, ensure_ascii=False)
+            
+            case LLMMessageFormat.TEXT:
+                ret = messageText
+                if self.isQuote and self.quoteText:
+                    ret = f"<quote>{self.quoteText}</quote>\n\n{ret}"
+                return ret
+            
+        raise ValueError(f"Invalid format: {format}")
+    
+    @classmethod
+    def formatDBChatMessageToLLM(cls, data: Dict[str, Any], format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
+        # TODO: Somehow merge with prevoius method
+        messageText = data["message_text"] if replaceMessageText is None else replaceMessageText
+        match format:
+            case LLMMessageFormat.JSON:
+                ret = {
+                        "login": "@" + data["user_name"],
+                        "name": data["user_name"], # TODO: Get from DB somehow
+                        "date": data["date"],
+                        "text": messageText
+                    }
+                if data.get("quote_text", None):
+                    ret["quote"] = data["quote_text"]
+
+                return json.dumps(ret, ensure_ascii=False)
+            case LLMMessageFormat.TEXT:
+                ret = messageText
+                if data.get("quote_text", None):
+                    ret = f"<quote>{data["quote_text"]}</quote>\n\n{ret}"
+                return ret
+            
+        raise ValueError(f"Invalid format: {format}")
 
     def __str__(self) -> str:
         return json.dumps(
@@ -97,6 +157,9 @@ class EnsuredMessage:
                 "messageText": self.messageText,
                 "replyId": self.replyId,
                 "isReply": self.isReply,
+                "replyText": self.replyText,
+                "isQuote": self.isQuote,
+                "quoteText": self.quoteText,
                 "threadId": self.threadId,
                 "isTopicMessage": self.isTopicMessage,
             },
