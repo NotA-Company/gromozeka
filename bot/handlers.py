@@ -595,6 +595,11 @@ class BotHandlers:
                 # If we found a mention, remove it from the messageText
                 # also remove leading spaces, and punctiation if any
                 logger.debug(f"Found mention: '{mention}' in message {messageText}")
+                mentionLen = len(mention)
+                if len(messageText) > mentionLen:
+                    if messageText[mentionLen] not in "\t\n\r ,.:":
+                        # If this mention is just part of word, skip it
+                        continue
                 messageText = messageText[len(mention):].lstrip("\t\n\r ,.:")
                 found = True
                 break
