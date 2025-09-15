@@ -3,10 +3,7 @@
 Test script for Telegram MarkdownV2 conversion and validation functions.
 """
 
-#import sys
-#sys.path.append('lib')
-
-from lib.telegram_markdown import convertMarkdownToV2, validateMarkdownV2, isValidMarkdownV2
+from telegram_markdown import convertMarkdownToV2, validateMarkdownV2, isValidMarkdownV2
 
 def test_conversion():
     """Test various Markdown to MarkdownV2 conversions."""

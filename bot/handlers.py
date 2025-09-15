@@ -17,6 +17,7 @@ from telegram.ext import ContextTypes
 from ai.abstract import AbstractModel, ModelMessage, ModelRunResult
 from ai.manager import LLMManager
 from database.wrapper import DatabaseWrapper
+import lib.telegram_markdown as telegramMarkdown
 from .ensured_message import EnsuredMessage, LLMMessageFormat
 
 logger = logging.getLogger(__name__)
@@ -281,18 +282,24 @@ class BotHandlers:
             prefix = f"{ROBOT_EMOJI} "
 
         replyMessage = None
+        LLMReply = f"{prefix}{LLMReply.strip()}"
         replyKwargs = {
-            "text": prefix + LLMReply,
             "reply_to_message_id": ensuredMessage.messageId,
             "message_thread_id": ensuredMessage.threadId,
         }
         try:
             logger.debug(f"Sending LLM reply to {ensuredMessage}")
-            replyMessage = await ensuredMessage.getBaseMessage().reply_text(parse_mode='Markdown',**replyKwargs)
+            replyText = telegramMarkdown.convertMarkdownToV2(LLMReply)
+            #logger.debug(f"Sending MarkdownV2: {replyText}")
+            replyMessage = await ensuredMessage.getBaseMessage().reply_text(
+                text=replyText,
+                parse_mode="MarkdownV2",
+                **replyKwargs,
+            )
         except Exception as e:
             logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
             # Probably error in markdown formatting, fallback to raw text
-            replyMessage = await ensuredMessage.getBaseMessage().reply_text(**replyKwargs)
+            replyMessage = await ensuredMessage.getBaseMessage().reply_text(text=LLMReply, **replyKwargs)
         if replyMessage is None:
             logger.error("Error while sending LLM reply")
             return False
@@ -392,16 +399,22 @@ class BotHandlers:
 
         self.db.savePrivateMessage(user.id, ensuredMessage.messageText, reply_text=reply)
 
-        replyKwargs = {
-            "text": reply,
+        replyKwargs: Dict[str, Any] = {
             "reply_to_message_id": ensuredMessage.messageId,
         }
         try:
-            await message.reply_text(parse_mode='Markdown', **replyKwargs)
+            await message.reply_text(
+                text=telegramMarkdown.convertMarkdownToV2(reply),
+                parse_mode="MarkdownV2",
+                **replyKwargs,
+            )
         except Exception as e:
             logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
             # Probably error in markdown formatting, fallback to raw text
-            await message.reply_text(**replyKwargs)
+            await message.reply_text(
+                text=reply,
+                **replyKwargs,
+            )
         logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
 
     async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -928,19 +941,21 @@ class BotHandlers:
 
         for msg in resMessages:
             replyKwargs = {
-                "text": msg,
                 "reply_to_message_id": ensuredMessage.messageId,
                 "message_thread_id": ensuredMessage.threadId,
             }
             replyMessage: Optional[Message] = None
             try:
+                replyText = telegramMarkdown.convertMarkdownToV2(msg)
+                #logger.debug(f"Sending MarkdownV2: {replyText}")
                 replyMessage = await message.reply_text(
-                    parse_mode="Markdown",
+                    text=replyText,
+                    parse_mode="MarkdownV2",
                     **replyKwargs,
                 )
             except Exception as e:
                 logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-                replyMessage = await message.reply_text(**replyKwargs)
+                replyMessage = await message.reply_text(text=msg, **replyKwargs)
 
             if replyMessage:
                 try:
