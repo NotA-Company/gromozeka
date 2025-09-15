@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class LLMMessageFormat(StrEnum):
     JSON = "json"
     TEXT = "text"
-    
+
 
 """
 A class to encapsulate and ensure the presence of essential message attributes from a Telegram message.
@@ -98,30 +98,31 @@ class EnsuredMessage:
 
     def getBaseMessage(self) -> Message:
         return self._message
-    
+
     def formatForLLM(self, format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
         messageText = self.messageText if replaceMessageText is None else replaceMessageText
         match format:
             case LLMMessageFormat.JSON:
                 ret = {
-                        "login": self.user.name,
-                        "name": self.user.full_name,
-                        "date": self.date.isoformat(),
-                        "text": messageText,
-                    }
+                    "login": self.user.name,
+                    "name": self.user.full_name,
+                    "date": self.date.isoformat(),
+                    "text": messageText,
+                }
                 if self.isQuote and self.quoteText:
                     ret["quote"] = self.quoteText
 
+                #logger.debug(f"EM.formatForLLM():{self} -> {ret}")
                 return json.dumps(ret, ensure_ascii=False)
-            
+
             case LLMMessageFormat.TEXT:
                 ret = messageText
                 if self.isQuote and self.quoteText:
                     ret = f"<quote>{self.quoteText}</quote>\n\n{ret}"
                 return ret
-            
+
         raise ValueError(f"Invalid format: {format}")
-    
+
     @classmethod
     def formatDBChatMessageToLLM(cls, data: Dict[str, Any], format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
         # TODO: Somehow merge with prevoius method
@@ -129,21 +130,22 @@ class EnsuredMessage:
         match format:
             case LLMMessageFormat.JSON:
                 ret = {
-                        "login": "@" + data["user_name"],
-                        "name": data["user_name"], # TODO: Get from DB somehow
-                        "date": data["date"],
-                        "text": messageText
-                    }
+                    "login": "@" + data["user_name"],
+                    "name": data["user_name"],  # TODO: Get from DB somehow
+                    "date": data["date"],
+                    "text": messageText,
+                }
                 if data.get("quote_text", None):
                     ret["quote"] = data["quote_text"]
 
+                #logger.debug(f"EM.formatDBChatMessageToLLM():{data} -> {ret}")
                 return json.dumps(ret, ensure_ascii=False)
             case LLMMessageFormat.TEXT:
                 ret = messageText
                 if data.get("quote_text", None):
                     ret = f"<quote>{data["quote_text"]}</quote>\n\n{ret}"
                 return ret
-            
+
         raise ValueError(f"Invalid format: {format}")
 
     def __str__(self) -> str:
