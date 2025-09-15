@@ -310,3 +310,40 @@ This file records architectural and implementation decisions using a list format
   - Overrides _create_model_instance() to create OpenrouterModel instances
 * All functionality preserved while reducing code duplication by approximately 60%
 * Comprehensive testing confirmed all imports, inheritance, and syntax validation pass successfully
+
+[2025-09-15 21:57:30] - Implemented Telegram MarkdownV2 Conversion and Validation Functions
+
+## Decision
+
+* Created comprehensive Telegram MarkdownV2 conversion and validation utilities in lib/telegram_markdown.py
+* Implemented convert_markdown_to_v2() function to convert standard Markdown to Telegram's MarkdownV2 format
+* Implemented validate_markdown_v2() and is_valid_markdown_v2() functions for MarkdownV2 validation
+* Added proper escaping logic for different contexts (general text, code blocks, link URLs)
+
+## Rationale 
+
+* Telegram's MarkdownV2 format has specific escaping requirements that differ from standard Markdown
+* The bot needs reliable conversion from standard Markdown to avoid formatting errors in Telegram messages
+* Validation functions help ensure generated MarkdownV2 text is properly formatted before sending
+* Modular design in lib/ directory follows the project's established architecture patterns
+* Comprehensive testing ensures reliability for production use, dood!
+
+## Implementation Details
+
+* Created escape_markdown_v2() function with context-aware escaping:
+  - General context: escapes _*[]()~`>#+-=|{}.! characters
+  - Pre/code context: escapes ` and \ characters only
+  - Link URL context: escapes ) and \ characters only
+* Implemented convert_markdown_to_v2() with proper conversion logic:
+  - **bold** → *bold* (MarkdownV2 bold syntax)
+  - *italic* → _italic_ (MarkdownV2 italic syntax)
+  - ~~strikethrough~~ → ~strikethrough~ (MarkdownV2 strikethrough)
+  - Preserves code blocks, inline code, links, and block quotes
+  - Uses placeholder technique to avoid conflicts between bold and italic processing
+* Created validate_markdown_v2() function with comprehensive validation:
+  - Checks for properly escaped special characters outside markup contexts
+  - Validates balanced markup (unclosed bold, italic, etc.)
+  - Special handling for block quotes (> at start of line is valid)
+  - Returns detailed error messages for debugging
+* All functions thoroughly tested with 27 test cases covering edge cases and complex scenarios
+* Functions integrate seamlessly with existing bot architecture and can be imported as needed
