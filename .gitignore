@@ -1,6 +1,8 @@
 #Project specific
 /config.toml
+/config.prod.toml
 /bot_data.db
+/bak/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
