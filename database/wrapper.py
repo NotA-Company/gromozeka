@@ -401,8 +401,8 @@ class DatabaseWrapper:
                     SELECT * FROM chat_users
                     WHERE
                         chat_id = ?
-                        AND (? IS NULL OR seen_since < ?)
-                    ORDER BY seen_since DESC
+                        AND (? IS NULL OR updated_at > ?)
+                    ORDER BY updated_at DESC
                     LIMIT ?
                 """, (chatId, seenSince,seenSince, limit))
                 return [dict(row) for row in cursor.fetchall()]
