@@ -6,6 +6,7 @@ from enum import StrEnum
 import json
 import logging
 
+import random
 import time
 from typing import Any, Dict, List, Optional
 
@@ -274,7 +275,7 @@ class BotHandlers:
             LLMReply = jsonReply["text"].strip()
         except Exception as e:
             logger.debug(f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}")
-            
+
         prefix = ""
         if mlRet.isFallback:
             prefix = f"{ROBOT_EMOJI} "
@@ -512,7 +513,7 @@ class BotHandlers:
                 "text": self.getChatSystemPrompt(chat.id),
             },
         ] + storedMessages
-        
+
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
             logger.error("Failed to send LLM reply")
 
@@ -621,6 +622,36 @@ class BotHandlers:
             return False
 
         # TODO: Add custom actions
+
+        whoToday = "кто сегодня "
+        if messageText.lower().startswith(whoToday):
+            userTitle = messageText[len(whoToday):].strip()
+            if userTitle[-1] == "?":
+                userTitle = userTitle[:-1]
+
+            today = datetime.datetime.now(datetime.timezone.utc)
+            today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            users = self.db.getChatUsers(
+                chatId=ensuredMessage.chat.id,
+                limit=100,
+                seenSince=today,
+                )
+
+            user = users[random.randint(0, len(users) - 1)]
+            logger.debug(f"Found user for candidate of being '{userTitle}': {user}")
+            replyMessage = await ensuredMessage.getBaseMessage().reply_text(
+                text=f"{user['username']} сегодня {userTitle}",
+                reply_to_message_id=ensuredMessage.messageId,
+                message_thread_id=ensuredMessage.threadId,
+            )
+
+            try:
+                ensuredReplyMessage = EnsuredMessage(replyMessage)
+                self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
+                return True
+            except Exception as e:
+                logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
+                return False
 
         reqMessages = [
             {
