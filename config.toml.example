@@ -2,19 +2,22 @@
 # Your Telegram bot token from @BotFather
 token = "YOUR_BOT_TOKEN_HERE"
 bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
+
+[bot.defaults]
 allow_admin_change_channel_settings = true
 custom_mentions = ["Громозека", "Gro"]
 llm_message_format = "text"
+allow_tools = false
 
 
-[bot.models]
+[bot.defaults.models]
 summary          = "openrouter-gemma-3-27b-it-free"
 private          = "openrouter-gemma-3-12b-it-free"
 chat             = "openrouter-gemma-3-12b-it-free"
 fallback         = "openrouter-deepseek-chat-v3.1-free"
 summary-fallback = "openrouter-deepseek-chat-v3.1-free"
 
-[bot.prompts]
+[bot.defaults.prompts]
 summary = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
 private = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
 chat    = "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
@@ -36,11 +39,6 @@ format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 [models]
 [models.providers]
 
-[models.providers.yc-sdk]
-folder_id = "FOLDER_ID"
-# Optional: specify yc profile (uncomment if needed)
-#yc_profile = "profile-id"
-
 [models.providers.yc-openai]
 # https://yandex.cloud/ru/docs/foundation-models/operations/get-api-key
 folder_id = "FOLDER_ID"
@@ -52,19 +50,21 @@ api_key = "API_KEY"
 # Possible YC Models: https://yandex.cloud/ru/docs/foundation-models/concepts/generation/models
 [[models.models]]
 name = "yandexgpt"
-provider = "yc-sdk"
+provider = "yc-openai"
 model_id = "yandexgpt"
-model_version = "rc"
+model_version = "latest"
 temperature = 0.5
 context = 32768
+support_tools = true
 
 [[models.models]]
 name = "yandexgpt-lite"
-provider = "yc-sdk"
+provider = "yc-openai"
 model_id = "yandexgpt-lite"
-model_version="rc"
+model_version="latest"
 temperature = 0.5
 context = 32768
+support_tools = false
 
 [[models.models]]
 name = "yc-gpt-oss-120b"
@@ -73,14 +73,16 @@ model_id = "gpt-oss-120b"
 model_version="latest"
 temperature = 0.5
 context = 128000
+support_tools = true
 
 [[models.models]]
 name = "yc-llama"
 provider = "yc-openai"
 model_id = "llama"
-model_version="rc"
+model_version="latest"
 temperature = 0.5
 context = 8192
+support_tools = true
 
 [[models.models]]
 name = "yc-qwen3-235b-a22b-fp8"
@@ -89,6 +91,7 @@ model_id = "qwen3-235b-a22b-fp8"
 model_version="latest"
 temperature = 0.5
 context = 256000
+support_tools = true
 
 [[models.models]]
 name = "yc-gemma-3-27b-it"
@@ -97,6 +100,7 @@ model_id = "gemma-3-27b-it"
 model_version="latest"
 temperature = 0.5
 context = 128000
+support_tools = true
 
 # https://openrouter.ai/models
 [[models.models]]
@@ -106,6 +110,7 @@ model_id = "anthropic/claude-sonnet-4"
 model_version = "latest"
 temparature = 0.3
 context = 256000
+support_tools = true
 
 [[models.models]]
 name = "openrouter-deepseek-chat-v3.1"
@@ -114,6 +119,7 @@ model_id = "deepseek/deepseek-chat-v3.1"
 model_version = "latest"
 temparature = 0.3
 context = 163840
+support_tools = true
 
 [[models.models]]
 name = "openrouter-deepseek-chat-v3.1-free"
@@ -122,6 +128,7 @@ model_id = "deepseek/deepseek-chat-v3.1:free"
 model_version = "latest"
 temparature = 0.3
 context = 64000
+support_tools = true
 
 [[models.models]]
 name = "openrouter-gemma-3-27b-it-free"
@@ -130,6 +137,7 @@ model_id = "google/gemma-3-27b-it:free"
 model_version = "latest"
 temparature = 0.3
 context = 96000
+support_tools = true
 
 [[models.models]]
 name = "openrouter-gemma-3-12b-it-free"
@@ -138,6 +146,7 @@ model_id = "google/gemma-3-12b-it:free"
 model_version = "latest"
 temparature = 0.3
 context = 32768
+support_tools = true
 
 [[models.models]]
 name = "openrouter-qwen-turbo"
@@ -146,3 +155,4 @@ model_id = "qwen/qwen-turbo"
 model_version = "latest"
 temparature = 0.3
 context = 1000000
+support_tools = true

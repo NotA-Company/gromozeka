@@ -5,7 +5,6 @@ import logging
 from typing import Dict, List, Any, Optional
 
 from .abstract import AbstractModel, AbstractLLMProvider
-from .providers.yc_sdk_provider import YcSdkProvider
 from .providers.yc_openai_provider import YcOpenaiProvider
 from .providers.openrouter_provider import OpenrouterProvider
 
@@ -35,14 +34,6 @@ class LLMManager:
         """Initialize known providers from config, dood!"""
         providers_config = self.config.get("providers", {})
 
-        # Initialize yc-sdk provider
-        if "yc-sdk" in providers_config:
-            try:
-                self.providers["yc-sdk"] = YcSdkProvider(providers_config["yc-sdk"])
-                logger.info("Initialized yc-sdk provider, dood!")
-            except Exception as e:
-                logger.error(f"Failed to initialize yc-sdk provider: {e}")
-
         # Initialize yc-openai provider
         if "yc-openai" in providers_config:
             try:
@@ -61,7 +52,7 @@ class LLMManager:
 
     def _initModels(self):
         """Initialize models from config, dood!"""
-        modelsConfig = self.config.get("models", [])
+        modelsConfig: List[Dict[str, Any]] = self.config.get("models", [])
 
         for modelConfig in modelsConfig:
             try:
@@ -82,7 +73,8 @@ class LLMManager:
                     modelId=modelId,
                     modelVersion=modelVersion,
                     temperature=temperature,
-                    contextSize=contextSize
+                    contextSize=contextSize,
+                    extraConfig=modelConfig,
                 )
 
                 self.modelRegistry[name] = providerName
