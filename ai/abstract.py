@@ -2,20 +2,110 @@
 Abstract base class for LLM models, dood!
 """
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import Enum, StrEnum
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 import tiktoken
 
 logger = logging.getLogger(__name__)
 
+
+class LLMAbstractTool(ABC):
+    """Abstract base class for LLM tools"""
+    
+    @abstractmethod
+    def toJson(self) -> Dict[str, Any]:
+        raise NotImplementedError
+
+class LLMParameterType(StrEnum):
+    """Enum for parameter type"""
+    STRING = 'string'
+    NUMBER = 'number'
+    BOOLEAN = 'boolean'
+    ARRAY = 'array'
+    OBJECT = 'object'
+
+class LLMFunctionParameter:
+    """Class for function parameter"""
+    def __init__(self, name: str, description: str, type: LLMParameterType, required: bool = False, extra: Dict[str, Any] = {}):
+        self.name = name
+        self.description = description
+        self.type = type
+        self.required = required
+        self.extra = extra.copy()
+
+    def toJson(self) -> Dict[str, Any]:
+        return {
+            self.name: {
+                'description': self.description,
+                'type': str(self.type),
+                **self.extra,
+            },
+        }
+
+class LLMToolFunction(LLMAbstractTool):
+    """Class for function for tools-calling"""
+    def __init__(self, name: str, description: str, parameters: List[LLMFunctionParameter], function: Optional[Callable] = None):
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self.function = function
+
+    def call(self, **kwargs) -> Any:
+        if self.function:
+            return self.function(**kwargs)
+        raise ValueError("No function provided")
+
+    def toJson(self) -> Dict[str, Any]:
+        params = {}
+        required = []
+        for param in self.parameters:
+            params.update(param.toJson())
+            if param.required:
+                required.append(param.name)
+
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": params,
+                    "required": required,
+                },
+            },
+        }
+
+class LLMToolCall:
+    """Class for tool-calling"""
+    def __init__(self, id: Any, name: str, parameters: Dict[Any, Any]):
+        self.id = id
+        self.name = name
+        self.parameters = parameters
+
+    def __str__(self) -> str:
+        return json.dumps(
+            {"id": self.id, "name": self.name, "parameters": self.parameters},
+            ensure_ascii=False,
+        )
+
 class ModelMessage:
     """Message for model"""
-    def __init__(self, role: str, content: str, contentKey: str = 'content'):
+    def __init__(
+        self,
+        role: str,
+        content: str,
+        contentKey: str = "content",
+        toolCalls: List[LLMToolCall] = [],
+        toolCallId: Optional[Any] = None,
+    ):
         self.role = role
         self.content = content
         self.contentKey = contentKey
+        self.toolCalls = toolCalls
+        self.toolCallId = toolCallId
 
     @classmethod
     def fromDict(cls, d: Dict[str, Any]) -> 'ModelMessage':
@@ -35,10 +125,28 @@ class ModelMessage:
     def toDict(self, contentKey: Optional[str] = None) -> Dict[str, Any]:
         if contentKey is None:
             contentKey = self.contentKey
-        return {
-            'role': self.role,
-            contentKey: self.content
+        ret: Dict[str, Any] = {
+            "role": self.role,
+            contentKey: self.content,
         }
+        if self.toolCalls:
+            ret["tool_calls"] = [
+                {
+                    "id": toolCall.id,
+                    "function": {
+                        "name": toolCall.name,
+                        "arguments": json.dumps(
+                            toolCall.parameters, ensure_ascii=False, default=str
+                        ),
+                    },
+                    "type": "function",
+                }
+                for toolCall in self.toolCalls
+            ]
+        if self.toolCallId is not None:
+            ret["tool_call_id"] = self.toolCallId
+
+        return ret
 
     def __str__(self) -> str:
         return json.dumps(self.toDict(), ensure_ascii=False)
@@ -63,11 +171,12 @@ class ModelResultStatus(Enum):
 
 class ModelRunResult:
     """Unified Result of model run"""
-    def __init__(self, rawResult: Any, status: ModelResultStatus, resultText: str):
+    def __init__(self, rawResult: Any, status: ModelResultStatus, resultText: str, toolCalls: List[LLMToolCall] = []):
         self.status = status
         self.resultText = resultText
         self.result = rawResult
         self.isFallback = False
+        self.toolCalls = toolCalls[:]
 
     def setFallback(self, isFallback: bool):
         self.isFallback = isFallback
@@ -80,8 +189,16 @@ class ModelRunResult:
             "status": self.status.name,
             "resultText": self.resultText,
             "isFallback": self.isFallback,
+            "toolCalls": self.toolCalls,
             "raw": str(self.result),
-        }, ensure_ascii=False) + ")"
+        }, ensure_ascii=False, default=str) + ")"
+    
+    def toModelMessage(self) -> ModelMessage:
+        return ModelMessage(
+            role="assistant",
+            content=self.resultText,
+            toolCalls=self.toolCalls,
+        )
 
 class AbstractModel(ABC):
     """Abstract base class for all LLM models, dood!"""
@@ -113,7 +230,7 @@ class AbstractModel(ABC):
         self.tokensCountCoeff = 1.1
 
     @abstractmethod
-    def run(self, messages: List[ModelMessage]) -> ModelRunResult:
+    def run(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the model with given messages, dood!
 
         Args:
@@ -122,18 +239,19 @@ class AbstractModel(ABC):
         Returns:
             Model response (type depends on implementation)
         """
-        pass
+        raise NotImplementedError
 
-    def runWithFallBack(self, messages: List[ModelMessage], fallbackModel: "AbstractModel") -> ModelRunResult:
+    def runWithFallBack(self, messages: List[ModelMessage], fallbackModel: "AbstractModel", tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the model with given messages, dood!"""
         try:
-            ret = self.run(messages)
+            ret = self.run(messages, tools)
             if ret.status in [ModelResultStatus.UNSPECIFIED, ModelResultStatus.CONTENT_FILTER, ModelResultStatus.UNKNOWN]:
+                logger.debug(f"Model {self.modelId} returned status {ret}")
                 raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
             return ret
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")
-            ret = fallbackModel.run(messages)
+            ret = fallbackModel.run(messages, tools)
             ret.setFallback(True)
             return ret
 
@@ -190,7 +308,8 @@ class AbstractLLMProvider(ABC):
         modelId: str,
         modelVersion: str,
         temperature: float,
-        contextSize: int
+        contextSize: int,
+        extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Add a model to this provider, dood!
 
