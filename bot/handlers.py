@@ -10,11 +10,12 @@ import random
 import time
 from typing import Any, Dict, List, Optional
 
+import requests
 from telegram import Chat, Update, Message
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
-from ai.abstract import AbstractModel, ModelMessage, ModelRunResult
+from ai.abstract import AbstractModel, LLMAbstractTool, LLMFunctionParameter, LLMParameterType, LLMToolFunction, ModelMessage, ModelRunResult, ModelResultStatus
 from ai.manager import LLMManager
 from database.wrapper import DatabaseWrapper
 import lib.telegram_markdown as telegramMarkdown
@@ -37,6 +38,7 @@ class ChatSettingsEnum(StrEnum):
     ALLOW_ADMIN_CHANGE_SETTINGS = "allow_admin_change_settings"
     CUSTOM_MENTIONS = "custom_mentions"
     LLM_MESSAGE_FORMAT = "llm_message_format"
+    ALLOW_TOOLS = "allow_tools"
 
     def __str__(self):
         return str(self.value)
@@ -51,7 +53,11 @@ class BotHandlers:
         self.llmManager = llmManager
 
         # Init different defaults
-        modelDefaults: Dict[str, str] = self.config.get("models", {})
+        self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
+
+        botDefaults = config.get("defaults", {})
+        
+        modelDefaults: Dict[str, str] = botDefaults.get("models", {})
         self.defaultModels: Dict[str, str] = {
             "private": modelDefaults.get("private", "yandexgpt-lite"),
             "summary": modelDefaults.get("summary", "yandexgpt-lite"),
@@ -59,19 +65,23 @@ class BotHandlers:
             "fallback": modelDefaults.get("fallback", "yandexgpt-lite"),
             "summary-fallback": modelDefaults.get("summary-fallback", "yandexgpt-lite"),
         }
-        promptsDefaults: Dict[str, str] = self.config.get("prompts", {})
+        
+        promptsDefaults: Dict[str, str] = botDefaults.get("prompts", {})
         self.defaultPrompts: Dict[str, str] = {
             "private": promptsDefaults.get("private", DEFAULT_PRIVATE_SYSTEM_PROMPT),
             "summary": promptsDefaults.get("summary", DEFAULT_SUMMARISATION_SYSTEM_PROMPT),
             "chat": promptsDefaults.get("chat", DEFAULT_CHAT_SYSTEM_PROMPT),
         }
-        self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
+        
+        self.defaultAdminCanChangeSettings = bool(botDefaults.get("allow_admin_change_channel_settings", False))
+        self.defaultCustomMentions = [str(v).lower() for v in botDefaults.get("custom_mentions", [])]
+        self.defaultLLMMessageFormat = botDefaults.get("llm_message_format", "json")
+        self.defaultAllowTools = bool(botDefaults.get("allow_tools", False))
+
+        # Init cache
         self.cache = {
             "chats": {},
         }
-        self.defaultAdminCanChangeSettings = bool(self.config.get("allow_admin_change_channel_settings", False))
-        self.defaultCustomMentions = [str(v).lower() for v in self.config.get("custom_mentions", [])]
-        self.defaultLLMMessageFormat = self.config.get("llm_message_format", "json")
 
     ###
     # Helpers for getting needed Models or Prompts
@@ -170,6 +180,7 @@ class BotHandlers:
             ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS: str(self.defaultAdminCanChangeSettings),
             ChatSettingsEnum.CUSTOM_MENTIONS: ", ".join(self.defaultCustomMentions),
             ChatSettingsEnum.LLM_MESSAGE_FORMAT: self.defaultLLMMessageFormat,
+            ChatSettingsEnum.ALLOW_TOOLS: str(self.defaultAllowTools),
         }
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
@@ -206,6 +217,46 @@ class BotHandlers:
     ###
     # Different helpers
     ###
+
+    def _callLLM(self, model: AbstractModel, messages: List[ModelMessage], fallbackModel: AbstractModel, useTools: bool = False) -> ModelRunResult:
+        """Call the LLM with the given messages."""
+
+        tools: Dict[str, LLMAbstractTool] = {}
+        functions = {
+            "get_url_content": lambda **kwargs: str(requests.get(kwargs['url']).content),
+        }
+
+        if useTools:
+            tools["get_url_content"] = LLMToolFunction(
+                name="get_url_content",
+                description="Get the content of a URL",
+                parameters=[
+                    LLMFunctionParameter(
+                        name="url",
+                        description="The URL to get the content from",
+                        type=LLMParameterType.STRING,
+                        required=True,
+                    ),
+                ],
+                function=lambda **kwargs: str(requests.get(kwargs['url']).content),
+            )
+
+        ret : Optional[ModelRunResult] = None
+        while True:
+            ret = model.runWithFallBack(messages, fallbackModel=fallbackModel, tools=list(tools.values()))
+            logger.debug(f"LLM returned: {ret}")
+            if ret.status == ModelResultStatus.TOOL_CALLS:
+                messages = messages + [ret.toModelMessage()]
+                for toolCall in ret.toolCalls:
+                    messages.append(ModelMessage(
+                        role="tool",
+                        content=json.dumps(functions[toolCall.name](**toolCall.parameters), ensure_ascii=False, default=str),
+                        toolCallId=toolCall.id,
+                    ))
+            else:
+                break
+                
+        return ret
 
     def _saveChatMessage(self, message: EnsuredMessage, messageCategory: str = 'user') -> bool:
         """Save a chat message to the database."""
@@ -257,9 +308,16 @@ class BotHandlers:
         """Send a chat message to the LLM model."""
         logger.debug(f"LLM Request messages: {messagesHistory}")
         llmModel = self.getChatModel(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         mlRet: Optional[ModelRunResult] = None
         try:
-            mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
+            # mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
+            mlRet = self._callLLM(
+                model=llmModel,
+                messages=ModelMessage.fromDictList(messagesHistory),
+                fallbackModel=self.getFallbackModel(),
+                useTools=chatSettings[ChatSettingsEnum.ALLOW_TOOLS].lower() == "true",
+            )
             logger.debug(f"LLM Response: {mlRet}")
         except Exception as e:
             logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
@@ -290,7 +348,7 @@ class BotHandlers:
         try:
             logger.debug(f"Sending LLM reply to {ensuredMessage}")
             replyText = telegramMarkdown.convertMarkdownToV2(LLMReply)
-            #logger.debug(f"Sending MarkdownV2: {replyText}")
+            # logger.debug(f"Sending MarkdownV2: {replyText}")
             replyMessage = await ensuredMessage.getBaseMessage().reply_text(
                 text=replyText,
                 parse_mode="MarkdownV2",
@@ -365,23 +423,23 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "text": self.getPrivateSystemPrompt(chatId=user.id),
+                "content": self.getPrivateSystemPrompt(chatId=user.id),
             },
         ]
 
         for msg in reversed(messages):
             reqMessages.append({
                 "role": "user",
-                "text": msg["message_text"],
+                "content": msg["message_text"],
             })
             if message["reply_text"]:
                 reqMessages.append({
                     "role": "assistant",
-                    "text": msg["reply_text"],
+                    "content": msg["reply_text"],
                 })
         reqMessages.append({
             "role": "user",
-            "text": ensuredMessage.messageText,
+            "content": ensuredMessage.messageText,
         })
 
         logger.debug(f"LLM Request messages: {reqMessages}")
@@ -497,11 +555,11 @@ class BotHandlers:
             ensuredReply = EnsuredMessage(message.reply_to_message)
             storedMessages.append({
                 "role": "assistant",
-                "text": ensuredReply.formatForLLM(format=llmMessageFormat)
+                "content": ensuredReply.formatForLLM(format=llmMessageFormat)
             })
             storedMessages.append({
                 "role": "user",
-                "text": ensuredMessage.formatForLLM(format=llmMessageFormat)
+                "content": ensuredMessage.formatForLLM(format=llmMessageFormat)
             })
         else:
             if storedMsg["message_category"] != "bot":
@@ -515,7 +573,7 @@ class BotHandlers:
             storedMessages = [
                 {
                     "role": "user" if storedMsg["message_category"] == "user" else "assistant",
-                    "text": EnsuredMessage.formatDBChatMessageToLLM(storedMsg, format=llmMessageFormat),
+                    "content": EnsuredMessage.formatDBChatMessageToLLM(storedMsg, format=llmMessageFormat),
                 }
                 for storedMsg in _storedMessages
             ]
@@ -523,7 +581,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "text": self.getChatSystemPrompt(chat.id),
+                "content": self.getChatSystemPrompt(chat.id),
             },
         ] + storedMessages
 
@@ -561,7 +619,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "text": self.getChatSystemPrompt(ensuredMessage.chat.id),
+                "content": self.getChatSystemPrompt(ensuredMessage.chat.id),
             }
         ]
 
@@ -580,14 +638,14 @@ class BotHandlers:
             reqMessages.append(
                 {
                     "role": "assistant" if isReplyToMyMessage else "user",
-                    "text": ensuredReply.formatForLLM(format=llmMessageFormat),
+                    "content": ensuredReply.formatForLLM(format=llmMessageFormat),
                 }
             )
 
         reqMessages.append(
             {
                 "role": "user",
-                "text": ensuredMessage.formatForLLM(format=llmMessageFormat),
+                "content": ensuredMessage.formatForLLM(format=llmMessageFormat),
             }
         )
 
@@ -671,11 +729,11 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "text": self.getChatSystemPrompt(ensuredMessage.chat.id),
+                "content": self.getChatSystemPrompt(ensuredMessage.chat.id),
             },
             {
                 "role": "user",
-                "text": ensuredMessage.formatForLLM(format=llmMessageFormat, replaceMessageText=messageText),
+                "content": ensuredMessage.formatForLLM(format=llmMessageFormat, replaceMessageText=messageText),
             }
         ]
 
@@ -851,7 +909,7 @@ class BotHandlers:
 
         systemMessage = {
             "role": "system",
-            "text": self.getSummarySystemPrompt(chatId=chatId),
+            "content": self.getSummarySystemPrompt(chatId=chatId),
         }
         parsedMessages = []
 
@@ -859,7 +917,7 @@ class BotHandlers:
             parsedMessages.append(
                 {
                     "role": "user",
-                    "text": json.dumps(
+                    "content": json.dumps(
                         {
                             # date, chat_id, user_id, username, full_name, message_id, reply_id, thread_id, message_text, message_type
                             "date": msg["date"],
@@ -947,7 +1005,7 @@ class BotHandlers:
             replyMessage: Optional[Message] = None
             try:
                 replyText = telegramMarkdown.convertMarkdownToV2(msg)
-                #logger.debug(f"Sending MarkdownV2: {replyText}")
+                # logger.debug(f"Sending MarkdownV2: {replyText}")
                 replyMessage = await message.reply_text(
                     text=replyText,
                     parse_mode="MarkdownV2",

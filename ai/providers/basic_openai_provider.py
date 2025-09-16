@@ -1,18 +1,23 @@
 """
 Basic OpenAI provider and model base classes for shared functionality, dood!
 """
+import json
 import logging
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
+from openai.types.chat.chat_completion import ChatCompletion
 
-from ..abstract import AbstractModel, AbstractLLMProvider, ModelMessage, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel, AbstractLLMProvider, LLMAbstractTool, LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
+
+class OpenAIModelRunResult(ModelRunResult):
+    """OpenAI model run result, dood!"""
 
 
 class BasicOpenAIModel(AbstractModel):
     """Basic OpenAI model implementation with shared functionality, dood!"""
-    
+
     def __init__(
         self, 
         provider: "BasicOpenAIProvider",
@@ -21,20 +26,22 @@ class BasicOpenAIModel(AbstractModel):
         temperature: float,
         contextSize: int,
         openAiClient: OpenAI,
+        supportTools: bool = False,
     ):
         """Initialize basic OpenAI model, dood!"""
         super().__init__(provider, modelId, modelVersion, temperature, contextSize)
         self._client = openAiClient
-        
+        self._supportTools = supportTools
+
     def _getModelId(self) -> str:
         """Get the model name to use in API calls. Override in subclasses, dood!"""
         return self.modelId
-        
+
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get extra parameters for the API call. Override in subclasses, dood!"""
         return {}
-        
-    def run(self, messages: List[ModelMessage]) -> Any:
+
+    def run(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> Any:
         """Run the OpenAI-compatible model with given messages, dood!
         
         Args:
@@ -46,32 +53,68 @@ class BasicOpenAIModel(AbstractModel):
         if not self._client:
             raise RuntimeError("OpenAI client not initialized, dood!")
 
+        kwargs: Dict[str, Any] = {}
+        if tools and self._supportTools:
+            kwargs["tools"] = [tool.toJson() for tool in tools]
+            kwargs["tool_choice"] = "auto"
+
         try:
             # Prepare base parameters
             params = {
                 "model": self._getModelId(),
                 "messages": [message.toDict('content') for message in messages],  # type: ignore
                 "temperature": self.temperature,
+                **kwargs,
             }
-            
+
             # Add any extra parameters from subclasses
             params.update(self._getExtraParams())
-            
-            # Use OpenAI-compatible API
-            response = self._client.chat.completions.create(**params)
 
-            #for chunk in response:
+            # Use OpenAI-compatible API
+            response: ChatCompletion = self._client.chat.completions.create(**params)
+
+            # for chunk in response:
             #   if chunk.choices[0].delta.content is not None:
             #       print(chunk.choices[0].delta.content, end="")
-            
-            # TODO: Set proper status based on response
-            status = ModelResultStatus.FINAL
-            resText = response.choices[0].message.content
-            if resText is None:
-                resText = ""
-                status = ModelResultStatus.UNKNOWN
-            return ModelRunResult(response, status, resText)
-            
+
+            status = ModelResultStatus.UNSPECIFIED
+            match response.choices[0].finish_reason:
+                case "stop":
+                    status = ModelResultStatus.FINAL
+                case "length":
+                    status = ModelResultStatus.TRUNCATED_FINAL
+                case "tool_calls":
+                    status = ModelResultStatus.TOOL_CALLS
+                case "content_filter":
+                    status = ModelResultStatus.CONTENT_FILTER
+                case _:
+                    status = ModelResultStatus.UNKNOWN
+
+            retMessage = response.choices[0].message
+            resText = retMessage.content if retMessage.content else ""
+
+            toolCalls: List[LLMToolCall] = []
+            if status == ModelResultStatus.TOOL_CALLS and retMessage.tool_calls:
+                # ChatCompletionMessageFunctionToolCall(
+                #    id='get_url_content',
+                #    function=Function(
+                #        arguments='{\"url\":\"https://ya.ru/\"}',
+                #        name='get_url_content'),
+                #        type='function',
+                #        index=0,
+                #    )
+                toolCalls = [
+                    LLMToolCall(
+                        id=tool.id,
+                        name=tool.function.name,
+                        parameters=json.loads(tool.function.arguments),
+                    )
+                    for tool in retMessage.tool_calls
+                    if tool.type == "function"
+                ]
+
+            return ModelRunResult(response, status, resText, toolCalls)
+
         except Exception as e:
             logger.error(f"Error running OpenAI-compatible model {self.modelId}: {e}")
             raise
@@ -131,7 +174,8 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         modelId: str,
         modelVersion: str,
         temperature: float,
-        contextSize: int
+        contextSize: int,
+        extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Create a model instance. Override in subclasses, dood!"""
         raise NotImplementedError("Subclasses must implement _create_model_instance, dood!")
@@ -142,7 +186,8 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         modelId: str,
         modelVersion: str,
         temperature: float,
-        contextSize: int
+        contextSize: int,
+        extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Add an OpenAI-compatible model, dood!"""
         if name in self.models:
@@ -153,7 +198,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             raise RuntimeError("OpenAI client not initialized, dood!")
             
         try:
-            model = self._createModelInstance(name, modelId, modelVersion, temperature, contextSize)
+            model = self._createModelInstance(name, modelId, modelVersion, temperature, contextSize, extraConfig)
             
             self.models[name] = model
             logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), dood!")
