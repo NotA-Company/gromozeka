@@ -59,96 +59,131 @@ def convertMarkdownToV2(markdown_text: str) -> str:
     """
     text = markdown_text
     
-    # Handle code blocks first (to avoid processing their content)
-    code_blocks = []
+    # Step 1: Protect code blocks and inline code first
+    protected_elements = {}
+    counter = 0
     
-    # Extract fenced code blocks (```lang\ncode\n```)
-    def replace_code_block(match):
+    # Protect fenced code blocks
+    def protect_code_block(match):
+        nonlocal counter
         lang = match.group(1) or ''
         code = match.group(2)
         escaped_code = escapeMarkdownV2(code, 'pre_code')
+        placeholder = f'XCODEBLOCKTOKENX{counter}XCODEBLOCKTOKENX'
         if lang:
-            return f'```{lang}\n{escaped_code}\n```'
+            protected_elements[placeholder] = f'```{lang}\n{escaped_code}\n```'
         else:
-            return f'```\n{escaped_code}\n```'
+            protected_elements[placeholder] = f'```\n{escaped_code}\n```'
+        counter += 1
+        return placeholder
     
-    text = re.sub(r'```(\w+)?\n(.*?)\n```', replace_code_block, text, flags=re.DOTALL)
+    text = re.sub(r'```(\w+)?\n(.*?)\n```', protect_code_block, text, flags=re.DOTALL)
     
-    # Extract inline code (`code`)
-    def replace_inline_code(match):
+    # Protect inline code
+    def protect_inline_code(match):
+        nonlocal counter
         code = match.group(1)
         escaped_code = escapeMarkdownV2(code, 'pre_code')
-        return f'`{escaped_code}`'
+        placeholder = f'XINLINECODETOKENX{counter}XINLINECODETOKENX'
+        protected_elements[placeholder] = f'`{escaped_code}`'
+        counter += 1
+        return placeholder
     
-    text = re.sub(r'`([^`]+?)`', replace_inline_code, text)
+    text = re.sub(r'`([^`]+?)`', protect_inline_code, text)
     
-    # Handle links [text](url)
-    def replace_link(match):
+    # Protect links
+    def protect_link(match):
+        nonlocal counter
         link_text = match.group(1)
         url = match.group(2)
         escaped_url = escapeMarkdownV2(url, 'link_url')
-        # Don't escape link text - it may contain other markup
-        return f'[{link_text}]({escaped_url})'
+        escaped_link_text = escapeMarkdownV2(link_text, 'general')
+        placeholder = f'XLINKTOKENX{counter}XLINKTOKENX'
+        protected_elements[placeholder] = f'[{escaped_link_text}]({escaped_url})'
+        counter += 1
+        return placeholder
     
-    text = re.sub(r'\[([^\]]+?)\]\(([^)]+?)\)', replace_link, text)
+    text = re.sub(r'\[([^\]]+?)\]\(([^)]+?)\)', protect_link, text)
     
-    # Handle bold **text** -> *text* (process first to avoid conflicts)
-    # Use a placeholder to avoid conflicts with italic processing
-    def replace_bold(match):
+    # Step 2: Convert markdown formatting using placeholders to avoid conflicts
+    
+    # Convert bold **text** -> *text*
+    def convert_bold(match):
+        nonlocal counter
         bold_text = match.group(1)
-        # Escape special characters inside bold text
         escaped_bold_text = escapeMarkdownV2(bold_text, 'general')
-        return f'BOLD_PLACEHOLDER_START{escaped_bold_text}BOLD_PLACEHOLDER_END'
+        placeholder = f'XBOLDTOKENX{counter}XBOLDTOKENX'
+        protected_elements[placeholder] = f'*{escaped_bold_text}*'
+        counter += 1
+        return placeholder
     
-    text = re.sub(r'\*\*([^*]+?)\*\*', replace_bold, text)
+    text = re.sub(r'\*\*([^*\n]+?)\*\*', convert_bold, text)
     
-    # Handle italic *text* -> _text_ (now safe from bold conflicts)
-    def replace_italic(match):
+    # Convert italic *text* -> _text_
+    def convert_italic(match):
         italic_text = match.group(1)
-        # Escape special characters inside italic text
         escaped_italic_text = escapeMarkdownV2(italic_text, 'general')
         return f'_{escaped_italic_text}_'
     
-    text = re.sub(r'\*([^*]+?)\*', replace_italic, text)
+    text = re.sub(r'\*([^*\n]+?)\*', convert_italic, text)
     
-    # Replace bold placeholders with actual MarkdownV2 bold syntax
-    text = text.replace('BOLD_PLACEHOLDER_START', '*').replace('BOLD_PLACEHOLDER_END', '*')
-    
-    # Handle strikethrough ~~text~~ -> ~text~
-    def replace_strikethrough(match):
+    # Convert strikethrough ~~text~~ -> ~text~
+    def convert_strikethrough(match):
         strike_text = match.group(1)
-        # Escape special characters inside strikethrough text
         escaped_strike_text = escapeMarkdownV2(strike_text, 'general')
         return f'~{escaped_strike_text}~'
     
-    text = re.sub(r'~~([^~]+?)~~', replace_strikethrough, text)
+    text = re.sub(r'~~([^~\n]+?)~~', convert_strikethrough, text)
     
-    # Handle block quotes > text
-    def replace_blockquote(match):
+    # Convert block quotes > text
+    def convert_blockquote(match):
         quote_text = match.group(1)
-        # Don't escape text inside markup - it's already being marked up
-        return f'>{quote_text}'
+        escaped_quote_text = escapeMarkdownV2(quote_text, 'general')
+        return f'>{escaped_quote_text}'
     
-    text = re.sub(r'^> (.+)$', replace_blockquote, text, flags=re.MULTILINE)
+    text = re.sub(r'^> (.+)$', convert_blockquote, text, flags=re.MULTILINE)
     
-    # Now escape any remaining special characters in plain text
-    # We need to be careful not to escape characters that are part of our markup
+    # Convert headers ### text
+    def convert_header(match):
+        hashes = match.group(1)
+        header_text = match.group(2)
+        escaped_hashes = escapeMarkdownV2(hashes, 'general')
+        escaped_header_text = escapeMarkdownV2(header_text, 'general')
+        return f'{escaped_hashes} {escaped_header_text}'
     
-    # Split text by markup patterns to identify plain text sections
-    # Updated pattern to include block quotes properly and handle code blocks
-    markup_pattern = r'(\*[^*]*\*|_[^_]*_|__[^_]*__|~[^~]*~|\|\|[^|]*\|\||`[^`]*`|```[\s\S]*?```|\[[^\]]*\]\([^)]*\)|^>[^\n]*$)'
+    text = re.sub(r'^(#{1,6})\s*(.+)$', convert_header, text, flags=re.MULTILINE)
+    
+    # Convert horizontal rules ---
+    text = re.sub(r'^---+$', r'\\-\\-\\-', text, flags=re.MULTILINE)
+    
+    # Step 3: Escape all remaining plain text
+    # Split by protected elements and existing markup
+    markup_pattern = r'(_[^_\n]*_|~[^~\n]*~|^>[^\n]*$|^\\#{1,6}[^\n]*$|^\\-\\-\\-$|XCODEBLOCKTOKENX\d+XCODEBLOCKTOKENX|XINLINECODETOKENX\d+XINLINECODETOKENX|XLINKTOKENX\d+XLINKTOKENX|XBOLDTOKENX\d+XBOLDTOKENX)'
     parts = re.split(markup_pattern, text, flags=re.MULTILINE)
     
     result_parts = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:  # Plain text part
-            # Escape special characters in plain text
-            escaped_part = escapeMarkdownV2(part, 'general')
-            result_parts.append(escaped_part)
-        else:  # Markup part
+        if i % 2 == 0:  # Plain text part - escape it
+            if part:  # Only escape non-empty parts
+                escaped_part = escapeMarkdownV2(part, 'general')
+                result_parts.append(escaped_part)
+        else:  # Markup or protected element - keep as is
             result_parts.append(part)
     
-    return ''.join(result_parts)
+    text = ''.join(result_parts)
+    
+    # Step 4: Restore all protected elements iteratively until no more changes
+    # This handles nested placeholders properly
+    max_iterations = 10  # Prevent infinite loops
+    for iteration in range(max_iterations):
+        original_text = text
+        for placeholder, element in protected_elements.items():
+            text = text.replace(placeholder, element)
+        if text == original_text:  # No more changes made
+            break
+    
+    return text
+    
 
 
 def validateMarkdownV2(text: str) -> Tuple[bool, List[str]]:
