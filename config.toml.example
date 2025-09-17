@@ -4,23 +4,24 @@ token = "YOUR_BOT_TOKEN_HERE"
 bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
 
 [bot.defaults]
-allow_admin_change_channel_settings = true
-custom_mentions = ["Громозека", "Gro"]
-llm_message_format = "text"
-allow_tools = false
+admin-can-change-settings = true
+bot-nicknames = "Громозека, Gro"
+llm-message-format = "text"
+use-tools = true
+save-images = true
+parse-images = true
 
+summary-model           = "openrouter-gemma-3-27b-it-free"
+private-model           = "openrouter-gemma-3-12b-it-free"
+chat-model              = "openrouter-gemma-3-12b-it-free"
+fallback-model          = "openrouter-deepseek-chat-v3.1-free"
+summary-fallback-model  = "openrouter-deepseek-chat-v3.1-free"
+image-model             = "openrouter-gemma-3-27b-it-free"
 
-[bot.defaults.models]
-summary          = "openrouter-gemma-3-27b-it-free"
-private          = "openrouter-gemma-3-12b-it-free"
-chat             = "openrouter-gemma-3-12b-it-free"
-fallback         = "openrouter-deepseek-chat-v3.1-free"
-summary-fallback = "openrouter-deepseek-chat-v3.1-free"
-
-[bot.defaults.prompts]
-summary = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
-private = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
-chat    = "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
+summary-prompt = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
+parse-image-prompt = "Подробно опиши, что изображено на картинке"
+private-prompt = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
+chat-prompt    = "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
 
 [database]
 # Database configuration
