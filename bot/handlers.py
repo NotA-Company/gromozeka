@@ -24,22 +24,29 @@ from .ensured_message import EnsuredMessage, LLMMessageFormat
 logger = logging.getLogger(__name__)
 
 DEFAULT_SUMMARISATION_SYSTEM_PROMPT = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
-DEFAULT_PRIVATE_SYSTEM_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
+DEFAULT_PRIVATE_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
 DEFAULT_CHAT_SYSTEM_PROMPT =  "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
 ROBOT_EMOJI = "🤖"
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
 class ChatSettingsEnum(StrEnum):
     """Enum for chat settings."""
-    SUMMARY_MODEL = "summary_model"
-    CHAT_MODEL = "chat_model"
-    SUMMARY_SYSTEM_PROMPT = "summary_system_prompt"
-    CHAT_SYSTEM_PROMPT = "chat_system_prompt"
-    ALLOW_ADMIN_CHANGE_SETTINGS = "allow_admin_change_settings"
-    CUSTOM_MENTIONS = "custom_mentions"
-    LLM_MESSAGE_FORMAT = "llm_message_format"
-    ALLOW_TOOLS = "allow_tools"
+    CHAT_MODEL = "chat-model"
+    FALLBACK_MODEL = "fallback-model"
+    SUMMARY_MODEL = "summary-model"
+    SUMMARY_FALLBACK_MODEL = "summary-fallback-model"
+    IMAGE_MODEL = "image-model"
 
+    SUMMARY_PROMPT = "summary-prompt"
+    CHAT_PROMPT = "chat-prompt"
+    PARSE_IMAGE_PROMPT = "parse-image-prompt"
+
+    ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
+    BOT_NICKNAMES = "bot-nicknames"
+    LLM_MESSAGE_FORMAT = "llm-message-format"
+    USE_TOOLS = "use-tools"
+    SAVE_IMAGES = "save-images"
+    PARSE_IMAGES = "parse-images"
     def __str__(self):
         return str(self.value)
 
@@ -57,27 +64,18 @@ class BotHandlers:
 
         botDefaults = config.get("defaults", {})
         
-        modelDefaults: Dict[str, str] = botDefaults.get("models", {})
-        self.defaultModels: Dict[str, str] = {
-            "private": modelDefaults.get("private", "yandexgpt-lite"),
-            "summary": modelDefaults.get("summary", "yandexgpt-lite"),
-            "chat": modelDefaults.get("chat", "yandexgpt-lite"),
-            "fallback": modelDefaults.get("fallback", "yandexgpt-lite"),
-            "summary-fallback": modelDefaults.get("summary-fallback", "yandexgpt-lite"),
-        }
-        
-        promptsDefaults: Dict[str, str] = botDefaults.get("prompts", {})
-        self.defaultPrompts: Dict[str, str] = {
-            "private": promptsDefaults.get("private", DEFAULT_PRIVATE_SYSTEM_PROMPT),
-            "summary": promptsDefaults.get("summary", DEFAULT_SUMMARISATION_SYSTEM_PROMPT),
-            "chat": promptsDefaults.get("chat", DEFAULT_CHAT_SYSTEM_PROMPT),
-        }
-        
-        self.defaultAdminCanChangeSettings = bool(botDefaults.get("allow_admin_change_channel_settings", False))
-        self.defaultCustomMentions = [str(v).lower() for v in botDefaults.get("custom_mentions", [])]
-        self.defaultLLMMessageFormat = botDefaults.get("llm_message_format", "json")
-        self.defaultAllowTools = bool(botDefaults.get("allow_tools", False))
+        self.privateModel = str(botDefaults.get("private-model", "yandexgpt-lite"))
+        self.fallbackModel = str(botDefaults.get(ChatSettingsEnum.FALLBACK_MODEL, "yandexgpt-lite"))
+        self.privatePrompt = str(botDefaults.get("private-prompt", DEFAULT_PRIVATE_PROMPT))
 
+        self.chatDefaults: Dict[ChatSettingsEnum, Any] = {
+            k: '' for k in ChatSettingsEnum
+        }
+
+        self.chatDefaults.update({
+            k: v for k, v in botDefaults.items() if k in ChatSettingsEnum
+        })
+        
         # Init cache
         self.cache = {
             "chats": {},
@@ -86,32 +84,36 @@ class BotHandlers:
     ###
     # Helpers for getting needed Models or Prompts
     ###
-    def getSummarySystemPrompt(self, chatId: Optional[int] = None) -> str:
+    def updateDefaults(self) -> None:
+        pass
+        
+    def getSummaryPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for summarising messages."""
         if not chatId:
-            return self.defaultPrompts["summary"]
+            return self.chatDefaults[ChatSettingsEnum.SUMMARY_PROMPT]
 
         chatSettings = self.getChatSettings(chatId)
-        return chatSettings.get(ChatSettingsEnum.SUMMARY_SYSTEM_PROMPT, self.defaultPrompts["summary"])
+        return chatSettings[ChatSettingsEnum.SUMMARY_PROMPT]
 
-    def getChatSystemPrompt(self, chatId: Optional[int] = None) -> str:
+    def getChatPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for chatting."""
         if not chatId:
-            return self.defaultPrompts["chat"]
+            return self.chatDefaults[ChatSettingsEnum.CHAT_PROMPT]
+        
         chatSettings = self.getChatSettings(chatId)
-        return chatSettings.get(ChatSettingsEnum.CHAT_SYSTEM_PROMPT, self.defaultPrompts["chat"])
+        return chatSettings[ChatSettingsEnum.CHAT_PROMPT]
 
-    def getPrivateSystemPrompt(self, chatId: Optional[int] = None) -> str:
+    def getPrivatePrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for private messages."""
         if not chatId:
-            return self.defaultPrompts["private"]
+            return self.privatePrompt
         # TODO: Try to get it from the database
-        return self.defaultPrompts["private"]
+        return self.privatePrompt
 
     def getSummaryModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for summarising messages."""
 
-        modelName = self.defaultModels["summary"]
+        modelName = str(self.chatDefaults[ChatSettingsEnum.SUMMARY_MODEL])
         if chatId:
             chatSettings = self.getChatSettings(chatId)
             modelName = chatSettings.get(ChatSettingsEnum.SUMMARY_MODEL, modelName)
@@ -124,7 +126,8 @@ class BotHandlers:
 
     def getChatModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for chatting."""
-        modelName = self.defaultModels["chat"]
+        modelName = str(self.chatDefaults[ChatSettingsEnum.CHAT_MODEL])
+        
         if chatId:
             chatSettings = self.getChatSettings(chatId)
             modelName = chatSettings.get(ChatSettingsEnum.CHAT_MODEL, modelName)
@@ -137,7 +140,7 @@ class BotHandlers:
 
     def getPrivateModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for private messages."""
-        modelName = self.defaultModels["private"]
+        modelName = self.privateModel
         if chatId:
             # TODO: Try to get it from the database
             pass
@@ -148,18 +151,26 @@ class BotHandlers:
             raise ValueError(f"Model {modelName} not found")
         return ret
 
-    def getFallbackModel(self) -> AbstractModel:
+    def getFallbackModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for fallback messages."""
-        modelName = self.defaultModels["fallback"]
+        modelName = str(self.chatDefaults[ChatSettingsEnum.FALLBACK_MODEL])
+        if chatId:
+            chatSettings = self.getChatSettings(chatId)
+            modelName = chatSettings.get(ChatSettingsEnum.FALLBACK_MODEL, modelName)
+
         ret = self.llmManager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
         return ret
 
-    def getFallbackSummaryModel(self) -> AbstractModel:
+    def getFallbackSummaryModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for fallback messages."""
-        modelName = self.defaultModels["summary-fallback"]
+        modelName = str(self.chatDefaults[ChatSettingsEnum.SUMMARY_FALLBACK_MODEL])
+        if chatId:
+            chatSettings = self.getChatSettings(chatId)
+            modelName = chatSettings.get(ChatSettingsEnum.SUMMARY_FALLBACK_MODEL, modelName)
+
         ret = self.llmManager.getModel(modelName)
         if ret is None:
             logger.error(f"Model {modelName} not found")
@@ -172,16 +183,6 @@ class BotHandlers:
 
     def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[ChatSettingsEnum, str]:
         """Get the chat settings for the given chat."""
-        defaultChatSettings = {
-            ChatSettingsEnum.SUMMARY_MODEL: self.defaultModels["summary"],
-            ChatSettingsEnum.CHAT_MODEL: self.defaultModels["chat"],
-            ChatSettingsEnum.SUMMARY_SYSTEM_PROMPT: self.defaultPrompts["summary"],
-            ChatSettingsEnum.CHAT_SYSTEM_PROMPT: self.defaultPrompts["chat"],
-            ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS: str(self.defaultAdminCanChangeSettings),
-            ChatSettingsEnum.CUSTOM_MENTIONS: ", ".join(self.defaultCustomMentions),
-            ChatSettingsEnum.LLM_MESSAGE_FORMAT: self.defaultLLMMessageFormat,
-            ChatSettingsEnum.ALLOW_TOOLS: str(self.defaultAllowTools),
-        }
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
 
@@ -189,7 +190,7 @@ class BotHandlers:
             self.cache["chats"][chatId]['settings'] = self.db.getChatSettings(chatId)
 
         if returnDefault:
-            return {**defaultChatSettings, **self.cache["chats"][chatId]['settings']}
+            return {**self.chatDefaults, **self.cache["chats"][chatId]['settings']}
 
         return self.cache["chats"][chatId]['settings']
 
@@ -316,7 +317,7 @@ class BotHandlers:
                 model=llmModel,
                 messages=ModelMessage.fromDictList(messagesHistory),
                 fallbackModel=self.getFallbackModel(),
-                useTools=chatSettings[ChatSettingsEnum.ALLOW_TOOLS].lower() == "true",
+                useTools=chatSettings[ChatSettingsEnum.USE_TOOLS].lower() == "true",
             )
             logger.debug(f"LLM Response: {mlRet}")
         except Exception as e:
@@ -423,7 +424,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": self.getPrivateSystemPrompt(chatId=user.id),
+                "content": self.getPrivatePrompt(chatId=user.id),
             },
         ]
 
@@ -581,7 +582,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": self.getChatSystemPrompt(chat.id),
+                "content": self.getChatPrompt(chat.id),
             },
         ] + storedMessages
 
@@ -619,7 +620,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": self.getChatSystemPrompt(ensuredMessage.chat.id),
+                "content": self.getChatPrompt(ensuredMessage.chat.id),
             }
         ]
 
@@ -662,7 +663,7 @@ class BotHandlers:
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT])
-        customMentions = [v.strip().lower() for v in chatSettings[ChatSettingsEnum.CUSTOM_MENTIONS].split(",")]
+        customMentions = [v.strip().lower() for v in chatSettings[ChatSettingsEnum.BOT_NICKNAMES].split(",")]
         customMentions = [v for v in customMentions if v]
         if not customMentions:
             return False
@@ -729,7 +730,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": self.getChatSystemPrompt(ensuredMessage.chat.id),
+                "content": self.getChatPrompt(ensuredMessage.chat.id),
             },
             {
                 "role": "user",
@@ -909,7 +910,7 @@ class BotHandlers:
 
         systemMessage = {
             "role": "system",
-            "content": self.getSummarySystemPrompt(chatId=chatId),
+            "content": self.getSummaryPrompt(chatId=chatId),
         }
         parsedMessages = []
 
@@ -1157,7 +1158,7 @@ class BotHandlers:
             return
 
         chatSettings = self.getChatSettings(chat.id)
-        adminAllowedChangeSettings = chatSettings.get(ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS, str(self.defaultAdminCanChangeSettings))
+        adminAllowedChangeSettings = chatSettings[ChatSettingsEnum.ADMIN_CAN_CHANGE_SETTINGS]
         adminAllowedChangeSettings = adminAllowedChangeSettings.lower() == "true"
 
         allowedUsers = self.botOwners[:]
@@ -1227,7 +1228,7 @@ class BotHandlers:
             return
 
         chatSettings = self.getChatSettings(chat.id)
-        adminAllowedChangeSettings = chatSettings.get(ChatSettingsEnum.ALLOW_ADMIN_CHANGE_SETTINGS, str(self.defaultAdminCanChangeSettings))
+        adminAllowedChangeSettings = chatSettings[ChatSettingsEnum.ADMIN_CAN_CHANGE_SETTINGS]
         adminAllowedChangeSettings = adminAllowedChangeSettings.lower() == "true"
 
         allowedUsers = self.botOwners[:]
