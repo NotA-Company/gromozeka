@@ -144,7 +144,8 @@ class Tokenizer:
             return True
         
         # Check if we're at start of line for block-level elements
-        if self.column == 1 or self._is_after_newline():
+        # Also check after consuming spaces if we're still logically at line start
+        if self.column == 1 or self._is_after_newline() or self._is_after_line_start_spaces():
             if self._try_tokenize_block_elements():
                 return True
         
@@ -343,6 +344,24 @@ class Tokenizer:
         if self.pos == 0:
             return True
         return self.text[self.pos - 1] == '\n'
+    
+    def _is_after_line_start_spaces(self) -> bool:
+        """Check if we're after spaces at the start of a line."""
+        if self.pos == 0:
+            return False
+        
+        # Look backwards to see if we have only spaces since the last newline
+        temp_pos = self.pos - 1
+        while temp_pos >= 0:
+            char = self.text[temp_pos]
+            if char == '\n':
+                return True  # Found newline, so we're after line-start spaces
+            elif char not in ' \t':
+                return False  # Found non-space character, not at line start
+            temp_pos -= 1
+        
+        # Reached beginning of text with only spaces
+        return True
     
     def __iter__(self) -> Iterator[Token]:
         """Make tokenizer iterable."""

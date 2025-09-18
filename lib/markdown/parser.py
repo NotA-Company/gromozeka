@@ -6,7 +6,7 @@ tokenization, block parsing, inline parsing, and rendering.
 """
 
 from typing import Dict, Any, Optional, List
-from .ast_nodes import MDDocument, MDNode, MDParagraph, MDText
+from .ast_nodes import MDDocument, MDNode, MDParagraph, MDText, MDHeader
 from .tokenizer import Tokenizer, Token
 from .block_parser import BlockParser
 from .inline_parser import InlineParser
@@ -38,6 +38,9 @@ class MarkdownParser:
         self.strict_mode = self.options.get('strict_mode', False)
         self.enable_extensions = self.options.get('enable_extensions', True)
         self.max_nesting_depth = self.options.get('max_nesting_depth', 100)
+        self.preserve_leading_spaces = self.options.get('preserve_leading_spaces', False)
+        self.preserve_soft_line_breaks = self.options.get('preserve_soft_line_breaks', False)
+        self.ignore_indented_code_blocks = self.options.get('ignore_indented_code_blocks', True)
         
         # Initialize components
         self.inline_parser = InlineParser()
@@ -82,7 +85,7 @@ class MarkdownParser:
             self.parse_stats['tokens_processed'] = len(tokens)
             
             # Stage 2: Block Parsing
-            block_parser = BlockParser(tokens)
+            block_parser = BlockParser(tokens, self.options)
             document = block_parser.parse()
             
             # Stage 3: Inline Parsing
@@ -190,6 +193,9 @@ class MarkdownParser:
         if isinstance(node, MDParagraph):
             # Process paragraph content for inline elements
             self._process_paragraph_inline(node)
+        elif isinstance(node, MDHeader):
+            # Process header content for inline elements
+            self._process_header_inline(node)
         elif hasattr(node, 'children'):
             # Recursively process children
             for child in node.children[:]:  # Copy list to avoid modification during iteration
@@ -219,6 +225,31 @@ class MarkdownParser:
         paragraph.children.clear()
         for node in inline_nodes:
             paragraph.add_child(node)
+    
+    def _process_header_inline(self, header: MDHeader) -> None:
+        """
+        Process inline elements within a header.
+        
+        Args:
+            header: The header node to process
+        """
+        # Collect all text content from header
+        text_content = ""
+        for child in header.children:
+            if isinstance(child, MDText):
+                text_content += child.content
+        
+        if not text_content.strip():
+            return
+        
+        # Parse inline elements
+        inline_nodes = self.inline_parser.parse_inline_content(text_content)
+        self.parse_stats['inline_elements_parsed'] += len(inline_nodes)
+        
+        # Replace header children with parsed inline nodes
+        header.children.clear()
+        for node in inline_nodes:
+            header.add_child(node)
     
     def _post_process_document(self, document: MDDocument) -> None:
         """
@@ -438,6 +469,12 @@ def markdown_to_markdownv2(text: str, **options) -> str:
     Returns:
         MarkdownV2 string
     """
+    # Enable preserve options by default for MarkdownV2 conversion
+    if 'preserve_leading_spaces' not in options:
+        options['preserve_leading_spaces'] = True
+    if 'preserve_soft_line_breaks' not in options:
+        options['preserve_soft_line_breaks'] = True
+    
     parser = MarkdownParser(options)
     return parser.parse_to_markdownv2(text)
 
