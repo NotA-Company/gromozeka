@@ -5,9 +5,11 @@ Refactored modular version.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
+from typing import List, Optional
 
 from config.manager import ConfigManager
 from database.manager import DatabaseManager
@@ -28,10 +30,10 @@ logger = logging.getLogger(__name__)
 class GromozekBot:
     """Main bot orchestrator that coordinates all components."""
 
-    def __init__(self, config_path: str = "config.toml"):
+    def __init__(self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None):
         """Initialize bot with all components."""
         # Initialize configuration
-        self.config_manager = ConfigManager(config_path)
+        self.config_manager = ConfigManager(config_path, config_dirs)
 
         # Initialize logging with config
         init_logger(self.config_manager.get_logging_config())
@@ -66,6 +68,11 @@ def parse_arguments():
         help="Path to configuration file (default: config.toml)"
     )
     parser.add_argument(
+        "--config-dir",
+        action="append",
+        help="Directory to search for .toml config files recursively (can be specified multiple times), dood!"
+    )
+    parser.add_argument(
         "-d", "--daemon",
         action="store_true",
         help="Run bot in background (daemon mode), dood!"
@@ -75,10 +82,19 @@ def parse_arguments():
         default="gromozeka.pid",
         help="PID file path for daemon mode (default: gromozeka.pid)"
     )
+    parser.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Pretty-print loaded configuration and exit, dood!"
+    )
     args = parser.parse_args()
     # Convert relative paths to absolute paths before daemon mode changes working directory
     args.config = os.path.abspath(args.config)
     args.pid_file = os.path.abspath(args.pid_file)
+    
+    # Convert config directories to absolute paths
+    if args.config_dir:
+        args.config_dir = [os.path.abspath(dir_path) for dir_path in args.config_dir]
 
     return args
 
@@ -134,17 +150,47 @@ def daemonize(pid_file: str):
         os.dup2(dev_null_w.fileno(), sys.stderr.fileno())
 
 
+def pretty_print_config(config_manager: ConfigManager):
+    """Pretty-print the loaded configuration and exit, dood!"""
+    print("=== Gromozeka Configuration ===")
+    print()
+    
+    # Get the raw config dictionary
+    config = config_manager.config
+    
+    # Pretty-print as JSON for better readability
+    try:
+        config_json = json.dumps(config, indent=2, ensure_ascii=False, sort_keys=True)
+        print(config_json)
+    except (TypeError, ValueError) as e:
+        # Fallback to basic dict representation if JSON serialization fails
+        logger.warning(f"Could not serialize config as JSON: {e}")
+        print("Raw configuration:")
+        for key, value in sorted(config.items()):
+            print(f"{key}: {value}")
+    
+    print()
+    print("=== Configuration loaded successfully, dood! ===")
+
+
 def main():
     """Main entry point."""
     args = parse_arguments()
 
     try:
+        # Handle --print-config argument first
+        if args.print_config:
+            # Initialize only the config manager to load and print config
+            config_manager = ConfigManager(config_path=args.config, config_dirs=args.config_dir)
+            pretty_print_config(config_manager)
+            sys.exit(0)
+
         # Fork to background if daemon mode requested
         if args.daemon:
             daemonize(args.pid_file)
 
-        # Initialize bot with custom config path
-        bot = GromozekBot(config_path=args.config)
+        # Initialize bot with custom config path and directories
+        bot = GromozekBot(config_path=args.config, config_dirs=args.config_dir)
         bot.run()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")

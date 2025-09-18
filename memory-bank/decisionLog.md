@@ -663,3 +663,32 @@ This file records architectural and implementation decisions using a list format
   - Integration with other MarkdownV2 elements (headers, paragraphs, block quotes)
 * Test results show perfect Telegram MarkdownV2 compliance with proper nested list structure
 * Both normalize_markdown() and markdown_to_markdownv2() now produce correctly formatted nested lists
+[2025-09-18 23:05:00] - Added --print-config Command Line Argument
+
+## Decision
+
+* Implemented --print-config command line argument to pretty-print loaded configuration and exit
+* Added pretty_print_config() function with JSON formatting and fallback error handling
+* Modified main() function to handle --print-config with early exit before daemon initialization
+
+## Rationale 
+
+* Users needed ability to inspect loaded configuration without starting the bot
+* Useful for debugging configuration issues, especially with merged configs from multiple directories
+* JSON formatting provides clean, readable output with proper indentation and sorting
+* Early exit prevents unnecessary initialization of database, LLM manager, and bot components
+* Fallback error handling ensures function works even if JSON serialization fails
+
+## Implementation Details
+
+* Added json import to main.py for configuration serialization
+* Added --print-config argument to argparse with descriptive help text
+* Implemented pretty_print_config() function that:
+  - Displays formatted header and footer messages
+  - Uses json.dumps() with indent=2, ensure_ascii=False, sort_keys=True for clean output
+  - Includes fallback to basic dict representation if JSON serialization fails
+  - Provides informative error logging for serialization issues
+* Modified main() function to check args.print_config first and exit early with sys.exit(0)
+* Only initializes ConfigManager (not full GromozekBot) when --print-config is used
+* Comprehensive testing confirmed functionality works with both config.toml and config.toml.example files
+* No breaking changes to existing command line arguments or bot functionality
