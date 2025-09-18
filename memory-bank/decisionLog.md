@@ -456,3 +456,60 @@ This file records architectural and implementation decisions using a list format
   - Specification compliance tests
   - Error handling and edge case tests
   - Performance and nesting depth validation
+
+[2025-09-18 16:52:50] - Implemented MarkdownV2 Rendering Support for Gromozeka Markdown Parser
+
+## Decision
+
+* Successfully added comprehensive MarkdownV2 rendering capability to the existing Gromozeka Markdown Parser
+* Created new MarkdownV2Renderer class integrated with the modular parser architecture
+* Added parse_to_markdownv2() method and markdown_to_markdownv2() convenience function
+* Implemented proper character escaping according to Telegram's MarkdownV2 specification
+
+## Rationale 
+
+* The Gromozeka project needed MarkdownV2 support for Telegram bot integration
+* Leveraging the existing modular parser architecture allows clean separation of concerns
+* Reusing existing telegram_markdown.py utilities ensures consistent escaping behavior
+* Following the same patterns as HTMLRenderer and MarkdownRenderer maintains architectural consistency
+* Comprehensive testing ensures reliability for production Telegram bot usage
+
+## Implementation Details
+
+* Created MarkdownV2Renderer class in lib/markdown/renderer.py with full AST traversal support
+* Implemented proper format conversion: **bold** → *bold*, *italic* → _italic_, ~~strike~~ → ~strike~
+* Added context-aware character escaping using existing escapeMarkdownV2() function from lib/telegram_markdown.py
+* Handled MarkdownV2 limitations: headers converted to bold text, lists to bullet/numbered format
+* Special handling for Telegram-specific features: custom emoji support, email autolinks with mailto:
+* Added parse_to_markdownv2() method to main MarkdownParser class with options support
+* Created markdown_to_markdownv2() convenience function for quick conversions
+* Updated module exports in __init__.py to include new MarkdownV2 functionality
+
+* Comprehensive test suite with 31 test cases covering:
+  - Basic formatting conversion (bold, italic, strikethrough)
+  - Character escaping in different contexts (general, code, links)
+  - Complex document structures with mixed elements
+  - Telegram-specific features (custom emoji, autolinks, mentions)
+  - Error handling and edge cases
+  - Integration with main parser interface
+
+* Created extensive documentation and examples:
+  - Updated module docstring with MarkdownV2 usage examples
+  - Created markdownv2_examples.py with comprehensive demonstrations
+  - Added test files: test_markdownv2_renderer.py, demo_markdownv2.py
+  - All examples tested and working correctly
+
+* Key architectural patterns maintained:
+  - Modular renderer design following existing HTMLRenderer/MarkdownRenderer patterns
+  - AST-based rendering with proper node type handling
+  - Options support for customization
+  - Error handling and graceful degradation
+  - Fallback escaping when telegram_markdown module unavailable
+
+* MarkdownV2 format compliance:
+  - Proper escaping of special characters: _*[]()~`>#+-=|{}.!
+  - Context-aware escaping (general text vs code vs link URLs)
+  - Support for all MarkdownV2 formatting: *bold*, _italic_, ~strikethrough~, `code`, ```code blocks```
+  - Block quote support with > prefix
+  - Link format: [text](url) with proper URL escaping
+  - Custom emoji support: ![emoji](tg://emoji?id=...)

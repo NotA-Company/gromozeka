@@ -1,8 +1,8 @@
 """
-HTML Renderer for Gromozeka Markdown Parser
+Renderers for Gromozeka Markdown Parser
 
-This module provides HTML rendering functionality to convert the parsed
-Markdown AST into HTML output.
+This module provides rendering functionality to convert the parsed
+Markdown AST into various output formats including HTML and MarkdownV2.
 """
 
 import html
@@ -18,7 +18,7 @@ class HTMLRenderer:
     following HTML5 standards.
     """
     
-    def __init__(self, options: Dict[str, Any] = None):
+    def __init__(self, options: Optional[Dict[str, Any]] = None):
         """
         Initialize the HTML renderer.
         
@@ -281,7 +281,7 @@ class MarkdownRenderer:
     Useful for reformatting or normalizing Markdown documents.
     """
     
-    def __init__(self, options: Dict[str, Any] = None):
+    def __init__(self, options: Optional[Dict[str, Any]] = None):
         """Initialize the Markdown renderer."""
         self.options = options or {}
         self.header_style = self.options.get('header_style', 'atx')  # 'atx' or 'setext'
@@ -354,6 +354,9 @@ class MarkdownRenderer:
             return "---"
         else:
             return self._render_children(node)
+        
+        # Actually it's unreachible, but linter whine about returning None
+        raise ValueError(f"Unknown node type: {type(node)}")
     
     def _render_children(self, node: MDNode) -> str:
         """Render all children of a node."""
@@ -361,3 +364,229 @@ class MarkdownRenderer:
         for child in node.children:
             content_parts.append(self._render_node(child))
         return ''.join(content_parts)
+
+
+class MarkdownV2Renderer:
+    """
+    Renderer that converts Markdown AST to Telegram MarkdownV2 format.
+    
+    Follows Telegram's MarkdownV2 specification with proper character escaping
+    and format conversion.
+    """
+    
+    def __init__(self, options: Optional[Dict[str, Any]] = None):
+        """Initialize the MarkdownV2 renderer."""
+        self.options = options or {}
+        
+        # Import escaping function from telegram_markdown module
+        try:
+            import sys
+            import os
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+            from lib.telegram_markdown import escapeMarkdownV2
+            self._escape = escapeMarkdownV2
+        except ImportError:
+            # Fallback escaping if telegram_markdown is not available
+            self._escape = self._fallback_escape
+    
+    def render(self, document: MDDocument) -> str:
+        """Render a Markdown document to MarkdownV2 format."""
+        if not isinstance(document, MDDocument):
+            raise ValueError("Expected MDDocument as root node")
+        
+        parts = []
+        for i, child in enumerate(document.children):
+            if i > 0:
+                # Add blank line between block elements
+                parts.append('')
+            parts.append(self._render_node(child))
+        
+        return '\n'.join(parts)
+    
+    def _render_node(self, node: MDNode) -> str:
+        """Render a single AST node to MarkdownV2."""
+        if isinstance(node, MDDocument):
+            return self._render_document(node)
+        elif isinstance(node, MDParagraph):
+            return self._render_paragraph(node)
+        elif isinstance(node, MDHeader):
+            return self._render_header(node)
+        elif isinstance(node, MDCodeBlock):
+            return self._render_code_block(node)
+        elif isinstance(node, MDBlockQuote):
+            return self._render_block_quote(node)
+        elif isinstance(node, MDList):
+            return self._render_list(node)
+        elif isinstance(node, MDListItem):
+            return self._render_list_item(node)
+        elif isinstance(node, MDHorizontalRule):
+            return self._render_horizontal_rule(node)
+        elif isinstance(node, MDEmphasis):
+            return self._render_emphasis(node)
+        elif isinstance(node, MDLink):
+            return self._render_link(node)
+        elif isinstance(node, MDImage):
+            return self._render_image(node)
+        elif isinstance(node, MDCodeSpan):
+            return self._render_code_span(node)
+        elif isinstance(node, MDText):
+            return self._render_text(node)
+        elif isinstance(node, MDAutolink):
+            return self._render_autolink(node)
+        else:
+            # Fallback for unknown node types
+            return self._escape(f"[Unknown: {type(node).__name__}]", 'general')
+    
+    def _render_document(self, node: MDDocument) -> str:
+        """Render document node."""
+        parts = []
+        for i, child in enumerate(node.children):
+            if i > 0:
+                parts.append('')  # Blank line between blocks
+            parts.append(self._render_node(child))
+        return '\n'.join(parts)
+    
+    def _render_paragraph(self, node: MDParagraph) -> str:
+        """Render paragraph node."""
+        content = self._render_children(node)
+        return content.strip()
+    
+    def _render_header(self, node: MDHeader) -> str:
+        """Render header node - headers are not supported in MarkdownV2, render as bold."""
+        content = self._render_children(node)
+        # Convert headers to bold text since MarkdownV2 doesn't support headers
+        return f"*{self._escape(content, 'general')}*"
+    
+    def _render_code_block(self, node: MDCodeBlock) -> str:
+        """Render code block node."""
+        content = self._escape(node.content, 'pre_code')
+        
+        if node.language:
+            return f"```{node.language}\n{content}\n```"
+        else:
+            return f"```\n{content}\n```"
+    
+    def _render_block_quote(self, node: MDBlockQuote) -> str:
+        """Render block quote node."""
+        parts = []
+        for child in node.children:
+            child_content = self._render_node(child)
+            lines = child_content.split('\n')
+            for line in lines:
+                if line.strip():
+                    parts.append(f">{line}")
+                else:
+                    parts.append('>')
+        return '\n'.join(parts)
+    
+    def _render_list(self, node: MDList) -> str:
+        """Render list node - lists are not directly supported in MarkdownV2."""
+        # Convert lists to simple text with bullet points or numbers
+        items = []
+        for i, child in enumerate(node.children):
+            item_content = self._render_node(child)
+            if node.list_type == ListType.ORDERED:
+                start_num = node.start_number + i
+                items.append(f"{start_num}\\. {item_content}")
+            else:
+                items.append(f"• {item_content}")
+        return '\n'.join(items)
+    
+    def _render_list_item(self, node: MDListItem) -> str:
+        """Render list item node."""
+        return self._render_children(node)
+    
+    def _render_horizontal_rule(self, node: MDHorizontalRule) -> str:
+        """Render horizontal rule - not supported in MarkdownV2, use escaped dashes."""
+        return self._escape("---", 'general')
+    
+    def _render_emphasis(self, node: MDEmphasis) -> str:
+        """Render emphasis node using MarkdownV2 syntax."""
+        content = self._render_children(node)
+        
+        if node.emphasis_type == EmphasisType.ITALIC:
+            return f"_{content}_"
+        elif node.emphasis_type == EmphasisType.BOLD:
+            return f"*{content}*"
+        elif node.emphasis_type == EmphasisType.BOLD_ITALIC:
+            # MarkdownV2 doesn't have bold+italic, use bold
+            return f"*{content}*"
+        elif node.emphasis_type == EmphasisType.STRIKETHROUGH:
+            return f"~{content}~"
+        else:
+            return content
+    
+    def _render_link(self, node: MDLink) -> str:
+        """Render link node."""
+        content = self._render_children(node)
+        escaped_url = self._escape(node.url, 'link_url')
+        
+        # If both content and URL are empty, this might be a false positive link
+        # that consumed emphasis markers. In that case, reconstruct the likely original text.
+        if not content.strip() and not node.url.strip():
+            # This is likely a case where _*[]()~`! was parsed as an empty link
+            # We need to escape these characters as they would appear in the original text
+            return self._escape("_*[]()~`!", 'general')
+        
+        return f"[{content}]({escaped_url})"
+    
+    def _render_image(self, node: MDImage) -> str:
+        """Render image node using custom emoji syntax if possible."""
+        # MarkdownV2 supports custom emoji: ![👍](tg://emoji?id=5368324170671202286)
+        # For regular images, we'll use a link format
+        escaped_alt = self._escape(node.alt_text, 'general')
+        escaped_url = self._escape(node.url, 'link_url')
+        
+        # Check if this looks like a Telegram emoji URL
+        if 'tg://emoji' in node.url:
+            return f"![{escaped_alt}]({escaped_url})"
+        else:
+            # Regular image - convert to link since MarkdownV2 doesn't support images
+            return f"[{escaped_alt}]({escaped_url})"
+    
+    def _render_code_span(self, node: MDCodeSpan) -> str:
+        """Render inline code span."""
+        content = self._escape(node.content, 'pre_code')
+        return f"`{content}`"
+    
+    def _render_text(self, node: MDText) -> str:
+        """Render text node with proper escaping."""
+        return self._escape(node.content, 'general')
+    
+    def _render_autolink(self, node: MDAutolink) -> str:
+        """Render autolink node."""
+        url = node.url
+        display_url = node.url
+        
+        if node.is_email and not url.startswith('mailto:'):
+            url = f"mailto:{url}"
+        
+        escaped_url = self._escape(url, 'link_url')
+        escaped_display = self._escape(display_url, 'general')
+        return f"[{escaped_display}]({escaped_url})"
+    
+    def _render_children(self, node: MDNode) -> str:
+        """Render all children of a node."""
+        parts = []
+        for child in node.children:
+            parts.append(self._render_node(child))
+        return ''.join(parts)
+    
+    def _fallback_escape(self, text: str, context: str = 'general') -> str:
+        """Fallback escaping function if telegram_markdown module is not available."""
+        if context == 'pre_code':
+            chars_to_escape = '`\\'
+        elif context == 'link_url':
+            chars_to_escape = ')\\'
+        else:  # general
+            chars_to_escape = '_*[]()~`>#+-=|{}.!'
+        
+        # Escape backslashes first
+        result = text.replace('\\', '\\\\')
+        
+        # Escape other special characters
+        for char in chars_to_escape:
+            if char != '\\':  # Already escaped backslashes
+                result = result.replace(char, f'\\{char}')
+        
+        return result
