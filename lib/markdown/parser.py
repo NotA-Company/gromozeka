@@ -10,7 +10,7 @@ from .ast_nodes import MDDocument, MDNode, MDParagraph, MDText
 from .tokenizer import Tokenizer, Token
 from .block_parser import BlockParser
 from .inline_parser import InlineParser
-from .renderer import HTMLRenderer, MarkdownRenderer
+from .renderer import HTMLRenderer, MarkdownRenderer, MarkdownV2Renderer
 
 
 class MarkdownParser:
@@ -45,6 +45,7 @@ class MarkdownParser:
         # Rendering options
         self.html_renderer = HTMLRenderer(self.options.get('html_options', {}))
         self.markdown_renderer = MarkdownRenderer(self.options.get('markdown_options', {}))
+        self.markdownv2_renderer = MarkdownV2Renderer(self.options.get('markdownv2_options', {}))
         
         # Statistics and debugging
         self.parse_stats = {
@@ -126,6 +127,19 @@ class MarkdownParser:
         """
         document = self.parse(markdown_text)
         return self.markdown_renderer.render(document)
+    
+    def parse_to_markdownv2(self, markdown_text: str) -> str:
+        """
+        Parse Markdown text and render to Telegram MarkdownV2 format.
+        
+        Args:
+            markdown_text: The Markdown text to parse
+            
+        Returns:
+            MarkdownV2 string representation
+        """
+        document = self.parse(markdown_text)
+        return self.markdownv2_renderer.render(document)
     
     def validate(self, markdown_text: str) -> Dict[str, Any]:
         """
@@ -320,6 +334,12 @@ class MarkdownParser:
                 self._markdown_options = {}
             self._markdown_options[md_key] = value
             self.markdown_renderer = MarkdownRenderer(self._markdown_options)
+        elif key.startswith('markdownv2_'):
+            mdv2_key = key[11:]  # Remove 'markdownv2_' prefix
+            if not hasattr(self, '_markdownv2_options'):
+                self._markdownv2_options = {}
+            self._markdownv2_options[mdv2_key] = value
+            self.markdownv2_renderer = MarkdownV2Renderer(self._markdownv2_options)
     
     def get_option(self, key: str, default: Any = None) -> Any:
         """
@@ -405,6 +425,21 @@ def normalize_markdown(text: str, **options) -> str:
     """
     parser = MarkdownParser(options)
     return parser.parse_to_markdown(text)
+
+
+def markdown_to_markdownv2(text: str, **options) -> str:
+    """
+    Convert Markdown text to Telegram MarkdownV2 format.
+    
+    Args:
+        text: Markdown text to convert
+        **options: Parser and renderer options
+        
+    Returns:
+        MarkdownV2 string
+    """
+    parser = MarkdownParser(options)
+    return parser.parse_to_markdownv2(text)
 
 
 def validate_markdown(text: str, **options) -> Dict[str, Any]:
