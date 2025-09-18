@@ -58,29 +58,12 @@ class LLMManager:
             except Exception as e:
                 logger.error(f"Failed to initialize {provider_name} provider: {e}")
 
-        # Initialize yc-openai provider
-        if "yc-openai" in providers_config:
-            try:
-                self.providers["yc-openai"] = YcOpenaiProvider(providers_config["yc-openai"])
-                logger.info("Initialized yc-openai provider, dood!")
-            except Exception as e:
-                logger.error(f"Failed to initialize yc-openai provider: {e}")
-
-        # Initialize openrouter provider
-        if "openrouter" in providers_config:
-            try:
-                self.providers["openrouter"] = OpenrouterProvider(providers_config["openrouter"])
-                logger.info("Initialized openrouter provider, dood!")
-            except Exception as e:
-                logger.error(f"Failed to initialize openrouter provider: {e}")
-
     def _initModels(self):
         """Initialize models from config, dood!"""
-        modelsConfig: List[Dict[str, Any]] = self.config.get("models", [])
+        modelsConfig: Dict[str, Dict[str, Any]] = self.config.get("models", {})
 
-        for modelConfig in modelsConfig:
+        for modelName, modelConfig in modelsConfig.items():
             try:
-                name = modelConfig["name"]
                 providerName = modelConfig["provider"]
                 modelId = modelConfig["model_id"]
                 modelVersion = modelConfig.get("model_version", "latest")
@@ -88,12 +71,12 @@ class LLMManager:
                 contextSize = modelConfig.get("context", 32768)
 
                 if providerName not in self.providers:
-                    logger.warning(f"Provider {providerName} not available for model {name}, dood!")
+                    logger.warning(f"Provider {providerName} not available for model {modelName}, dood!")
                     continue
 
                 provider = self.providers[providerName]
                 provider.addModel(
-                    name=name,
+                    name=modelName,
                     modelId=modelId,
                     modelVersion=modelVersion,
                     temperature=temperature,
@@ -101,8 +84,8 @@ class LLMManager:
                     extraConfig=modelConfig,
                 )
 
-                self.modelRegistry[name] = providerName
-                logger.info(f"Added model {name} to provider {providerName}, dood!")
+                self.modelRegistry[modelName] = providerName
+                logger.info(f"Added model {modelName} to provider {providerName}, dood!")
 
             except Exception as e:
                 logger.error(f"Failed to initialize model {modelConfig.get('name', 'unknown')}: {e}")

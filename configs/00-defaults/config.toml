@@ -1,0 +1,38 @@
+[bot]
+# Your Telegram bot token from @BotFather
+token = "YOUR_BOT_TOKEN_HERE"
+bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
+
+[bot.defaults]
+admin-can-change-settings = true
+bot-nicknames = "Громозека, Gro"
+llm-message-format = "text"
+use-tools = true
+save-images = true
+parse-images = true
+
+summary-model           = "openrouter/gemma-3-27b-it-free"
+private-model           = "openrouter/gemma-3-12b-it-free"
+chat-model              = "openrouter/gemma-3-12b-it-free"
+fallback-model          = "openrouter/deepseek-chat-v3.1-free"
+summary-fallback-model  = "openrouter/deepseek-chat-v3.1-free"
+image-model             = "openrouter/gemma-3-27b-it-free"
+
+summary-prompt = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
+parse-image-prompt = "Подробно опиши, что изображено на картинке"
+private-prompt = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
+chat-prompt    = "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
+
+[database]
+# Database configuration
+path = "bot_data.db"
+# Connection pool settings
+max_connections = 5
+timeout = 30
+
+[logging]
+# Logging configuration
+level = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Optional: log to file (uncomment to enable)
+# file = "logs/gromozeka.log"

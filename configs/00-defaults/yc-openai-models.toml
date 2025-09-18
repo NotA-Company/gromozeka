@@ -1,0 +1,48 @@
+# Possible YC Models: https://yandex.cloud/ru/docs/foundation-models/concepts/generation/models
+[models.models.yandexgpt]
+provider = "yc-openai"
+model_id = "yandexgpt"
+model_version = "latest"
+temperature = 0.5
+context = 32768
+support_tools = true
+
+[models.models.yandexgpt-lite]
+provider = "yc-openai"
+model_id = "yandexgpt-lite"
+model_version="latest"
+temperature = 0.5
+context = 32768
+support_tools = false
+
+[models.models."yc/gpt-oss-120b"]
+provider = "yc-openai"
+model_id = "gpt-oss-120b"
+model_version="latest"
+temperature = 0.5
+context = 128000
+support_tools = true
+
+[models.models."yc/llama"]
+provider = "yc-openai"
+model_id = "llama"
+model_version="latest"
+temperature = 0.5
+context = 8192
+support_tools = true
+
+[models.models."yc/qwen3-235b-a22b-fp8"]
+provider = "yc-openai"
+model_id = "qwen3-235b-a22b-fp8"
+model_version="latest"
+temperature = 0.5
+context = 256000
+support_tools = true
+
+[models.models."yc/gemma-3-27b-it"]
+provider = "yc-openai"
+model_id = "gemma-3-27b-it"
+model_version="latest"
+temperature = 0.5
+context = 128000
+support_tools = true
