@@ -34,6 +34,30 @@ class LLMManager:
         """Initialize known providers from config, dood!"""
         providers_config = self.config.get("providers", {})
 
+        providerTypes = {
+            "yc-openai": YcOpenaiProvider,
+            "openrouter": OpenrouterProvider,
+        }
+
+        for provider_name, provider_config in providers_config.items():
+            try:
+                providerType = provider_config.get("type", None)
+                if providerType is None:
+                    raise ValueError(
+                        "Provider type is not specified for provider {provider_name}, dood!"
+                    )
+                if providerType not in providerTypes:
+                    raise ValueError(
+                        "Unknown provider type {providerType} for provider {provider_name}, dood!"
+                    )
+
+                self.providers[provider_name] = providerTypes[providerType](provider_config)
+                logger.info(
+                    f"Initialized {provider_name} provider with type {providerType}, dood!"
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize {provider_name} provider: {e}")
+
         # Initialize yc-openai provider
         if "yc-openai" in providers_config:
             try:

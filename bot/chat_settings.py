@@ -30,7 +30,7 @@ class ChatSettingsEnum(StrEnum):
 class ChatSettingsValue:
     """Value of chat settings."""
     def __init__(self, value: Any):
-        self.value = str(value)
+        self.value = str(value).strip()
 
     def __str__(self) -> str:
         return str(self.value)
