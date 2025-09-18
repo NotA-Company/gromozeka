@@ -53,6 +53,9 @@ class YcOpenaiProvider(BasicOpenAIProvider):
     def __init__(self, config: Dict[str, Any]):
         """Initialize YC OpenAI provider, dood!"""
         self._folderId = str(config.get("folder_id", ""))
+        if not self._folderId:
+            raise ValueError("folder_id is required for YC OpenAI provider, dood!")
+        
         super().__init__(config)
         
     def _getBaseUrl(self) -> str:
