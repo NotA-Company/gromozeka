@@ -18,37 +18,15 @@ from telegram.ext import ContextTypes
 from ai.abstract import AbstractModel, LLMAbstractTool, LLMFunctionParameter, LLMParameterType, LLMToolFunction, ModelMessage, ModelRunResult, ModelResultStatus
 from ai.manager import LLMManager
 from database.wrapper import DatabaseWrapper
-import lib.telegram_markdown as telegramMarkdown
+from lib.markdown import markdown_to_markdownv2
 from .ensured_message import EnsuredMessage, LLMMessageFormat
+from .chat_settings import ChatSettingsEnum, ChatSettingsValue
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SUMMARISATION_SYSTEM_PROMPT = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
 DEFAULT_PRIVATE_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
-DEFAULT_CHAT_SYSTEM_PROMPT =  "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
 ROBOT_EMOJI = "🤖"
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-
-class ChatSettingsEnum(StrEnum):
-    """Enum for chat settings."""
-    CHAT_MODEL = "chat-model"
-    FALLBACK_MODEL = "fallback-model"
-    SUMMARY_MODEL = "summary-model"
-    SUMMARY_FALLBACK_MODEL = "summary-fallback-model"
-    IMAGE_MODEL = "image-model"
-
-    SUMMARY_PROMPT = "summary-prompt"
-    CHAT_PROMPT = "chat-prompt"
-    PARSE_IMAGE_PROMPT = "parse-image-prompt"
-
-    ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
-    BOT_NICKNAMES = "bot-nicknames"
-    LLM_MESSAGE_FORMAT = "llm-message-format"
-    USE_TOOLS = "use-tools"
-    SAVE_IMAGES = "save-images"
-    PARSE_IMAGES = "parse-images"
-    def __str__(self):
-        return str(self.value)
 
 class BotHandlers:
     """Contains all bot command and message handlers."""
@@ -62,14 +40,17 @@ class BotHandlers:
         # Init different defaults
         self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
 
-        botDefaults = config.get("defaults", {})
+        botDefaults: Dict[ChatSettingsEnum, ChatSettingsValue] = {
+            k: ChatSettingsValue(v) for k, v in self.config.get("defaults", {}).items() if k in ChatSettingsEnum
+        }
         
-        self.privateModel = str(botDefaults.get("private-model", "yandexgpt-lite"))
-        self.fallbackModel = str(botDefaults.get(ChatSettingsEnum.FALLBACK_MODEL, "yandexgpt-lite"))
-        self.privatePrompt = str(botDefaults.get("private-prompt", DEFAULT_PRIVATE_PROMPT))
+        # TODO: Add wrappers for private chats (or use chats settings for private as well)
+        self.privateModel = str(self.config.get("defaults",{}).get("private-model", "yandexgpt-lite"))
+        self.fallbackModel = str(self.config.get("defaults",{}).get(ChatSettingsEnum.FALLBACK_MODEL, "yandexgpt-lite"))
+        self.privatePrompt = str(self.config.get("defaults",{}).get("private-prompt", DEFAULT_PRIVATE_PROMPT))
 
-        self.chatDefaults: Dict[ChatSettingsEnum, Any] = {
-            k: '' for k in ChatSettingsEnum
+        self.chatDefaults: Dict[ChatSettingsEnum, ChatSettingsValue] = {
+            k: ChatSettingsValue('') for k in ChatSettingsEnum
         }
 
         self.chatDefaults.update({
@@ -77,7 +58,7 @@ class BotHandlers:
         })
         
         # Init cache
-        self.cache = {
+        self.cache: Dict[str, Dict[Any, Any]] = {
             "chats": {},
         }
 
@@ -90,18 +71,18 @@ class BotHandlers:
     def getSummaryPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for summarising messages."""
         if not chatId:
-            return self.chatDefaults[ChatSettingsEnum.SUMMARY_PROMPT]
+            return self.chatDefaults[ChatSettingsEnum.SUMMARY_PROMPT].toStr()
 
         chatSettings = self.getChatSettings(chatId)
-        return chatSettings[ChatSettingsEnum.SUMMARY_PROMPT]
+        return chatSettings[ChatSettingsEnum.SUMMARY_PROMPT].toStr()
 
     def getChatPrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for chatting."""
         if not chatId:
-            return self.chatDefaults[ChatSettingsEnum.CHAT_PROMPT]
+            return self.chatDefaults[ChatSettingsEnum.CHAT_PROMPT].toStr()
         
         chatSettings = self.getChatSettings(chatId)
-        return chatSettings[ChatSettingsEnum.CHAT_PROMPT]
+        return chatSettings[ChatSettingsEnum.CHAT_PROMPT].toStr()
 
     def getPrivatePrompt(self, chatId: Optional[int] = None) -> str:
         """Get the system prompt for private messages."""
@@ -113,12 +94,12 @@ class BotHandlers:
     def getSummaryModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for summarising messages."""
 
-        modelName = str(self.chatDefaults[ChatSettingsEnum.SUMMARY_MODEL])
+        modelName = self.chatDefaults[ChatSettingsEnum.SUMMARY_MODEL]
         if chatId:
             chatSettings = self.getChatSettings(chatId)
             modelName = chatSettings.get(ChatSettingsEnum.SUMMARY_MODEL, modelName)
 
-        ret = self.llmManager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName.toStr())
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
@@ -126,13 +107,13 @@ class BotHandlers:
 
     def getChatModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for chatting."""
-        modelName = str(self.chatDefaults[ChatSettingsEnum.CHAT_MODEL])
+        modelName = self.chatDefaults[ChatSettingsEnum.CHAT_MODEL]
         
         if chatId:
             chatSettings = self.getChatSettings(chatId)
             modelName = chatSettings.get(ChatSettingsEnum.CHAT_MODEL, modelName)
 
-        ret = self.llmManager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName.toStr())
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
@@ -153,12 +134,12 @@ class BotHandlers:
 
     def getFallbackModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for fallback messages."""
-        modelName = str(self.chatDefaults[ChatSettingsEnum.FALLBACK_MODEL])
+        modelName = self.chatDefaults[ChatSettingsEnum.FALLBACK_MODEL]
         if chatId:
             chatSettings = self.getChatSettings(chatId)
             modelName = chatSettings.get(ChatSettingsEnum.FALLBACK_MODEL, modelName)
 
-        ret = self.llmManager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName.toStr())
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
@@ -166,12 +147,12 @@ class BotHandlers:
 
     def getFallbackSummaryModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for fallback messages."""
-        modelName = str(self.chatDefaults[ChatSettingsEnum.SUMMARY_FALLBACK_MODEL])
+        modelName = self.chatDefaults[ChatSettingsEnum.SUMMARY_FALLBACK_MODEL]
         if chatId:
             chatSettings = self.getChatSettings(chatId)
             modelName = chatSettings.get(ChatSettingsEnum.SUMMARY_FALLBACK_MODEL, modelName)
 
-        ret = self.llmManager.getModel(modelName)
+        ret = self.llmManager.getModel(modelName.toStr())
         if ret is None:
             logger.error(f"Model {modelName} not found")
             raise ValueError(f"Model {modelName} not found")
@@ -181,13 +162,15 @@ class BotHandlers:
     # Chat settings Managenent
     ###
 
-    def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[ChatSettingsEnum, str]:
+    def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[ChatSettingsEnum, ChatSettingsValue]:
         """Get the chat settings for the given chat."""
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
 
         if 'settings' not in self.cache["chats"][chatId]:
-            self.cache["chats"][chatId]['settings'] = self.db.getChatSettings(chatId)
+            self.cache["chats"][chatId]['settings'] = {
+                k: ChatSettingsValue(v) for k, v in self.db.getChatSettings(chatId).items()
+            }
 
         if returnDefault:
             return {**self.chatDefaults, **self.cache["chats"][chatId]['settings']}
@@ -317,7 +300,7 @@ class BotHandlers:
                 model=llmModel,
                 messages=ModelMessage.fromDictList(messagesHistory),
                 fallbackModel=self.getFallbackModel(),
-                useTools=chatSettings[ChatSettingsEnum.USE_TOOLS].lower() == "true",
+                useTools=chatSettings[ChatSettingsEnum.USE_TOOLS].toBool(),
             )
             logger.debug(f"LLM Response: {mlRet}")
         except Exception as e:
@@ -348,7 +331,7 @@ class BotHandlers:
         }
         try:
             logger.debug(f"Sending LLM reply to {ensuredMessage}")
-            replyText = telegramMarkdown.convertMarkdownToV2(LLMReply)
+            replyText = markdown_to_markdownv2(LLMReply)
             # logger.debug(f"Sending MarkdownV2: {replyText}")
             replyMessage = await ensuredMessage.getBaseMessage().reply_text(
                 text=replyText,
@@ -463,7 +446,7 @@ class BotHandlers:
         }
         try:
             await message.reply_text(
-                text=telegramMarkdown.convertMarkdownToV2(reply),
+                text=markdown_to_markdownv2(reply),
                 parse_mode="MarkdownV2",
                 **replyKwargs,
             )
@@ -663,8 +646,8 @@ class BotHandlers:
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT])
-        customMentions = [v.strip().lower() for v in chatSettings[ChatSettingsEnum.BOT_NICKNAMES].split(",")]
-        customMentions = [v for v in customMentions if v]
+        customMentions = chatSettings[ChatSettingsEnum.BOT_NICKNAMES].toList()
+        customMentions = [v.lower() for v in customMentions if v]
         if not customMentions:
             return False
         myUserName = "@" + context.bot.username.lower()
@@ -1005,7 +988,7 @@ class BotHandlers:
             }
             replyMessage: Optional[Message] = None
             try:
-                replyText = telegramMarkdown.convertMarkdownToV2(msg)
+                replyText = markdown_to_markdownv2(msg)
                 # logger.debug(f"Sending MarkdownV2: {replyText}")
                 replyMessage = await message.reply_text(
                     text=replyText,
@@ -1158,8 +1141,7 @@ class BotHandlers:
             return
 
         chatSettings = self.getChatSettings(chat.id)
-        adminAllowedChangeSettings = chatSettings[ChatSettingsEnum.ADMIN_CAN_CHANGE_SETTINGS]
-        adminAllowedChangeSettings = adminAllowedChangeSettings.lower() == "true"
+        adminAllowedChangeSettings = chatSettings[ChatSettingsEnum.ADMIN_CAN_CHANGE_SETTINGS].toBool()
 
         allowedUsers = self.botOwners[:]
         if adminAllowedChangeSettings:
@@ -1228,8 +1210,7 @@ class BotHandlers:
             return
 
         chatSettings = self.getChatSettings(chat.id)
-        adminAllowedChangeSettings = chatSettings[ChatSettingsEnum.ADMIN_CAN_CHANGE_SETTINGS]
-        adminAllowedChangeSettings = adminAllowedChangeSettings.lower() == "true"
+        adminAllowedChangeSettings = chatSettings[ChatSettingsEnum.ADMIN_CAN_CHANGE_SETTINGS].toBool()
 
         allowedUsers = self.botOwners[:]
         if adminAllowedChangeSettings:
@@ -1254,4 +1235,5 @@ class BotHandlers:
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
-        logger.error(f"Exception while handling an update: {type(context.error).__name__}#{context.error}")
+        logger.error(f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}")
+        logger.exception(context.error)
