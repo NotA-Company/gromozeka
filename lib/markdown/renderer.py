@@ -323,6 +323,10 @@ class MarkdownRenderer:
             lines = content.split('\n')
             quoted_lines = ['> ' + line for line in lines]
             return '\n'.join(quoted_lines)
+        elif isinstance(node, MDList):
+            return self._render_list(node)
+        elif isinstance(node, MDListItem):
+            return self._render_list_item(node)
         elif isinstance(node, MDEmphasis):
             content = self._render_children(node)
             if node.emphasis_type == EmphasisType.ITALIC:
@@ -358,6 +362,58 @@ class MarkdownRenderer:
         # Actually it's unreachible, but linter whine about returning None
         raise ValueError(f"Unknown node type: {type(node)}")
     
+    def _render_list(self, node: MDList) -> str:
+        """Render list node."""
+        list_items = []
+        for child in node.children:
+            if isinstance(child, MDListItem):
+                list_items.append(self._render_list_item(child))
+        return '\n'.join(list_items)
+    
+    def _render_list_item(self, node: MDListItem) -> str:
+        """Render list item node."""
+        # Separate text content from nested lists
+        text_parts = []
+        nested_lists = []
+        
+        for child in node.children:
+            if isinstance(child, MDList):
+                nested_lists.append(child)
+            else:
+                text_parts.append(self._render_node(child))
+        
+        # Render the main text content
+        text_content = ''.join(text_parts)
+        
+        # Determine list marker based on list type
+        if hasattr(node, 'parent') and isinstance(node.parent, MDList):
+            if node.parent.list_type == ListType.ORDERED:
+                # For ordered lists, we need the item number
+                item_index = node.parent.children.index(node) + 1
+                marker = f"{item_index}."
+            else:
+                # For unordered lists, use the configured marker
+                marker = self.list_marker
+        else:
+            # Fallback to unordered marker
+            marker = self.list_marker
+        
+        # Start with the main item
+        result_lines = [f"{marker} {text_content}"]
+        
+        # Add nested lists with proper indentation
+        for nested_list in nested_lists:
+            nested_content = self._render_list(nested_list)
+            # Indent each line of the nested list
+            nested_lines = nested_content.split('\n')
+            for line in nested_lines:
+                if line.strip():  # Don't indent empty lines
+                    result_lines.append('   ' + line)  # 3 spaces for nesting
+                else:
+                    result_lines.append(line)
+        
+        return '\n'.join(result_lines)
+    
     def _render_children(self, node: MDNode) -> str:
         """Render all children of a node."""
         content_parts = []
@@ -377,6 +433,10 @@ class MarkdownV2Renderer:
     def __init__(self, options: Optional[Dict[str, Any]] = None):
         """Initialize the MarkdownV2 renderer."""
         self.options = options or {}
+        
+        # Renderer options
+        self.preserve_leading_spaces = self.options.get('preserve_leading_spaces', False)
+        self.preserve_soft_line_breaks = self.options.get('preserve_soft_line_breaks', False)
         
         # Import escaping function from telegram_markdown module
         try:
@@ -449,13 +509,16 @@ class MarkdownV2Renderer:
     def _render_paragraph(self, node: MDParagraph) -> str:
         """Render paragraph node."""
         content = self._render_children(node)
-        return content.strip()
+        if self.preserve_leading_spaces:
+            return content.rstrip()
+        else:
+            return content.strip()
     
     def _render_header(self, node: MDHeader) -> str:
         """Render header node - headers are not supported in MarkdownV2, render as bold."""
         content = self._render_children(node)
-        # Convert headers to bold text since MarkdownV2 doesn't support headers
-        return f"*{self._escape(content, 'general')}*"
+        # MarkdownV2 doesn't support headers so return as is
+        return '#' * node.level + ' ' + content.strip()
     
     def _render_code_block(self, node: MDCodeBlock) -> str:
         """Render code block node."""
@@ -482,19 +545,56 @@ class MarkdownV2Renderer:
     def _render_list(self, node: MDList) -> str:
         """Render list node - lists are not directly supported in MarkdownV2."""
         # Convert lists to simple text with bullet points or numbers
-        items = []
-        for i, child in enumerate(node.children):
-            item_content = self._render_node(child)
-            if node.list_type == ListType.ORDERED:
-                start_num = node.start_number + i
-                items.append(f"{start_num}\\. {item_content}")
-            else:
-                items.append(f"• {item_content}")
-        return '\n'.join(items)
+        list_items = []
+        for child in node.children:
+            if isinstance(child, MDListItem):
+                list_items.append(self._render_list_item(child))
+        return '\n'.join(list_items)
     
     def _render_list_item(self, node: MDListItem) -> str:
         """Render list item node."""
-        return self._render_children(node)
+        # Separate text content from nested lists
+        text_parts = []
+        nested_lists = []
+        
+        for child in node.children:
+            if isinstance(child, MDList):
+                nested_lists.append(child)
+            else:
+                text_parts.append(self._render_node(child))
+        
+        # Render the main text content
+        text_content = ''.join(text_parts)
+        
+        # Determine list marker based on list type
+        if hasattr(node, 'parent') and isinstance(node.parent, MDList):
+            if node.parent.list_type == ListType.ORDERED:
+                # For ordered lists, we need the item number
+                item_index = node.parent.children.index(node) + 1
+                start_num = getattr(node.parent, 'start_number', 1) + item_index - 1
+                marker = f"{start_num}\\."
+            else:
+                # For unordered lists, use bullet
+                marker = "•"
+        else:
+            # Fallback to unordered marker
+            marker = "•"
+        
+        # Start with the main item
+        result_lines = [f"{marker} {text_content}"]
+        
+        # Add nested lists with proper indentation
+        for nested_list in nested_lists:
+            nested_content = self._render_list(nested_list)
+            # Indent each line of the nested list
+            nested_lines = nested_content.split('\n')
+            for line in nested_lines:
+                if line.strip():  # Don't indent empty lines
+                    result_lines.append('   ' + line)  # 3 spaces for nesting
+                else:
+                    result_lines.append(line)
+        
+        return '\n'.join(result_lines)
     
     def _render_horizontal_rule(self, node: MDHorizontalRule) -> str:
         """Render horizontal rule - not supported in MarkdownV2, use escaped dashes."""
