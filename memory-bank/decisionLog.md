@@ -396,3 +396,63 @@ This file records architectural and implementation decisions using a list format
 * Now parentheses inside markup are properly escaped: `*Bold \(text in parentheses\)*`
 * All other special characters (periods, colons, dashes, etc.) inside markup are also properly escaped
 * Test validation now correctly returns True for all properly escaped content
+
+[2025-09-18 16:16:00] - Implemented Gromozeka Markdown Parser v1.0
+
+## Decision
+
+* Implemented comprehensive Markdown parser following the Gromozeka Markdown Specification v1.0
+* Created modular architecture with separate components for tokenization, block parsing, inline parsing, and rendering
+* Built extensible AST (Abstract Syntax Tree) system with proper node hierarchy
+* Implemented both HTML and Markdown renderers for output flexibility
+
+## Rationale 
+
+* The specification required a minimal but extensible Markdown parser with clear parsing rules
+* Modular design allows for easy maintenance and future extensions
+* AST-based approach provides flexibility for different output formats and transformations
+* Following the four-stage processing model (Tokenization → Block Parsing → Inline Parsing → Rendering) ensures predictable behavior
+* Comprehensive test suite ensures reliability and specification compliance
+
+## Implementation Details
+
+* Created lib/markdown/ directory with 8 core modules:
+  - __init__.py: Main module interface with convenience functions
+  - ast_nodes.py: AST node classes (MDDocument, MDParagraph, MDHeader, etc.)
+  - tokenizer.py: Token-based input processing with 15+ token types
+  - block_parser.py: Block-level element parsing (headers, paragraphs, lists, code blocks, etc.)
+  - inline_parser.py: Inline element parsing (emphasis, links, images, code spans, etc.)
+  - renderer.py: HTML and Markdown output renderers
+  - parser.py: Main orchestrating parser class with error handling
+  - test_markdown_parser.py: Comprehensive test suite with 100+ test cases
+
+* Supported Markdown elements per specification:
+  - Block elements: Paragraphs, Headers (1-6), Code blocks (fenced/indented), Block quotes, Lists (ordered/unordered), Horizontal rules
+  - Inline elements: Emphasis (bold/italic/strikethrough), Links (inline/reference), Images, Code spans, Autolinks, Text nodes
+  - Special features: Character escaping, precedence rules, reference link definitions
+
+* Key architectural patterns:
+  - Token-based parsing for precise control and error reporting
+  - Visitor pattern for AST traversal and rendering
+  - Template method pattern for extensible rendering
+  - Factory pattern for node creation
+  - Strategy pattern for different emphasis types and list types
+
+* Error handling and validation:
+  - Graceful degradation for invalid syntax
+  - Configurable strict/lenient parsing modes
+  - Comprehensive validation with detailed error reporting
+  - Statistics tracking for parsing performance analysis
+
+* Extension points implemented:
+  - Pluggable renderer system (HTML, Markdown, custom)
+  - Configurable parser options
+  - AST manipulation capabilities
+  - JSON serialization support for AST
+
+* Testing and quality assurance:
+  - Unit tests for all components (tokenizer, parsers, renderers)
+  - Integration tests for complete parsing workflows
+  - Specification compliance tests
+  - Error handling and edge case tests
+  - Performance and nesting depth validation
