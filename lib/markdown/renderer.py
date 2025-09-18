@@ -518,7 +518,7 @@ class MarkdownV2Renderer:
         """Render header node - headers are not supported in MarkdownV2, render as bold."""
         content = self._render_children(node)
         # MarkdownV2 doesn't support headers so return as is
-        return '#' * node.level + ' ' + content.strip()
+        return '\\#' * node.level + ' ' + content.strip()
     
     def _render_code_block(self, node: MDCodeBlock) -> str:
         """Render code block node."""
