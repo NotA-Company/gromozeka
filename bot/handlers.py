@@ -519,7 +519,7 @@ class BotHandlers:
             return False
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT])
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT].toStr())
 
         parentId = ensuredMessage.replyId
         chat = ensuredMessage.chat
@@ -582,7 +582,7 @@ class BotHandlers:
 
         # logger.debug(f"Bot is: {context.bot.bot} {context.bot.username}")
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT])
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT].toStr())
         myUsername = context.bot.username.lower()
         mentionedMe = False
         message = ensuredMessage.getBaseMessage()
@@ -645,7 +645,7 @@ class BotHandlers:
         """
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT])
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsEnum.LLM_MESSAGE_FORMAT].toStr())
         customMentions = chatSettings[ChatSettingsEnum.BOT_NICKNAMES].toList()
         customMentions = [v.lower() for v in customMentions if v]
         if not customMentions:
