@@ -41,11 +41,13 @@ format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 [models.providers]
 
 [models.providers.yc-openai]
+type = "yc-openai"
 # https://yandex.cloud/ru/docs/foundation-models/operations/get-api-key
 folder_id = "FOLDER_ID"
 api_key = "API_KEY"
 
 [models.providers.openrouter]
+type = "openrouter"
 api_key = "API_KEY"
 
 # Possible YC Models: https://yandex.cloud/ru/docs/foundation-models/concepts/generation/models

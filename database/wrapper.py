@@ -109,6 +109,8 @@ class DatabaseWrapper:
                     message_text TEXT NOT NULL,
                     message_type TEXT DEFAULT 'text' NOT NULL,
                     message_category TEXT DEFAULT 'user' NOT NULL,
+                    media_content TEXT,
+                    media_links TEXT,
                     quote_text TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
