@@ -20,6 +20,7 @@ This project implements a Telegram bot using Python, with a focus on clean archi
 - Python 3.10 or higher
 - Telegram Bot Token (obtained from [@BotFather](https://t.me/botfather))
 - pip (Python package installer)
+- libmagic (tested on 5.46+)
 
 ## Installation
 
