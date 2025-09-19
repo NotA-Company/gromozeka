@@ -26,12 +26,13 @@ class BasicOpenAIModel(AbstractModel):
         temperature: float,
         contextSize: int,
         openAiClient: OpenAI,
-        supportTools: bool = False,
+        extraConfig: Dict[str, Any] = {}
     ):
         """Initialize basic OpenAI model, dood!"""
         super().__init__(provider, modelId, modelVersion, temperature, contextSize)
         self._client = openAiClient
-        self._supportTools = supportTools
+        self._config = extraConfig
+        self._supportTools = self._config.get("support_tools", False)
 
     def _getModelId(self) -> str:
         """Get the model name to use in API calls. Override in subclasses, dood!"""
@@ -41,7 +42,7 @@ class BasicOpenAIModel(AbstractModel):
         """Get extra parameters for the API call. Override in subclasses, dood!"""
         return {}
 
-    def run(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> Any:
+    def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the OpenAI-compatible model with given messages, dood!
         
         Args:
@@ -52,6 +53,9 @@ class BasicOpenAIModel(AbstractModel):
         """
         if not self._client:
             raise RuntimeError("OpenAI client not initialized, dood!")
+        
+        if not self._config.get("support_text", True):
+            raise NotImplementedError(f"Text generation isn't supported by {self.modelId}, dood!")
 
         kwargs: Dict[str, Any] = {}
         if tools and self._supportTools:
@@ -118,6 +122,14 @@ class BasicOpenAIModel(AbstractModel):
         except Exception as e:
             logger.error(f"Error running OpenAI-compatible model {self.modelId}: {e}")
             raise
+
+    def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
+        """Generate an image via the OpenAI-compatible model, dood"""
+
+        if not self._config.get("support_images", False):
+            raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
+        
+        raise NotImplementedError("Image generation isn't supported by OpenAI-compatible models yet, dood")
 
 
 class BasicOpenAIProvider(AbstractLLMProvider):

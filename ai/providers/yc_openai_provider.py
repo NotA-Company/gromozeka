@@ -26,10 +26,10 @@ class YcOpenaiModel(BasicOpenAIModel):
         contextSize: int,        
         openAiClient: OpenAI,
         folderId: str,
-        supportTools: bool = False,
+        extraConfig: Dict[str, Any] = {},
     ):
         """Initialize YC OpenAI model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient, supportTools)
+        super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient, extraConfig)
         self._folderId = folderId
             
     def _getModelId(self) -> str:
@@ -83,5 +83,5 @@ class YcOpenaiProvider(BasicOpenAIProvider):
             contextSize=contextSize,
             openAiClient=self._client,
             folderId=self._folderId,
-            supportTools=bool(extraConfig.get("support_tools", False)),
+            extraConfig=extraConfig,
         )

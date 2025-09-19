@@ -22,10 +22,10 @@ class OpenrouterModel(BasicOpenAIModel):
         temperature: float,
         contextSize: int,
         openAiClient: OpenAI,
-        supportTools: bool = False,
+        extraConfig: Dict[str, Any] = {},
     ):
         """Initialize OpenRouter model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient, supportTools)
+        super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient, extraConfig)
         
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get OpenRouter-specific extra parameters, dood!"""
@@ -69,5 +69,5 @@ class OpenrouterProvider(BasicOpenAIProvider):
             temperature=temperature,
             contextSize=contextSize,
             openAiClient=self._client,
-            supportTools=bool(extraConfig.get("support_tools", False)),
+            extraConfig=extraConfig,
         )

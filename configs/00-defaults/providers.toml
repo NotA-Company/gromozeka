@@ -7,3 +7,9 @@ api_key = "API_KEY"
 [models.providers.openrouter]
 type = "openrouter"
 api_key = "API_KEY"
+
+[models.providers.yc-sdk]
+type = "yc-sdk"
+folder_id = "FOLDER_ID"
+# Optional: specify yc profile (uncomment if needed)
+#yc_profile = "profile-id"
