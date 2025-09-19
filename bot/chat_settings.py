@@ -8,7 +8,7 @@ from typing import Any, List
 
 logger = logging.getLogger(__name__)
 
-class ChatSettingsEnum(StrEnum):
+class ChatSettingsKey(StrEnum):
     """Enum for chat settings."""
     CHAT_MODEL = "chat-model"
     FALLBACK_MODEL = "fallback-model"
@@ -26,6 +26,7 @@ class ChatSettingsEnum(StrEnum):
     USE_TOOLS = "use-tools"
     SAVE_IMAGES = "save-images"
     PARSE_IMAGES = "parse-images"
+    OPTIMAL_IMAGE_SIZE = "optimal-image-size"
 
 class ChatSettingsValue:
     """Value of chat settings."""

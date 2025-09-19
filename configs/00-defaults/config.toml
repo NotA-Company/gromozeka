@@ -4,12 +4,22 @@ token = "YOUR_BOT_TOKEN_HERE"
 bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
 
 [bot.defaults]
+# Can chat admins change channel-specific bot settings?
 admin-can-change-settings = true
+# Bot nicknames for mention purposes. Comma-separated list
 bot-nicknames = "Громозека, Gro"
+# Message format for LLM, currently supported: text and json
 llm-message-format = "text"
+# Can we use tools
 use-tools = true
+# Should we save images to S3 for future using?
 save-images = true
+# Should we parse images via LLM
 parse-images = true
+# For LLM-parsing We'll try to get smallest image, but larger than this
+# Set to 0 to get largest image possible
+# Set to 1 to get smallest image possible
+optimal-image-size        = 896
 
 summary-model           = "openrouter/gemma-3-27b-it-free"
 private-model           = "openrouter/gemma-3-12b-it-free"

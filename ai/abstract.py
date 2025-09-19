@@ -2,10 +2,12 @@
 Abstract base class for LLM models, dood!
 """
 from abc import ABC, abstractmethod
+import base64
 from enum import Enum, StrEnum
 import json
 import logging
 from typing import Dict, List, Any, Optional, Callable
+import magic
 import tiktoken
 
 logger = logging.getLogger(__name__)
@@ -122,12 +124,15 @@ class ModelMessage:
     def fromDictList(cls, l: List[Dict[str, Any]]) -> List['ModelMessage']:
         return [cls.fromDict(d) for d in l]
 
-    def toDict(self, contentKey: Optional[str] = None) -> Dict[str, Any]:
+    def toDict(self, contentKey: Optional[str] = None, content: Optional[Any] = None) -> Dict[str, Any]:
         if contentKey is None:
             contentKey = self.contentKey
+        if content is None:
+            content = self.content
+
         ret: Dict[str, Any] = {
             "role": self.role,
-            contentKey: self.content,
+            contentKey: content,
         }
         if self.toolCalls:
             ret["tool_calls"] = [
@@ -150,6 +155,34 @@ class ModelMessage:
 
     def __str__(self) -> str:
         return json.dumps(self.toDict(), ensure_ascii=False)
+
+class ModelImageMessage(ModelMessage):
+    """Message for model with image"""
+    def __init__(self, role: str, content: str, image: bytearray):
+        super().__init__(role, content)
+        self.image = image
+
+    def toDict(self, contentKey: Optional[str] = None, content: Optional[Any] = None) -> Dict[str, Any]:
+        if content is None:
+            mimeType = magic.from_buffer(bytes(self.image), mime=True)
+            base64Image = base64.b64encode(self.image).decode('utf-8')
+
+            content = []
+            if self.content: 
+                content.append({"type": "text", "content": self.content})
+
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mimeType};base64,{base64Image}",
+                    },
+                }
+            )
+            #logger.debug(f"Image Content: {content}")
+
+        return super().toDict(contentKey, content)
+
 
 class ModelResultStatus(Enum):
     """Status of model run"""
