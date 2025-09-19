@@ -218,13 +218,18 @@ class ModelRunResult:
         self.status = status
         self.resultText = resultText
         self.result = rawResult
-        self.isFallback = False
         self.toolCalls = toolCalls[:]
         self.mediaMimeType = mediaMimeType
         self.mediaData = mediaData
 
+        self.isFallback = False
+        self.isToolsUsed = False
+
     def setFallback(self, isFallback: bool):
         self.isFallback = isFallback
+
+    def setToolsUsed(self, isToolsUsed: bool):
+        self.isToolsUsed = isToolsUsed
 
     def to_json(self) -> str:
         return json.dumps(self.result, ensure_ascii=False)

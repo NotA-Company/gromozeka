@@ -230,7 +230,151 @@ class BotHandlers:
     # Different helpers
     ###
 
-    async def _callLLM(self, model: AbstractModel, messages: List[ModelMessage], fallbackModel: AbstractModel, ensuredMessage: EnsuredMessage, context: ContextTypes.DEFAULT_TYPE, useTools: bool = False) -> ModelRunResult:
+    async def _sendMessage(
+        self,
+        replyToMessage: EnsuredMessage,
+        context: ContextTypes.DEFAULT_TYPE,
+        messageText: Optional[str] = None,
+        addMessagePrefix: str = "",
+        photoData: Optional[bytes] = None,
+        photoCaption: Optional[str] = None,
+        sendMessageKWargs: Optional[Dict[str, Any]] = None,
+        tryMarkdownV2: bool = True,
+        tryParseInputJSON: bool = True,
+        saveMessage: bool = True,
+        sendErrorIfAny: bool = True,
+    ) -> bool:
+        """Send a message to the chat or user."""
+
+        if photoData is None and messageText is None:
+            logger.error("No message text or photo data provided")
+            raise ValueError("No message text or photo data provided")
+
+        replyMessage: Optional[Message] = None
+        message = replyToMessage.getBaseMessage()
+        media: Optional[Dict[str, Any]] = None
+        chatType = replyToMessage.chat.type
+        isPrivate = chatType == Chat.PRIVATE
+        isGroupChat = chatType in [Chat.GROUP, Chat.SUPERGROUP]
+
+        if not isPrivate and not isGroupChat:
+            logger.error("Cannot send message to chat type {}".format(chatType))
+            raise ValueError("Cannot send message to chat type {}".format(chatType))
+
+        if sendMessageKWargs is None:
+            sendMessageKWargs = {}
+
+        try:
+            if photoData is not None:
+                # Send photo
+                replyMessage = await message.reply_photo(
+                    photo=photoData,
+                    caption=photoCaption,
+                    reply_to_message_id=replyToMessage.messageId,
+                    message_thread_id=replyToMessage.threadId,
+                    **sendMessageKWargs,
+                )
+                # TODO: Save media info somehow
+            elif messageText is not None:
+                # Send text
+
+                # If response is json, parse it
+                if tryParseInputJSON:
+                    try:
+                        jsonReply = json.loads(messageText.strip("`"))
+                        if "text" in jsonReply:
+                            messageText = str(jsonReply["text"]).strip()
+                        elif "media_description" in jsonReply:
+                            messageText = str(jsonReply["media_description"]).strip()
+                        else:
+                            logger.warning(
+                                f"No text field found in json reply, fallback to text: {jsonReply}"
+                            )
+                            raise ValueError("No text field found in json reply")
+                    except Exception as e:
+                        logger.debug(
+                            f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}"
+                        )
+
+                replyKwargs = sendMessageKWargs.copy()
+                replyKwargs.update(
+                    {
+                        "reply_to_message_id": replyToMessage.messageId,
+                        "message_thread_id": replyToMessage.threadId,
+                    }
+                )
+
+                logger.debug(f"Sending reply to {replyToMessage}")
+                # Try to send Message as MarkdownV2 first
+                if tryMarkdownV2:
+                    try:
+                        messageTextParsed = markdown_to_markdownv2(addMessagePrefix + messageText)
+                        # logger.debug(f"Sending MarkdownV2: {replyText}")
+                        replyMessage = await message.reply_text(
+                            text=messageTextParsed,
+                            parse_mode="MarkdownV2",
+                            **replyKwargs,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}"
+                        )
+                        # Probably error in markdown formatting, fallback to raw text
+
+                if replyMessage is None:
+                    replyMessage = await message.reply_text(
+                        text=addMessagePrefix + messageText, **replyKwargs
+                    )
+
+            try:
+                if replyMessage is None:
+                    raise ValueError("No reply message")
+
+                logger.debug(f"Sent message: {replyMessage}")
+
+                # Save message if needed
+                if saveMessage:
+                    ensuredReplyMessage = EnsuredMessage(replyMessage)
+                    if addMessagePrefix:
+                        replyText = ensuredReplyMessage.messageText
+                        if replyText.startswith(addMessagePrefix):
+                            replyText = replyText[len(addMessagePrefix) :]
+                            ensuredReplyMessage.messageText = replyText
+                    if isGroupChat:
+                        self._saveChatMessage(
+                        ensuredReplyMessage, messageCategory="bot", media=media
+                    )
+                    elif isPrivate:
+                        logger.error(f"Saving private message is not implemented yet")
+                    else:
+                        raise ValueError("Unknown chat type")
+            except Exception as e:
+                logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
+                logger.exception(e)
+                # Message was sent, so return True anyway
+                return True
+
+        except Exception as e:
+            logger.error(f"Error while sending message: {type(e).__name__}#{e}")
+            logger.exception(e)
+            if sendErrorIfAny:
+                await message.reply_text(
+                    f"Error while sending message: {type(e).__name__}#{e}",
+                    reply_to_message_id=replyToMessage.messageId,
+                )
+            return False
+
+        return True
+
+    async def _generateTextViaLLM(
+        self,
+        model: AbstractModel,
+        messages: List[ModelMessage],
+        fallbackModel: AbstractModel,
+        ensuredMessage: EnsuredMessage,
+        context: ContextTypes.DEFAULT_TYPE,
+        useTools: bool = False,
+    ) -> ModelRunResult:
         """Call the LLM with the given messages."""
 
         async def generateAndSendImage(image_prompt: str, image_description:Optional[str] = None, **kwargs) -> str:
@@ -242,19 +386,19 @@ class BotHandlers:
                 logger.error(f"No image generated for {image_prompt}")
                 return '{"done": false}'
 
-            message = ensuredMessage.getBaseMessage()
-
-            replyMessage = await message.reply_photo(
-                photo=mlRet.mediaData,
-                caption=image_description,
-                reply_to_message_id=ensuredMessage.messageId,
-                message_thread_id=ensuredMessage.threadId,
-            )
             logger.debug(f"Generated image: {mlRet}")
-            logger.debug(f"Sent image: {replyMessage}")
-            return '{"done": true}'
+
+            ret = await self._sendMessage(
+                ensuredMessage,
+                context,
+                photoData=mlRet.mediaData,
+                photoCaption=image_description,
+            )
+
+            return json.dumps({"done": ret})
 
         async def getUrlContent(url: str, **kwargs) -> str:
+            # TODO: Check if content is text content
             return str(requests.get(url).content)
 
         tools: Dict[str, LLMAbstractTool] = {}
@@ -283,13 +427,13 @@ class BotHandlers:
                 parameters=[
                     LLMFunctionParameter(
                         name="image_prompt",
-                        description="The prompt to generate the image from",
+                        description="Detailed prompt to generate the image from",
                         type=LLMParameterType.STRING,
                         required=True,
                     ),
                     LLMFunctionParameter(
                         name="image_description",
-                        description="The description of the image",
+                        description="The description of the image if any",
                         type=LLMParameterType.STRING,
                         required=False,
                     ),
@@ -298,10 +442,12 @@ class BotHandlers:
             )
 
         ret : Optional[ModelRunResult] = None
+        toolsUsed = False
         while True:
             ret = model.generateTextWithFallBack(messages, fallbackModel=fallbackModel, tools=list(tools.values()))
             logger.debug(f"LLM returned: {ret}")
             if ret.status == ModelResultStatus.TOOL_CALLS:
+                toolsUsed = True
                 messages = messages + [ret.toModelMessage()]
                 for toolCall in ret.toolCalls:
                     messages.append(
@@ -317,6 +463,9 @@ class BotHandlers:
                     )
             else:
                 break
+
+        if toolsUsed:
+            ret.setToolsUsed(True)
 
         return ret
 
@@ -370,7 +519,12 @@ class BotHandlers:
 
         return True
 
-    async def _sendLLMChatMessage(self, ensuredMessage: EnsuredMessage, messagesHistory: List[Dict[str, str]], context: ContextTypes.DEFAULT_TYPE) -> bool:
+    async def _sendLLMChatMessage(
+        self,
+        ensuredMessage: EnsuredMessage,
+        messagesHistory: List[Dict[str, str]],
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> bool:
         """Send a chat message to the LLM model."""
         logger.debug(f"LLM Request messages: {messagesHistory}")
         llmModel = self.getChatModel(ensuredMessage.chat.id)
@@ -378,7 +532,7 @@ class BotHandlers:
         mlRet: Optional[ModelRunResult] = None
         try:
             # mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
-            mlRet = await self._callLLM(
+            mlRet = await self._generateTextViaLLM(
                 model=llmModel,
                 messages=ModelMessage.fromDictList(messagesHistory),
                 fallbackModel=self.getFallbackModel(),
@@ -390,54 +544,26 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
             logger.exception(e)
-            await ensuredMessage.getBaseMessage().reply_text(
-                f"Error while sending LLM request: {type(e).__name__}",
-                reply_to_message_id=ensuredMessage.messageId,
-                message_thread_id=ensuredMessage.threadId,
+            await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText=f"Error while sending LLM request: {type(e).__name__}",
+                saveMessage=False,
             )
             return False
-        LLMReply = mlRet.resultText
-        # If response is json, parse it
-        try:
-            jsonReply = json.loads(LLMReply.strip('`'))
-            LLMReply = jsonReply["text"].strip()
-        except Exception as e:
-            logger.debug(f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}")
 
-        prefix = ""
+        addPrefix = ""
         if mlRet.isFallback:
-            prefix = f"{ROBOT_EMOJI} "
+            addPrefix += chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
+        if mlRet.isToolsUsed:
+            addPrefix += chatSettings[ChatSettingsKey.TOOLS_USED_PREFIX].toStr()
 
-        replyMessage = None
-        LLMReply = f"{prefix}{LLMReply.strip()}"
-        replyKwargs = {
-            "reply_to_message_id": ensuredMessage.messageId,
-            "message_thread_id": ensuredMessage.threadId,
-        }
-        try:
-            logger.debug(f"Sending LLM reply to {ensuredMessage}")
-            replyText = markdown_to_markdownv2(LLMReply)
-            # logger.debug(f"Sending MarkdownV2: {replyText}")
-            replyMessage = await ensuredMessage.getBaseMessage().reply_text(
-                text=replyText,
-                parse_mode="MarkdownV2",
-                **replyKwargs,
-            )
-        except Exception as e:
-            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-            # Probably error in markdown formatting, fallback to raw text
-            replyMessage = await ensuredMessage.getBaseMessage().reply_text(text=LLMReply, **replyKwargs)
-        if replyMessage is None:
-            logger.error("Error while sending LLM reply")
-            return False
-
-        try:
-            ensuredReplyMessage = EnsuredMessage(replyMessage)
-            self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
-            return True
-        except Exception as e:
-            logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-            return False
+        return await self._sendMessage(
+            ensuredMessage,
+            context,
+            messageText=mlRet.resultText,
+            addMessagePrefix=addPrefix,
+        )
 
     ###
     # Handling messages
@@ -525,23 +651,11 @@ class BotHandlers:
             reply = f"Error while running LLM: {type(e).__name__}#{e}"
 
         self.db.savePrivateMessage(user.id, ensuredMessage.messageText, reply_text=reply)
-
-        replyKwargs: Dict[str, Any] = {
-            "reply_to_message_id": ensuredMessage.messageId,
-        }
-        try:
-            await message.reply_text(
-                text=markdown_to_markdownv2(reply),
-                parse_mode="MarkdownV2",
-                **replyKwargs,
-            )
-        except Exception as e:
-            logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-            # Probably error in markdown formatting, fallback to raw text
-            await message.reply_text(
-                text=reply,
-                **replyKwargs,
-            )
+        await self._sendMessage(
+            ensuredMessage,
+            context,
+            messageText=reply,
+        )
         logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
 
     async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -789,19 +903,12 @@ class BotHandlers:
 
             user = users[random.randint(0, len(users) - 1)]
             logger.debug(f"Found user for candidate of being '{userTitle}': {user}")
-            replyMessage = await ensuredMessage.getBaseMessage().reply_text(
-                text=f"{user['username']} сегодня {userTitle}",
-                reply_to_message_id=ensuredMessage.messageId,
-                message_thread_id=ensuredMessage.threadId,
+            return await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText=f"{user['username']} сегодня {userTitle}",
+                tryParseInputJSON=False,
             )
-
-            try:
-                ensuredReplyMessage = EnsuredMessage(replyMessage)
-                self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
-                return True
-            except Exception as e:
-                logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-                return False
 
         # End of Who Today
 
@@ -841,34 +948,12 @@ class BotHandlers:
                             logger.error(f"Failed to parse parent message content (ChatId: {ensuredReply.chat.id}, MessageId: {ensuredReply.messageId}, messageContent: {response})")
                             response = DUNNO_EMOJI
 
-                # TODO: Should I move sending and saving message to separate function?
-                replyKwargs = {
-            "reply_to_message_id": ensuredMessage.messageId,
-            "message_thread_id": ensuredMessage.threadId,
-        }
-                try:
-                    replyText = markdown_to_markdownv2(response)
-
-                    replyMessage = await message.reply_text(
-                text=replyText,
-                parse_mode="MarkdownV2",
-                **replyKwargs,
-            )
-                except Exception as e:
-                    logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-                    # Probably error in markdown formatting, fallback to raw text
-                    replyMessage = await message.reply_text(text=response, **replyKwargs)
-                if replyMessage is None:
-                    logger.error("Error while sending reply")
-                    return False
-
-                try:
-                    ensuredReplyMessage = EnsuredMessage(replyMessage)
-                    self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
-                    return True
-                except Exception as e:
-                    logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-                    return False
+                return await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=response,
+                    tryParseInputJSON=False,
+                )
 
         # End of What There
 
@@ -1028,28 +1113,38 @@ class BotHandlers:
             logger.error("Message undefined")
             return
 
+        ensuredMessage = EnsuredMessage(update.message)
+
         help_text = (
-            "🤖 *Gromozeka Bot Help*\n\n"
-            "*Commands:*\n"
+            "🤖 **Gromozeka Bot Help**\n\n"
+            "**Commands:**\n"
             "/start - Welcome message and bot introduction\n"
             "/help - Show this help message\n"
             "/stats - Display your usage statistics\n"
             "/echo <message> - Echo your message back\n\n"
-            "*Features:*\n"
+            "**Features:**\n"
             "• Message logging and statistics\n"
             "• User data persistence\n"
             "• Simple conversation handling\n\n"
             "Just send me any text message and I'll respond, dood!"
         )
 
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+        await self._sendMessage(
+            ensuredMessage,
+            context,
+            messageText=help_text,
+            saveMessage=False,
+            tryParseInputJSON=False,
+        )
 
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /stats command."""
-        user = update.effective_user
-        if not user or not update.message:
-            logger.error("User or message undefined")
+        if not update.message:
+            logger.error("Message undefined")
             return
+
+        ensuredMessage = EnsuredMessage(update.message)
+        user = ensuredMessage.user
 
         # Get user data from database
         user_data = self.db.getUser(user.id)
@@ -1057,28 +1152,47 @@ class BotHandlers:
 
         if user_data:
             stats_text = (
-                f"📊 *Your Statistics*\n\n"
-                f"👤 *User:* {user_data['first_name']}\n"
-                f"🆔 *ID:* {user_data['user_id']}\n"
-                f"📅 *Joined:* {user_data['created_at'][:10]}\n"
-                f"💬 *Messages sent:* {len(messages)}\n"
+                f"📊 **Your Statistics**\n\n"
+                f"👤 **User:** {user_data['first_name']}\n"
+                f"🆔 **ID:** {user_data['user_id']}\n"
+                f"📅 **Joined:** {user_data['created_at'][:10]}\n"
+                f"💬 **Messages sent:** {len(messages)}\n"
             )
         else:
             stats_text = "No statistics available. Send me a message first!"
 
-        await update.message.reply_text(stats_text, parse_mode='Markdown')
+        await self._sendMessage(
+            ensuredMessage,
+            context,
+            messageText=stats_text,
+            saveMessage=False,
+            tryParseInputJSON=False,
+        )
 
     async def echo_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /echo command."""
         if not update.message:
             logger.error("Message undefined")
             return
+        ensuredMessage = EnsuredMessage(update.message)
 
         if context.args:
             echo_text = " ".join(context.args)
-            await update.message.reply_text(f"🔄 Echo: {echo_text}")
+            await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText=f"🔄 Echo: {echo_text}",
+                saveMessage=False,
+                tryParseInputJSON=False,
+            )
         else:
-            await update.message.reply_text("Please provide a message to echo!\nUsage: /echo <your message>")
+            await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText="Please provide a message to echo!\nUsage: /echo <your message>",
+                saveMessage=False,
+                tryParseInputJSON=False,
+            )
 
     async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /summary [<messages> <chunks> <chat_id>]command."""
@@ -1125,17 +1239,23 @@ class BotHandlers:
                     except ValueError:
                         logger.error(f"Invalid argument: '{context.args[2]}' is not a valid number.")
                 else:
-                    await message.reply_text(
-                        "Need to provide <bulk_limit> and <chatId> for summarization in private messages",
-                        reply_to_message_id=message.message_id,
+                    await self._sendMessage(
+                        ensuredMessage,
+                        context,
+                        messageText="Need to provide <messages>, <batches_limit> and <chatId> for summarization in private messages",
+                        saveMessage=False,
+                        tryParseInputJSON=False,
                     )
                     return
 
             if localChatId is None:
-                await message.reply_text(
-                    "This command is only available in groups and supergroups for now.",
-                    reply_to_message_id=message.message_id,
-                )
+                await self._sendMessage(
+                        ensuredMessage,
+                        context,
+                        messageText="This command is only available in groups and supergroups for now.",
+                        saveMessage=False,
+                        tryParseInputJSON=False,
+                    )
                 return
             else:
                 chatId = localChatId
@@ -1165,7 +1285,7 @@ class BotHandlers:
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {
+                        {   # TODO: Use EnsuredMessage... instead
                             # date, chat_id, user_id, username, full_name, message_id, reply_id, thread_id, message_text, message_type
                             "date": msg["date"],
                             "sender": msg["username"][1:],
@@ -1192,6 +1312,8 @@ class BotHandlers:
         logger.debug(f"Summarisation: estimated total tokens: {tokensCount}, max tokens: {maxTokens}, messages count: {len(parsedMessages)}, batches count: {batchesCount}, batch length: {batchLength}")
 
         resMessages = []
+        if not parsedMessages:
+            resMessages.append("No messages to summarize")
         startPos: int = 0
         batchN = 0
         # Summarise each chunk of messages
@@ -1245,30 +1367,12 @@ class BotHandlers:
         resMessages = tmpResMessages
 
         for msg in resMessages:
-            replyKwargs = {
-                "reply_to_message_id": ensuredMessage.messageId,
-                "message_thread_id": ensuredMessage.threadId,
-            }
-            replyMessage: Optional[Message] = None
-            try:
-                replyText = markdown_to_markdownv2(msg)
-                # logger.debug(f"Sending MarkdownV2: {replyText}")
-                replyMessage = await message.reply_text(
-                    text=replyText,
-                    parse_mode="MarkdownV2",
-                    **replyKwargs,
-                )
-            except Exception as e:
-                logger.error(f"Error while replying to message: {type(e).__name__}#{e}")
-                replyMessage = await message.reply_text(text=msg, **replyKwargs)
-
-            if replyMessage:
-                try:
-                    ensuredReplyMessage = EnsuredMessage(replyMessage)
-                    self._saveChatMessage(ensuredReplyMessage, messageCategory='bot')
-                except Exception as e:
-                    logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-
+            await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText=msg,
+                tryParseInputJSON=False,
+            )
             time.sleep(1)
 
     async def models_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1286,15 +1390,7 @@ class BotHandlers:
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        # user = ensuredMessage.user
-        # chat = ensuredMessage.chat
-        replyKwargs = {
-            "reply_to_message_id": ensuredMessage.messageId,
-            "message_thread_id": ensuredMessage.threadId,
-            "parse_mode": "Markdown",
-        }
-
-        replyText = "*Доступные модели:*\n\n"
+        replyText = "**Доступные модели:**\n\n"
 
         for i, modelName in enumerate(self.llmManager.listModels()):
             modelData = self.llmManager.getModelInfo(modelName)
@@ -1307,19 +1403,31 @@ class BotHandlers:
                 "context_size": "Размер контекста",
                 "provider": "Провайдер",
             }
-            replyText += f"*Модель: {modelName}*\n```{modelName}\n"
+            replyText += f"**Модель: {modelName}**\n```{modelName}\n"
             for k, v in modelData.items():
                 replyText += f"{modelKeyI18n.get(k, k)}: {v}\n"
 
             replyText += "```\n\n"
 
             if i % modelsPerMessage == (modelsPerMessage - 1):
-                await message.reply_text(replyText, **replyKwargs)
+                await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=replyText,
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
                 replyText = ""
                 time.sleep(0.5)
 
         if replyText:
-            await message.reply_text(replyText, **replyKwargs)
+            await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText=replyText,
+                saveMessage=False,
+                tryParseInputJSON=False,
+            )
 
     async def chat_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /settings command."""
@@ -1346,20 +1454,32 @@ class BotHandlers:
         chatType = chat.type
 
         if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
-            await message.reply_text(
-                "This command is only available in groups and supergroups for now.",
-                **replyKwargs,
+            await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText="This command is only available in groups and supergroups for now.",
+                saveMessage=False,
+                tryParseInputJSON=False,
             )
             return
 
-        resp = f"Настройки чата *#{chat.id}*:\n\n"
+        resp = f"Настройки чата **#{chat.id}**:\n\n"
         chatSettings = self.getChatSettings(chat.id)
         for k, v in chatSettings.items():
             resp += f"`{k}`: ```{k}\n{v}\n```\n"
-        await message.reply_text(resp, **replyKwargs)
 
-    async def set_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self._sendMessage(
+            ensuredMessage,
+            context,
+            messageText=resp,
+            saveMessage=False,
+            tryParseInputJSON=False,
+        )
+
+    async def set_or_unset_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /set <key> <value> command."""
+        logger.debug(f"Got set or unset command: {update}")
+
         message = update.message
         if not message:
             logger.error("Message undefined")
@@ -1371,37 +1491,63 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
+        
+        commandStr = ""
+        for entity in message.entities:
+            if entity.type == MessageEntityType.BOT_COMMAND:
+                commandStr = ensuredMessage.messageText[entity.offset:entity.offset+entity.length]
+                break
 
-        replyKwargs = {
-            "reply_to_message_id": ensuredMessage.messageId,
-            "message_thread_id": ensuredMessage.threadId,
-            "parse_mode": "Markdown",
-        }
+        logger.debug(f"Command string: {commandStr}")
+        isSet = commandStr.startswith("/set")
 
         user = ensuredMessage.user
         chat = ensuredMessage.chat
         chatType = chat.type
 
         if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
-            await message.reply_text(
-                "This command is only available in groups and supergroups for now.",
-                **replyKwargs,
-            )
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="This command is only available in groups and supergroups for now.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
             return
 
         if not user.username:
-            await message.reply_text(
-                "You need to have a username to change chat settings.",
-                **replyKwargs,
-            )
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="You need to have a username to change chat settings.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
             return
 
-        if not context.args or len(context.args) < 2:
-            await message.reply_text(
-                "You need to specify a key and a value to change chat settings.",
-                **replyKwargs,
-            )
+        if isSet and (not context.args or len(context.args) < 2):
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="You need to specify a key and a value to change chat setting.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
             return
+        if not isSet and (not context.args or len(context.args) < 1):
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="You need to specify a key to clear chat setting.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+        
+        if not context.args:
+            #It is impossible, actually as we have checked it before, but we do it to make linters happy
+            raise ValueError("No args provided")
+        
 
         chatSettings = self.getChatSettings(chat.id)
         adminAllowedChangeSettings = chatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
@@ -1415,86 +1561,35 @@ class BotHandlers:
                     allowedUsers.append(username.lower())
 
         if user.username.lower() not in allowedUsers:
-            await message.reply_text(
-                "You are not allowed to change chat settings.",
-                **replyKwargs,
-            )
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="You are not allowed to change chat settings.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
             return
 
         key = context.args[0]
-        value = " ".join(context.args[1:])
-        self.setChatSettings(chat.id, {key: value})
-
-        await message.reply_text(f"Готово, теперь `{key}` = `{value}`", **replyKwargs)
-
-    async def unset_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /unset <key> command."""
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage : Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        replyKwargs = {
-            "reply_to_message_id": ensuredMessage.messageId,
-            "message_thread_id": ensuredMessage.threadId,
-            "parse_mode": "Markdown",
-        }
-
-        user = ensuredMessage.user
-        chat = ensuredMessage.chat
-        chatType = chat.type
-
-        if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
-            await message.reply_text(
-                "This command is only available in groups and supergroups for now.",
-                **replyKwargs,
-            )
-            return
-
-        if not user.username:
-            await message.reply_text(
-                "You need to have a username to change chat settings.",
-                **replyKwargs,
-            )
-            return
-
-        if not context.args or len(context.args) < 1:
-            await message.reply_text(
-                "You need to specify a key and a value to change chat settings.",
-                **replyKwargs,
-            )
-            return
-
-        chatSettings = self.getChatSettings(chat.id)
-        adminAllowedChangeSettings = chatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
-
-        allowedUsers = self.botOwners[:]
-        if adminAllowedChangeSettings:
-            for admin in await chat.get_administrators():
-                logger.debug(f"Got admin for chat {chat.id}: {admin}")
-                username = admin.user.username
-                if username:
-                    allowedUsers.append(username.lower())
-
-        if user.username.lower() not in allowedUsers:
-            await message.reply_text(
-                "You are not allowed to change chat settings.",
-                **replyKwargs,
-            )
-            return
-
-        key = context.args[0]
-        value = " ".join(context.args[1:])
-        self.unsetChatSetting(chat.id, key)
-
-        await message.reply_text(f"Готово, теперь `{key}` сброшено в значение по умолчанию", **replyKwargs)
+        if isSet:
+            value = " ".join(context.args[1:])
+            self.setChatSettings(chat.id, {key: value})
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=f"Готово, теперь `{key}` = `{value}`",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+        else:
+            self.unsetChatSetting(chat.id, key)
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=f"Готово, теперь `{key}` сброшено в значение по умолчанию",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
