@@ -253,10 +253,22 @@ class DatabaseWrapper:
             logger.error(f"Failed to get messages for user {userId}: {e}")
             return []
 
-    def saveChatMessage(self, date: datetime.datetime, chatId: int, userId: int, messageId: int,
-                         replyId: Optional[int] = None, threadId: Optional[int] = None,
-                         messageText: str = '', messageType: str = 'text', messageCategory: str = 'user',
-                        rootMessageId: Optional[int] = None, quoteText: Optional[str] = None) -> bool:
+    def saveChatMessage(
+        self,
+        date: datetime.datetime,
+        chatId: int,
+        userId: int,
+        messageId: int,
+        replyId: Optional[int] = None,
+        threadId: Optional[int] = None,
+        messageText: str = "",
+        messageType: str = "text",
+        messageCategory: str = "user",
+        rootMessageId: Optional[int] = None,
+        quoteText: Optional[str] = None,
+        mediaContent: Optional[str] = None,
+        mediaLinks: Optional[str] = None,
+    ) -> bool:
         """Save a chat message with detailed information."""
         try:
             with self.getCursor() as cursor:
@@ -265,14 +277,17 @@ class DatabaseWrapper:
                     INSERT INTO chat_messages
                     (date, chat_id, user_id, message_id,
                         reply_id, thread_id, message_text, message_type,
-                        message_category, root_message_id, quote_text)
+                        message_category, root_message_id, quote_text,
+                        media_content, media_links)
                     VALUES
                     (?, ?, ?, ?,
                         ?, ?, ?, ?,
-                        ?, ?, ?)
+                        ?, ?, ?,
+                        ?, ?)
                 """, (date, chatId, userId, messageId,
                       replyId, threadId, messageText, messageType,
-                      messageCategory, rootMessageId, quoteText))
+                      messageCategory, rootMessageId, quoteText,
+                      mediaContent, mediaLinks))
                 cursor.execute("""
                     UPDATE chat_users
                     SET messages_count = messages_count + 1,

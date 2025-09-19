@@ -17,6 +17,14 @@ class LLMMessageFormat(StrEnum):
     JSON = "json"
     TEXT = "text"
 
+class MessageType(StrEnum):
+    TEXT = "text"
+    IMAGE = "image"
+    #VIDEO = "video"
+    #AUDIO = "audio"
+    #DOCUMENT = "document"
+    #STICKER = "sticker"
+    UNKNOWN = "unknown"
 
 """
 A class to encapsulate and ensure the presence of essential message attributes from a Telegram message.
@@ -62,14 +70,23 @@ class EnsuredMessage:
 
         self.messageId = message.message_id
         self.date = message.date
-        self.messageText = ""
-        self.messageType = "text"
-        if not message.text:
-            # Probably not a text message, ignore but log it for now
-            logger.error(f"Message text undefined: {message}")
-            self.messageType = "unknown"
-        else:
-            self.messageText = message.text
+        self.messageText: str = ""
+        self.messageType: MessageType = MessageType.TEXT
+
+        # If there are photo in message, set proper type + handle caption (if any) as messageText
+        if message.photo:
+            self.messageType = MessageType.IMAGE
+            if message.caption:
+                self.messageText = message.caption
+
+
+        if self.messageType == MessageType.TEXT:
+            if not message.text:
+                # Probably not a text message, just log it for now
+                logger.error(f"Message text undefined: {message}")
+                self.messageType = MessageType.UNKNOWN
+            else:
+                self.messageText = message.text
 
         # If this is reply, then set replyId and replyText
         self.replyId: Optional[int] = None
@@ -93,11 +110,16 @@ class EnsuredMessage:
         self.isTopicMessage = message.is_topic_message == True if message.is_topic_message is not None else False
         if self.isTopicMessage:
             self.threadId = message.message_thread_id
+        
+        self.mediaContent: Optional[str] = None
 
         logger.debug(f"Ensured Message: {self}")
 
     def getBaseMessage(self) -> Message:
         return self._message
+    
+    def setMediaContent(self, mediaContent: str):
+        self.mediaContent = mediaContent
 
     def formatForLLM(self, format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
         messageText = self.messageText if replaceMessageText is None else replaceMessageText
@@ -107,10 +129,14 @@ class EnsuredMessage:
                     "login": self.user.name,
                     "name": self.user.full_name,
                     "date": self.date.isoformat(),
+                    "type": str(self.messageType),
                     "text": messageText,
                 }
                 if self.isQuote and self.quoteText:
                     ret["quote"] = self.quoteText
+
+                if self.mediaContent:
+                    ret["media_description"] = self.mediaContent
 
                 #logger.debug(f"EM.formatForLLM():{self} -> {ret}")
                 return json.dumps(ret, ensure_ascii=False)
@@ -133,13 +159,20 @@ class EnsuredMessage:
                     "login": data["username"],
                     "name": data["full_name"],
                     "date": data["date"],
+                    "type": data["message_type"],
                     "text": messageText,
                 }
                 if data.get("quote_text", None):
                     ret["quote"] = data["quote_text"]
 
+                if data.get("media_content", None):
+                    try:
+                        ret["media_description"] = json.loads(data["media_content"])
+                    except json.JSONDecodeError:
+                        logger.error(f"Invalid media_content: {data['media_content']}")
+
                 #logger.debug(f"EM.formatDBChatMessageToLLM():{data} -> {ret}")
-                return json.dumps(ret, ensure_ascii=False)
+                return json.dumps(ret, ensure_ascii=False, default=str)
             case LLMMessageFormat.TEXT:
                 ret = messageText
                 if data.get("quote_text", None):

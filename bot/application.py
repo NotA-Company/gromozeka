@@ -33,7 +33,6 @@ class BotApplication:
         if not self.application:
             logger.error("Application not initialized!")
             return
-
         # Command handlers
         self.application.add_handler(CommandHandler("start", self.handlers.start_command))
         self.application.add_handler(CommandHandler("help", self.handlers.help_command))
@@ -50,7 +49,11 @@ class BotApplication:
         # See
         # https://docs.python-telegram-bot.org/en/stable/telegram.ext.filters.html#module-telegram.ext.filters
         # for more information about filters
-        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handlers.handle_message))
+        # PHOTO, VIDEO, AUDIO, DOCUMENT, Sticker.ALL, VOICE, ANIMATION
+        self.application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO & ~filters.COMMAND, self.handlers.handle_message))
+        #self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers.handle_photo))
+        self.application.add_handler(MessageHandler(filters.VIA_BOT, self.handlers.handle_bot))
+        
 
         # Error handler
         self.application.add_error_handler(self.handlers.error_handler)
