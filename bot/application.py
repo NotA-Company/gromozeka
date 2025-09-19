@@ -42,8 +42,7 @@ class BotApplication:
         # Chat commands
         self.application.add_handler(CommandHandler("summary", self.handlers.summary_command))
         self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
-        self.application.add_handler(CommandHandler("set", self.handlers.set_chat_setting_command))
-        self.application.add_handler(CommandHandler("unset", self.handlers.unset_chat_setting_command))
+        self.application.add_handler(CommandHandler(["set", "unset"], self.handlers.set_or_unset_chat_setting_command))
 
         # Message handler for regular text messages
         # See

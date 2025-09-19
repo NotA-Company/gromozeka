@@ -21,6 +21,9 @@ parse-images = true
 # Set to 1 to get smallest image possible
 optimal-image-size        = 896
 
+tools-used-prefix        = "🛠"
+fallback-happened-prefix = "🤖"
+
 
 summary-model           = "openrouter/gemma-3-27b-it-free"
 private-model           = "openrouter/gemma-3-12b-it-free"

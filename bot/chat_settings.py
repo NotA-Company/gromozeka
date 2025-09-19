@@ -29,6 +29,9 @@ class ChatSettingsKey(StrEnum):
     PARSE_IMAGES = "parse-images"
     OPTIMAL_IMAGE_SIZE = "optimal-image-size"
 
+    TOOLS_USED_PREFIX = "tools-used-prefix"
+    FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
+
 class ChatSettingsValue:
     """Value of chat settings."""
     def __init__(self, value: Any):
