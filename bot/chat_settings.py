@@ -14,7 +14,8 @@ class ChatSettingsKey(StrEnum):
     FALLBACK_MODEL = "fallback-model"
     SUMMARY_MODEL = "summary-model"
     SUMMARY_FALLBACK_MODEL = "summary-fallback-model"
-    IMAGE_MODEL = "image-model"
+    IMAGE_PARSING_MODEL = "image-parsing-model"
+    IMAGE_GENERATION_MODEL = "image-generation-model"
 
     SUMMARY_PROMPT = "summary-prompt"
     CHAT_PROMPT = "chat-prompt"
@@ -38,23 +39,23 @@ class ChatSettingsValue:
 
     def toStr(self) -> str:
         return str(self.value)
-    
+
     def toInt(self) -> int:
         try:
             return int(self.value)
         except ValueError:
             logger.error(f"Failed to convert {self.value} to int")
             return 0
-        
+
     def toFloat(self) -> float:
         try:
             return float(self.value)
         except ValueError:
             logger.error(f"Failed to convert {self.value} to float")
             return 0.0
-        
+
     def toBool(self) -> bool:
         return self.value.lower() == "true"
-    
+
     def toList(self, separator: str = ",", dropEmpty: bool = True) -> List[str]:
         return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]

@@ -1,0 +1,10 @@
+# Possible YC Models: https://yandex.cloud/ru/docs/foundation-models/concepts/generation/models
+[models.models."yandex-art"]
+provider = "yc-sdk"
+model_id = "yandex-art"
+model_version = "latest"
+#temparature = 0.3
+#context = 256000
+support_tools = false
+support_text = false
+support_images = true

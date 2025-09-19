@@ -53,7 +53,7 @@ class BotApplication:
         self.application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO & ~filters.COMMAND, self.handlers.handle_message))
         #self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers.handle_photo))
         self.application.add_handler(MessageHandler(filters.VIA_BOT, self.handlers.handle_bot))
-        
+
 
         # Error handler
         self.application.add_error_handler(self.handlers.error_handler)

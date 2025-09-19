@@ -6,6 +6,9 @@ model_version = "latest"
 temparature = 0.3
 context = 256000
 support_tools = true
+support_text = true
+support_images = false
+
 
 [models.models."openrouter/deepseek-chat-v3.1"]
 provider = "openrouter"
@@ -14,6 +17,8 @@ model_version = "latest"
 temparature = 0.3
 context = 163840
 support_tools = true
+support_text = true
+support_images = false
 
 [models.models."openrouter/deepseek-chat-v3.1-free"]
 provider = "openrouter"
@@ -22,6 +27,8 @@ model_version = "latest"
 temparature = 0.3
 context = 64000
 support_tools = true
+support_text = true
+support_images = false
 
 [models.models."openrouter/gemma-3-27b-it-free"]
 provider = "openrouter"
@@ -30,6 +37,8 @@ model_version = "latest"
 temparature = 0.3
 context = 96000
 support_tools = true
+support_text = true
+support_images = false
 
 [models.models."openrouter/gemma-3-12b-it-free"]
 provider = "openrouter"
@@ -38,6 +47,8 @@ model_version = "latest"
 temparature = 0.3
 context = 32768
 support_tools = true
+support_text = true
+support_images = false
 
 [models.models."openrouter/qwen-turbo"]
 provider = "openrouter"
@@ -46,3 +57,5 @@ model_version = "latest"
 temparature = 0.3
 context = 1000000
 support_tools = true
+support_text = true
+support_images = false

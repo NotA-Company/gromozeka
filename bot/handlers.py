@@ -2,13 +2,12 @@
 Telegram bot command handlers for Gromozeka.
 """
 import datetime
-from enum import StrEnum
 import json
 import logging
 
 import random
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 import magic
@@ -163,10 +162,23 @@ class BotHandlers:
 
     def getImageParsingModel(self, chatId: Optional[int] = None) -> AbstractModel:
         """Get the model for fallback messages."""
-        modelName = self.chatDefaults[ChatSettingsKey.IMAGE_MODEL]
+        modelName = self.chatDefaults[ChatSettingsKey.IMAGE_PARSING_MODEL]
         if chatId:
             chatSettings = self.getChatSettings(chatId)
-            modelName = chatSettings.get(ChatSettingsKey.IMAGE_MODEL, modelName)
+            modelName = chatSettings.get(ChatSettingsKey.IMAGE_PARSING_MODEL, modelName)
+
+        ret = self.llmManager.getModel(modelName.toStr())
+        if ret is None:
+            logger.error(f"Model {modelName} not found")
+            raise ValueError(f"Model {modelName} not found")
+        return ret
+
+    def getImageGenerationModel(self, chatId: Optional[int] = None) -> AbstractModel:
+        """Get the model for fallback messages."""
+        modelName = self.chatDefaults[ChatSettingsKey.IMAGE_GENERATION_MODEL]
+        if chatId:
+            chatSettings = self.getChatSettings(chatId)
+            modelName = chatSettings.get(ChatSettingsKey.IMAGE_GENERATION_MODEL, modelName)
 
         ret = self.llmManager.getModel(modelName.toStr())
         if ret is None:
@@ -218,12 +230,37 @@ class BotHandlers:
     # Different helpers
     ###
 
-    def _callLLM(self, model: AbstractModel, messages: List[ModelMessage], fallbackModel: AbstractModel, useTools: bool = False) -> ModelRunResult:
+    async def _callLLM(self, model: AbstractModel, messages: List[ModelMessage], fallbackModel: AbstractModel, ensuredMessage: EnsuredMessage, context: ContextTypes.DEFAULT_TYPE, useTools: bool = False) -> ModelRunResult:
         """Call the LLM with the given messages."""
 
+        async def generateAndSendImage(image_prompt: str, image_description:Optional[str] = None, **kwargs) -> str:
+            logger.debug(f"Generating image: {image_prompt}. Image description: {image_description}")
+            model = self.getImageGenerationModel(ensuredMessage.chat.id)
+
+            mlRet = model.generateImage([ModelMessage(content=image_prompt)])
+            if mlRet.mediaData is None:
+                logger.error(f"No image generated for {image_prompt}")
+                return '{"done": false}'
+
+            message = ensuredMessage.getBaseMessage()
+
+            replyMessage = await message.reply_photo(
+                photo=mlRet.mediaData,
+                caption=image_description,
+                reply_to_message_id=ensuredMessage.messageId,
+                message_thread_id=ensuredMessage.threadId,
+            )
+            logger.debug(f"Generated image: {mlRet}")
+            logger.debug(f"Sent image: {replyMessage}")
+            return '{"done": true}'
+
+        async def getUrlContent(url: str, **kwargs) -> str:
+            return str(requests.get(url).content)
+
         tools: Dict[str, LLMAbstractTool] = {}
-        functions = {
-            "get_url_content": lambda **kwargs: str(requests.get(kwargs['url']).content),
+        functions: Dict[str, Callable] = {
+            "get_url_content": getUrlContent,
+            "generate_and_send_image": generateAndSendImage,
         }
 
         if useTools:
@@ -238,21 +275,46 @@ class BotHandlers:
                         required=True,
                     ),
                 ],
-                function=lambda **kwargs: str(requests.get(kwargs['url']).content),
+                function=functions["get_url_content"],
+            )
+            tools["generate_and_send_image"] = LLMToolFunction(
+                name="generate_and_send_image",
+                description="Generate and send an image. ALWAYS use it if user ask to generate/paint/draw an image/picture/photo",
+                parameters=[
+                    LLMFunctionParameter(
+                        name="image_prompt",
+                        description="The prompt to generate the image from",
+                        type=LLMParameterType.STRING,
+                        required=True,
+                    ),
+                    LLMFunctionParameter(
+                        name="image_description",
+                        description="The description of the image",
+                        type=LLMParameterType.STRING,
+                        required=False,
+                    ),
+                ],
+                function=functions["generate_and_send_image"],
             )
 
         ret : Optional[ModelRunResult] = None
         while True:
-            ret = model.runWithFallBack(messages, fallbackModel=fallbackModel, tools=list(tools.values()))
+            ret = model.generateTextWithFallBack(messages, fallbackModel=fallbackModel, tools=list(tools.values()))
             logger.debug(f"LLM returned: {ret}")
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 messages = messages + [ret.toModelMessage()]
                 for toolCall in ret.toolCalls:
-                    messages.append(ModelMessage(
-                        role="tool",
-                        content=json.dumps(functions[toolCall.name](**toolCall.parameters), ensure_ascii=False, default=str),
-                        toolCallId=toolCall.id,
-                    ))
+                    messages.append(
+                        ModelMessage(
+                            role="tool",
+                            content=json.dumps(
+                                await functions[toolCall.name](**toolCall.parameters),
+                                ensure_ascii=False,
+                                default=str,
+                            ),
+                            toolCallId=toolCall.id,
+                        )
+                    )
             else:
                 break
 
@@ -308,7 +370,7 @@ class BotHandlers:
 
         return True
 
-    async def _sendLLMChatMessage(self, ensuredMessage: EnsuredMessage, messagesHistory: List[Dict[str, str]]) -> bool:
+    async def _sendLLMChatMessage(self, ensuredMessage: EnsuredMessage, messagesHistory: List[Dict[str, str]], context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Send a chat message to the LLM model."""
         logger.debug(f"LLM Request messages: {messagesHistory}")
         llmModel = self.getChatModel(ensuredMessage.chat.id)
@@ -316,15 +378,18 @@ class BotHandlers:
         mlRet: Optional[ModelRunResult] = None
         try:
             # mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
-            mlRet = self._callLLM(
+            mlRet = await self._callLLM(
                 model=llmModel,
                 messages=ModelMessage.fromDictList(messagesHistory),
                 fallbackModel=self.getFallbackModel(),
+                ensuredMessage=ensuredMessage,
+                context=context,
                 useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
             )
             logger.debug(f"LLM Response: {mlRet}")
         except Exception as e:
             logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
+            logger.exception(e)
             await ensuredMessage.getBaseMessage().reply_text(
                 f"Error while sending LLM request: {type(e).__name__}",
                 reply_to_message_id=ensuredMessage.messageId,
@@ -450,7 +515,7 @@ class BotHandlers:
         reply = ""
         llmModel = self.getPrivateModel(chatId=user.id)
         try:
-            mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
+            mlRet = llmModel.generateTextWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
             logger.debug(f"LLM Response: {mlRet}")
             reply = mlRet.resultText
             if mlRet.isFallback:
@@ -595,7 +660,7 @@ class BotHandlers:
             },
         ] + storedMessages
 
-        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
+        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
             logger.error("Failed to send LLM reply")
 
         return True
@@ -659,7 +724,7 @@ class BotHandlers:
             }
         )
 
-        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
+        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
             logger.error("Failed to send LLM reply")
             return False
 
@@ -742,7 +807,7 @@ class BotHandlers:
 
         # what there? Return parsed content of replied message (if any)
         whatThereList = ["что там"]
-        
+
         isWhatThere = False
         for whatThere in whatThereList:
             if messageTextLower.startswith(whatThere):
@@ -752,9 +817,9 @@ class BotHandlers:
                 if not tail.rstrip('?.').strip():
                     isWhatThere = True
                     break
-        
+
         if isWhatThere and ensuredMessage.isReply and message.reply_to_message:
-            #TODO: Move getting parent message to separate function
+            # TODO: Move getting parent message to separate function
             ensuredReply = EnsuredMessage(message.reply_to_message)
             response = DUNNO_EMOJI
             if ensuredReply.messageType != MessageType.TEXT:
@@ -775,15 +840,15 @@ class BotHandlers:
                         except json.JSONDecodeError:
                             logger.error(f"Failed to parse parent message content (ChatId: {ensuredReply.chat.id}, MessageId: {ensuredReply.messageId}, messageContent: {response})")
                             response = DUNNO_EMOJI
-                
-                #TODO: Should I move sending and saving message to separate function?
+
+                # TODO: Should I move sending and saving message to separate function?
                 replyKwargs = {
             "reply_to_message_id": ensuredMessage.messageId,
             "message_thread_id": ensuredMessage.threadId,
         }
                 try:
                     replyText = markdown_to_markdownv2(response)
-        
+
                     replyMessage = await message.reply_text(
                 text=replyText,
                 parse_mode="MarkdownV2",
@@ -804,7 +869,7 @@ class BotHandlers:
                 except Exception as e:
                     logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
                     return False
-                
+
         # End of What There
 
         # Handle LLM Action
@@ -816,7 +881,6 @@ class BotHandlers:
             },
         ]
 
-        
         # Add Parent message if any
         if ensuredMessage.isReply and message.reply_to_message:
             ensuredReply = EnsuredMessage(message.reply_to_message)
@@ -842,7 +906,7 @@ class BotHandlers:
                             "content": EnsuredMessage.formatDBChatMessageToLLM(storedReply, llmMessageFormat),
                         }
                     )
-                
+
         # Add user message
         reqMessages.append(
             {
@@ -853,7 +917,7 @@ class BotHandlers:
             }
         )
 
-        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages):
+        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
             logger.error("Failed to send LLM reply")
             return False
 
@@ -892,7 +956,6 @@ class BotHandlers:
                 if pSize.width > optimalImageSize or pSize.height > optimalImageSize:
                     photoSize = pSize
                     break
-            
 
         file = await context.bot.get_file(photoSize)
         logger.debug(f"Photo File info: {file}")
@@ -920,11 +983,11 @@ class BotHandlers:
             ]
             # logger.debug(f"Image Prompt: {imagePrompt}")
             logger.debug(f"Prompting Image LLM for image with prompt: {imagePrompt}")
-            llmRet = llmModel.run(messages)
+            llmRet = llmModel.generateText(messages)
             logger.debug(f"Image LLM Response: {llmRet}")
             ret['content'] = llmRet.resultText
 
-        return ret            
+        return ret
 
     ###
     # COMMANDS Handlers
@@ -1153,7 +1216,7 @@ class BotHandlers:
                 mlRet: Optional[ModelRunResult] = None
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
-                    mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackSummaryModel())
+                    mlRet = llmModel.generateTextWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackSummaryModel())
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
                     logger.error(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}")

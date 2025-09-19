@@ -4,6 +4,8 @@ LLM Manager for coordinating multiple LLM providers and models, dood!
 import logging
 from typing import Dict, List, Any, Optional
 
+from ai.providers.yc_sdk_provider import YcSdkProvider
+
 from .abstract import AbstractModel, AbstractLLMProvider
 from .providers.yc_openai_provider import YcOpenaiProvider
 from .providers.openrouter_provider import OpenrouterProvider
@@ -37,6 +39,7 @@ class LLMManager:
         providerTypes = {
             "yc-openai": YcOpenaiProvider,
             "openrouter": OpenrouterProvider,
+            "yc-sdk": YcSdkProvider,
         }
 
         for provider_name, provider_config in providers_config.items():
