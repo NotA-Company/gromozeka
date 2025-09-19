@@ -110,14 +110,14 @@ class EnsuredMessage:
         self.isTopicMessage = message.is_topic_message == True if message.is_topic_message is not None else False
         if self.isTopicMessage:
             self.threadId = message.message_thread_id
-        
+
         self.mediaContent: Optional[str] = None
 
         logger.debug(f"Ensured Message: {self}")
 
     def getBaseMessage(self) -> Message:
         return self._message
-    
+
     def setMediaContent(self, mediaContent: str):
         self.mediaContent = mediaContent
 

@@ -8,7 +8,7 @@ from telegram_markdown import convertMarkdownToV2, validateMarkdownV2, isValidMa
 def test_conversion():
     """Test various Markdown to MarkdownV2 conversions."""
     print("=== CONVERSION TESTS ===")
-    
+
     test_cases = [
         ("**bold**", "*bold*"),
         ("*italic*", "_italic_"),
@@ -21,7 +21,7 @@ def test_conversion():
         ("Text with special chars: # + - = | { } . !", "Text with special chars: \\# \\+ \\- \\= \\| \\{ \\} \\. \\!"),
         ("Mixed: **bold** `code` [link](url)", "Mixed: *bold* `code` [link](url)"),
     ]
-    
+
     for i, (input_md, expected) in enumerate(test_cases, 1):
         result = convertMarkdownToV2(input_md)
         status = "✅ PASS" if result == expected else "❌ FAIL"
@@ -36,7 +36,7 @@ def test_conversion():
 def test_validation():
     """Test MarkdownV2 validation."""
     print("=== VALIDATION TESTS ===")
-    
+
     valid_cases = [
         "*bold*",
         "_italic_",
@@ -50,7 +50,7 @@ def test_validation():
         "*bold* _italic_ `code`",
         "Text with escaped chars: \\# \\+ \\- \\= \\| \\{ \\} \\. \\!",
     ]
-    
+
     invalid_cases = [
         "*unclosed bold",
         "_unclosed italic",
@@ -59,7 +59,7 @@ def test_validation():
         "*bold _italic*",  # Overlapping markup
         "`unclosed code",
     ]
-    
+
     print("Valid cases:")
     for i, case in enumerate(valid_cases, 1):
         is_valid, errors = validateMarkdownV2(case)
@@ -68,7 +68,7 @@ def test_validation():
         if not is_valid:
             for error in errors:
                 print(f"     Error: {error}")
-    
+
     print("\nInvalid cases:")
     for i, case in enumerate(invalid_cases, 1):
         is_valid, errors = validateMarkdownV2(case)
@@ -83,7 +83,7 @@ def test_validation():
 def test_complex_cases():
     """Test complex real-world cases."""
     print("\n=== COMPLEX CASES ===")
-    
+
     complex_md = """
 # Header (should be escaped)
 This is **bold text** with *italic* and ~~strikethrough~~.
@@ -103,13 +103,13 @@ Special characters: # + - = | { } . ! should be escaped.
 
 Mixed formatting: **bold with `code` inside** and *italic with [link](url)*.
 """
-    
+
     print("Complex Markdown input:")
     print(complex_md)
     print("\nConverted to MarkdownV2:")
     converted = convertMarkdownToV2(complex_md)
     print(converted)
-    
+
     print(f"\nValidation result: {isValidMarkdownV2(converted)}")
     is_valid, errors = validateMarkdownV2(converted)
     if not is_valid:

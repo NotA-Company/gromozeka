@@ -23,15 +23,15 @@ class ConfigManager:
         """Recursively find all .toml files in a directory, dood!"""
         toml_files = []
         dir_path = Path(directory)
-        
+
         if not dir_path.exists():
             logger.warning(f"Config directory {directory} does not exist, skipping, dood!")
             return toml_files
-            
+
         if not dir_path.is_dir():
             logger.warning(f"Config path {directory} is not a directory, skipping, dood!")
             return toml_files
-        
+
         try:
             # Use rglob to recursively find all .toml files
             for toml_file in dir_path.rglob("*.toml"):
@@ -40,13 +40,13 @@ class ConfigManager:
                     logger.debug(f"Found config file: {toml_file}")
         except Exception as e:
             logger.error(f"Error scanning directory {directory}: {e}")
-            
+
         return sorted(toml_files)  # Sort for consistent ordering
 
     def _merge_configs(self, base_config: Dict[str, Any], new_config: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively merge two configuration dictionaries, dood!"""
         merged = base_config.copy()
-        
+
         for key, value in new_config.items():
             if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
                 # Recursively merge nested dictionaries
@@ -54,7 +54,7 @@ class ConfigManager:
             else:
                 # Override with new value
                 merged[key] = value
-                
+
         return merged
 
     """
@@ -92,20 +92,20 @@ class ConfigManager:
             # Load and merge configs from directories
             if self.config_dirs:
                 logger.info(f"Scanning {len(self.config_dirs)} config directories for .toml files, dood!")
-                
+
                 for config_dir in self.config_dirs:
                     toml_files = self._find_toml_files_recursive(config_dir)
                     logger.info(f"Found {len(toml_files)} .toml files in {config_dir}")
-                    
+
                     for toml_file in toml_files:
                         try:
                             with open(toml_file, "rb") as f:
                                 dir_config = tomli.load(f)
-                            
+
                             # Merge this config into the main config
                             config = self._merge_configs(config, dir_config)
                             logger.info(f"Merged config from {toml_file}")
-                            
+
                         except Exception as e:
                             logger.error(f"Failed to load config file {toml_file}: {e}")
                             # Continue with other files instead of exiting

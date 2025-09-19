@@ -91,7 +91,7 @@ def parse_arguments():
     # Convert relative paths to absolute paths before daemon mode changes working directory
     args.config = os.path.abspath(args.config)
     args.pid_file = os.path.abspath(args.pid_file)
-    
+
     # Convert config directories to absolute paths
     if args.config_dir:
         args.config_dir = [os.path.abspath(dir_path) for dir_path in args.config_dir]
@@ -154,10 +154,10 @@ def pretty_print_config(config_manager: ConfigManager):
     """Pretty-print the loaded configuration and exit, dood!"""
     print("=== Gromozeka Configuration ===")
     print()
-    
+
     # Get the raw config dictionary
     config = config_manager.config
-    
+
     # Pretty-print as JSON for better readability
     try:
         config_json = json.dumps(config, indent=2, ensure_ascii=False, sort_keys=True)
@@ -168,7 +168,7 @@ def pretty_print_config(config_manager: ConfigManager):
         print("Raw configuration:")
         for key, value in sorted(config.items()):
             print(f"{key}: {value}")
-    
+
     print()
     print("=== Configuration loaded successfully, dood! ===")
 

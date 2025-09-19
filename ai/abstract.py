@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class LLMAbstractTool(ABC):
     """Abstract base class for LLM tools"""
-    
+
     @abstractmethod
     def toJson(self) -> Dict[str, Any]:
         raise NotImplementedError
@@ -97,8 +97,8 @@ class ModelMessage:
     """Message for model"""
     def __init__(
         self,
-        role: str,
-        content: str,
+        role: str = "user",
+        content: str = "",
         contentKey: str = "content",
         toolCalls: List[LLMToolCall] = [],
         toolCallId: Optional[Any] = None,
@@ -124,16 +124,18 @@ class ModelMessage:
     def fromDictList(cls, l: List[Dict[str, Any]]) -> List['ModelMessage']:
         return [cls.fromDict(d) for d in l]
 
-    def toDict(self, contentKey: Optional[str] = None, content: Optional[Any] = None) -> Dict[str, Any]:
+    def toDict(self, contentKey: Optional[str] = None, content: Optional[Any] = None, skipRole: bool = False) -> Dict[str, Any]:
         if contentKey is None:
             contentKey = self.contentKey
         if content is None:
             content = self.content
 
         ret: Dict[str, Any] = {
-            "role": self.role,
             contentKey: content,
         }
+        if not skipRole:
+            ret["role"] = self.role
+
         if self.toolCalls:
             ret["tool_calls"] = [
                 {
@@ -158,17 +160,17 @@ class ModelMessage:
 
 class ModelImageMessage(ModelMessage):
     """Message for model with image"""
-    def __init__(self, role: str, content: str, image: bytearray):
+    def __init__(self, role: str = "user", content: str = "", image: bytearray = bytearray()):
         super().__init__(role, content)
         self.image = image
 
-    def toDict(self, contentKey: Optional[str] = None, content: Optional[Any] = None) -> Dict[str, Any]:
+    def toDict(self, contentKey: Optional[str] = None, content: Optional[Any] = None, skipRole: bool = False) -> Dict[str, Any]:
         if content is None:
             mimeType = magic.from_buffer(bytes(self.image), mime=True)
             base64Image = base64.b64encode(self.image).decode('utf-8')
 
             content = []
-            if self.content: 
+            if self.content:
                 content.append({"type": "text", "content": self.content})
 
             content.append(
@@ -181,7 +183,7 @@ class ModelImageMessage(ModelMessage):
             )
             #logger.debug(f"Image Content: {content}")
 
-        return super().toDict(contentKey, content)
+        return super().toDict(contentKey, content=content, skipRole=skipRole)
 
 
 class ModelResultStatus(Enum):
@@ -204,12 +206,22 @@ class ModelResultStatus(Enum):
 
 class ModelRunResult:
     """Unified Result of model run"""
-    def __init__(self, rawResult: Any, status: ModelResultStatus, resultText: str, toolCalls: List[LLMToolCall] = []):
+    def __init__(
+        self,
+        rawResult: Any,
+        status: ModelResultStatus,
+        resultText: str = "",
+        toolCalls: List[LLMToolCall] = [],
+        mediaMimeType: Optional[str] = None,
+        mediaData: Optional[bytes] = None,
+    ):
         self.status = status
         self.resultText = resultText
         self.result = rawResult
         self.isFallback = False
         self.toolCalls = toolCalls[:]
+        self.mediaMimeType = mediaMimeType
+        self.mediaData = mediaData
 
     def setFallback(self, isFallback: bool):
         self.isFallback = isFallback
@@ -224,14 +236,19 @@ class ModelRunResult:
             "isFallback": self.isFallback,
             "toolCalls": self.toolCalls,
             "raw": str(self.result),
+            "mediaMimeType": self.mediaMimeType,
+            "mediaData": f"BinaryData({len(self.mediaData)})" if self.mediaData else None,
         }, ensure_ascii=False, default=str) + ")"
-    
+
     def toModelMessage(self) -> ModelMessage:
         return ModelMessage(
             role="assistant",
             content=self.resultText,
             toolCalls=self.toolCalls,
         )
+
+    def isMedia(self) -> bool:
+        return self.mediaMimeType is not None and self.mediaData is not None
 
 class AbstractModel(ABC):
     """Abstract base class for all LLM models, dood!"""
@@ -263,7 +280,7 @@ class AbstractModel(ABC):
         self.tokensCountCoeff = 1.1
 
     @abstractmethod
-    def run(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the model with given messages, dood!
 
         Args:
@@ -274,20 +291,24 @@ class AbstractModel(ABC):
         """
         raise NotImplementedError
 
-    def runWithFallBack(self, messages: List[ModelMessage], fallbackModel: "AbstractModel", tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    @abstractmethod
+    def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
+        """Generate Image"""
+        raise NotImplementedError
+
+    def generateTextWithFallBack(self, messages: List[ModelMessage], fallbackModel: "AbstractModel", tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the model with given messages, dood!"""
         try:
-            ret = self.run(messages, tools)
+            ret = self.generateText(messages, tools)
             if ret.status in [ModelResultStatus.UNSPECIFIED, ModelResultStatus.CONTENT_FILTER, ModelResultStatus.UNKNOWN]:
                 logger.debug(f"Model {self.modelId} returned status {ret}")
                 raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
             return ret
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")
-            ret = fallbackModel.run(messages, tools)
+            ret = fallbackModel.generateText(messages, tools)
             ret.setFallback(True)
             return ret
-
 
     def getEstimateTokensCount(self, data: Any) -> int:
         """Get estimate number of tokens in given data, dood!"""
