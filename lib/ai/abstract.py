@@ -41,7 +41,7 @@ class AbstractModel(ABC):
         self.tokensCountCoeff = 1.1
 
     @abstractmethod
-    def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the model with given messages, dood!
 
         Args:
@@ -53,21 +53,21 @@ class AbstractModel(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
         """Generate Image"""
         raise NotImplementedError
 
-    def generateTextWithFallBack(self, messages: List[ModelMessage], fallbackModel: "AbstractModel", tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateTextWithFallBack(self, messages: List[ModelMessage], fallbackModel: "AbstractModel", tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the model with given messages, dood!"""
         try:
-            ret = self.generateText(messages, tools)
+            ret = await self.generateText(messages, tools)
             if ret.status in [ModelResultStatus.UNSPECIFIED, ModelResultStatus.CONTENT_FILTER, ModelResultStatus.UNKNOWN]:
                 logger.debug(f"Model {self.modelId} returned status {ret}")
                 raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
             return ret
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")
-            ret = fallbackModel.generateText(messages, tools)
+            ret = await fallbackModel.generateText(messages, tools)
             ret.setFallback(True)
             return ret
 
