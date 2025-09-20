@@ -98,7 +98,7 @@ class BotApplication:
         # VIDEO      - https://docs.python-telegram-bot.org/en/stable/telegram.video.html#telegram.Video
         # VideoNote  - https://docs.python-telegram-bot.org/en/stable/telegram.videonote.html#telegram.VideoNote
         # VOICE      - https://docs.python-telegram-bot.org/en/stable/telegram.voice.html#telegram.Voice
-        self.application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO & ~filters.COMMAND, self.handlers.handle_message))
+        self.application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Sticker.ALL & ~filters.COMMAND, self.handlers.handle_message))
         #self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers.handle_photo))
         self.application.add_handler(MessageHandler(filters.VIA_BOT, self.handlers.handle_bot))
 
