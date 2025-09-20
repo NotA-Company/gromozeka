@@ -3,7 +3,7 @@
 /config.prod.toml
 /configs/*
 !/configs/00-defaults
-/bot_data.db
+/*.db
 /bak/
 
 # Byte-compiled / optimized / DLL files
