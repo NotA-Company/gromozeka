@@ -692,6 +692,7 @@ class DatabaseWrapper:
         mimeType: Optional[str] = None,
         localUrl: Optional[str] = None,
         description: Optional[str] = None,
+        prompt: Optional[str] = None,
     ) -> bool:
         """Update a media attachment in the database."""
         try:
@@ -713,6 +714,9 @@ class DatabaseWrapper:
             if description is not None:
                 query += "description = :description, "
                 values['description'] = description
+            if prompt is not None:
+                query += "prompt = :prompt, "
+                values['prompt'] = prompt
 
             with self.getCursor() as cursor:
                 cursor.execute(f"""
