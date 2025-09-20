@@ -36,8 +36,12 @@ ROBOT_EMOJI = "🤖"
 DUNNO_EMOJI = "🤷‍♂️"
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 MAX_QUEUE_LENGTH = 10
-MAX_QUEUE_AGE = 60 * 30 # 30 minutes
+MAX_QUEUE_AGE = 30 * 60 # 30 minutes
+PROCESSING_TIMEOUT = 30 * 60 # 30 minutes
 
+def makeEmptyAsyncTask() -> asyncio.Task:
+    """Create an empty async task."""
+    return asyncio.create_task(asyncio.sleep(0))
 
 class BotHandlers:
     """Contains all bot command and message handlers."""
@@ -439,11 +443,11 @@ class BotHandlers:
         """Call the LLM with the given messages."""
 
         async def generateAndSendImage(image_prompt: str, image_description:Optional[str] = None, **kwargs) -> str:
-            logger.debug(f"Generating image: {image_prompt}. Image description: {image_description}")
+            logger.debug(f"Generating image: {image_prompt}. Image description: {image_description}, mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
             model = self.getImageGenerationModel(ensuredMessage.chat.id)
 
             mlRet = await model.generateImage([ModelMessage(content=image_prompt)])
-            logger.debug(f"Generated image Data: {mlRet}")
+            logger.debug(f"Generated image Data: {mlRet} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
             if mlRet.status != ModelResultStatus.FINAL:
                 ret = await self._sendMessage(
                     ensuredMessage,
@@ -574,7 +578,7 @@ class BotHandlers:
             replyId=replyId,
             threadId=message.threadId,
             messageText=messageText,
-            messageType='text', # In future we'll support not only text messages, but photos, stickers and something else. Or not
+            messageType=message.messageType,
             messageCategory=messageCategory,
             rootMessageId=rootMessageId,
             quoteText=message.quoteText,
@@ -745,14 +749,22 @@ class BotHandlers:
         # chat = ensuredMessage.chat
 
         media = {}
-        if ensuredMessage.messageType == MessageType.IMAGE:
-            media = await self.processImage(update, context, ensuredMessage)
-            ensuredMessage.setMediaProcessingInfo(media)
 
-        if ensuredMessage.messageType == MessageType.UNKNOWN:
-            logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
-            return
-
+        match ensuredMessage.messageType:
+            case MessageType.TEXT:
+                # No special handling for text messages needed
+                pass
+            case MessageType.IMAGE:
+                media = await self.processImage(update, context, ensuredMessage)
+                ensuredMessage.setMediaProcessingInfo(media)
+            case MessageType.STICKER:
+                media = await self.processSticker(update, context, ensuredMessage)
+                ensuredMessage.setMediaProcessingInfo(media)
+        
+            case _:
+                logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
+                return
+        
         messageText = ensuredMessage.messageText
 
         if not self._saveChatMessage(ensuredMessage, messageCategory='user'):
@@ -1104,7 +1116,153 @@ class BotHandlers:
             return False
 
         # ret['content'] = llmRet.resultText
+        
 
+    async def processSticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
+        """
+        Process a sticker from message if needed
+        """
+        #TODO: Very similar to processPhoto method. think about merging into one
+
+        mimeType: Optional[str] = None
+        localUrl: Optional[str] = None
+
+        sticker = ensuredMessage.getBaseMessage().sticker
+        if sticker is None:
+            raise ValueError("Sticker not found")
+        
+        logger.debug(f"Processing sticker: {sticker}")
+        ret = MediaProcessingInfo(
+            id = sticker.file_unique_id,
+            task = None,
+            type = MessageType.STICKER,
+        )
+        # Sticker(..., emoji='😨', file_id='C...E', file_size=51444, file_unique_id='A...Q', 
+        # height=512, is_animated=True, is_video=False, set_name='SharkBoss', 
+        # thumbnail=PhotoSize(...), type=<StickerType.REGULAR>, width=512)
+
+        # First check if we have the photo in the database already
+        mediaAttachment = self.db.getMediaAttachment(ret.id)
+        if mediaAttachment is not None:
+            logger.debug(f"Sticker {ret.id} already in database: {mediaAttachment}")
+            #logger.debug(repr(mediaAttachment))
+            if mediaAttachment["media_type"] != MessageType.STICKER:
+                raise RuntimeError(f"Media attachment with id {ret.id} already present in database and it is not an sticker but {mediaAttachment['media_type']}")
+
+            # Only skip processing if Media in DB is in right status
+            match MediaStatus(mediaAttachment["status"]):
+                case MediaStatus.DONE:
+                    ret.task = makeEmptyAsyncTask()
+                    return ret
+                
+                case MediaStatus.PENDING:
+                    try:
+                        stickerDate = mediaAttachment["updated_at"]
+                        if not isinstance(stickerDate, datetime.datetime):
+                            stickerDate = datetime.datetime.fromisoformat(stickerDate) 
+                        stickerAge =  time.time() - stickerDate.timestamp()
+                        if stickerAge > PROCESSING_TIMEOUT:
+                            logger.warning(f"Sticker {ret.id} already in database but in status {mediaAttachment['status']} and is too old ({stickerAge}), reprocessing it")
+                        else:
+                            ret.task = makeEmptyAsyncTask()
+                            return ret
+                    except Exception as e:
+                        logger.error("Error during checking sticker age:")
+                        logger.exception(e)
+
+                case MediaStatus.NEW:
+                    # We do not support processing non-image stickers for now
+                    if mediaAttachment["mime_type"] is not None and not mediaAttachment["mime_type"].lower().startswith("image/"):
+                        ret.task = makeEmptyAsyncTask()
+                        return ret
+                    
+                case _:
+                    logger.debug(f"Sticker {ret.id} already in database but in wrong status: {mediaAttachment['status']}. Reprocessing it")
+                    pass
+                
+        
+        metadata = {
+            "width": sticker.width,
+            "height": sticker.height,
+            "emoji": sticker.emoji,
+            "set_name": sticker.set_name,
+            "is_animated": sticker.is_animated,
+            "is_video": sticker.is_video,
+            "is_premium": sticker.premium_animation is not None,
+        }
+
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        stickerData: Optional[bytes] = None
+
+        if chatSettings[ChatSettingsKey.SAVE_IMAGES].toBool():
+            # TODO do
+            pass
+
+        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+            mediaStatus = MediaStatus.NEW
+        else:
+            mediaStatus = MediaStatus.DONE
+
+        self.db.addMediaAttachment(
+            fileUniqueId=sticker.file_unique_id,
+            fileId=sticker.file_id,
+            fileSize=sticker.file_size,
+            mediaType=MessageType.STICKER,
+            mimeType=mimeType,
+            metadata=json.dumps(metadata, ensure_ascii=False, default=str),
+            status=mediaStatus,
+            localUrl=localUrl,
+            prompt=None,
+            description=None,
+        )
+
+        # Need to parse image content with LLM
+        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+            # Do not redownload file if it was downloaded already
+            if stickerData is None:
+                file = await context.bot.get_file(sticker)
+                logger.debug(f"Sticker File info: {file}")
+                stickerData = await file.download_as_bytearray()
+
+            mimeType = magic.from_buffer(bytes(stickerData), mime=True)
+            logger.debug(f"Sticker Mimetype: {mimeType}")
+
+            self.db.updateMediaAttachment(
+                fileUniqueId=ret.id,
+                mimeType=mimeType,
+            )
+
+            if mimeType.lower().startswith("image/"):
+                self.db.updateMediaAttachment(
+                    fileUniqueId=ret.id,
+                    status=MediaStatus.PENDING,
+                )
+                imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
+                messages = [
+                    ModelMessage(
+                        role="system",
+                        content=imagePrompt,
+                    ),
+                    ModelImageMessage(
+                        role="user",
+                        content=ensuredMessage.messageText,
+                        image=stickerData,
+                    )
+                ]
+                logger.debug(f"Asynchronously parsing sticker: {ret.id}")
+                parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
+                #logger.debug(f"{ret.id} After Start")
+                ret.task = parseTask
+                await self.addQueueTask(parseTask)
+                #logger.debug(f"{ret.id} After Queued")
+            else:
+                logger.debug(f"Sticker {ret.id} is not an image, skip parsing")
+
+        if ret.task is None:
+            ret.task = makeEmptyAsyncTask()
+
+        return ret
+        
     async def processImage(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
         """
         Process a photo from message if needed
@@ -1128,11 +1286,32 @@ class BotHandlers:
             logger.debug(f"Photo {ret.id} already in database")
             if mediaAttachment["media_type"] != MessageType.IMAGE:
                 raise RuntimeError(f"Media attachment with id {ret.id} already present in database and it is not an image but {mediaAttachment['media_type']}")
+            
+            # Only skip processing if Media in DB is in right status
+            match MediaStatus(mediaAttachment["status"]):
+                case MediaStatus.DONE:
+                    ret.task = makeEmptyAsyncTask()
+                    return ret
+                
+                case MediaStatus.PENDING:
+                    try:
+                        mediaDate = mediaAttachment["updated_at"]
+                        if not isinstance(mediaDate, datetime.datetime):
+                            mediaDate = datetime.datetime.fromisoformat(mediaDate) 
+                        
+                        mediaAge =  time.time() - mediaDate.timestamp()
+                        if mediaAge > PROCESSING_TIMEOUT:
+                            logger.warning(f"Photo {ret.id} already in database but in status {mediaAttachment['status']} and is too old ({mediaAge}), reprocessing it")
+                        else:
+                            ret.task = makeEmptyAsyncTask()
+                            return ret
+                    except Exception as e:
+                        logger.error("Error during checking sticker age:")
+                        logger.exception(e)
 
-            if mediaAttachment["status"] in [MediaStatus.DONE, MediaStatus.PENDING]:
-                # Only skip processing if Media in DB is in right status
-                ret.task = asyncio.create_task(asyncio.sleep(0))
-                return ret
+                case _:
+                    logger.debug(f"Image {ret.id} already in database but in wrong status: {mediaAttachment['status']}. Reprocessing it")
+                    pass
 
         metadata = {
             # Store metadata for best size
@@ -1185,6 +1364,11 @@ class BotHandlers:
             mimeType = magic.from_buffer(bytes(photoData), mime=True)
             logger.debug(f"Photo Mimetype: {mimeType}")
 
+            self.db.updateMediaAttachment(
+                fileUniqueId=ret.id,
+                mimeType=mimeType,
+            )
+
             imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
             messages = [
                 ModelMessage(
@@ -1199,14 +1383,14 @@ class BotHandlers:
             ]
 
             logger.debug(f"Asynchronously parsing image: {ret.id}")
-            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, bestPhotoSize.file_unique_id, messages))
+            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
             logger.debug(f"{ret.id} After Start")
             ret.task = parseTask
             await self.addQueueTask(parseTask)
             logger.debug(f"{ret.id} After Queued")
 
         if ret.task is None:
-            ret.task = asyncio.create_task(asyncio.sleep(0))
+            ret.task = makeEmptyAsyncTask()
 
         return ret
 
@@ -1291,7 +1475,7 @@ class BotHandlers:
                 f"📊 **Your Statistics**\n\n"
                 f"👤 **User:** {user_data['first_name']}\n"
                 f"🆔 **ID:** {user_data['user_id']}\n"
-                f"📅 **Joined:** {user_data['created_at'][:10]}\n"
+                f"📅 **Joined:** {user_data['created_at']}\n"
                 f"💬 **Messages sent:** {len(messages)}\n"
             )
         else:
@@ -1423,7 +1607,7 @@ class BotHandlers:
                     "content": json.dumps(
                         {   # TODO: Use EnsuredMessage... instead
                             # date, chat_id, user_id, username, full_name, message_id, reply_id, thread_id, message_text, message_type
-                            "date": msg["date"],
+                            "date": str(msg["date"]),
                             "sender": msg["username"][1:],
                             "message_id": msg["message_id"],
                             "reply_id": msg["reply_id"],

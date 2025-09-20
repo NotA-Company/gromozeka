@@ -35,6 +35,11 @@ MEDIA_FIELDS_WITH_PREFIX = f"""
 {MEDIA_TABLE_TABLE_ALIAS}.updated_at     as {MEDIA_TABLE_PREFIX}updated_at
 """.strip()
 
+def convert_timestamp(val: bytes) -> datetime.datetime:
+    return datetime.datetime.strptime(val.decode('utf-8'), '%Y-%m-%d %H:%M:%S')
+
+sqlite3.register_converter("timestamp", convert_timestamp)
+
 
 class DatabaseWrapper:
     """
@@ -55,7 +60,8 @@ class DatabaseWrapper:
             self._local.connection = sqlite3.connect(
                 self.dbPath,
                 timeout=self.timeout,
-                check_same_thread=False
+                check_same_thread=False,
+                detect_types=sqlite3.PARSE_DECLTYPES
             )
             self._local.connection.row_factory = sqlite3.Row
         return self._local.connection
@@ -333,7 +339,7 @@ class DatabaseWrapper:
         replyId: Optional[int] = None,
         threadId: Optional[int] = None,
         messageText: str = "",
-        messageType: str = "text",
+        messageType: MessageType = MessageType.TEXT,
         messageCategory: str = "user",
         rootMessageId: Optional[int] = None,
         quoteText: Optional[str] = None,

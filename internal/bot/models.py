@@ -22,7 +22,7 @@ class MessageType(StrEnum):
     #VIDEO = "video"
     #AUDIO = "audio"
     #DOCUMENT = "document"
-    #STICKER = "sticker"
+    STICKER = "sticker"
     UNKNOWN = "unknown"
 
 class MediaProcessingInfo:
