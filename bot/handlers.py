@@ -18,7 +18,7 @@ from telegram.ext import ContextTypes
 
 from ai.abstract import AbstractModel, LLMAbstractTool, LLMFunctionParameter, LLMParameterType, LLMToolFunction, ModelImageMessage, ModelMessage, ModelRunResult, ModelResultStatus
 from ai.manager import LLMManager
-from database.wrapper import DatabaseWrapper
+from database.wrapper import DatabaseWrapper, MediaStatus
 from lib.markdown import markdown_to_markdownv2
 from .ensured_message import EnsuredMessage, LLMMessageFormat, MessageType
 from .chat_settings import ChatSettingsKey, ChatSettingsValue
@@ -520,8 +520,7 @@ class BotHandlers:
             messageCategory=messageCategory,
             rootMessageId=rootMessageId,
             quoteText=message.quoteText,
-            mediaContent=json.dumps(media.get('content', {}), ensure_ascii=False, default=str) if 'content' in media else None,
-            mediaLinks=json.dumps(media.get('metadata', {}), ensure_ascii=False, default=str) if 'metadata' in media else None,
+            mediaId=media.get('id', None) if media else None,
         )
 
         return True
@@ -657,7 +656,7 @@ class BotHandlers:
             logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
             reply = f"Error while running LLM: {type(e).__name__}#{e}"
 
-        self.db.savePrivateMessage(user.id, ensuredMessage.messageText, reply_text=reply)
+        self.db.savePrivateMessage(user.id, ensuredMessage.messageText, replyText=reply)
         await self._sendMessage(
             ensuredMessage,
             context,
@@ -945,15 +944,9 @@ class BotHandlers:
                 if storedReply is None:
                     logger.error(f"Failed to get parent message (ChatId: {ensuredReply.chat.id}, MessageId: {ensuredReply.messageId})")
                 else:
-                    response = storedReply.get('media_content', None)
-                    if response is None:
+                    response = storedReply.get('media_description', None)
+                    if response is None or response == "":
                         response = DUNNO_EMOJI
-                    else:
-                        try:
-                            response = json.loads(response)
-                        except json.JSONDecodeError:
-                            logger.error(f"Failed to parse parent message content (ChatId: {ensuredReply.chat.id}, MessageId: {ensuredReply.messageId}, messageContent: {response})")
-                            response = DUNNO_EMOJI
 
                 return await self._sendMessage(
                     ensuredMessage,
@@ -1019,9 +1012,12 @@ class BotHandlers:
         """
         Process a photo from message if needed
         """
+        #TODO: Do something better
         photoSize = ensuredMessage.getBaseMessage().photo[-1]
+        bestPhotoSize = photoSize
         logger.debug(f"Processing photo: {photoSize}")
         ret = {
+            'id': photoSize.file_unique_id,
             'type': 'image',
             'content': None,
             'metadata': {
@@ -1078,6 +1074,19 @@ class BotHandlers:
             llmRet = llmModel.generateText(messages)
             logger.debug(f"Image LLM Response: {llmRet}")
             ret['content'] = llmRet.resultText
+
+        self.db.addMediaAttachment(
+            fileUniqueId=bestPhotoSize.file_unique_id,
+            fileId=bestPhotoSize.file_id,
+            fileSize=bestPhotoSize.file_size,
+            mediaType=MessageType.IMAGE,
+            mimeType=mimeType,
+            metadata=json.dumps(ret["metadata"], ensure_ascii=False, default=str),
+            status=MediaStatus.COMPLETE,
+            localUrl=None,
+            prompt=None,
+            description=ret["content"],
+        )
 
         return ret
 

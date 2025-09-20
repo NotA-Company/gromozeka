@@ -203,7 +203,7 @@ class ModelResultStatus(Enum):
     #: represents an unknown status (-1)
     UNKNOWN = -1
     ERROR = 6
-    
+
 
 
 class ModelRunResult:
