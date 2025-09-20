@@ -5,14 +5,14 @@ with other database backends in the future.
 """
 
 import datetime
-from enum import StrEnum
 import sqlite3
 import logging
+import threading
 from typing import Any, Dict, List, Optional, Union
 from contextlib import contextmanager
-import threading
 
-from bot.ensured_message import MessageType
+from .models import MediaStatus
+from ..bot.ensured_message import MessageType
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +34,6 @@ MEDIA_FIELDS_WITH_PREFIX = f"""
 {MEDIA_TABLE_TABLE_ALIAS}.created_at     as {MEDIA_TABLE_PREFIX}created_at,
 {MEDIA_TABLE_TABLE_ALIAS}.updated_at     as {MEDIA_TABLE_PREFIX}updated_at
 """.strip()
-class MediaStatus(StrEnum):
-    """
-    Enum for media status.
-    """
-
-    NEW = 'new'
-    PENDING = 'pending'
-    COMPLETE = 'complete'
-    FAILED = 'failed'
 
 
 class DatabaseWrapper:

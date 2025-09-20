@@ -8,7 +8,8 @@ from yandex_cloud_ml_sdk import YCloudML
 from yandex_cloud_ml_sdk.auth import YandexCloudCLIAuth
 from yandex_cloud_ml_sdk._exceptions import AioRpcError
 
-from ..abstract import AbstractModel, AbstractLLMProvider, LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel, AbstractLLMProvider
+from ..models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 class YcSdkModel(AbstractModel):
