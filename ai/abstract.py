@@ -202,6 +202,8 @@ class ModelResultStatus(Enum):
     TOOL_CALLS = 5
     #: represents an unknown status (-1)
     UNKNOWN = -1
+    ERROR = 6
+    
 
 
 class ModelRunResult:
@@ -214,6 +216,7 @@ class ModelRunResult:
         toolCalls: List[LLMToolCall] = [],
         mediaMimeType: Optional[str] = None,
         mediaData: Optional[bytes] = None,
+        error: Optional[Exception] = None,
     ):
         self.status = status
         self.resultText = resultText
@@ -221,6 +224,7 @@ class ModelRunResult:
         self.toolCalls = toolCalls[:]
         self.mediaMimeType = mediaMimeType
         self.mediaData = mediaData
+        self.error = error
 
         self.isFallback = False
         self.isToolsUsed = False
@@ -243,6 +247,7 @@ class ModelRunResult:
             "raw": str(self.result),
             "mediaMimeType": self.mediaMimeType,
             "mediaData": f"BinaryData({len(self.mediaData)})" if self.mediaData else None,
+            "error": str(self.error) if self.error else "None"
         }, ensure_ascii=False, default=str) + ")"
 
     def toModelMessage(self) -> ModelMessage:

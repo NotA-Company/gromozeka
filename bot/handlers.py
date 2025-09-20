@@ -382,11 +382,18 @@ class BotHandlers:
             model = self.getImageGenerationModel(ensuredMessage.chat.id)
 
             mlRet = model.generateImage([ModelMessage(content=image_prompt)])
+            logger.debug(f"Generated image Data: {mlRet}")
+            if mlRet.status != ModelResultStatus.FINAL:
+                ret = await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=f"Не удалось сгенерировать изображение. {mlRet.status};{str(mlRet.resultText)}"
+                )
+                return json.dumps({"done": False, 'errorMessage': mlRet.resultText})
+
             if mlRet.mediaData is None:
                 logger.error(f"No image generated for {image_prompt}")
                 return '{"done": false}'
-
-            logger.debug(f"Generated image: {mlRet}")
 
             ret = await self._sendMessage(
                 ensuredMessage,
@@ -1491,7 +1498,7 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         commandStr = ""
         for entity in message.entities:
             if entity.type == MessageEntityType.BOT_COMMAND:
@@ -1543,11 +1550,10 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
             return
-        
+
         if not context.args:
-            #It is impossible, actually as we have checked it before, but we do it to make linters happy
+            # It is impossible, actually as we have checked it before, but we do it to make linters happy
             raise ValueError("No args provided")
-        
 
         chatSettings = self.getChatSettings(chat.id)
         adminAllowedChangeSettings = chatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
