@@ -2,66 +2,114 @@
 Logging utilities for Gromozeka bot.
 """
 import logging
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-
-def init_logger(logging_config: Dict[str, Any]) -> None:
-    """Configure logging from config file settings."""
-    # Get log level from config (default to INFO)
-    log_level = logging_config.get("level", "INFO").upper()
+def getLogLevelByStr(levelStr: str, default: Optional[int] = None) -> Optional[int]:
+    """Get log level by string."""
     try:
-        level = getattr(logging, log_level)
+        return getattr(logging, levelStr.upper())
     except AttributeError:
-        logger.warning(f"Invalid log level '{log_level}', using INFO")
-        level = logging.INFO
+        logger.error(f"Invalid log level '{levelStr}'")
+        return default
+        
 
-    # Get log format from config (use existing default if not specified)
-    log_format = logging_config.get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None:
+    """Configure individual logger from config file settings."""
 
-    # Get log file path from config (optional)
-    log_file = logging_config.get("file")
+    if "propagate" in config:
+        localLogger.propagate = bool(config["propagate"])
 
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-
-    # Clear existing handlers to avoid duplicates
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
+    # Configure log level
+    if "level" in config:
+        logLevel = getLogLevelByStr(config["level"])
+        if logLevel is not None:
+            localLogger.setLevel(logLevel)
+    
+    logLevel = localLogger.getEffectiveLevel()
 
     # Create formatter
-    formatter = logging.Formatter(log_format)
+    logFormat = config.get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter(logFormat)
+
+    # Clear existing handlers to avoid duplicates
+    for handler in localLogger.handlers[:]:
+        localLogger.removeHandler(handler)
 
     # Add console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(level)
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
+    if config.get("console", False):
+        consoleLogLevel = logLevel
+        if "console-level" in config:
+            consoleLogLevel = getLogLevelByStr(config["console-level"], logLevel)
+        if consoleLogLevel is None:
+            consoleLogLevel = logLevel
+        consoleHandler = logging.StreamHandler()
+        consoleHandler.setLevel(consoleLogLevel)
+        consoleHandler.setFormatter(formatter)
+        localLogger.addHandler(consoleHandler)
+        logger.info(f"Logging {localLogger.name} to console, logLevel: {consoleLogLevel}")
 
     # Add file handler if specified
-    if log_file:
+    if "file" in config:
+        logFile = config["file"]
         try:
             # Create log directory if it doesn't exist
-            log_path = Path(log_file)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
+            logPath = Path(logFile)
+            logPath.parent.mkdir(parents=True, exist_ok=True)
 
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setLevel(level)
-            file_handler.setFormatter(formatter)
-            root_logger.addHandler(file_handler)
-            logger.info(f"Logging to file: {log_file}")
+            fileLogLevel = logLevel
+            if "file-level" in config:
+                fileLogLevel = getLogLevelByStr(config["file-level"], logLevel)
+            if fileLogLevel is None:
+                fileLogLevel = logLevel
+
+            fileHandler: Optional[logging.Handler] = None
+            if config.get("rotate", False):
+                fileHandler = TimedRotatingFileHandler(
+                    filename=logFile,
+                    when="midnight",
+                    interval=1,
+                    backupCount=7,
+                    encoding="utf-8",
+                )
+            else:
+                fileHandler = logging.FileHandler(logFile)
+
+            fileHandler.setLevel(fileLogLevel)
+            fileHandler.setFormatter(formatter)
+            localLogger.addHandler(fileHandler)
+            logger.info(f"Logging {localLogger.name} to file: {logFile}, logLevel: {fileLogLevel}")
         except Exception as e:
-            logger.error(f"Failed to setup file logging: {e}")
+            logger.error(f"Failed to setup file logging for {localLogger.name}: {e}")
 
+
+def initLogging(config: Dict[str, Any]) -> None:
+    """Configure logging from config file settings."""
+    # Configure root logger
+    rootLogger = logging.getLogger()
+    rootLogger.setLevel(logging.INFO)
+
+    configureLogger(rootLogger, config)
+    logLevel = rootLogger.getEffectiveLevel()
+
+    # Set some defaults to prevent spamming in logs
     # Set higher logging level for httpx to avoid all GET and POST requests being logged
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    if logLevel < logging.WARNING:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
 
     # Set higher logging level for external components
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("telegram").setLevel(logging.INFO)
+    if logLevel < logging.WARNING:
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+    if logLevel < logging.INFO:
+        logging.getLogger("telegram").setLevel(logging.INFO)
 
-    logger.info(f"Logging configured: level={log_level}, format='{log_format}'" +
-               (f", file={log_file}" if log_file else ""))
+    logConfigs = config.get("logger", {})
+    for loggerName, loggerConfig in logConfigs.items():
+        logger.debug(f"Configuring logger '{loggerName}' with config {loggerConfig}")
+        localLogger = logging.getLogger(loggerName)
+        configureLogger(localLogger, loggerConfig)
+
+    logger.info(f"Logging configured: root level={logLevel}")
