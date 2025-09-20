@@ -301,6 +301,7 @@ class BotHandlers:
         tryParseInputJSON: bool = True,
         saveMessage: bool = True,
         sendErrorIfAny: bool = True,
+        skipLogs: bool = False,
     ) -> bool:
         """Send a message to the chat or user."""
 
@@ -362,7 +363,8 @@ class BotHandlers:
                     }
                 )
 
-                logger.debug(f"Sending reply to {replyToMessage}")
+                if not skipLogs:
+                    logger.debug(f"Sending reply to {replyToMessage}")
                 # Try to send Message as MarkdownV2 first
                 if tryMarkdownV2:
                     try:
@@ -388,7 +390,8 @@ class BotHandlers:
                 if replyMessage is None:
                     raise ValueError("No reply message")
 
-                logger.debug(f"Sent message: {replyMessage}")
+                if not skipLogs:
+                    logger.debug(f"Sent message: {replyMessage}")
 
                 # Save message if needed
                 if saveMessage:
@@ -1119,6 +1122,18 @@ class BotHandlers:
             type = MessageType.IMAGE,
         )
 
+        # First check if we have the photo in the database already
+        mediaAttachment = self.db.getMediaAttachment(ret.id)
+        if mediaAttachment is not None:
+            logger.debug(f"Photo {ret.id} already in database")
+            if mediaAttachment["media_type"] != MessageType.IMAGE:
+                raise RuntimeError(f"Media attachment with id {ret.id} already present in database and it is not an image but {mediaAttachment['media_type']}")
+
+            if mediaAttachment["status"] in [MediaStatus.DONE, MediaStatus.PENDING]:
+                # Only skip processing if Media in DB is in right status
+                ret.task = asyncio.create_task(asyncio.sleep(0))
+                return ret
+
         metadata = {
             # Store metadata for best size
             "width": bestPhotoSize.width,
@@ -1795,7 +1810,7 @@ class BotHandlers:
 
                 for i in range(iterationsCount):
                     logger.debug(
-                        f"Iteration {i} of {iterationsCount} (delay is {delay})"
+                        f"Iteration {i} of {iterationsCount} (delay is {delay}) {context.args[3:]}"
                     )
                     await self._sendMessage(
                         ensuredMessage,
@@ -1803,6 +1818,7 @@ class BotHandlers:
                         messageText=f"Iteration {i}",
                         saveMessage=False,
                         tryParseInputJSON=False,
+                        skipLogs=True,
                     )
                     await asyncio.sleep(delay)
 
