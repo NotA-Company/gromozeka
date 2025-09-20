@@ -7,7 +7,8 @@ from typing import Dict, List, Any, Optional
 from openai import OpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 
-from ..abstract import AbstractModel, AbstractLLMProvider, LLMAbstractTool, LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel, AbstractLLMProvider
+from ..models import LLMAbstractTool, LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 

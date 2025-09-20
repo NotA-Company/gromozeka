@@ -2,10 +2,10 @@
 Yandex Cloud OpenAI-compatible provider for LLM models, dood!
 """
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 from openai import OpenAI
 
-from ..abstract import AbstractModel, ModelMessage, ModelResultStatus, ModelRunResult
+from ..abstract import AbstractModel
 from .basic_openai_provider import BasicOpenAIModel, BasicOpenAIProvider
 
 logger = logging.getLogger(__name__)
