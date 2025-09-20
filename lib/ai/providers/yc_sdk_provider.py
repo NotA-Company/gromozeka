@@ -80,7 +80,7 @@ class YcSdkModel(AbstractModel):
     def _statusToModelRunResultStatus(self, status: int) -> ModelResultStatus:
         return ModelResultStatus(status)
 
-    def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the YC SDK model with given messages, dood!
         
         Args:
@@ -108,7 +108,7 @@ class YcSdkModel(AbstractModel):
             logger.error(f"Error running YC SDK model {self.modelId}: {e}")
             raise
 
-    def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
         """Generate an image via the YC SDK model, dood"""
 
         if not self._ycModel:

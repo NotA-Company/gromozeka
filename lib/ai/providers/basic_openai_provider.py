@@ -4,7 +4,7 @@ Basic OpenAI provider and model base classes for shared functionality, dood!
 import json
 import logging
 from typing import Dict, List, Any, Optional
-from openai import OpenAI
+from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 
 from ..abstract import AbstractModel, AbstractLLMProvider
@@ -26,7 +26,7 @@ class BasicOpenAIModel(AbstractModel):
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        openAiClient: OpenAI,
+        openAiClient: AsyncOpenAI,
         extraConfig: Dict[str, Any] = {}
     ):
         """Initialize basic OpenAI model, dood!"""
@@ -43,7 +43,7 @@ class BasicOpenAIModel(AbstractModel):
         """Get extra parameters for the API call. Override in subclasses, dood!"""
         return {}
 
-    def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the OpenAI-compatible model with given messages, dood!
         
         Args:
@@ -76,7 +76,7 @@ class BasicOpenAIModel(AbstractModel):
             params.update(self._getExtraParams())
 
             # Use OpenAI-compatible API
-            response: ChatCompletion = self._client.chat.completions.create(**params)
+            response: ChatCompletion = await self._client.chat.completions.create(**params)
 
             # for chunk in response:
             #   if chunk.choices[0].delta.content is not None:
@@ -124,7 +124,7 @@ class BasicOpenAIModel(AbstractModel):
             logger.error(f"Error running OpenAI-compatible model {self.modelId}: {e}")
             raise
 
-    def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
         """Generate an image via the OpenAI-compatible model, dood"""
 
         if not self._config.get("support_images", False):
@@ -139,7 +139,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
     def __init__(self, config: Dict[str, Any]):
         """Initialize basic OpenAI provider, dood!"""
         super().__init__(config)
-        self._client: Optional[OpenAI] = None
+        self._client: Optional[AsyncOpenAI] = None
         self._initClient()
         
     def _getBaseUrl(self) -> str:
@@ -170,7 +170,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             }
             client_params.update(self._getClientParams())
             
-            self._client = OpenAI(**client_params)
+            self._client = AsyncOpenAI(**client_params)
             
             logger.info(f"{self.__class__.__name__} initialized, dood!")
             
