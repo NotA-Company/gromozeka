@@ -7,10 +7,8 @@ from typing import Any, Dict
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-from ai.manager import LLMManager
-from config.manager import ConfigManager
-from database.wrapper import DatabaseWrapper
-
+from lib.ai.manager import LLMManager
+from internal.database.wrapper import DatabaseWrapper
 from .handlers import BotHandlers
 
 logger = logging.getLogger(__name__)

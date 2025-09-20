@@ -16,9 +16,13 @@ from telegram import Chat, Update, Message
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
-from ai.abstract import AbstractModel, LLMAbstractTool, LLMFunctionParameter, LLMParameterType, LLMToolFunction, ModelImageMessage, ModelMessage, ModelRunResult, ModelResultStatus
-from ai.manager import LLMManager
-from database.wrapper import DatabaseWrapper, MediaStatus
+from lib.ai.abstract import AbstractModel, LLMAbstractTool
+from lib.ai.models import LLMFunctionParameter, LLMParameterType, LLMToolFunction, ModelImageMessage, ModelMessage, ModelRunResult, ModelResultStatus
+from lib.ai.manager import LLMManager
+
+from internal.database.wrapper import DatabaseWrapper
+from internal.database.models import MediaStatus
+
 from lib.markdown import markdown_to_markdownv2
 from .ensured_message import EnsuredMessage, LLMMessageFormat, MessageType
 from .chat_settings import ChatSettingsKey, ChatSettingsValue

@@ -11,10 +11,10 @@ import os
 import sys
 from typing import List, Optional
 
-from config.manager import ConfigManager
-from database.manager import DatabaseManager
-from ai.manager import LLMManager
-from bot.application import BotApplication
+from internal.config.manager import ConfigManager
+from internal.database.manager import DatabaseManager
+from lib.ai.manager import LLMManager
+from internal.bot.application import BotApplication
 from lib.logging_utils import init_logger
 
 # Configure basic logging first
