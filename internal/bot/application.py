@@ -38,7 +38,7 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
                 topicId = update.message.message_thread_id
 
         key = f"{chatId}_{topicId}"
-        logger.debug(f"Processing update for chatId: {chatId}, topicId: {topicId}")
+        #logger.debug(f"Processing update for chatId: {chatId}, topicId: {topicId}")
 
         
         topicSemaphore = self.chatTopicMap.get(key, None)
@@ -47,7 +47,7 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
             self.chatTopicMap[key] = topicSemaphore
             
         async with topicSemaphore:
-            logger.debug(f"awaiting corutine for chatId: {chatId}, topicId: {topicId}")
+            #logger.debug(f"awaiting corutine for chatId: {chatId}, topicId: {topicId}")
             await coroutine
 
 
