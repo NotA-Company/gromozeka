@@ -75,8 +75,7 @@ class EnsuredMessage:
 
         if message.sticker:
             self.messageType = MessageType.STICKER
-            if message.caption:
-                self.messageText = message.caption
+            self.messageText = message.sticker.emoji if message.sticker.emoji else ""
 
 
         if self.messageType == MessageType.TEXT:
