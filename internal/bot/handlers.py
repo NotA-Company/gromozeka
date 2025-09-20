@@ -439,7 +439,7 @@ class BotHandlers:
             logger.debug(f"Generating image: {image_prompt}. Image description: {image_description}")
             model = self.getImageGenerationModel(ensuredMessage.chat.id)
 
-            mlRet = model.generateImage([ModelMessage(content=image_prompt)])
+            mlRet = await model.generateImage([ModelMessage(content=image_prompt)])
             logger.debug(f"Generated image Data: {mlRet}")
             if mlRet.status != ModelResultStatus.FINAL:
                 ret = await self._sendMessage(
@@ -509,7 +509,7 @@ class BotHandlers:
         ret : Optional[ModelRunResult] = None
         toolsUsed = False
         while True:
-            ret = model.generateTextWithFallBack(messages, fallbackModel=fallbackModel, tools=list(tools.values()))
+            ret = await model.generateTextWithFallBack(messages, fallbackModel=fallbackModel, tools=list(tools.values()))
             logger.debug(f"LLM returned: {ret}")
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 toolsUsed = True
@@ -706,7 +706,7 @@ class BotHandlers:
         reply = ""
         llmModel = self.getPrivateModel(chatId=user.id)
         try:
-            mlRet = llmModel.generateTextWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
+            mlRet = await llmModel.generateTextWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
             logger.debug(f"LLM Response: {mlRet}")
             reply = mlRet.resultText
             if mlRet.isFallback:
@@ -1078,7 +1078,7 @@ class BotHandlers:
         try:
             llmModel = self.getImageParsingModel(ensuredMessage.chat.id)
             logger.debug(f"Prompting Image LLM for image with prompt: {messages}")
-            llmRet = llmModel.generateText(messages)
+            llmRet = await llmModel.generateText(messages)
             logger.debug(f"Image LLM Response: {llmRet}")
 
             if llmRet.status != ModelResultStatus.FINAL:
@@ -1459,7 +1459,7 @@ class BotHandlers:
                 mlRet: Optional[ModelRunResult] = None
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
-                    mlRet = llmModel.generateTextWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackSummaryModel())
+                    mlRet = await llmModel.generateTextWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackSummaryModel())
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
                     logger.error(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}")
