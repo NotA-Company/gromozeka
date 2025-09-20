@@ -15,7 +15,7 @@ def getLogLevelByStr(levelStr: str, default: Optional[int] = None) -> Optional[i
     except AttributeError:
         logger.error(f"Invalid log level '{levelStr}'")
         return default
-        
+
 
 def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None:
     """Configure individual logger from config file settings."""
@@ -28,7 +28,7 @@ def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None
         logLevel = getLogLevelByStr(config["level"])
         if logLevel is not None:
             localLogger.setLevel(logLevel)
-    
+
     logLevel = localLogger.getEffectiveLevel()
 
     # Create formatter
