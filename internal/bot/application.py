@@ -37,6 +37,7 @@ class BotApplication:
         self.application.add_handler(CommandHandler("stats", self.handlers.stats_command))
         self.application.add_handler(CommandHandler("echo", self.handlers.echo_command))
         self.application.add_handler(CommandHandler("models", self.handlers.models_command))
+        self.application.add_handler(CommandHandler("test", self.handlers.test_command))
         # Chat commands
         self.application.add_handler(CommandHandler("summary", self.handlers.summary_command))
         self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))

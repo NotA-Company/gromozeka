@@ -1,6 +1,7 @@
 """
 Telegram bot command handlers for Gromozeka.
 """
+import asyncio
 import datetime
 import json
 import logging
@@ -1606,6 +1607,108 @@ class BotHandlers:
                     ensuredMessage,
                     context,
                     messageText=f"Готово, теперь `{key}` сброшено в значение по умолчанию",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            
+    async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /test <suite> [<args>] command."""
+        logger.debug(f"Got test command: {update}")
+
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        user = ensuredMessage.user
+        chat = ensuredMessage.chat
+
+        if not context.args or len(context.args) < 1:
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="You need to specify test suite.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+        
+        if not user.username:
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="You need to have a username to run tests.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+        
+        allowedUsers = self.botOwners[:]
+        
+        if user.username.lower() not in allowedUsers:
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="You are not allowed to run tests.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+
+        suite = context.args[0]
+        
+        match suite:
+            case "long":
+                iterationsCount = 10
+                delay = 10
+                if len(context.args) > 1:
+                    try:
+                        iterationsCount = int(context.args[1])
+                    except ValueError as e:
+                        await self._sendMessage(
+                            ensuredMessage,
+                            context,
+                            messageText=f"Invalid iterations count. {e}",
+                            saveMessage=False,
+                            tryParseInputJSON=False,
+                        )
+                        pass
+                if len(context.args) > 2:
+                    try:
+                        delay = int(context.args[2])
+                    except ValueError as e:
+                        await self._sendMessage(
+                            ensuredMessage,
+                            context,
+                            messageText=f"Invalid delay. {e}",
+                            saveMessage=False,
+                            tryParseInputJSON=False,
+                        )
+                        pass
+
+                for i in range(iterationsCount):
+                    logger.debug(f"Iteration {i} of {iterationsCount} (delay is {delay})")
+                    await self._sendMessage(
+                        ensuredMessage,
+                        context,
+                        messageText=f"Iteration {i}",
+                        saveMessage=False,
+                        tryParseInputJSON=False,
+                    )
+                    await asyncio.sleep(delay)
+                
+            case _:
+                await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=f"Unknown test suite: {suite}.",
                     saveMessage=False,
                     tryParseInputJSON=False,
                 )
