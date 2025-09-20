@@ -1,31 +1,30 @@
 # https://openrouter.ai/models
-[models.models."openrouter/claude-sonnet-4"]
+[models.models."openrouter/deepseek-chat-v3.1-free"]
 provider = "openrouter"
-model_id = "anthropic/claude-sonnet-4"
+model_id = "deepseek/deepseek-chat-v3.1:free"
 model_version = "latest"
 temparature = 0.3
-context = 256000
+context = 64000
 support_tools = true
 support_text = true
 support_images = false
 
-
-[models.models."openrouter/deepseek-chat-v3.1"]
+[models.models."openrouter/gemma-3-27b-it-free"]
 provider = "openrouter"
-model_id = "deepseek/deepseek-chat-v3.1"
+model_id = "google/gemma-3-27b-it:free"
 model_version = "latest"
 temparature = 0.3
-context = 163840
+context = 96000
 support_tools = true
 support_text = true
 support_images = false
 
-[models.models."openrouter/qwen-turbo"]
+[models.models."openrouter/gemma-3-12b-it-free"]
 provider = "openrouter"
-model_id = "qwen/qwen-turbo"
+model_id = "google/gemma-3-12b-it:free"
 model_version = "latest"
 temparature = 0.3
-context = 1000000
+context = 32768
 support_tools = true
 support_text = true
 support_images = false
