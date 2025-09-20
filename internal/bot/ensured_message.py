@@ -73,6 +73,11 @@ class EnsuredMessage:
             if message.caption:
                 self.messageText = message.caption
 
+        if message.sticker:
+            self.messageType = MessageType.STICKER
+            if message.caption:
+                self.messageText = message.caption
+
 
         if self.messageType == MessageType.TEXT:
             if not message.text:
@@ -143,6 +148,9 @@ class EnsuredMessage:
                 case MediaStatus.DONE:
                     self.mediaContent = mediaAttachment["description"]
                     return
+                case MediaStatus.NEW:
+                    # NEW status mean, that nobody plan to process it, just skip
+                    return
                 case _:
                     raise ValueError("Invalid media status")
         
@@ -186,7 +194,7 @@ class EnsuredMessage:
                 ret = {
                     "login": data["username"],
                     "name": data["full_name"],
-                    "date": data["date"],
+                    "date": data["date"].isoformat(),
                     "type": data["message_type"],
                     "text": messageText,
                 }
