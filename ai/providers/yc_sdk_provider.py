@@ -6,6 +6,7 @@ from typing import Dict, List, Any
 
 from yandex_cloud_ml_sdk import YCloudML
 from yandex_cloud_ml_sdk.auth import YandexCloudCLIAuth
+from yandex_cloud_ml_sdk._exceptions import AioRpcError
 
 from ..abstract import AbstractModel, AbstractLLMProvider, LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
 
@@ -119,9 +120,34 @@ class YcSdkModel(AbstractModel):
         # # Sample 3: run with several messages specifying weight
         # operation = model.run_deferred([{"text": message1, "weight": 5}, message2])
         # TODO: Think about support of message weights
+        
+        result: Any = None
+        resultStatus: ModelResultStatus = ModelResultStatus.UNKNOWN
 
-        operation = self._ycModel.run_deferred([message.toDict('text', skipRole=True) for message in messages])
-        result = operation.wait()
+        try:
+            operation = self._ycModel.run_deferred([message.toDict('text', skipRole=True) for message in messages])
+            result = operation.wait()
+            resultStatus = ModelResultStatus.FINAL
+        except Exception as e:
+            resultStatus = ModelResultStatus.ERROR
+            errorMsg = str(e)
+            logger.error(f"Error generating image with YC SDK model {self.modelId}: {type(e).__name__}#{e}")
+            #logger.info(e.__dict__)
+            ethicDetails = [
+              "it is not possible to generate an image from this request because it may violate the terms of use",
+            ]
+            
+            if isinstance(e, AioRpcError) and hasattr(e, "details"):
+                errorMsg = str(e.details())
+                if errorMsg in ethicDetails:
+                    resultStatus = ModelResultStatus.CONTENT_FILTER
+                    logger.warning(f"Content filter error: '{errorMsg}'")
+            
+            if resultStatus != ModelResultStatus.CONTENT_FILTER:
+                # Do not log content filter errors
+                logger.exception(e)
+
+            return ModelRunResult(result, resultStatus, resultText=errorMsg, error=e)
         logger.debug(f"Image generation Result: {result}")
         return ModelRunResult(
             result,
