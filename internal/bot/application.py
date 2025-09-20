@@ -1,17 +1,54 @@
 """
 Telegram bot application setup and management for Gromozeka.
 """
+import asyncio
 import logging
 import sys
-from typing import Any, Dict
+from typing import Any, Awaitable, Dict
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, BaseUpdateProcessor
 
 from lib.ai.manager import LLMManager
 from internal.database.wrapper import DatabaseWrapper
 from .handlers import BotHandlers
 
 logger = logging.getLogger(__name__)
+
+class PerTopicUpdateProcessor(BaseUpdateProcessor):
+    """Update processor that processes updates parallel for each chatId + topicId"""
+
+    async def initialize(self) -> None:
+      self.chatTopicMap: Dict[str, asyncio.Semaphore] = {}
+
+    async def shutdown(self) -> None:
+      pass
+
+    async def do_process_update(self, update, coroutine: Awaitable) -> None:
+        # This method is called for every update
+        if not isinstance(update, Update):
+            logger.error(f"Invalid update type: {type(update)}")
+            await coroutine
+            return
+        
+        chatId = None
+        topicId = None
+        if update.message:
+            chatId = update.message.chat_id
+            if update.message.is_topic_message:
+                topicId = update.message.message_thread_id
+
+        key = f"{chatId}_{topicId}"
+        logger.debug(f"Processing update for chatId: {chatId}, topicId: {topicId}")
+
+        
+        topicSemaphore = self.chatTopicMap.get(key, None)
+        if not isinstance(topicSemaphore, asyncio.Semaphore):
+            topicSemaphore = asyncio.BoundedSemaphore(1)
+            self.chatTopicMap[key] = topicSemaphore
+            
+        async with topicSemaphore:
+            logger.debug(f"awaiting corutine for chatId: {chatId}, topicId: {topicId}")
+            await coroutine
 
 
 class BotApplication:
@@ -78,7 +115,8 @@ class BotApplication:
             sys.exit(1)
 
         # Create application
-        self.application = Application.builder().token(self.botToken).build()
+        self.application = Application.builder().token(self.botToken).concurrent_updates(PerTopicUpdateProcessor(128)).build()
+
 
         # Setup handlers
         self.setupHandlers()
