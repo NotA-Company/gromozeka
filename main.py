@@ -15,7 +15,7 @@ from internal.config.manager import ConfigManager
 from internal.database.manager import DatabaseManager
 from lib.ai.manager import LLMManager
 from internal.bot.application import BotApplication
-from lib.logging_utils import init_logger
+from lib.logging_utils import initLogging
 
 # Configure basic logging first
 logging.basicConfig(
@@ -36,7 +36,7 @@ class GromozekBot:
         self.config_manager = ConfigManager(config_path, config_dirs)
 
         # Initialize logging with config
-        init_logger(self.config_manager.get_logging_config())
+        initLogging(self.config_manager.get_logging_config())
 
         # Initialize database
         self.database_manager = DatabaseManager(self.config_manager.get_database_config())
