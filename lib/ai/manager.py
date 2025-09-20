@@ -66,6 +66,10 @@ class LLMManager:
 
         for modelName, modelConfig in modelsConfig.items():
             try:
+                if modelConfig.get("enabled", True) is False:
+                    logger.info(f"Model {modelName} is disabled, dood!")
+                    continue
+
                 providerName = modelConfig["provider"]
                 modelId = modelConfig["model_id"]
                 modelVersion = modelConfig.get("model_version", "latest")
