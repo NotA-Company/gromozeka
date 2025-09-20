@@ -522,12 +522,13 @@ class BotHandlers:
         toolsUsed = False
         while True:
             ret = await model.generateTextWithFallBack(messages, fallbackModel=fallbackModel, tools=list(tools.values()))
-            logger.debug(f"LLM returned: {ret}")
+            logger.debug(f"LLM returned: {ret} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 toolsUsed = True
-                messages = messages + [ret.toModelMessage()]
+                newMessages = [ret.toModelMessage()]
+                
                 for toolCall in ret.toolCalls:
-                    messages.append(
+                    newMessages.append(
                         ModelMessage(
                             role="tool",
                             content=json.dumps(
@@ -538,6 +539,8 @@ class BotHandlers:
                             toolCallId=toolCall.id,
                         )
                     )
+                messages = messages + newMessages
+                logger.debug(f"Tools used: {newMessages} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
             else:
                 break
 
