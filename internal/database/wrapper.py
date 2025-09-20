@@ -5,6 +5,7 @@ with other database backends in the future.
 """
 
 import datetime
+import dateutil
 import sqlite3
 import logging
 import threading
@@ -36,7 +37,11 @@ MEDIA_FIELDS_WITH_PREFIX = f"""
 """.strip()
 
 def convert_timestamp(val: bytes) -> datetime.datetime:
-    return datetime.datetime.strptime(val.decode('utf-8'), '%Y-%m-%d %H:%M:%S')
+    valStr = val.decode('utf-8')
+    ret = dateutil.parser.parse(valStr)
+    #logger.debug(f"Converted {valStr} to {repr(ret)}")
+    return ret
+    #return datetime.datetime.strptime(valStr, '%Y-%m-%d %H:%M:%S')
 
 sqlite3.register_converter("timestamp", convert_timestamp)
 
