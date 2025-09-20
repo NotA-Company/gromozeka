@@ -165,11 +165,8 @@ class EnsuredMessage:
                 if data.get("quote_text", None):
                     ret["quote"] = data["quote_text"]
 
-                if data.get("media_content", None):
-                    try:
-                        ret["media_description"] = json.loads(data["media_content"])
-                    except json.JSONDecodeError:
-                        logger.error(f"Invalid media_content: {data['media_content']}")
+                if data.get("media_description", None):
+                        ret["media_description"] = data["media_description"]
 
                 #logger.debug(f"EM.formatDBChatMessageToLLM():{data} -> {ret}")
                 return json.dumps(ret, ensure_ascii=False, default=str)
