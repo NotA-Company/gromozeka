@@ -8,11 +8,11 @@ import datetime
 import sqlite3
 import logging
 import threading
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 
 from .models import MediaStatus
-from ..bot.ensured_message import MessageType
+from ..bot.models import MessageType
 
 logger = logging.getLogger(__name__)
 

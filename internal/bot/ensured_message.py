@@ -1,30 +1,24 @@
 """
 EnsuredMessage: wrapper around telegram.Message
 """
-from enum import StrEnum
+import asyncio
 import json
 import logging
 
+import time
 from typing import Any, Dict, Optional
 
 from telegram import Message
 
+from .models import LLMMessageFormat, MediaProcessingInfo, MessageType
+from internal.database.models import MediaStatus
+from internal.database.wrapper import DatabaseWrapper
+
 
 logger = logging.getLogger(__name__)
 
-
-class LLMMessageFormat(StrEnum):
-    JSON = "json"
-    TEXT = "text"
-
-class MessageType(StrEnum):
-    TEXT = "text"
-    IMAGE = "image"
-    #VIDEO = "video"
-    #AUDIO = "audio"
-    #DOCUMENT = "document"
-    #STICKER = "sticker"
-    UNKNOWN = "unknown"
+MAX_MEDIA_AWAIT_SECS = 300 # 5 minutes
+MEDIA_AWAIT_DELAY = 10
 
 """
 A class to encapsulate and ensure the presence of essential message attributes from a Telegram message.
@@ -112,16 +106,50 @@ class EnsuredMessage:
             self.threadId = message.message_thread_id
 
         self.mediaContent: Optional[str] = None
+        self.mediaId: Optional[str] = None
+        self.mediaProcessingInfo: Optional[MediaProcessingInfo] = None
 
         logger.debug(f"Ensured Message: {self}")
 
     def getBaseMessage(self) -> Message:
         return self._message
 
-    def setMediaContent(self, mediaContent: str):
-        self.mediaContent = mediaContent
+    def setMediaId(self, mediaId: str):
+        self.mediaId = mediaId
 
-    def formatForLLM(self, format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
+    def setMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
+        self.mediaProcessingInfo = mediaProcessingInfo
+        self.mediaId = mediaProcessingInfo.id
+    
+    async def updateMediaContent(self, db: DatabaseWrapper) -> None:
+        """
+        Set the media content of the message from DB.
+        """
+        if self.mediaProcessingInfo:
+            await self.mediaProcessingInfo.awaitResult()
+
+        if self.mediaId is None:
+            return
+        
+        startTime = time.time()
+        while time.time() - startTime < MAX_MEDIA_AWAIT_SECS:
+            mediaAttachment = db.getMediaAttachment(self.mediaId)
+            if mediaAttachment is None:
+                raise ValueError(f"Media attachment {self.mediaId} not found")
+            
+            match MediaStatus(str(mediaAttachment["status"])):
+                case MediaStatus.PENDING:
+                    await asyncio.sleep(MEDIA_AWAIT_DELAY)
+                case MediaStatus.DONE:
+                    self.mediaContent = mediaAttachment["description"]
+                    return
+                case _:
+                    raise ValueError("Invalid media status")
+        
+        raise TimeoutError("Media processing timed out")
+
+    async def formatForLLM(self, db: DatabaseWrapper, format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
+        await self.updateMediaContent(db)
         messageText = self.messageText if replaceMessageText is None else replaceMessageText
         match format:
             case LLMMessageFormat.JSON:

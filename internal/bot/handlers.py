@@ -25,7 +25,8 @@ from internal.database.wrapper import DatabaseWrapper
 from internal.database.models import MediaStatus
 
 from lib.markdown import markdown_to_markdownv2
-from .ensured_message import EnsuredMessage, LLMMessageFormat, MessageType
+from .ensured_message import EnsuredMessage
+from .models import LLMMessageFormat, MessageType, MediaProcessingInfo
 from .chat_settings import ChatSettingsKey, ChatSettingsValue
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ DEFAULT_PRIVATE_PROMPT = "Ты - Принни: вайбовый, но умный
 ROBOT_EMOJI = "🤖"
 DUNNO_EMOJI = "🤷‍♂️"
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+MAX_QUEUE_LENGTH = 10
+MAX_QUEUE_AGE = 60 * 30 # 30 minutes
+
 
 class BotHandlers:
     """Contains all bot command and message handlers."""
@@ -65,9 +69,13 @@ class BotHandlers:
         })
 
         # Init cache
+        # TODO: Should I use something thread-safe?
         self.cache: Dict[str, Dict[Any, Any]] = {
             "chats": {},
         }
+
+        self.delayedQueue = asyncio.Queue()
+        self.queueLastUpdated = time.time()
 
     ###
     # Helpers for getting needed Models or Prompts
@@ -235,6 +243,51 @@ class BotHandlers:
     # Different helpers
     ###
 
+    async def addQueueTask(self, task: asyncio.Task) -> None:
+        """Add a task to the queue."""
+        if self.delayedQueue.qsize() > MAX_QUEUE_LENGTH:
+            logger.info(f"Queue is full, processing oldest task")
+            oldTask = await self.delayedQueue.get()
+            if not isinstance(oldTask, asyncio.Task):
+                logger.error(f"Task {oldTask} is not a task, but a {type(oldTask)}")
+            else:
+                await oldTask
+            self.delayedQueue.task_done()
+
+        await self.delayedQueue.put(task)
+        self.queueLastUpdated = time.time()
+
+    async def _processBackgroundTasks(self) -> None:
+        """Process background tasks."""
+
+        if self.delayedQueue.empty():
+            return
+
+        if self.queueLastUpdated + MAX_QUEUE_AGE > time.time():
+            return
+
+        logger.info(f"Processing queue due to age ({MAX_QUEUE_AGE})")
+        # TODO: Do it properly
+        # Little hack to avoid concurency in processing queue
+        self.queueLastUpdated = time.time()
+
+        try:
+            while True:
+                task = await self.delayedQueue.get_nowait()
+                if not isinstance(task, asyncio.Task):
+                    logger.error(f"Task {task} is not a task, but a {type(task)}")
+                else:
+                    await task
+                self.delayedQueue.task_done()
+        except asyncio.QueueEmpty:
+            pass
+        except Exception as e:
+            logger.error(f"Error in background task: {e}")
+            logger.exception(e)
+
+    async def awaitMedia(self, fileUniqueId: str) -> Dict[str, Any]:
+        raise NotImplemented
+
     async def _sendMessage(
         self,
         replyToMessage: EnsuredMessage,
@@ -347,8 +400,8 @@ class BotHandlers:
                             ensuredReplyMessage.messageText = replyText
                     if isGroupChat:
                         self._saveChatMessage(
-                        ensuredReplyMessage, messageCategory="bot", media=media
-                    )
+                            ensuredReplyMessage, messageCategory="bot"
+                        )
                     elif isPrivate:
                         logger.error(f"Saving private message is not implemented yet")
                     else:
@@ -392,7 +445,7 @@ class BotHandlers:
                 ret = await self._sendMessage(
                     ensuredMessage,
                     context,
-                    messageText=f"Не удалось сгенерировать изображение. {mlRet.status};{str(mlRet.resultText)}"
+                    messageText=f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\nPrompt:\n```\n{image_prompt}\n```"
                 )
                 return json.dumps({"done": False, 'errorMessage': mlRet.resultText})
 
@@ -481,11 +534,8 @@ class BotHandlers:
 
         return ret
 
-    def _saveChatMessage(self, message: EnsuredMessage, messageCategory: str = 'user', media: Optional[Dict[str, Any]] = None) -> bool:
+    def _saveChatMessage(self, message: EnsuredMessage, messageCategory: str = 'user') -> bool:
         """Save a chat message to the database."""
-        if media is None:
-            media = {}
-
         user = message.user
         chat = message.chat
 
@@ -525,7 +575,7 @@ class BotHandlers:
             messageCategory=messageCategory,
             rootMessageId=rootMessageId,
             quoteText=message.quoteText,
-            mediaId=media.get('id', None) if media else None,
+            mediaId=message.mediaId,
         )
 
         return True
@@ -583,6 +633,10 @@ class BotHandlers:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
         # logger.debug(f"Handling SOME message: {update}")
+
+        # process background tasks if any
+        await self._processBackgroundTasks()
+
         chat = update.effective_chat
         if not chat:
             logger.error("Chat undefined")
@@ -690,8 +744,7 @@ class BotHandlers:
         media = {}
         if ensuredMessage.messageType == MessageType.IMAGE:
             media = await self.processImage(update, context, ensuredMessage)
-            if media and media['content']:
-                ensuredMessage.setMediaContent(media['content'])
+            ensuredMessage.setMediaProcessingInfo(media)
 
         if ensuredMessage.messageType == MessageType.UNKNOWN:
             logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
@@ -699,7 +752,7 @@ class BotHandlers:
 
         messageText = ensuredMessage.messageText
 
-        if not self._saveChatMessage(ensuredMessage, messageCategory='user', media=media):
+        if not self._saveChatMessage(ensuredMessage, messageCategory='user'):
             logger.error("Failed to save chat message")
 
         # Check if message is a reply to our message
@@ -733,6 +786,9 @@ class BotHandlers:
 
         if not isReplyToMyMessage:
             return False
+        
+        # As it's resporse to our message, we need to wait for media to be processed if any
+        await ensuredMessage.updateMediaContent(self.db)
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
@@ -755,11 +811,11 @@ class BotHandlers:
             ensuredReply = EnsuredMessage(message.reply_to_message)
             storedMessages.append({
                 "role": "assistant",
-                "content": ensuredReply.formatForLLM(format=llmMessageFormat)
+                "content": await ensuredReply.formatForLLM(self.db, format=llmMessageFormat)
             })
             storedMessages.append({
                 "role": "user",
-                "content": ensuredMessage.formatForLLM(format=llmMessageFormat)
+                "content": await ensuredMessage.formatForLLM(self.db, format=llmMessageFormat)
             })
         else:
             if storedMsg["message_category"] != "bot":
@@ -838,14 +894,14 @@ class BotHandlers:
             reqMessages.append(
                 {
                     "role": "assistant" if isReplyToMyMessage else "user",
-                    "content": ensuredReply.formatForLLM(format=llmMessageFormat),
+                    "content": await ensuredReply.formatForLLM(self.db, format=llmMessageFormat),
                 }
             )
 
         reqMessages.append(
             {
                 "role": "user",
-                "content": ensuredMessage.formatForLLM(format=llmMessageFormat),
+                "content": await ensuredMessage.formatForLLM(self.db, format=llmMessageFormat),
             }
         )
 
@@ -964,6 +1020,7 @@ class BotHandlers:
 
         # Handle LLM Action
 
+
         reqMessages = [
             {
                 "role": "system",
@@ -978,7 +1035,7 @@ class BotHandlers:
                 reqMessages.append(
                     {
                         "role": "assistant" if ensuredReply.user.id == context.bot.id else "user",
-                        "content": ensuredReply.formatForLLM(format=llmMessageFormat),
+                        "content": await ensuredReply.formatForLLM(self.db, format=llmMessageFormat),
                     }
                 )
             else:
@@ -1001,8 +1058,8 @@ class BotHandlers:
         reqMessages.append(
             {
                 "role": "user",
-                "content": ensuredMessage.formatForLLM(
-                    format=llmMessageFormat, replaceMessageText=messageText
+                "content": await ensuredMessage.formatForLLM(
+                    self.db, format=llmMessageFormat, replaceMessageText=messageText
                 ),
             }
         )
@@ -1013,55 +1070,106 @@ class BotHandlers:
 
         return True
 
-    async def processImage(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> Any:
+    async def _parseImage(self, ensuredMessage: EnsuredMessage, fileUniqueId: str, messages: List[ModelMessage]) -> Any:
+        """
+        Parse image content using LLM
+        """
+
+        try:
+            llmModel = self.getImageParsingModel(ensuredMessage.chat.id)
+            logger.debug(f"Prompting Image LLM for image with prompt: {messages}")
+            llmRet = llmModel.generateText(messages)
+            logger.debug(f"Image LLM Response: {llmRet}")
+
+            if llmRet.status != ModelResultStatus.FINAL:
+                raise RuntimeError(f"Image LLM Response status is not FINAL: {llmRet.status}")
+
+            description = llmRet.resultText
+            self.db.updateMediaAttachment(
+                fileUniqueId=fileUniqueId,
+                status=MediaStatus.DONE,
+                description=description,
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to parse image: {e}")
+            self.db.updateMediaAttachment(
+                fileUniqueId=fileUniqueId,
+                status=MediaStatus.FAILED,
+            )
+            return False
+
+        # ret['content'] = llmRet.resultText
+
+    async def processImage(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
         """
         Process a photo from message if needed
         """
-        #TODO: Do something better
-        photoSize = ensuredMessage.getBaseMessage().photo[-1]
-        bestPhotoSize = photoSize
-        logger.debug(f"Processing photo: {photoSize}")
-        ret = {
-            'id': photoSize.file_unique_id,
-            'type': 'image',
-            'content': None,
-            'metadata': {
-                # Store metadata for best size
-                'file_id': photoSize.file_id,
-                'file_unique_id': photoSize.file_unique_id,
-                'file_size': photoSize.file_size,
-                'width': photoSize.width,
-                'height': photoSize.height,
-                'url': None,
-            }
+
+        bestPhotoSize = ensuredMessage.getBaseMessage().photo[-1]
+        mediaStatus = MediaStatus.NEW
+        localUrl: Optional[str] = None
+        mimeType: Optional[str] = None
+
+        logger.debug(f"Processing photo: {bestPhotoSize}")
+        ret = MediaProcessingInfo(
+            id = bestPhotoSize.file_unique_id,
+            task = None,
+            type = MessageType.IMAGE,
+        )
+
+        metadata = {
+            # Store metadata for best size
+            "width": bestPhotoSize.width,
+            "height": bestPhotoSize.height,
         }
+
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        if not (
-            chatSettings[ChatSettingsKey.SAVE_IMAGES].toBool()
-            or chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool()
-        ):
-            return ret
-
-        optimalImageSize = chatSettings[ChatSettingsKey.OPTIMAL_IMAGE_SIZE].toInt()
-        if optimalImageSize > 0:
-            # Iterate over all photo sizes and find the best one (i.e. smallest, but, larger than optimalImageSize)
-            for pSize in ensuredMessage.getBaseMessage().photo:
-                if pSize.width > optimalImageSize or pSize.height > optimalImageSize:
-                    photoSize = pSize
-                    break
-
-        file = await context.bot.get_file(photoSize)
-        logger.debug(f"Photo File info: {file}")
-        photoData = await file.download_as_bytearray()
-        mimeType = magic.from_buffer(bytes(photoData), mime=True)
-        logger.debug(f"Photo Mimetype: {mimeType}")
+        photoData: Optional[bytes] = None
 
         if chatSettings[ChatSettingsKey.SAVE_IMAGES].toBool():
             # TODO do
             pass
 
         if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
-            llmModel = self.getImageParsingModel(ensuredMessage.chat.id)
+            mediaStatus = MediaStatus.PENDING
+        else:
+            mediaStatus = MediaStatus.DONE
+
+        self.db.addMediaAttachment(
+            fileUniqueId=bestPhotoSize.file_unique_id,
+            fileId=bestPhotoSize.file_id,
+            fileSize=bestPhotoSize.file_size,
+            mediaType=MessageType.IMAGE,
+            mimeType=mimeType,
+            metadata=json.dumps(metadata, ensure_ascii=False, default=str),
+            status=mediaStatus,
+            localUrl=localUrl,
+            prompt=None,
+            description=None,
+        )
+
+        # Need to parse image content with LLM
+        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+            photoSize = bestPhotoSize
+            optimalImageSize = chatSettings[ChatSettingsKey.OPTIMAL_IMAGE_SIZE].toInt()
+            if optimalImageSize > 0:
+                # Iterate over all photo sizes and find the best one (i.e. smallest, but, larger than optimalImageSize)
+                for pSize in ensuredMessage.getBaseMessage().photo:
+                    if pSize.width > optimalImageSize or pSize.height > optimalImageSize:
+                        photoSize = pSize
+                        break
+
+            # Do not redownload file if it was downloaded already
+            if photoData is None or photoSize != bestPhotoSize:
+                file = await context.bot.get_file(photoSize)
+                logger.debug(f"Photo File info: {file}")
+                photoData = await file.download_as_bytearray()
+
+            mimeType = magic.from_buffer(bytes(photoData), mime=True)
+            logger.debug(f"Photo Mimetype: {mimeType}")
+
             imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
             messages = [
                 ModelMessage(
@@ -1074,24 +1182,16 @@ class BotHandlers:
                     image=photoData,
                 )
             ]
-            # logger.debug(f"Image Prompt: {imagePrompt}")
-            logger.debug(f"Prompting Image LLM for image with prompt: {imagePrompt}")
-            llmRet = llmModel.generateText(messages)
-            logger.debug(f"Image LLM Response: {llmRet}")
-            ret['content'] = llmRet.resultText
 
-        self.db.addMediaAttachment(
-            fileUniqueId=bestPhotoSize.file_unique_id,
-            fileId=bestPhotoSize.file_id,
-            fileSize=bestPhotoSize.file_size,
-            mediaType=MessageType.IMAGE,
-            mimeType=mimeType,
-            metadata=json.dumps(ret["metadata"], ensure_ascii=False, default=str),
-            status=MediaStatus.COMPLETE,
-            localUrl=None,
-            prompt=None,
-            description=ret["content"],
-        )
+            logger.debug(f"Asynchronously parsing image: {ret.id}")
+            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, bestPhotoSize.file_unique_id, messages))
+            logger.debug(f"{ret.id} After Start")
+            ret.task = parseTask
+            await self.addQueueTask(parseTask)
+            logger.debug(f"{ret.id} After Queued")
+
+        if ret.task is None:
+            ret.task = asyncio.create_task(asyncio.sleep(0))
 
         return ret
 
@@ -1610,7 +1710,7 @@ class BotHandlers:
                     saveMessage=False,
                     tryParseInputJSON=False,
                 )
-            
+
     async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /test <suite> [<args>] command."""
         logger.debug(f"Got test command: {update}")
@@ -1639,7 +1739,7 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
             return
-        
+
         if not user.username:
             await self._sendMessage(
                     ensuredMessage,
@@ -1649,9 +1749,9 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
             return
-        
+
         allowedUsers = self.botOwners[:]
-        
+
         if user.username.lower() not in allowedUsers:
             await self._sendMessage(
                     ensuredMessage,
@@ -1663,7 +1763,7 @@ class BotHandlers:
             return
 
         suite = context.args[0]
-        
+
         match suite:
             case "long":
                 iterationsCount = 10
@@ -1694,7 +1794,9 @@ class BotHandlers:
                         pass
 
                 for i in range(iterationsCount):
-                    logger.debug(f"Iteration {i} of {iterationsCount} (delay is {delay})")
+                    logger.debug(
+                        f"Iteration {i} of {iterationsCount} (delay is {delay})"
+                    )
                     await self._sendMessage(
                         ensuredMessage,
                         context,
@@ -1703,7 +1805,7 @@ class BotHandlers:
                         tryParseInputJSON=False,
                     )
                     await asyncio.sleep(delay)
-                
+
             case _:
                 await self._sendMessage(
                     ensuredMessage,

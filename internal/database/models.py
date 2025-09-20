@@ -10,5 +10,5 @@ class MediaStatus(StrEnum):
 
     NEW = 'new'
     PENDING = 'pending'
-    COMPLETE = 'complete'
+    DONE = 'done'
     FAILED = 'failed'
