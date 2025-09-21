@@ -12,7 +12,7 @@ from lib.markdown import MarkdownParser, markdown_to_markdownv2
 def test_basic_functionality():
     """Test basic MarkdownV2 functionality."""
     print("=== MarkdownV2 Demo ===\n")
-    
+
     # Test cases
     test_cases = [
         ("**Bold text**", "Bold formatting"),
@@ -25,9 +25,9 @@ def test_basic_functionality():
         ("# Header", "Header formatting"),
         ("> Quote", "Block quote formatting"),
     ]
-    
+
     parser = MarkdownParser()
-    
+
     for markdown, description in test_cases:
         print(f"Test: {description}")
         print(f"Input:  {repr(markdown)}")
