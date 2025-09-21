@@ -2,6 +2,7 @@
 EnsuredMessage: wrapper around telegram.Message
 """
 import asyncio
+import datetime
 import json
 import logging
 
@@ -9,6 +10,8 @@ import time
 from typing import Any, Dict, Optional
 
 from telegram import Message
+
+import lib.utils as utils
 
 from .models import LLMMessageFormat, MediaProcessingInfo, MessageType
 from internal.database.models import MediaStatus
@@ -77,7 +80,6 @@ class EnsuredMessage:
             self.messageType = MessageType.STICKER
             self.messageText = message.sticker.emoji if message.sticker.emoji else ""
 
-
         if self.messageType == MessageType.TEXT:
             if not message.text:
                 # Probably not a text message, just log it for now
@@ -124,7 +126,7 @@ class EnsuredMessage:
     def setMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
         self.mediaProcessingInfo = mediaProcessingInfo
         self.mediaId = mediaProcessingInfo.id
-    
+
     async def updateMediaContent(self, db: DatabaseWrapper) -> None:
         """
         Set the media content of the message from DB.
@@ -135,25 +137,46 @@ class EnsuredMessage:
         if self.mediaId is None:
             return
         
+        mediaAttachment = await self.__class__.awaitMedia(db, self.mediaId)
+        if mediaAttachment.get("description", None) is not None:
+            self.mediaContent = mediaAttachment["description"]
+
+    @classmethod
+    async def awaitMedia(cls, db: DatabaseWrapper, mediaId: str) -> Dict[str, Any]:
+        """
+        Await the media content of the message from DB.
+        """
         startTime = time.time()
+        mediaAttachment: Optional[Dict[str, Any]] = {}
         while time.time() - startTime < MAX_MEDIA_AWAIT_SECS:
-            mediaAttachment = db.getMediaAttachment(self.mediaId)
+            mediaAttachment = db.getMediaAttachment(mediaId)
             if mediaAttachment is None:
-                raise ValueError(f"Media attachment {self.mediaId} not found")
-            
+                logger.error(f"Media#{mediaId} not found")
+                return {}
+
             match MediaStatus(str(mediaAttachment["status"])):
                 case MediaStatus.PENDING:
+                    mediaUpdated = mediaAttachment["updated_at"]
+                    if not isinstance(mediaUpdated, datetime.datetime):
+                        logger.error(
+                            f"Media#{mediaId} attachment `updated_at` is not a datetime: {type(mediaUpdated["updated_at"]).__name__}({mediaUpdated["updated_at"]})"
+                        )
+                        return mediaAttachment
+
+                    if utils.getAgeInSecs(mediaUpdated) > MAX_MEDIA_AWAIT_SECS:
+                        logger.warning(
+                            f"Media#{mediaId} is pending for too long ({time.time() - mediaAttachment["updated_at"].timestamp()})"
+                        )
+                        return mediaAttachment
                     await asyncio.sleep(MEDIA_AWAIT_DELAY)
                 case MediaStatus.DONE:
-                    self.mediaContent = mediaAttachment["description"]
-                    return
-                case MediaStatus.NEW:
-                    # NEW status mean, that nobody plan to process it, just skip
-                    return
+                    return mediaAttachment
                 case _:
-                    raise ValueError("Invalid media status")
+                    logger.error(f"Media#{mediaId} has invalid status: {mediaAttachment['status']}")
+                    return mediaAttachment
         
-        raise TimeoutError("Media processing timed out")
+        logger.error(f"Media#{mediaId} processing timed out")
+        return mediaAttachment
 
     async def formatForLLM(self, db: DatabaseWrapper, format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
         await self.updateMediaContent(db)
@@ -173,7 +196,7 @@ class EnsuredMessage:
                 if self.mediaContent:
                     ret["media_description"] = self.mediaContent
 
-                #logger.debug(f"EM.formatForLLM():{self} -> {ret}")
+                # logger.debug(f"EM.formatForLLM():{self} -> {ret}")
                 return json.dumps(ret, ensure_ascii=False)
 
             case LLMMessageFormat.TEXT:
@@ -185,9 +208,19 @@ class EnsuredMessage:
         raise ValueError(f"Invalid format: {format}")
 
     @classmethod
-    def formatDBChatMessageToLLM(cls, data: Dict[str, Any], format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
+    async def formatDBChatMessageToLLM(cls, db: DatabaseWrapper, data: Dict[str, Any], format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
         # TODO: Somehow merge with prevoius method
         messageText = data["message_text"] if replaceMessageText is None else replaceMessageText
+
+        # Update media content if needed
+        if data.get("media_id", None) is not None:
+            mediaId = data["media_id"]
+            status = MediaStatus(data.get('media_status', MediaStatus.FAILED))
+            if status != MediaStatus.DONE:
+                mediaAttachment = await cls.awaitMedia(db, mediaId)
+                if mediaAttachment.get("description", None) is not None:
+                    data["media_description"] = mediaAttachment["description"]
+
         match format:
             case LLMMessageFormat.JSON:
                 ret = {
@@ -201,9 +234,9 @@ class EnsuredMessage:
                     ret["quote"] = data["quote_text"]
 
                 if data.get("media_description", None):
-                        ret["media_description"] = data["media_description"]
+                    ret["media_description"] = data["media_description"]
 
-                #logger.debug(f"EM.formatDBChatMessageToLLM():{data} -> {ret}")
+                # logger.debug(f"EM.formatDBChatMessageToLLM():{data} -> {ret}")
                 return json.dumps(ret, ensure_ascii=False, default=str)
             case LLMMessageFormat.TEXT:
                 ret = messageText
@@ -229,6 +262,9 @@ class EnsuredMessage:
                 "quoteText": self.quoteText,
                 "threadId": self.threadId,
                 "isTopicMessage": self.isTopicMessage,
+                "mediaId": self.mediaId,
+                "mediaContent": self.mediaContent,
             },
             ensure_ascii=False,
+            default=str,
         )
