@@ -400,7 +400,7 @@ class BotHandlers:
 
                 # Save message if needed
                 if saveMessage:
-                    ensuredReplyMessage = EnsuredMessage(replyMessage)
+                    ensuredReplyMessage = EnsuredMessage.fromMessage(replyMessage)
                     if addMessagePrefix:
                         replyText = ensuredReplyMessage.messageText
                         if replyText.startswith(addMessagePrefix):
@@ -680,7 +680,7 @@ class BotHandlers:
 
         ensuredMessage : Optional[EnsuredMessage] = None
         try:
-            ensuredMessage = EnsuredMessage(message)
+            ensuredMessage = EnsuredMessage.fromMessage(message)
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
@@ -749,7 +749,7 @@ class BotHandlers:
 
         ensuredMessage : Optional[EnsuredMessage] = None
         try:
-            ensuredMessage = EnsuredMessage(message)
+            ensuredMessage = EnsuredMessage.fromMessage(message)
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
@@ -832,7 +832,7 @@ class BotHandlers:
             if not message.reply_to_message:
                 logger.error("message.reply_to_message is None, but should be Message()")
                 return False
-            ensuredReply = EnsuredMessage(message.reply_to_message)
+            ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
             storedMessages.append({
                 "role": "assistant",
                 "content": await ensuredReply.formatForLLM(self.db, format=llmMessageFormat)
@@ -913,7 +913,7 @@ class BotHandlers:
             isReplyToMyMessage = True
 
         if ensuredMessage.replyText and message.reply_to_message:
-            ensuredReply = EnsuredMessage(message.reply_to_message)
+            ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
 
             reqMessages.append(
                 {
@@ -1018,7 +1018,7 @@ class BotHandlers:
 
         if isWhatThere and ensuredMessage.isReply and message.reply_to_message:
             # TODO: Move getting parent message to separate function
-            ensuredReply = EnsuredMessage(message.reply_to_message)
+            ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
             response = DUNNO_EMOJI
             if ensuredReply.messageType != MessageType.TEXT:
                 # Not text message, try to get it content from DB
@@ -1053,7 +1053,7 @@ class BotHandlers:
 
         # Add Parent message if any
         if ensuredMessage.isReply and message.reply_to_message:
-            ensuredReply = EnsuredMessage(message.reply_to_message)
+            ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
             if ensuredReply.messageType == MessageType.TEXT:
                 reqMessages.append(
                     {
@@ -1461,7 +1461,7 @@ class BotHandlers:
             logger.error("Message undefined")
             return
 
-        ensuredMessage = EnsuredMessage(update.message)
+        ensuredMessage = EnsuredMessage.fromMessage(update.message)
 
         help_text = (
             "🤖 **Gromozeka Bot Help**\n\n"
@@ -1491,7 +1491,7 @@ class BotHandlers:
             logger.error("Message undefined")
             return
 
-        ensuredMessage = EnsuredMessage(update.message)
+        ensuredMessage = EnsuredMessage.fromMessage(update.message)
         user = ensuredMessage.user
 
         # Get user data from database
@@ -1522,7 +1522,7 @@ class BotHandlers:
         if not update.message:
             logger.error("Message undefined")
             return
-        ensuredMessage = EnsuredMessage(update.message)
+        ensuredMessage = EnsuredMessage.fromMessage(update.message)
 
         if context.args:
             echo_text = " ".join(context.args)
@@ -1566,7 +1566,7 @@ class BotHandlers:
 
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
-            ensuredMessage = EnsuredMessage(message)
+            ensuredMessage = EnsuredMessage.fromMessage(message)
         except Exception as e:
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
@@ -1733,7 +1733,7 @@ class BotHandlers:
 
         ensuredMessage : Optional[EnsuredMessage] = None
         try:
-            ensuredMessage = EnsuredMessage(message)
+            ensuredMessage = EnsuredMessage.fromMessage(message)
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
@@ -1786,7 +1786,7 @@ class BotHandlers:
 
         ensuredMessage : Optional[EnsuredMessage] = None
         try:
-            ensuredMessage = EnsuredMessage(message)
+            ensuredMessage = EnsuredMessage.fromMessage(message)
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
@@ -1835,7 +1835,7 @@ class BotHandlers:
 
         ensuredMessage : Optional[EnsuredMessage] = None
         try:
-            ensuredMessage = EnsuredMessage(message)
+            ensuredMessage = EnsuredMessage.fromMessage(message)
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
@@ -1949,7 +1949,7 @@ class BotHandlers:
 
         ensuredMessage : Optional[EnsuredMessage] = None
         try:
-            ensuredMessage = EnsuredMessage(message)
+            ensuredMessage = EnsuredMessage.fromMessage(message)
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
