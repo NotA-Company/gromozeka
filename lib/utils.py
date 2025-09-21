@@ -16,5 +16,5 @@ def getAgeInSecs(dt: datetime.datetime) -> float:
     else:
         dt = dt.astimezone(datetime.timezone.utc)
     nowUtc = datetime.datetime.now(datetime.timezone.utc)
-    
+
     return (nowUtc - dt).total_seconds()
