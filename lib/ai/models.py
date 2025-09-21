@@ -156,7 +156,7 @@ class ModelMessage:
 
     def __str__(self) -> str:
         return json.dumps(self.toDict(), ensure_ascii=False)
-    
+
     def __repr__(self) -> str:
         return f"ModelMessage({str(self)})"
 

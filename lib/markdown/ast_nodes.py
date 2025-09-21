@@ -44,38 +44,38 @@ class ListType(Enum):
 
 class MDNode(ABC):
     """Base class for all Markdown AST nodes."""
-    
+
     def __init__(self, node_type: NodeType):
         self.node_type = node_type
         self.children: List['MDNode'] = []
         self.parent: Optional['MDNode'] = None
-    
+
     def add_child(self, child: 'MDNode') -> None:
         """Add a child node."""
         child.parent = self
         self.children.append(child)
-    
+
     def remove_child(self, child: 'MDNode') -> None:
         """Remove a child node."""
         if child in self.children:
             child.parent = None
             self.children.remove(child)
-    
+
     @abstractmethod
     def to_dict(self) -> Dict[str, Any]:
         """Convert node to dictionary representation."""
         pass
-    
+
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(type={self.node_type.value})"
 
 
 class MDDocument(MDNode):
     """Root document node containing all other nodes."""
-    
+
     def __init__(self):
         super().__init__(NodeType.DOCUMENT)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -85,10 +85,10 @@ class MDDocument(MDNode):
 
 class MDParagraph(MDNode):
     """Paragraph node containing inline elements."""
-    
+
     def __init__(self):
         super().__init__(NodeType.PARAGRAPH)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -98,13 +98,13 @@ class MDParagraph(MDNode):
 
 class MDHeader(MDNode):
     """Header node with level (1-6)."""
-    
+
     def __init__(self, level: int):
         super().__init__(NodeType.HEADER)
         if not 1 <= level <= 6:
             raise ValueError(f"Header level must be 1-6, got {level}")
         self.level = level
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -115,13 +115,13 @@ class MDHeader(MDNode):
 
 class MDCodeBlock(MDNode):
     """Code block node with optional language identifier."""
-    
+
     def __init__(self, content: str, language: Optional[str] = None, is_fenced: bool = False):
         super().__init__(NodeType.CODE_BLOCK)
         self.content = content
         self.language = language
         self.is_fenced = is_fenced
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -133,10 +133,10 @@ class MDCodeBlock(MDNode):
 
 class MDBlockQuote(MDNode):
     """Block quote node that can contain other block elements."""
-    
+
     def __init__(self):
         super().__init__(NodeType.BLOCK_QUOTE)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -146,14 +146,14 @@ class MDBlockQuote(MDNode):
 
 class MDList(MDNode):
     """List node (ordered or unordered)."""
-    
+
     def __init__(self, list_type: ListType, marker: str = "", start_number: int = 1):
         super().__init__(NodeType.LIST)
         self.list_type = list_type
         self.marker = marker  # -, *, +, or number format
         self.start_number = start_number  # for ordered lists
         self.is_tight = True  # no blank lines between items
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -167,10 +167,10 @@ class MDList(MDNode):
 
 class MDListItem(MDNode):
     """List item node that can contain block elements."""
-    
+
     def __init__(self):
         super().__init__(NodeType.LIST_ITEM)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -180,11 +180,11 @@ class MDListItem(MDNode):
 
 class MDHorizontalRule(MDNode):
     """Horizontal rule node."""
-    
+
     def __init__(self, marker: str = "---"):
         super().__init__(NodeType.HORIZONTAL_RULE)
         self.marker = marker
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -194,11 +194,11 @@ class MDHorizontalRule(MDNode):
 
 class MDEmphasis(MDNode):
     """Emphasis node for bold, italic, strikethrough text."""
-    
+
     def __init__(self, emphasis_type: EmphasisType):
         super().__init__(NodeType.EMPHASIS)
         self.emphasis_type = emphasis_type
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -209,13 +209,13 @@ class MDEmphasis(MDNode):
 
 class MDLink(MDNode):
     """Link node with URL and optional title."""
-    
+
     def __init__(self, url: str, title: Optional[str] = None, is_reference: bool = False):
         super().__init__(NodeType.LINK)
         self.url = url
         self.title = title
         self.is_reference = is_reference
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -228,13 +228,13 @@ class MDLink(MDNode):
 
 class MDImage(MDNode):
     """Image node with URL, alt text, and optional title."""
-    
+
     def __init__(self, url: str, alt_text: str, title: Optional[str] = None):
         super().__init__(NodeType.IMAGE)
         self.url = url
         self.alt_text = alt_text
         self.title = title
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -246,11 +246,11 @@ class MDImage(MDNode):
 
 class MDCodeSpan(MDNode):
     """Inline code span node."""
-    
+
     def __init__(self, content: str):
         super().__init__(NodeType.CODE_SPAN)
         self.content = content
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -260,11 +260,11 @@ class MDCodeSpan(MDNode):
 
 class MDText(MDNode):
     """Plain text node."""
-    
+
     def __init__(self, content: str):
         super().__init__(NodeType.TEXT)
         self.content = content
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
@@ -274,12 +274,12 @@ class MDText(MDNode):
 
 class MDAutolink(MDNode):
     """Autolink node for URLs and emails."""
-    
+
     def __init__(self, url: str, is_email: bool = False):
         super().__init__(NodeType.AUTOLINK)
         self.url = url
         self.is_email = is_email
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
