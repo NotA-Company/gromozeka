@@ -1300,7 +1300,7 @@ class BotHandlers:
             parsedMessages.append(
                 {
                     "role": "user",
-                    "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, msg, LLMMessageFormat.JSON),
+                    "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, msg, LLMMessageFormat.JSON, stripAtsign=True),
                 }
             )
 
