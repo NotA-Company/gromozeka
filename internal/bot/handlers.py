@@ -25,6 +25,7 @@ from internal.database.wrapper import DatabaseWrapper
 from internal.database.models import MediaStatus
 
 from lib.markdown import markdown_to_markdownv2
+import lib.utils as utils
 from .ensured_message import EnsuredMessage
 from .models import LLMMessageFormat, MessageType, MediaProcessingInfo
 from .chat_settings import ChatSettingsKey, ChatSettingsValue
@@ -852,7 +853,7 @@ class BotHandlers:
             storedMessages = [
                 {
                     "role": "user" if storedMsg["message_category"] == "user" else "assistant",
-                    "content": EnsuredMessage.formatDBChatMessageToLLM(storedMsg, format=llmMessageFormat),
+                    "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, storedMsg, format=llmMessageFormat),
                 }
                 for storedMsg in _storedMessages
             ]
@@ -1072,7 +1073,7 @@ class BotHandlers:
                     reqMessages.append(
                         {
                             "role": "assistant" if ensuredReply.user.id == context.bot.id else "user",
-                            "content": EnsuredMessage.formatDBChatMessageToLLM(storedReply, llmMessageFormat),
+                            "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, storedReply, llmMessageFormat),
                         }
                     )
 
@@ -1154,7 +1155,7 @@ class BotHandlers:
             logger.debug(f"Sticker {ret.id} already in database: {mediaAttachment}")
             # logger.debug(repr(mediaAttachment))
             if mediaAttachment["media_type"] != MessageType.STICKER:
-                raise RuntimeError(f"Media attachment with id {ret.id} already present in database and it is not an sticker but {mediaAttachment['media_type']}")
+                raise RuntimeError(f"Media#{ret.id} already present in database and it is not an sticker but {mediaAttachment['media_type']}")
 
             # Only skip processing if Media in DB is in right status
             match MediaStatus(mediaAttachment["status"]):
@@ -1166,10 +1167,10 @@ class BotHandlers:
                     try:
                         stickerDate = mediaAttachment["updated_at"]
                         if not isinstance(stickerDate, datetime.datetime):
-                            stickerDate = datetime.datetime.fromisoformat(stickerDate) 
-                        stickerAge =  time.time() - stickerDate.timestamp()
-                        if stickerAge > PROCESSING_TIMEOUT:
-                            logger.warning(f"Sticker {ret.id} already in database but in status {mediaAttachment['status']} and is too old ({stickerAge}), reprocessing it")
+                            logger.error(f"Sticker#{ret.id} updated_at is not a datetime: {type(stickerDate).__name__}({stickerDate})")
+                            stickerDate = datetime.datetime.fromisoformat(stickerDate)
+                        if utils.getAgeInSecs(stickerDate) > PROCESSING_TIMEOUT:
+                            logger.warning(f"Sticker#{ret.id} already in database but in status {mediaAttachment['status']} and is too old ({stickerDate}), reprocessing it")
                         else:
                             ret.task = makeEmptyAsyncTask()
                             return ret
@@ -1287,6 +1288,7 @@ class BotHandlers:
         mediaStatus = MediaStatus.NEW
         localUrl: Optional[str] = None
         mimeType: Optional[str] = None
+        mediaType = MessageType.IMAGE
 
         logger.debug(f"Processing photo: {bestPhotoSize}")
         ret = MediaProcessingInfo(
@@ -1313,11 +1315,11 @@ class BotHandlers:
                     try:
                         mediaDate = mediaAttachment["updated_at"]
                         if not isinstance(mediaDate, datetime.datetime):
+                            logger.error(f"Photo#{ret.id} attachment `updated_at` is not a datetime: {type(mediaDate).__name__}({mediaDate})")
                             mediaDate = datetime.datetime.fromisoformat(mediaDate) 
 
-                        mediaAge =  time.time() - mediaDate.timestamp()
-                        if mediaAge > PROCESSING_TIMEOUT:
-                            logger.warning(f"Photo {ret.id} already in database but in status {mediaAttachment['status']} and is too old ({mediaAge}), reprocessing it")
+                        if utils.getAgeInSecs(mediaDate) > PROCESSING_TIMEOUT:
+                            logger.warning(f"Photo#{ret.id} already in database but in status {mediaAttachment['status']} and is too old ({mediaDate}), reprocessing it")
                         else:
                             ret.task = makeEmptyAsyncTask()
                             return ret
@@ -1361,7 +1363,7 @@ class BotHandlers:
                 fileUniqueId=ret.id,
                 fileId=bestPhotoSize.file_id,
                 fileSize=bestPhotoSize.file_size,
-                mediaType=MessageType.IMAGE,
+                mediaType=mediaType,
                 mimeType=mimeType,
                 metadata=json.dumps(metadata, ensure_ascii=False, default=str),
                 status=mediaStatus,
