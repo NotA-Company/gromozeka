@@ -170,7 +170,7 @@ class EnsuredMessage:
         )
 
         ensuredMessage.replyId = data["reply_id"]
-        #ensuredMessage.replyText: Optional[str] = None
+        # ensuredMessage.replyText: Optional[str] = None
         ensuredMessage.isReply = data["reply_id"] is not None
 
         ensuredMessage.quoteText = data["quote_text"]
@@ -252,13 +252,22 @@ class EnsuredMessage:
         logger.error(f"Media#{mediaId} processing timed out")
         return mediaAttachment
 
-    async def formatForLLM(self, db: DatabaseWrapper, format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
+    async def formatForLLM(
+        self,
+        db: DatabaseWrapper,
+        format: LLMMessageFormat = LLMMessageFormat.JSON,
+        replaceMessageText: Optional[str] = None,
+        stripAtsign: bool = False,
+    ) -> str:
         await self.updateMediaContent(db)
         messageText = self.messageText if replaceMessageText is None else replaceMessageText
+        userName = self.user.name
+        if stripAtsign:
+            userName = userName.lstrip("@")
         match format:
             case LLMMessageFormat.JSON:
                 ret = {
-                    "login": self.user.name,
+                    "login": userName,
                     "name": self.user.full_name,
                     "date": self.date.isoformat(),
                     "messageId": self.messageId,
@@ -287,9 +296,16 @@ class EnsuredMessage:
         raise ValueError(f"Invalid format: {format}")
 
     @classmethod
-    async def formatDBChatMessageToLLM(cls, db: DatabaseWrapper, data: Dict[str, Any], format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
+    async def formatDBChatMessageToLLM(
+        cls,
+        db: DatabaseWrapper,
+        data: Dict[str, Any],
+        format: LLMMessageFormat = LLMMessageFormat.JSON,
+        replaceMessageText: Optional[str] = None,
+        stripAtsign: bool = False,
+    ) -> str:
         ensuredMessage = cls.fromDBChatMessage(data)
-        return await ensuredMessage.formatForLLM(db, format, replaceMessageText)
+        return await ensuredMessage.formatForLLM(db, format, replaceMessageText, stripAtsign)
 
     def __str__(self) -> str:
         return json.dumps(
