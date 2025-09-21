@@ -16,7 +16,7 @@ class YcSdkModel(AbstractModel):
     """Yandex Cloud SDK model implementation, dood!"""
 
     def __init__(
-        self, 
+        self,
         provider: "YcSdkProvider",
         modelId: str,
         modelVersion: str,
@@ -82,10 +82,10 @@ class YcSdkModel(AbstractModel):
 
     async def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the YC SDK model with given messages, dood!
-        
+
         Args:
             messages: List of message dictionaries with role and content
-            
+
         Returns:
             Model response
         """
@@ -116,12 +116,12 @@ class YcSdkModel(AbstractModel):
 
         if not self.supportImages:
             raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
-        
+
         # From docs:
         # # Sample 3: run with several messages specifying weight
         # operation = model.run_deferred([{"text": message1, "weight": 5}, message2])
         # TODO: Think about support of message weights
-        
+
         result: Any = None
         resultStatus: ModelResultStatus = ModelResultStatus.UNKNOWN
 
@@ -137,13 +137,13 @@ class YcSdkModel(AbstractModel):
             ethicDetails = [
               "it is not possible to generate an image from this request because it may violate the terms of use",
             ]
-            
+
             if isinstance(e, AioRpcError) and hasattr(e, "details"):
                 errorMsg = str(e.details())
                 if errorMsg in ethicDetails:
                     resultStatus = ModelResultStatus.CONTENT_FILTER
                     logger.warning(f"Content filter error: '{errorMsg}'")
-            
+
             if resultStatus != ModelResultStatus.CONTENT_FILTER:
                 # Do not log content filter errors
                 logger.exception(e)
@@ -165,22 +165,22 @@ class YcSdkModel(AbstractModel):
 
 class YcSdkProvider(AbstractLLMProvider):
     """Yandex Cloud SDK provider implementation, dood!"""
-    
+
     def __init__(self, config: Dict[str, Any]):
         """Initialize YC SDK provider, dood!"""
         super().__init__(config)
         self._ycMlSDK = None
         self._initSDK()
-        
+
     def _initSDK(self):
         """Initialize Yandex Cloud ML SDK, dood!"""
         try:
             folder_id = self.config.get("folder_id")
             yc_profile = self.config.get("yc_profile", None)
-            
+
             if not folder_id:
                 raise ValueError("folder_id is required for YC SDK provider, dood!")
-            
+
             logger.debug(f"Initializing YC SDK provider with folder_id: {folder_id} and yc_profile: {yc_profile}, dood")
             #TODO: Add ability to configure somehow else
             self._ycMlSDK = YCloudML(
@@ -188,13 +188,13 @@ class YcSdkProvider(AbstractLLMProvider):
                 auth=YandexCloudCLIAuth(),
                 yc_profile=yc_profile
             )
-            
+
             logger.info("YC SDK provider initialized, dood!")
 
         except Exception as e:
             logger.error(f"Failed to initialize YC SDK: {e}")
             raise
-        
+
     def addModel(
         self,
         name: str,
@@ -208,7 +208,7 @@ class YcSdkProvider(AbstractLLMProvider):
         if name in self.models:
             logger.warning(f"Model {name} already exists in YC SDK provider, dood!")
             return self.models[name]
-            
+
         try:
             model = YcSdkModel(
                 provider=self,
@@ -219,11 +219,11 @@ class YcSdkProvider(AbstractLLMProvider):
                 ycSDK=self._ycMlSDK,
                 extraConfig=extraConfig,
             )
-            
+
             self.models[name] = model
             logger.info(f"Added YC SDK model {name} ({modelId}), dood!")
             return model
-            
+
         except Exception as e:
             logger.error(f"Failed to add YC SDK model {name}: {e}")
             raise

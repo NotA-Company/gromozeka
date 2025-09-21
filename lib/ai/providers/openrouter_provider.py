@@ -26,7 +26,7 @@ class OpenrouterModel(BasicOpenAIModel):
     ):
         """Initialize OpenRouter model, dood!"""
         super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient, extraConfig)
-        
+
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get OpenRouter-specific extra parameters, dood!"""
         return {
@@ -40,15 +40,15 @@ class OpenrouterModel(BasicOpenAIModel):
 
 class OpenrouterProvider(BasicOpenAIProvider):
     """OpenRouter provider implementation, dood!"""
-    
+
     def __init__(self, config: Dict[str, Any]):
         """Initialize OpenRouter provider, dood!"""
         super().__init__(config)
-        
+
     def _getBaseUrl(self) -> str:
         """Get the OpenRouter base URL, dood!"""
         return "https://openrouter.ai/api/v1"
-        
+
     def _createModelInstance(
         self,
         name: str,
@@ -61,7 +61,7 @@ class OpenrouterProvider(BasicOpenAIProvider):
         """Create an OpenRouter model instance, dood!"""
         if not self._client:
             raise RuntimeError("OpenRouter client not initialized, dood!")
-            
+
         return OpenrouterModel(
             provider=self,
             modelId=modelId,

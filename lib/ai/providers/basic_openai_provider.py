@@ -20,7 +20,7 @@ class BasicOpenAIModel(AbstractModel):
     """Basic OpenAI model implementation with shared functionality, dood!"""
 
     def __init__(
-        self, 
+        self,
         provider: "BasicOpenAIProvider",
         modelId: str,
         modelVersion: str,
@@ -45,16 +45,16 @@ class BasicOpenAIModel(AbstractModel):
 
     async def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the OpenAI-compatible model with given messages, dood!
-        
+
         Args:
             messages: List of message dictionaries with role and content
-            
+
         Returns:
             Model response
         """
         if not self._client:
             raise RuntimeError("OpenAI client not initialized, dood!")
-        
+
         if not self._config.get("support_text", True):
             raise NotImplementedError(f"Text generation isn't supported by {self.modelId}, dood!")
 
@@ -129,58 +129,58 @@ class BasicOpenAIModel(AbstractModel):
 
         if not self._config.get("support_images", False):
             raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
-        
+
         raise NotImplementedError("Image generation isn't supported by OpenAI-compatible models yet, dood")
 
 
 class BasicOpenAIProvider(AbstractLLMProvider):
     """Basic OpenAI provider implementation with shared functionality, dood!"""
-    
+
     def __init__(self, config: Dict[str, Any]):
         """Initialize basic OpenAI provider, dood!"""
         super().__init__(config)
         self._client: Optional[AsyncOpenAI] = None
         self._initClient()
-        
+
     def _getBaseUrl(self) -> str:
         """Get the base URL for the OpenAI API. Override in subclasses, dood!"""
         raise NotImplementedError("Subclasses must implement _get_base_url, dood!")
-        
+
     def _getApiKey(self) -> str:
         """Get the API key from config. Override if needed, dood!"""
         apiKey = self.config.get("api_key")
         if not apiKey:
             raise ValueError("api_key is required for OpenAI-compatible provider, dood!")
         return apiKey
-        
+
     def _getClientParams(self) -> Dict[str, Any]:
         """Get additional client parameters. Override in subclasses if needed, dood!"""
         return {}
-        
+
     def _initClient(self):
         """Initialize OpenAI client, dood!"""
         try:
             api_key = self._getApiKey()
             base_url = self._getBaseUrl()
-            
+
             # Prepare client parameters
             client_params: Dict[str, Any] = {
                 "api_key": api_key,
                 "base_url": base_url,
             }
             client_params.update(self._getClientParams())
-            
+
             self._client = AsyncOpenAI(**client_params)
-            
+
             logger.info(f"{self.__class__.__name__} initialized, dood!")
-            
+
         except ImportError:
             logger.error("openai package not available, dood!")
             raise
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {e}")
             raise
-                
+
     def _createModelInstance(
         self,
         name: str,
@@ -192,7 +192,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
     ) -> AbstractModel:
         """Create a model instance. Override in subclasses, dood!"""
         raise NotImplementedError("Subclasses must implement _create_model_instance, dood!")
-        
+
     def addModel(
         self,
         name: str,
@@ -206,17 +206,17 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         if name in self.models:
             logger.warning(f"Model {name} already exists in {self.__class__.__name__}, dood!")
             return self.models[name]
-        
+
         if not self._client:
             raise RuntimeError("OpenAI client not initialized, dood!")
-            
+
         try:
             model = self._createModelInstance(name, modelId, modelVersion, temperature, contextSize, extraConfig)
-            
+
             self.models[name] = model
             logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), dood!")
             return model
-            
+
         except Exception as e:
             logger.error(f"Failed to add {self.__class__.__name__} model {name}: {e}")
             raise
