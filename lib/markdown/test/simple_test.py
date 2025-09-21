@@ -11,9 +11,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 try:
     from lib.markdown import MarkdownParser, markdown_to_html
-    
+
     print("=== Gromozeka Markdown Parser Test ===")
-    
+
     # Test basic functionality
     test_cases = [
         "# Hello World",
@@ -26,9 +26,9 @@ try:
         "![Image](image.jpg)",
         "---"
     ]
-    
+
     parser = MarkdownParser()
-    
+
     for i, test_md in enumerate(test_cases, 1):
         print(f"\nTest {i}: {test_md[:30]}...")
         try:
@@ -36,9 +36,9 @@ try:
             print(f"✓ Success: {html}")
         except Exception as e:
             print(f"✗ Error: {e}")
-    
+
     print("\n=== All tests completed! ===")
-    
+
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

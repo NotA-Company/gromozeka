@@ -14,7 +14,7 @@ from lib.markdown import MarkdownParser, markdown_to_html
 def main():
     print("🎉 Gromozeka Markdown Parser v1.0 - Comprehensive Demo")
     print("=" * 60)
-    
+
     # Comprehensive test document
     test_document = """# Gromozeka Markdown Parser Demo
 
@@ -26,7 +26,7 @@ This document demonstrates **all supported features** of the Gromozeka Markdown 
 Headers from level 1 to 6 are supported:
 
 # Header 1
-## Header 2  
+## Header 2
 ### Header 3
 #### Header 4
 ##### Header 5
@@ -64,7 +64,7 @@ Indented code blocks:
 
 > This is a block quote, dood!
 > It can span multiple lines and contain other elements.
-> 
+>
 > > Nested quotes are also supported.
 
 ### Lists
@@ -131,7 +131,7 @@ This paragraph contains **bold text**, *italic text*, `inline code`, and a [link
 
 ### Quotes with Code
 > Here's how to use the parser, dood:
-> 
+>
 > ```python
 > parser = MarkdownParser()
 > document = parser.parse("**Hello World**")
@@ -142,28 +142,28 @@ That's all, dood! 🎉"""
     print("📝 Input Markdown:")
     print("-" * 40)
     print(test_document)
-    
+
     print("\n🔄 Parsing...")
-    
+
     # Parse to HTML
     html_output = markdown_to_html(test_document)
-    
+
     print("\n✅ HTML Output:")
     print("-" * 40)
     print(html_output)
-    
+
     # Show parser statistics
     parser = MarkdownParser()
     document = parser.parse(test_document)
     stats = parser.get_stats()
-    
+
     print(f"\n📊 Parser Statistics:")
     print("-" * 40)
     print(f"Tokens processed: {stats['tokens_processed']}")
     print(f"Blocks parsed: {stats['blocks_parsed']}")
     print(f"Inline elements: {stats['inline_elements_parsed']}")
     print(f"Errors: {len(stats['errors'])}")
-    
+
     print(f"\n🎯 All features working perfectly, dood! 🎉")
 
 if __name__ == "__main__":
