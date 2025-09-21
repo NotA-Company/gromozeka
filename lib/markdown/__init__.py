@@ -15,14 +15,14 @@ This module provides:
 
 Usage:
     from lib.markdown import MarkdownParser, markdown_to_markdownv2
-    
+
     # Basic HTML rendering
     parser = MarkdownParser()
     html = parser.parse_to_html("# Hello World\n\nThis is **bold** text.")
-    
+
     # Telegram MarkdownV2 rendering
     markdownv2 = parser.parse_to_markdownv2("# Hello World\n\nThis is **bold** text.")
-    
+
     # Convenience function
     markdownv2 = markdown_to_markdownv2("**Bold** and *italic* text")
 

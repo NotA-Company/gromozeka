@@ -30,7 +30,7 @@ class MediaProcessingInfo:
         self.id = id
         self.type = type
         self.task = task
-    
+
     async def awaitResult(self) -> Any:
         if self.task is not None:
             return await self.task
