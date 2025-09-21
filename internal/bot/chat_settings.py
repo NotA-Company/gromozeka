@@ -6,6 +6,9 @@ from enum import StrEnum
 import logging
 from typing import Any, List
 
+from lib.ai.abstract import AbstractModel
+from lib.ai.manager import LLMManager
+
 logger = logging.getLogger(__name__)
 
 class ChatSettingsKey(StrEnum):
@@ -62,3 +65,10 @@ class ChatSettingsValue:
 
     def toList(self, separator: str = ",", dropEmpty: bool = True) -> List[str]:
         return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]
+
+    def toModel(self, modelManager: LLMManager) -> AbstractModel:
+        ret = modelManager.getModel(self.value)
+        if ret is None:
+            logger.error(f"Model {self.value} not found")
+            raise ValueError(f"Model {self.value} not found")
+        return ret

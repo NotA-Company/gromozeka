@@ -29,7 +29,7 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
             logger.error(f"Invalid update type: {type(update)}")
             await coroutine
             return
-        
+
         chatId = None
         topicId = None
         if update.message:
@@ -40,12 +40,12 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
         key = f"{chatId}_{topicId}"
         #logger.debug(f"Processing update for chatId: {chatId}, topicId: {topicId}")
 
-        
+
         topicSemaphore = self.chatTopicMap.get(key, None)
         if not isinstance(topicSemaphore, asyncio.Semaphore):
             topicSemaphore = asyncio.BoundedSemaphore(1)
             self.chatTopicMap[key] = topicSemaphore
-            
+
         async with topicSemaphore:
             #logger.debug(f"awaiting corutine for chatId: {chatId}, topicId: {topicId}")
             await coroutine
@@ -71,12 +71,11 @@ class BotApplication:
         # Command handlers
         self.application.add_handler(CommandHandler("start", self.handlers.start_command))
         self.application.add_handler(CommandHandler("help", self.handlers.help_command))
-        self.application.add_handler(CommandHandler("stats", self.handlers.stats_command))
         self.application.add_handler(CommandHandler("echo", self.handlers.echo_command))
         self.application.add_handler(CommandHandler("models", self.handlers.models_command))
         self.application.add_handler(CommandHandler("test", self.handlers.test_command))
         # Chat commands
-        self.application.add_handler(CommandHandler("summary", self.handlers.summary_command))
+        self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
         self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
         self.application.add_handler(CommandHandler(["set", "unset"], self.handlers.set_or_unset_chat_setting_command))
 

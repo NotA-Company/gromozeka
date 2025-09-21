@@ -95,19 +95,6 @@ class DatabaseWrapper:
     def _initDatabase(self):
         """Initialize the database with required tables."""
         with self.getCursor() as cursor:
-            # Users table for storing user information
-            # TODO: Rethink and rewrite it
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    last_name TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
             # Settings table for storing key-value pairs
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -115,19 +102,6 @@ class DatabaseWrapper:
                     value TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Messages table for storing message history (optional)
-            # TODO: Rethink and rewrite it, maybe use chat messages table instead
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    message_text TEXT NOT NULL,
-                    reply_text TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
             """)
 
@@ -222,41 +196,6 @@ class DatabaseWrapper:
                 )
             """)
 
-    def saveUser(self, userId: int, userName: Optional[str] = None,
-                  firstName: Optional[str] = None, lastName: Optional[str] = None) -> bool:
-        """Save or update user information."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT OR REPLACE INTO users
-                    (user_id, username, first_name, last_name, updated_at)
-                    VALUES (:userId, :userName, :firstName, :lastName, CURRENT_TIMESTAMP)
-                """,
-                    {
-                        "userId": userId,
-                        "userName": userName,
-                        "firstName": firstName,
-                        "lastName": lastName,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to save user {userId}: {e}")
-            return False
-
-    # DEPRECATED
-    def getUser(self, userId: int) -> Optional[Dict[str, Any]]:
-        """Get user information by user_id."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute("SELECT * FROM users WHERE user_id = ?", (userId,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
-        except Exception as e:
-            logger.error(f"Failed to get user {userId}: {e}")
-            return None
-
     def setSetting(self, key: str, value: str) -> bool:
         """Set a configuration setting."""
         try:
@@ -297,43 +236,6 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get settings: {e}")
             return {}
-
-    def savePrivateMessage(
-        self, userId: int, messageText: str, replyText: str = ""
-    ) -> bool:
-        """Save a message to the database."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO messages (user_id, message_text, reply_text)
-                    VALUES (:userId, :messageText, :replyText)
-                """,
-                    {
-                        "userId": userId,
-                        "messageText": messageText,
-                        "replyText": replyText,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to save message from user {userId}: {e}")
-            return False
-
-    def getUserMessages(self, userId: int, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent messages from a user."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute("""
-                    SELECT * FROM messages
-                    WHERE user_id = ?
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                """, (userId, limit))
-                return [dict(row) for row in cursor.fetchall()]
-        except Exception as e:
-            logger.error(f"Failed to get messages for user {userId}: {e}")
-            return []
 
     def saveChatMessage(
         self,
@@ -414,7 +316,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
             return False
 
-    def getChatMessageSince(self, chatId: int, sinceDateTime: Optional[datetime.datetime], threadId: Optional[int] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def getChatMessagesSince(self, chatId: int, sinceDateTime: Optional[datetime.datetime] = None, threadId: Optional[int] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get chat messages from a specific chat newer than the given date."""
         logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:
@@ -516,6 +418,7 @@ class DatabaseWrapper:
                         (:chatId, :userId, :username, :fullName, CURRENT_TIMESTAMP)
                     ON CONFLICT(chat_id, user_id) DO UPDATE SET
                         username = excluded.username,
+                        full_name = excluded.full_name,
                         updated_at = CURRENT_TIMESTAMP
                 """,
                     {
@@ -655,14 +558,14 @@ class DatabaseWrapper:
                 cursor.execute(
                     """
                     INSERT INTO media_attachments
-                        (file_unique_id, file_id, file_size, 
-                               media_type, metadata, status, 
+                        (file_unique_id, file_id, file_size,
+                               media_type, metadata, status,
                                mime_type, local_url, prompt,
                                description
                                )
                     VALUES
-                        (:fileUniqueId, :fileId, :fileSize, 
-                               :mediaType, :metadata, :status, 
+                        (:fileUniqueId, :fileId, :fileSize,
+                               :mediaType, :metadata, :status,
                                :mimeType, :localUrl, :prompt,
                                :description)
                 """,
