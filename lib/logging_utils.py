@@ -52,17 +52,26 @@ def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None
         localLogger.addHandler(consoleHandler)
         logger.info(f"Logging {localLogger.name} to console, logLevel: {consoleLogLevel}")
 
-    # Add file handler if specified
+    fileLogs = {}
     if "file" in config:
-        logFile = config["file"]
+        fileLogs["file"] = {
+            "file": config["file"],
+            "level": config.get("file-level", None),
+        }
+    if "error-file" in config:
+        fileLogs["error-file"] = {
+            "file": config["error-file"],
+            "level": "ERROR",
+        }
+    # Add file handler if specified
+    for logType, logConfig in fileLogs.items():
+        logFile = logConfig["file"]
         try:
             # Create log directory if it doesn't exist
             logPath = Path(logFile)
             logPath.parent.mkdir(parents=True, exist_ok=True)
 
-            fileLogLevel = logLevel
-            if "file-level" in config:
-                fileLogLevel = getLogLevelByStr(config["file-level"], logLevel)
+            fileLogLevel = getLogLevelByStr(logConfig["level"], logLevel)
             if fileLogLevel is None:
                 fileLogLevel = logLevel
 
@@ -81,9 +90,9 @@ def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None
             fileHandler.setLevel(fileLogLevel)
             fileHandler.setFormatter(formatter)
             localLogger.addHandler(fileHandler)
-            logger.info(f"Logging {localLogger.name} to file: {logFile}, logLevel: {fileLogLevel}")
+            logger.info(f"Logging {localLogger.name}#{logType} to file: {logFile}, logLevel: {fileLogLevel}")
         except Exception as e:
-            logger.error(f"Failed to setup file logging for {localLogger.name}: {e}")
+            logger.error(f"Failed to setup {logType} logging for {localLogger.name}: {e}")
 
 
 def initLogging(config: Dict[str, Any]) -> None:

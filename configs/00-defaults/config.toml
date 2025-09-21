@@ -52,6 +52,7 @@ format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 console = true
 # Optional: log to file (uncomment to enable)
 file = "logs/gromozeka.log"
+error-file = "logs/gromozeka.err.log"
 rotate = true
 
 [logging.logger."openai._base_client"]
