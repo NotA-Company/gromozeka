@@ -7,9 +7,10 @@ import json
 import logging
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
-from telegram import Message
+from telegram import Chat, Message, User
+import telegram.constants
 
 import lib.utils as utils
 
@@ -53,90 +54,163 @@ Raises:
 """
 class EnsuredMessage:
 
-    def __init__(self, message: Message):
-        self._message = message
+    def __init__(self,
+                 user: User,
+                 chat: Chat,
+                 messageId: int,
+                 date: datetime.datetime,
+                 messageText: str = "",
+                 messageType: MessageType = MessageType.UNKNOWN,
+                 ):
 
-        if not message.from_user:
-            raise ValueError("Message User undefined")
+        self._message: Optional[Message] = None
 
-        self.user = message.from_user
+        self.user: User = user
+        self.chat: Chat= chat
 
-        if not message.chat:
-            raise ValueError("Message Chat undefined")
-        self.chat = message.chat
-
-        self.messageId = message.message_id
-        self.date = message.date
-        self.messageText: str = ""
-        self.messageType: MessageType = MessageType.TEXT
-
-        # If there are photo in message, set proper type + handle caption (if any) as messageText
-        if message.photo:
-            self.messageType = MessageType.IMAGE
-            if message.caption:
-                self.messageText = message.caption
-
-        if message.sticker:
-            self.messageType = MessageType.STICKER
-            self.messageText = message.sticker.emoji if message.sticker.emoji else ""
-
-        if self.messageType == MessageType.TEXT:
-            if not message.text:
-                # Probably not a text message, just log it for now
-                logger.error(f"Message text undefined: {message}")
-                self.messageType = MessageType.UNKNOWN
-            else:
-                self.messageText = message.text
+        self.messageId: int = messageId
+        self.date: datetime.datetime = date
+        self.messageText: str = messageText
+        self.messageType: MessageType = messageType
 
         # If this is reply, then set replyId and replyText
         self.replyId: Optional[int] = None
         self.replyText: Optional[str] = None
-        self.isReply = False
-        self.isQuote = False
+        self.isReply: bool = False
+        self.isQuote: bool = False
         self.quoteText: Optional[str] = None
-        if message.reply_to_message:
-            # If reply_to_message is message about creating topic, then it isn't reply
-            if message.reply_to_message.forum_topic_created is None:
-                self.replyId = message.reply_to_message.message_id
-                self.isReply = True
-                if message.reply_to_message.text:
-                    self.replyText = message.reply_to_message.text
-                if message.quote and message.quote.text:
-                    self.isQuote = True
-                    self.quoteText = message.quote.text
 
         # If this is topic message, then set threadId
         self.threadId: Optional[int] = None
-        self.isTopicMessage = message.is_topic_message == True if message.is_topic_message is not None else False
-        if self.isTopicMessage:
-            self.threadId = message.message_thread_id
+        self.isTopicMessage: bool = False
 
         self.mediaContent: Optional[str] = None
         self.mediaId: Optional[str] = None
-        self.mediaProcessingInfo: Optional[MediaProcessingInfo] = None
+        self._mediaProcessingInfo: Optional[MediaProcessingInfo] = None
 
-        logger.debug(f"Ensured Message: {self}")
+    @classmethod
+    def fromMessage(cls, message: Message) -> 'EnsuredMessage':
+        """Create EnsuredMessage from Telegram message"""
+        if not message.from_user:
+            raise ValueError("Message User undefined")
+
+        if not message.chat:
+            raise ValueError("Message Chat undefined")
+
+        messageText: str = ""
+        messageType: MessageType = MessageType.TEXT
+
+        # If there are photo in message, set proper type + handle caption (if any) as messageText
+        if message.photo:
+            messageType = MessageType.IMAGE
+            if message.caption:
+                messageText = message.caption
+
+        if message.sticker:
+            messageType = MessageType.STICKER
+            messageText = message.sticker.emoji if message.sticker.emoji else ""
+
+        if messageType == MessageType.TEXT:
+            if not message.text:
+                # Probably not a text message, just log it for now
+                logger.error(f"Message text undefined: {message}")
+                messageType = MessageType.UNKNOWN
+            else:
+                messageText = message.text
+
+        ensuredMessage = EnsuredMessage(
+            user=message.from_user,
+            chat=message.chat,
+            messageId=message.message_id,
+            date=message.date,
+            messageText=messageText,
+            messageType=messageType,
+        )
+        ensuredMessage.setBaseMessage(message)
+
+        # If this is reply, then set replyId and replyText
+        if message.reply_to_message:
+            # If reply_to_message is message about creating topic, then it isn't reply
+            if message.reply_to_message.forum_topic_created is None:
+                ensuredMessage.replyId = message.reply_to_message.message_id
+                ensuredMessage.isReply = True
+                if message.reply_to_message.text:
+                    ensuredMessage.replyText = message.reply_to_message.text
+                if message.quote and message.quote.text:
+                    ensuredMessage.isQuote = True
+                    ensuredMessage.quoteText = message.quote.text
+
+        # If this is topic message, then set threadId
+        isTopicMessage = message.is_topic_message == True if message.is_topic_message is not None else False
+        if isTopicMessage:
+            ensuredMessage.isTopicMessage = True
+            ensuredMessage.threadId = message.message_thread_id
+
+        logger.debug(f"Ensured Message from Telegram: {ensuredMessage}")
+        return ensuredMessage
+
+    @classmethod
+    def fromDBChatMessage(cls, data: Dict[str, Any]) -> 'EnsuredMessage':
+        """Create EnsuredMessage from DB chat message"""
+        ensuredMessage = EnsuredMessage(
+            user=User(
+                id=data["user_id"],
+                first_name=data["full_name"],
+                is_bot=data["message_category"] == "bot",
+                username=data["username"],
+            ),
+            chat=Chat(
+                id=data["chat_id"],
+                type=telegram.constants.ChatType.SUPERGROUP,
+            ),
+            messageId=data["message_id"],
+            date=data["date"],
+            messageText=data["message_text"],
+            messageType=MessageType(data["message_type"]),
+        )
+
+        ensuredMessage.replyId = data["reply_id"]
+        #ensuredMessage.replyText: Optional[str] = None
+        ensuredMessage.isReply = data["reply_id"] is not None
+        
+        ensuredMessage.quoteText = data["quote_text"]
+        ensuredMessage.isQuote = data["quote_text"] is not None
+
+        # If this is topic message, then set threadId
+        ensuredMessage.threadId = data["thread_id"]
+        ensuredMessage.isTopicMessage = data["thread_id"] != 0
+
+        ensuredMessage.mediaContent = data["media_description"]
+        ensuredMessage.mediaId = data["media_id"]
+
+        logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
+        return ensuredMessage
 
     def getBaseMessage(self) -> Message:
+        if self._message is None:
+            raise ValueError("Message is not set")
         return self._message
+
+    def setBaseMessage(self, message: Message):
+        self._message = message
 
     def setMediaId(self, mediaId: str):
         self.mediaId = mediaId
 
     def setMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
-        self.mediaProcessingInfo = mediaProcessingInfo
+        self._mediaProcessingInfo = mediaProcessingInfo
         self.mediaId = mediaProcessingInfo.id
 
     async def updateMediaContent(self, db: DatabaseWrapper) -> None:
         """
         Set the media content of the message from DB.
         """
-        if self.mediaProcessingInfo:
-            await self.mediaProcessingInfo.awaitResult()
+        if self._mediaProcessingInfo:
+            await self._mediaProcessingInfo.awaitResult()
 
         if self.mediaId is None:
             return
-        
+
         mediaAttachment = await self.__class__.awaitMedia(db, self.mediaId)
         if mediaAttachment.get("description", None) is not None:
             self.mediaContent = mediaAttachment["description"]
@@ -174,7 +248,7 @@ class EnsuredMessage:
                 case _:
                     logger.error(f"Media#{mediaId} has invalid status: {mediaAttachment['status']}")
                     return mediaAttachment
-        
+
         logger.error(f"Media#{mediaId} processing timed out")
         return mediaAttachment
 
@@ -201,6 +275,8 @@ class EnsuredMessage:
 
             case LLMMessageFormat.TEXT:
                 ret = messageText
+                if self.mediaContent:
+                    ret = f"<media-description>{self.mediaContent}</media-description>\n\n{ret}"
                 if self.isQuote and self.quoteText:
                     ret = f"<quote>{self.quoteText}</quote>\n\n{ret}"
                 return ret
@@ -209,42 +285,8 @@ class EnsuredMessage:
 
     @classmethod
     async def formatDBChatMessageToLLM(cls, db: DatabaseWrapper, data: Dict[str, Any], format: LLMMessageFormat = LLMMessageFormat.JSON, replaceMessageText: Optional[str] = None) -> str:
-        # TODO: Somehow merge with prevoius method
-        messageText = data["message_text"] if replaceMessageText is None else replaceMessageText
-
-        # Update media content if needed
-        if data.get("media_id", None) is not None:
-            mediaId = data["media_id"]
-            status = MediaStatus(data.get('media_status', MediaStatus.FAILED))
-            if status != MediaStatus.DONE:
-                mediaAttachment = await cls.awaitMedia(db, mediaId)
-                if mediaAttachment.get("description", None) is not None:
-                    data["media_description"] = mediaAttachment["description"]
-
-        match format:
-            case LLMMessageFormat.JSON:
-                ret = {
-                    "login": data["username"],
-                    "name": data["full_name"],
-                    "date": data["date"].isoformat(),
-                    "type": data["message_type"],
-                    "text": messageText,
-                }
-                if data.get("quote_text", None):
-                    ret["quote"] = data["quote_text"]
-
-                if data.get("media_description", None):
-                    ret["media_description"] = data["media_description"]
-
-                # logger.debug(f"EM.formatDBChatMessageToLLM():{data} -> {ret}")
-                return json.dumps(ret, ensure_ascii=False, default=str)
-            case LLMMessageFormat.TEXT:
-                ret = messageText
-                if data.get("quote_text", None):
-                    ret = f"<quote>{data["quote_text"]}</quote>\n\n{ret}"
-                return ret
-
-        raise ValueError(f"Invalid format: {format}")
+        ensuredMessage = cls.fromDBChatMessage(data)
+        return await ensuredMessage.formatForLLM(db, format, replaceMessageText)
 
     def __str__(self) -> str:
         return json.dumps(
