@@ -32,13 +32,13 @@ from .chat_settings import ChatSettingsKey, ChatSettingsValue
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PRIVATE_PROMPT = "Ты - Принни: вайбовый, но умный пингвин из Disgaea, мужчина. При ответе ты можешь использовать Markdown форматирование."
 ROBOT_EMOJI = "🤖"
 DUNNO_EMOJI = "🤷‍♂️"
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 MAX_QUEUE_LENGTH = 10
 MAX_QUEUE_AGE = 30 * 60 # 30 minutes
 PROCESSING_TIMEOUT = 30 * 60 # 30 minutes
+PRIVATE_CHAT_CONTEXT_LENGTH = 50
 
 def makeEmptyAsyncTask() -> asyncio.Task:
     """Create an empty async task."""
@@ -59,11 +59,6 @@ class BotHandlers:
         botDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
             k: ChatSettingsValue(v) for k, v in self.config.get("defaults", {}).items() if k in ChatSettingsKey
         }
-
-        # TODO: Add wrappers for private chats (or use chats settings for private as well)
-        self.privateModel = str(self.config.get("defaults",{}).get("private-model", "yandexgpt-lite"))
-        self.fallbackModel = str(self.config.get("defaults",{}).get(ChatSettingsKey.FALLBACK_MODEL, "yandexgpt-lite"))
-        self.privatePrompt = str(self.config.get("defaults",{}).get("private-prompt", DEFAULT_PRIVATE_PROMPT))
 
         self.chatDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
             k: ChatSettingsValue('') for k in ChatSettingsKey
@@ -87,122 +82,6 @@ class BotHandlers:
     ###
     def updateDefaults(self) -> None:
         pass
-
-    def getSummaryPrompt(self, chatId: Optional[int] = None) -> str:
-        """Get the system prompt for summarising messages."""
-        if not chatId:
-            return self.chatDefaults[ChatSettingsKey.SUMMARY_PROMPT].toStr()
-
-        chatSettings = self.getChatSettings(chatId)
-        return chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
-
-    def getChatPrompt(self, chatId: Optional[int] = None) -> str:
-        """Get the system prompt for chatting."""
-        if not chatId:
-            return self.chatDefaults[ChatSettingsKey.CHAT_PROMPT].toStr()
-
-        chatSettings = self.getChatSettings(chatId)
-        return chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
-
-    def getPrivatePrompt(self, chatId: Optional[int] = None) -> str:
-        """Get the system prompt for private messages."""
-        if not chatId:
-            return self.privatePrompt
-        # TODO: Try to get it from the database
-        return self.privatePrompt
-
-    def getSummaryModel(self, chatId: Optional[int] = None) -> AbstractModel:
-        """Get the model for summarising messages."""
-
-        modelName = self.chatDefaults[ChatSettingsKey.SUMMARY_MODEL]
-        if chatId:
-            chatSettings = self.getChatSettings(chatId)
-            modelName = chatSettings.get(ChatSettingsKey.SUMMARY_MODEL, modelName)
-
-        ret = self.llmManager.getModel(modelName.toStr())
-        if ret is None:
-            logger.error(f"Model {modelName} not found")
-            raise ValueError(f"Model {modelName} not found")
-        return ret
-
-    def getChatModel(self, chatId: Optional[int] = None) -> AbstractModel:
-        """Get the model for chatting."""
-        modelName = self.chatDefaults[ChatSettingsKey.CHAT_MODEL]
-
-        if chatId:
-            chatSettings = self.getChatSettings(chatId)
-            modelName = chatSettings.get(ChatSettingsKey.CHAT_MODEL, modelName)
-
-        ret = self.llmManager.getModel(modelName.toStr())
-        if ret is None:
-            logger.error(f"Model {modelName} not found")
-            raise ValueError(f"Model {modelName} not found")
-        return ret
-
-    def getPrivateModel(self, chatId: Optional[int] = None) -> AbstractModel:
-        """Get the model for private messages."""
-        modelName = self.privateModel
-        if chatId:
-            # TODO: Try to get it from the database
-            pass
-
-        ret = self.llmManager.getModel(modelName)
-        if ret is None:
-            logger.error(f"Model {modelName} not found")
-            raise ValueError(f"Model {modelName} not found")
-        return ret
-
-    def getFallbackModel(self, chatId: Optional[int] = None) -> AbstractModel:
-        """Get the model for fallback messages."""
-        modelName = self.chatDefaults[ChatSettingsKey.FALLBACK_MODEL]
-        if chatId:
-            chatSettings = self.getChatSettings(chatId)
-            modelName = chatSettings.get(ChatSettingsKey.FALLBACK_MODEL, modelName)
-
-        ret = self.llmManager.getModel(modelName.toStr())
-        if ret is None:
-            logger.error(f"Model {modelName} not found")
-            raise ValueError(f"Model {modelName} not found")
-        return ret
-
-    def getFallbackSummaryModel(self, chatId: Optional[int] = None) -> AbstractModel:
-        """Get the model for fallback messages."""
-        modelName = self.chatDefaults[ChatSettingsKey.SUMMARY_FALLBACK_MODEL]
-        if chatId:
-            chatSettings = self.getChatSettings(chatId)
-            modelName = chatSettings.get(ChatSettingsKey.SUMMARY_FALLBACK_MODEL, modelName)
-
-        ret = self.llmManager.getModel(modelName.toStr())
-        if ret is None:
-            logger.error(f"Model {modelName} not found")
-            raise ValueError(f"Model {modelName} not found")
-        return ret
-
-    def getImageParsingModel(self, chatId: Optional[int] = None) -> AbstractModel:
-        """Get the model for fallback messages."""
-        modelName = self.chatDefaults[ChatSettingsKey.IMAGE_PARSING_MODEL]
-        if chatId:
-            chatSettings = self.getChatSettings(chatId)
-            modelName = chatSettings.get(ChatSettingsKey.IMAGE_PARSING_MODEL, modelName)
-
-        ret = self.llmManager.getModel(modelName.toStr())
-        if ret is None:
-            logger.error(f"Model {modelName} not found")
-            raise ValueError(f"Model {modelName} not found")
-        return ret
-
-    def getImageGenerationModel(self, chatId: Optional[int] = None) -> AbstractModel:
-        """Get the model for fallback messages."""
-        modelName = self.chatDefaults[ChatSettingsKey.IMAGE_GENERATION_MODEL]
-        if chatId:
-            chatSettings = self.getChatSettings(chatId)
-            modelName = chatSettings.get(ChatSettingsKey.IMAGE_GENERATION_MODEL, modelName)
-
-        ret = self.llmManager.getModel(modelName.toStr())
-        if ret is None:
-            logger.error(f"Model {modelName} not found")
-            raise ValueError(f"Model {modelName} not found")
-        return ret
 
     ###
     # Chat settings Managenent
@@ -409,15 +288,14 @@ class BotHandlers:
                     if replyMessage.photo:
                         media = await self.processImage(ensuredReplyMessage, context, mediaPrompt)
                         ensuredReplyMessage.setMediaProcessingInfo(media)
-                        
-                    if isGroupChat:
+
+                    if isGroupChat or isPrivate:
                         self._saveChatMessage(
                             ensuredReplyMessage, messageCategory="bot"
                         )
-                    elif isPrivate:
-                        logger.error(f"Saving private message is not implemented yet")
                     else:
                         raise ValueError("Unknown chat type")
+
             except Exception as e:
                 logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
                 logger.exception(e)
@@ -446,10 +324,11 @@ class BotHandlers:
         useTools: bool = False,
     ) -> ModelRunResult:
         """Call the LLM with the given messages."""
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
         async def generateAndSendImage(image_prompt: str, image_description:Optional[str] = None, **kwargs) -> str:
             logger.debug(f"Generating image: {image_prompt}. Image description: {image_description}, mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
-            model = self.getImageGenerationModel(ensuredMessage.chat.id)
+            model = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
 
             mlRet = await model.generateImage([ModelMessage(content=image_prompt)])
             logger.debug(f"Generated image Data: {mlRet} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
@@ -527,7 +406,7 @@ class BotHandlers:
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 toolsUsed = True
                 newMessages = [ret.toModelMessage()]
-                
+
                 for toolCall in ret.toolCalls:
                     newMessages.append(
                         ModelMessage(
@@ -604,20 +483,21 @@ class BotHandlers:
     ) -> bool:
         """Send a chat message to the LLM model."""
         logger.debug(f"LLM Request messages: {messagesHistory}")
-        llmModel = self.getChatModel(ensuredMessage.chat.id)
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
         mlRet: Optional[ModelRunResult] = None
+
         try:
             # mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
             mlRet = await self._generateTextViaLLM(
                 model=llmModel,
                 messages=ModelMessage.fromDictList(messagesHistory),
-                fallbackModel=self.getFallbackModel(),
+                fallbackModel=chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager),
                 ensuredMessage=ensuredMessage,
                 context=context,
                 useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
             )
-            logger.debug(f"LLM Response: {mlRet}")
+            #logger.debug(f"LLM Response: {mlRet}")
         except Exception as e:
             logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
             logger.exception(e)
@@ -661,85 +541,17 @@ class BotHandlers:
 
         match chatType:
             case Chat.PRIVATE:
-                return await self.handle_private_message(update, context)
+                return await self.handle_chat_message(update, context)
             case Chat.GROUP:
-                return await self.handle_group_message(update, context)
+                return await self.handle_chat_message(update, context)
             case Chat.SUPERGROUP:
-                return await self.handle_group_message(update, context)
+                return await self.handle_chat_message(update, context)
             case Chat.CHANNEL:
                 logger.error(f"Unsupported chat type: {chatType}")
             case _:
                 logger.error(f"Unsupported chat type: {chatType}")
 
-    async def handle_private_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        message = update.message
-        if not message:
-            # Not new message, ignore
-            # logger.error("Message undefined")
-            return
-
-        ensuredMessage : Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        user = ensuredMessage.user
-
-        # Save user and message to database
-        self.db.saveUser(
-            userId=user.id,
-            userName=user.username,
-            firstName=user.first_name,
-            lastName=user.last_name
-        )
-
-        messages = self.db.getUserMessages(user.id, limit=10)
-        reqMessages = [
-            {
-                "role": "system",
-                "content": self.getPrivatePrompt(chatId=user.id),
-            },
-        ]
-
-        for msg in reversed(messages):
-            reqMessages.append({
-                "role": "user",
-                "content": msg["message_text"],
-            })
-            if message["reply_text"]:
-                reqMessages.append({
-                    "role": "assistant",
-                    "content": msg["reply_text"],
-                })
-        reqMessages.append({
-            "role": "user",
-            "content": ensuredMessage.messageText,
-        })
-
-        logger.debug(f"LLM Request messages: {reqMessages}")
-        reply = ""
-        llmModel = self.getPrivateModel(chatId=user.id)
-        try:
-            mlRet = await llmModel.generateTextWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackModel())
-            logger.debug(f"LLM Response: {mlRet}")
-            reply = mlRet.resultText
-            if mlRet.isFallback:
-                reply = f"{ROBOT_EMOJI} {reply}"
-        except Exception as e:
-            logger.error(f"Error while running LLM: {type(e).__name__}#{e}")
-            reply = f"Error while running LLM: {type(e).__name__}#{e}"
-
-        self.db.savePrivateMessage(user.id, ensuredMessage.messageText, replyText=reply)
-        await self._sendMessage(
-            ensuredMessage,
-            context,
-            messageText=reply,
-        )
-        logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
-
-    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handle_chat_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.debug(f"Handling group message: {update}")
         message = update.message
         if not message:
@@ -780,19 +592,19 @@ class BotHandlers:
             logger.error("Failed to save chat message")
 
         # Check if message is a reply to our message
-        if await self.handleGroupReply(update, context, ensuredMessage):
+        if await self.handleReply(update, context, ensuredMessage):
             return
 
-        # Check if we was custom-mentioned
-        if await self.handleGroupCustomMention(update, context, ensuredMessage):
+        # Check if we was mentioned
+        if await self.handleMention(update, context, ensuredMessage):
             return
 
-        # If our bot has mentioned, answer somehow
-        await self.handleGroupMention(update, context, ensuredMessage)
+        if ensuredMessage.chat.type == Chat.PRIVATE:
+            await self.handlePrivateMessage(update, context, ensuredMessage)
 
         logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
 
-    async def handleGroupReply(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
+    async def handleReply(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
         """
         Check if message is a reply to our message and handle it
         """
@@ -861,7 +673,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": self.getChatPrompt(chat.id),
+                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr(),
             },
         ] + storedMessages
 
@@ -870,72 +682,7 @@ class BotHandlers:
 
         return True
 
-    async def handleGroupMention(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
-        """
-        Check if bot has been mentioned in the message
-        """
-        # TODO: Should I handle whole thread if any?
-
-        # logger.debug(f"Bot is: {context.bot.bot} {context.bot.username}")
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
-        myUsername = context.bot.username.lower()
-        mentionedMe = False
-        message = ensuredMessage.getBaseMessage()
-        messageText = ensuredMessage.messageText
-
-        for entity in message.entities:
-            if entity.type == MessageEntityType.MENTION:
-                mentionText = messageText[entity.offset:entity.offset + entity.length]
-
-                # Проверяем, совпадает ли упоминание с именем бота
-                if mentionText.lower() == f"@{myUsername}":
-                    mentionedMe = True
-                    break
-
-        if not mentionedMe:
-            return False
-
-        reqMessages = [
-            {
-                "role": "system",
-                "content": self.getChatPrompt(ensuredMessage.chat.id),
-            }
-        ]
-
-        isReplyToMyMessage = False
-        if (
-            ensuredMessage.replyId
-            and message.reply_to_message
-            and message.reply_to_message.from_user
-            and message.reply_to_message.from_user.id == context.bot.id
-        ):
-            isReplyToMyMessage = True
-
-        if ensuredMessage.replyText and message.reply_to_message:
-            ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
-
-            reqMessages.append(
-                {
-                    "role": "assistant" if isReplyToMyMessage else "user",
-                    "content": await ensuredReply.formatForLLM(self.db, format=llmMessageFormat),
-                }
-            )
-
-        reqMessages.append(
-            {
-                "role": "user",
-                "content": await ensuredMessage.formatForLLM(self.db, format=llmMessageFormat),
-            }
-        )
-
-        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
-            logger.error("Failed to send LLM reply")
-            return False
-
-        return True
-
-    async def handleGroupCustomMention(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
+    async def handleMention(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
         """
         Check if bot has been mentioned in the message
         """
@@ -949,15 +696,25 @@ class BotHandlers:
             return False
         myUserName = "@" + context.bot.username.lower()
         messageText = ensuredMessage.messageText
-        matched = False
+        mentionedAtBegin = False
+        mentionedMe = False
+        mentionedByNick = False
+
+        for entity in message.entities:
+            if entity.type == MessageEntityType.MENTION:
+                mentionText = messageText[entity.offset:entity.offset + entity.length]
+
+                # Проверяем, совпадает ли упоминание с именем бота
+                if mentionText.lower() == f"{myUserName}":
+                    mentionedMe = True
+                    break
 
         # Remove leading @username from messageText if any
         if messageText.lower().startswith(myUserName):
             messageText = messageText[len(myUserName):].lstrip()
-            matched = True
+            mentionedAtBegin = True
 
         messageTextLower = messageText.lower()
-        found = False
         for mention in customMentions:
             if messageTextLower.startswith(mention):
                 # If we found a mention, remove it from the messageText
@@ -969,15 +726,18 @@ class BotHandlers:
                         # If this mention is just part of word, skip it
                         continue
                 messageText = messageText[len(mention):].lstrip("\t\n\r ,.:")
-                found = True
+                mentionedByNick = True
                 break
 
-        if not found and not matched:
+        if not mentionedByNick and not mentionedAtBegin and not mentionedMe:
             return False
 
         messageTextLower = messageText.lower()
-        # TODO: Add custom actions
 
+        ###
+        # Random choose from users who were active today
+        ###
+        # TODO: Save to DB
         whoToday = "кто сегодня "
         if messageTextLower.startswith(whoToday):
             userTitle = messageText[len(whoToday):].strip()
@@ -1003,7 +763,9 @@ class BotHandlers:
 
         # End of Who Today
 
-        # what there? Return parsed content of replied message (if any)
+        ###
+        # what there? Return parsed media content of replied message (if any)
+        ###
         whatThereList = ["что там"]
 
         isWhatThere = False
@@ -1043,11 +805,10 @@ class BotHandlers:
         # End of What There
 
         # Handle LLM Action
-
         reqMessages = [
             {
                 "role": "system",
-                "content": self.getChatPrompt(ensuredMessage.chat.id),
+                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr(),
             },
         ]
 
@@ -1093,13 +854,49 @@ class BotHandlers:
 
         return True
 
+    async def handlePrivateMessage(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
+        """ Process message in private chat """
+        # If it message in private chat and no other methods catched message,
+        # then just do LLM answer with context of last PRIVATE_CHAT_CONTEXT_LENGTH messages
+
+        messages = self.db.getChatMessagesSince(ensuredMessage.chat.id, limit=PRIVATE_CHAT_CONTEXT_LENGTH)
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+
+        # Handle LLM Action
+        reqMessages = [
+            {
+                "role": "system",
+                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr(),
+            },
+        ]
+        for message in reversed(messages):
+            reqMessages.append(
+                {
+                    "role": "assistant" if message["message_category"] == "bot" else "user",
+                    "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, message, llmMessageFormat),
+                }
+            )
+
+        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
+            logger.error("Failed to send LLM reply")
+            return False
+
+        return True
+
+    ###
+    # Processing media
+    ###
+
     async def _parseImage(self, ensuredMessage: EnsuredMessage, fileUniqueId: str, messages: List[ModelMessage]) -> Any:
         """
         Parse image content using LLM
         """
 
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+
         try:
-            llmModel = self.getImageParsingModel(ensuredMessage.chat.id)
+            llmModel = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
             logger.debug(f"Prompting Image {ensuredMessage.mediaId} LLM for image with prompt: {messages[:1]}")
             llmRet = await llmModel.generateText(messages)
             logger.debug(f"Image LLM Response: {llmRet}")
@@ -1316,7 +1113,7 @@ class BotHandlers:
                         mediaDate = mediaAttachment["updated_at"]
                         if not isinstance(mediaDate, datetime.datetime):
                             logger.error(f"Photo#{ret.id} attachment `updated_at` is not a datetime: {type(mediaDate).__name__}({mediaDate})")
-                            mediaDate = datetime.datetime.fromisoformat(mediaDate) 
+                            mediaDate = datetime.datetime.fromisoformat(mediaDate)
 
                         if utils.getAgeInSecs(mediaDate) > PROCESSING_TIMEOUT:
                             logger.warning(f"Photo#{ret.id} already in database but in status {mediaAttachment['status']} and is too old ({mediaDate}), reprocessing it")
@@ -1433,14 +1230,6 @@ class BotHandlers:
             logger.error("User or message undefined")
             return
 
-        # Save user to database
-        self.db.saveUser(
-            userId=user.id,
-            userName=user.username,
-            firstName=user.first_name,
-            lastName=user.last_name
-        )
-
         welcome_message = (
             f"Hello {user.first_name}! 👋\n\n"
             "I'm Gromozeka, your friendly Telegram bot, dood!\n\n"
@@ -1468,11 +1257,9 @@ class BotHandlers:
             "**Commands:**\n"
             "/start - Welcome message and bot introduction\n"
             "/help - Show this help message\n"
-            "/stats - Display your usage statistics\n"
             "/echo <message> - Echo your message back\n\n"
             "**Features:**\n"
             "• Message logging and statistics\n"
-            "• User data persistence\n"
             "• Simple conversation handling\n\n"
             "Just send me any text message and I'll respond, dood!"
         )
@@ -1481,38 +1268,6 @@ class BotHandlers:
             ensuredMessage,
             context,
             messageText=help_text,
-            saveMessage=False,
-            tryParseInputJSON=False,
-        )
-
-    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /stats command."""
-        if not update.message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage = EnsuredMessage.fromMessage(update.message)
-        user = ensuredMessage.user
-
-        # Get user data from database
-        user_data = self.db.getUser(user.id)
-        messages = self.db.getUserMessages(user.id, limit=100)
-
-        if user_data:
-            stats_text = (
-                f"📊 **Your Statistics**\n\n"
-                f"👤 **User:** {user_data['first_name']}\n"
-                f"🆔 **ID:** {user_data['user_id']}\n"
-                f"📅 **Joined:** {user_data['created_at']}\n"
-                f"💬 **Messages sent:** {len(messages)}\n"
-            )
-        else:
-            stats_text = "No statistics available. Send me a message first!"
-
-        await self._sendMessage(
-            ensuredMessage,
-            context,
-            messageText=stats_text,
             saveMessage=False,
             tryParseInputJSON=False,
         )
@@ -1543,7 +1298,7 @@ class BotHandlers:
             )
 
     async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /summary [<messages> <chunks> <chat_id>]command."""
+        """Handle the /[topic-]summary [<messages> <chunks> <chatId> <threadId>]command."""
         message = update.message
         if not message:
             logger.error("Message undefined")
@@ -1551,18 +1306,19 @@ class BotHandlers:
 
         maxBatches: Optional[int] = None
         maxMessages: Optional[int] = None
-        if context.args:
+        if context.args and len(context.args) > 0:
             try:
                 maxMessages = int(context.args[0])
                 if maxMessages < 1:
                     maxMessages = None
 
-                if len(context.args) > 1:
-                    maxBatches = int(context.args[1])
-                    if maxBatches < 1:
-                        maxBatches = None
+                maxBatches = int(context.args[1])
+                if maxBatches < 1:
+                    maxBatches = None
             except ValueError:
-                logger.error(f"Invalid argument: '{context.args[0:2]}' is not a valid number.")
+                logger.error(f"Invalid arguments: '{context.args[0:2]}' are not a valid number.")
+            except IndexError:
+                pass
 
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
@@ -1571,60 +1327,52 @@ class BotHandlers:
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
 
+        commandStr = ""
+        for entity in message.entities:
+            if entity.type == MessageEntityType.BOT_COMMAND:
+                commandStr = ensuredMessage.messageText[entity.offset:entity.offset+entity.length]
+                break
+
+        logger.debug(f"Command string: {commandStr}")
+        isTopicSummary = commandStr.startswith("/topic_summary")
+
+        # Summary command print summary for whole chat.
+        # Topic-summary prints summary for current topic, we threat default topic as 0
+        threadId = None
+        if isTopicSummary:
+            threadId = ensuredMessage.threadId if ensuredMessage.threadId else 0
+
         chat = ensuredMessage.chat
-        chatId = chat.id
-        threadId = ensuredMessage.threadId
-        chatType = chat.type
+        targetChatId = chat.id
 
-        if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
-            localChatId = None
-            userName = ensuredMessage.user.username
-            logger.debug(f"User {userName} called summarisation in private chat. Bot owners are {self.botOwners}")
-            if userName and userName.lower() in self.botOwners:
-                if context.args and len(context.args) >= 3:
-                    try:
-                        localChatId = int(context.args[2])
-                    except ValueError:
-                        logger.error(f"Invalid argument: '{context.args[2]}' is not a valid number.")
-                else:
-                    await self._sendMessage(
-                        ensuredMessage,
-                        context,
-                        messageText="Need to provide <messages>, <batches_limit> and <chatId> for summarization in private messages",
-                        saveMessage=False,
-                        tryParseInputJSON=False,
-                    )
-                    return
+        userName = ensuredMessage.user.username
+        # Allow bot owners to ask for summarisation of any chat
+        if userName and userName.lower() in self.botOwners and context.args and len(context.args) >= 3:
+            try:
+                targetChatId = int(context.args[2])
+                threadId = int(context.args[3])
+            except ValueError:
+                logger.error(f"Invalid arguments: '{context.args[2:4]}' are not a valid number.")
+            except IndexError:
+                pass
 
-            if localChatId is None:
-                await self._sendMessage(
-                        ensuredMessage,
-                        context,
-                        messageText="This command is only available in groups and supergroups for now.",
-                        saveMessage=False,
-                        tryParseInputJSON=False,
-                    )
-                return
-            else:
-                chatId = localChatId
-                threadId = None
-
-        logger.debug(f"Getting summary for chat {chatId}, thread {threadId}, maxBatches {maxBatches}, maxMessages {maxMessages}")
+        logger.debug(f"Getting summary for chat {targetChatId}, thread {threadId}, maxBatches {maxBatches}, maxMessages {maxMessages}")
         today = datetime.datetime.now(datetime.timezone.utc)
         today = today.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        messages = self.db.getChatMessageSince(
-            chatId=chatId,
+        messages = self.db.getChatMessagesSince(
+            chatId=targetChatId,
             sinceDateTime=today if maxMessages is None else None,
             threadId=threadId,
             limit=maxMessages,
         )
 
         logger.debug(f"Messages: {messages}")
+        chatSettings = self.getChatSettings(chatId=targetChatId)
 
         systemMessage = {
             "role": "system",
-            "content": self.getSummaryPrompt(chatId=chatId),
+            "content": chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr(),
         }
         parsedMessages = []
 
@@ -1632,23 +1380,13 @@ class BotHandlers:
             parsedMessages.append(
                 {
                     "role": "user",
-                    "content": json.dumps(
-                        {   # TODO: Use EnsuredMessage... instead
-                            # date, chat_id, user_id, username, full_name, message_id, reply_id, thread_id, message_text, message_type
-                            "date": str(msg["date"]),
-                            "sender": msg["username"][1:],
-                            "message_id": msg["message_id"],
-                            "reply_id": msg["reply_id"],
-                            "text": msg["message_text"],
-                        },
-                        ensure_ascii=False,
-                    ),
+                    "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, msg, LLMMessageFormat.JSON),
                 }
             )
 
         reqMessages = [systemMessage] + parsedMessages
 
-        llmModel = self.getSummaryModel(chatId=chatId)
+        llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel(self.llmManager)
         # TODO: Move to config or ask from model somehow
         maxTokens = llmModel.getInfo()["context_size"]
         tokensCount = llmModel.getEstimateTokensCount(reqMessages)
@@ -1674,7 +1412,7 @@ class BotHandlers:
                 tokensCount = llmModel.getEstimateTokensCount(reqMessages)
                 if tokensCount > maxTokens:
                     if currentBatchLen == 1:
-                        resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: Bats has too many tokens ({tokensCount})")
+                        resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: Batch has too many tokens ({tokensCount})")
                         break
                     currentBatchLen = int(currentBatchLen // (tokensCount / maxTokens))
                     currentBatchLen -= 2
@@ -1686,12 +1424,18 @@ class BotHandlers:
                 mlRet: Optional[ModelRunResult] = None
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
-                    mlRet = await llmModel.generateTextWithFallBack(ModelMessage.fromDictList(reqMessages), self.getFallbackSummaryModel())
+                    mlRet = await llmModel.generateTextWithFallBack(
+                        ModelMessage.fromDictList(reqMessages),
+                        chatSettings[ChatSettingsKey.SUMMARY_FALLBACK_MODEL].toModel(
+                            self.llmManager
+                        ),
+                    )
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
                     logger.error(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}")
                     resMessages.append(f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}")
                     break
+
                 respText = mlRet.resultText
                 if mlRet.isFallback:
                     respText = f"{ROBOT_EMOJI} {respText}"

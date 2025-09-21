@@ -66,7 +66,7 @@ class EnsuredMessage:
         self._message: Optional[Message] = None
 
         self.user: User = user
-        self.chat: Chat= chat
+        self.chat: Chat = chat
 
         self.messageId: int = messageId
         self.date: datetime.datetime = date
@@ -157,7 +157,7 @@ class EnsuredMessage:
                 id=data["user_id"],
                 first_name=data["full_name"],
                 is_bot=data["message_category"] == "bot",
-                username=data["username"],
+                username=data["username"].lstrip("@"),
             ),
             chat=Chat(
                 id=data["chat_id"],
@@ -172,7 +172,7 @@ class EnsuredMessage:
         ensuredMessage.replyId = data["reply_id"]
         #ensuredMessage.replyText: Optional[str] = None
         ensuredMessage.isReply = data["reply_id"] is not None
-        
+
         ensuredMessage.quoteText = data["quote_text"]
         ensuredMessage.isQuote = data["quote_text"] is not None
 
@@ -261,9 +261,12 @@ class EnsuredMessage:
                     "login": self.user.name,
                     "name": self.user.full_name,
                     "date": self.date.isoformat(),
+                    "messageId": self.messageId,
                     "type": str(self.messageType),
                     "text": messageText,
                 }
+                if self.replyId:
+                    ret["replyId"] = self.replyId
                 if self.isQuote and self.quoteText:
                     ret["quote"] = self.quoteText
 
