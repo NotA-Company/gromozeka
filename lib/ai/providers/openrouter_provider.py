@@ -3,7 +3,7 @@ OpenRouter provider for LLM models, dood!
 """
 import logging
 from typing import Dict, Any
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from ..abstract import AbstractModel
 from .basic_openai_provider import BasicOpenAIModel, BasicOpenAIProvider
@@ -21,7 +21,7 @@ class OpenrouterModel(BasicOpenAIModel):
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        openAiClient: OpenAI,
+        openAiClient: AsyncOpenAI,
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize OpenRouter model, dood!"""

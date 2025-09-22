@@ -2,7 +2,7 @@
 Yandex Cloud SDK provider for LLM models, dood!
 """
 import logging
-from typing import Dict, List, Any
+from typing import Dict, Iterable, List, Any
 
 from yandex_cloud_ml_sdk import YCloudML
 from yandex_cloud_ml_sdk.auth import YandexCloudCLIAuth
@@ -80,7 +80,7 @@ class YcSdkModel(AbstractModel):
     def _statusToModelRunResultStatus(self, status: int) -> ModelResultStatus:
         return ModelResultStatus(status)
 
-    async def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateText(self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the YC SDK model with given messages, dood!
 
         Args:
@@ -108,7 +108,7 @@ class YcSdkModel(AbstractModel):
             logger.error(f"Error running YC SDK model {self.modelId}: {e}")
             raise
 
-    async def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: Iterable[ModelMessage]) -> ModelRunResult:
         """Generate an image via the YC SDK model, dood"""
 
         if not self._ycModel:

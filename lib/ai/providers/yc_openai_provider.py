@@ -3,7 +3,7 @@ Yandex Cloud OpenAI-compatible provider for LLM models, dood!
 """
 import logging
 from typing import Dict, Any
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from ..abstract import AbstractModel
 from .basic_openai_provider import BasicOpenAIModel, BasicOpenAIProvider
@@ -24,7 +24,7 @@ class YcOpenaiModel(BasicOpenAIModel):
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        openAiClient: OpenAI,
+        openAiClient: AsyncOpenAI,
         folderId: str,
         extraConfig: Dict[str, Any] = {},
     ):
