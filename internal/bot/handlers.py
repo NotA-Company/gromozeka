@@ -1707,6 +1707,140 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
 
+    async def analyze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /analyze <prompt> command."""
+        # Analyse media with given prompt. Should be reply to message with media.
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+        
+        if not ensuredMessage.isReply or not message.reply_to_message:
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="Команда должна быть ответом на сообщение с медиа.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+        
+        parentMessage = message.reply_to_message
+        parentEnsuredMessage = ensuredMessage.fromMessage(parentMessage)
+        
+        commandStr = ""
+        prompt = ensuredMessage.messageText
+        for entity in message.entities:
+            if entity.type == MessageEntityType.BOT_COMMAND:
+                commandStr = ensuredMessage.messageText[entity.offset:entity.offset+entity.length]
+                prompt = ensuredMessage.messageText[entity.offset+entity.length:].strip()
+                break
+
+        logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
+
+        if not prompt:
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="Необходимо указать запрос для анализа медиа.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+        
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
+
+        mediaData: Optional[bytearray] = None
+        fileId: Optional[str] = None
+        fileUniqueId: Optional[str] = None
+        
+        match parentEnsuredMessage.messageType:
+            case MessageType.IMAGE:
+                if parentMessage.photo is None:
+                    raise ValueError("Photo is None")
+                # TODO: Should I try to get optimal image size like in processImage()? 
+                fileId = parentMessage.photo[-1].file_id
+                fileUniqueId = parentMessage.photo[-1].file_unique_id
+            case MessageType.STICKER:
+                if parentMessage.sticker is None:
+                    raise ValueError("Sticker is None")
+                fileId = parentMessage.sticker.file_id
+                fileUniqueId = parentMessage.sticker.file_unique_id
+            case _:
+                await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+                return
+        
+        mediaInfo = await context.bot.get_file(fileId)
+        logger.debug(f"Media info: {mediaInfo}")
+        mediaData = await mediaInfo.download_as_bytearray()
+
+        if not mediaData:
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="Не удалось получить данные медиа.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+        
+        mimeType = magic.from_buffer(bytes(mediaData), mime=True)
+        logger.debug(f"Mime type: {mimeType}")
+        if not mimeType.startswith("image/"):
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+        
+        reqMessages = [
+            ModelMessage(
+                role="system",
+                content=prompt,
+            ),
+            ModelImageMessage(
+                role="user",
+                #content="",
+                image=mediaData,
+            )
+        ]
+
+        llmRet = await parserLLM.generateText(reqMessages)
+        if llmRet.status != ModelResultStatus.FINAL:
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+
+        self._saveChatMessage(ensuredMessage, "user")
+        await self._sendMessage(
+            ensuredMessage,
+            context,
+            messageText=llmRet.resultText,
+            tryParseInputJSON=False,
+        )
+
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
         logger.error(f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}")

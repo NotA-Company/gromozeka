@@ -3,7 +3,7 @@ Basic OpenAI provider and model base classes for shared functionality, dood!
 """
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, Iterable, List, Any, Optional
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 
@@ -43,7 +43,7 @@ class BasicOpenAIModel(AbstractModel):
         """Get extra parameters for the API call. Override in subclasses, dood!"""
         return {}
 
-    async def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateText(self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the OpenAI-compatible model with given messages, dood!
 
         Args:
@@ -124,7 +124,7 @@ class BasicOpenAIModel(AbstractModel):
             logger.error(f"Error running OpenAI-compatible model {self.modelId}: {e}")
             raise
 
-    async def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: Iterable[ModelMessage]) -> ModelRunResult:
         """Generate an image via the OpenAI-compatible model, dood"""
 
         if not self._config.get("support_images", False):
