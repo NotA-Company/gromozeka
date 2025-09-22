@@ -100,6 +100,14 @@ class InlineParser:
                 nodes.append(autolink)
                 pos = new_pos
                 continue
+            
+            # If we tried to parse an autolink but failed, and we're at a '<' character,
+            # treat it as regular text instead of skipping it
+            if content[pos] == '<' and new_pos == pos:
+                # Add the '<' as regular text and advance position
+                nodes.append(MDText('<'))
+                pos += 1
+                continue
 
             # 3. Images (must come before links)
             image, new_pos = self._try_parse_image(content, pos)
@@ -196,6 +204,8 @@ class InlineParser:
         elif self.email_pattern.match(link_content):
             return MDAutolink(link_content, is_email=True), end_pos + 1
 
+        # If we found a closing > but content doesn't match URL/email pattern,
+        # this is not a valid autolink, so don't consume the < character
         return None, pos
 
     def _try_parse_image(self, content: str, pos: int) -> Tuple[Optional[MDImage], int]:
