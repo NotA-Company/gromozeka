@@ -4,7 +4,7 @@ Abstract base class for LLM models, dood!
 from abc import ABC, abstractmethod
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, Iterable, List, Any, Optional
 import tiktoken
 
 from .models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
@@ -41,7 +41,7 @@ class AbstractModel(ABC):
         self.tokensCountCoeff = 1.1
 
     @abstractmethod
-    async def generateText(self, messages: List[ModelMessage], tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateText(self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the model with given messages, dood!
 
         Args:
@@ -53,11 +53,11 @@ class AbstractModel(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def generateImage(self, messages: List[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: Iterable[ModelMessage]) -> ModelRunResult:
         """Generate Image"""
         raise NotImplementedError
 
-    async def generateTextWithFallBack(self, messages: List[ModelMessage], fallbackModel: "AbstractModel", tools: List[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateTextWithFallBack(self, messages: Iterable[ModelMessage], fallbackModel: "AbstractModel", tools: Iterable[LLMAbstractTool] = []) -> ModelRunResult:
         """Run the model with given messages, dood!"""
         try:
             ret = await self.generateText(messages, tools)

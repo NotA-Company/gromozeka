@@ -72,10 +72,14 @@ class BotApplication:
         self.application.add_handler(CommandHandler("start", self.handlers.start_command))
         self.application.add_handler(CommandHandler("help", self.handlers.help_command))
         self.application.add_handler(CommandHandler("echo", self.handlers.echo_command))
-        self.application.add_handler(CommandHandler("models", self.handlers.models_command))
         self.application.add_handler(CommandHandler("test", self.handlers.test_command))
-        # Chat commands
+        
+        
+
         self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
+        self.application.add_handler(CommandHandler("analyze", self.handlers.analyze_command))
+
+        self.application.add_handler(CommandHandler("models", self.handlers.models_command))
         self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
         self.application.add_handler(CommandHandler(["set", "unset"], self.handlers.set_or_unset_chat_setting_command))
 
