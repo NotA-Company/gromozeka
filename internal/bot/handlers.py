@@ -1823,6 +1823,7 @@ class BotHandlers:
         ]
 
         llmRet = await parserLLM.generateText(reqMessages)
+        logger.debug(f"LLM result: {llmRet}")
         if llmRet.status != ModelResultStatus.FINAL:
             await self._sendMessage(
                     ensuredMessage,
