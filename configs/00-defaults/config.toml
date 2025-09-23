@@ -8,7 +8,7 @@ bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
 admin-can-change-settings = true
 # Bot nicknames for mention purposes. Comma-separated list
 bot-nicknames = "Громозека, Gro"
-# Message format for LLM, currently supported: text and json
+# Message format for LLM, currently supported: `text`, `json`, `smart`
 llm-message-format = "json"
 # Can we use tools
 use-tools = true
