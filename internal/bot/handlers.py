@@ -1578,7 +1578,7 @@ class BotHandlers:
         for k, v in chatSettings.items():
             resp += f"`{k}`:```{k}\n{v}\n```\n"
 
-        logger.debug(resp)
+        #logger.debug(resp)
         await self._sendMessage(
             ensuredMessage,
             context,
