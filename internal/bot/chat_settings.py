@@ -32,6 +32,16 @@ class ChatSettingsKey(StrEnum):
     PARSE_IMAGES = "parse-images"
     OPTIMAL_IMAGE_SIZE = "optimal-image-size"
 
+    ALLOW_DRAW = "allow-draw"
+    ALLOW_ANALYZE = "allow-analyze"
+    ALLOW_SUMMARY = "allow-summary"
+
+    ALLOW_MENTION = "allow-mention"
+    ALLOW_REPLY = "allow-reply"
+    ALLOW_PRIVATE = "allow-private"
+    RANDOM_ANSWER_PROBABILITY = "random-answer-probability"
+    RANDOM_ANSWER_TO_ADMIN = "random-answer-to-admin"
+
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
 

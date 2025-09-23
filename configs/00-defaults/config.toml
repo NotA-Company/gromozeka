@@ -16,14 +16,33 @@ use-tools = true
 save-images = true
 # Should we parse images via LLM
 parse-images = true
+
 # For LLM-parsing We'll try to get smallest image, but larger than this
 # Set to 0 to get largest image possible
 # Set to 1 to get smallest image possible
 optimal-image-size        = 896
 
+# Allow /draw command
+allow-draw = true
+# Allow /analyze command
+allow-analyze = true
+# Allow /summary and /topic_summary commands
+allow-summary = true
+
+# Allow reaction in bot mention (by username and by name)
+allow-mention = true
+# Allow reaction on reply of bot message
+allow-reply = true
+# Allow reaction on private message
+allow-private = true
+
+# Probability of random answer to any message (set 0 for disable, 1 for always)
+random-answer-probability = 0.01
+# In case of random answer - answer to chat admin messages?
+random-answer-to-admin = true
+
 tools-used-prefix        = "🛠"
 fallback-happened-prefix = "🤖"
-
 
 summary-model           = "openrouter/gemma-3-27b-it-free"
 chat-model              = "openrouter/gemma-3-12b-it-free"
