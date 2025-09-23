@@ -13,7 +13,7 @@ def debug_failing_test():
     test_input = "Special chars: _*[]()~`>#+-=|{}.!"
     result = markdown_to_markdownv2(test_input)
     expected = r"Special chars: \_\*\[\]\(\)\~\`\!\>\#\+\-\=\|\{\}\."
-    
+
     print(f"Input: {test_input!r}")
     print(f"Expected: {expected!r}")
     print(f"Actual:   {result!r}")
@@ -21,13 +21,13 @@ def debug_failing_test():
     print(f"Expected: {expected}")
     print(f"Actual:   {result}")
     print()
-    
+
     # Character by character comparison
     print("Character analysis:")
     for i, (exp_char, act_char) in enumerate(zip(expected, result)):
         if exp_char != act_char:
             print(f"  Position {i}: expected {exp_char!r}, got {act_char!r}")
-    
+
     if len(expected) != len(result):
         print(f"Length difference: expected {len(expected)}, got {len(result)}")
 

@@ -350,17 +350,17 @@ Final paragraph with special chars: ()[]{}!"""
         # Test case for the bug where < symbols were being lost
         markdown = "7 > 5. 9 < 10"
         result = self.parser.parse_to_markdownv2(markdown)
-        
+
         # Both < and > should be preserved in the output
         self.assertIn("<", result, "< symbol should be preserved")
         self.assertIn(">", result, "> symbol should be preserved")
-        
+
         # Test more complex cases
         markdown2 = "Compare: a < b and c > d, also x <= y"
         result2 = self.parser.parse_to_markdownv2(markdown2)
         self.assertIn("<", result2, "< symbol should be preserved in complex text")
         self.assertIn(">", result2, "> symbol should be preserved in complex text")
-        
+
         # Test that valid autolinks still work
         markdown3 = "Visit <https://example.com> and email <user@example.com>"
         result3 = self.parser.parse_to_markdownv2(markdown3)

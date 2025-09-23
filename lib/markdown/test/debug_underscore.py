@@ -11,7 +11,7 @@ from lib.markdown.inline_parser import InlineParser
 
 def debug_underscore():
     parser = InlineParser()
-    
+
     test_cases = [
         '_italic_',
         '__bold__',
@@ -19,10 +19,10 @@ def debug_underscore():
         ' _italic_ ',
         '_italic_.',
     ]
-    
+
     for case in test_cases:
         print(f"Testing: {case!r}")
-        
+
         # Test underscore validation at different positions
         for i, char in enumerate(case):
             if char == '_':
@@ -32,10 +32,10 @@ def debug_underscore():
                 while j < len(case) and case[j] == '_':
                     delim_count += 1
                     j += 1
-                
+
                 is_valid = parser._is_valid_underscore_position(case, i, delim_count)
                 print(f"  Position {i}, delim_count {delim_count}: {is_valid}")
-        
+
         # Test actual parsing
         nodes = parser.parse_inline_content(case)
         print(f"  Parsed nodes:")
