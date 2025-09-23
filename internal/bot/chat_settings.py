@@ -21,8 +21,9 @@ class ChatSettingsKey(StrEnum):
     IMAGE_GENERATION_MODEL = "image-generation-model"
 
     SUMMARY_PROMPT = "summary-prompt"
-    CHAT_PROMPT = "chat-prompt"
     PARSE_IMAGE_PROMPT = "parse-image-prompt"
+    CHAT_PROMPT = "chat-prompt"
+    CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
 
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
     BOT_NICKNAMES = "bot-nicknames"
