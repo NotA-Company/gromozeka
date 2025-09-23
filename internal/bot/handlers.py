@@ -1572,23 +1572,13 @@ class BotHandlers:
 
         # user = ensuredMessage.user
         chat = ensuredMessage.chat
-        chatType = chat.type
-
-        if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
-            await self._sendMessage(
-                ensuredMessage,
-                context,
-                messageText="This command is only available in groups and supergroups for now.",
-                saveMessage=False,
-                tryParseInputJSON=False,
-            )
-            return
 
         resp = f"Настройки чата **#{chat.id}**:\n\n"
         chatSettings = self.getChatSettings(chat.id)
         for k, v in chatSettings.items():
-            resp += f"`{k}`: ```{k}\n{v}\n```\n"
+            resp += f"`{k}`:```{k}\n{v}\n```\n"
 
+        logger.debug(resp)
         await self._sendMessage(
             ensuredMessage,
             context,
