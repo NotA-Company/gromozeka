@@ -128,7 +128,7 @@ class BotHandlers:
     # Different helpers
     ###
 
-    async def addQueueTask(self, task: asyncio.Task) -> None:
+    async def addTaskToQueue(self, task: asyncio.Task) -> None:
         """Add a task to the queue."""
         if self.delayedQueue.qsize() > MAX_QUEUE_LENGTH:
             logger.info(f"Queue is full, processing oldest task")
@@ -211,14 +211,36 @@ class BotHandlers:
         try:
             if photoData is not None:
                 # Send photo
-                replyMessage = await message.reply_photo(
-                    photo=photoData,
-                    caption=photoCaption,
-                    reply_to_message_id=replyToMessage.messageId,
-                    message_thread_id=replyToMessage.threadId,
-                    **sendMessageKWargs,
+                replyKwargs = sendMessageKWargs.copy()
+                replyKwargs.update(
+                    {
+                        "photo": photoData,
+                        "reply_to_message_id": replyToMessage.messageId,
+                        "message_thread_id": replyToMessage.threadId,
+                    }
                 )
-                # TODO: Save media info somehow
+                
+                if tryMarkdownV2 and photoCaption is not None:
+                    try:
+                        messageTextParsed = markdown_to_markdownv2(photoCaption)
+                        # logger.debug(f"Sending MarkdownV2: {replyText}")
+                        replyMessage = await message.reply_photo(
+                            caption=messageTextParsed,
+                            parse_mode="MarkdownV2",
+                            **replyKwargs,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}"
+                        )
+                        # Probably error in markdown formatting, fallback to raw text
+
+                if replyMessage is None:
+                    replyMessage = await message.reply_photo(
+                        caption=photoCaption, **replyKwargs
+                    )
+
+                
             elif messageText is not None:
                 # Send text
 
@@ -1074,7 +1096,7 @@ class BotHandlers:
             parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
             # logger.debug(f"{mediaType}#{ret.id} After Start")
             ret.task = parseTask
-            await self.addQueueTask(parseTask)
+            await self.addTaskToQueue(parseTask)
             # logger.debug(f"{mediaType}#{ret.id} After Queued")
 
         if ret.task is None:
@@ -1721,7 +1743,7 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self._sendMessage(
                     ensuredMessage,
@@ -1731,10 +1753,10 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
             return
-        
+
         parentMessage = message.reply_to_message
         parentEnsuredMessage = ensuredMessage.fromMessage(parentMessage)
-        
+
         commandStr = ""
         prompt = ensuredMessage.messageText
         for entity in message.entities:
@@ -1754,19 +1776,19 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
             return
-        
+
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
 
         mediaData: Optional[bytearray] = None
         fileId: Optional[str] = None
         fileUniqueId: Optional[str] = None
-        
+
         match parentEnsuredMessage.messageType:
             case MessageType.IMAGE:
                 if parentMessage.photo is None:
                     raise ValueError("Photo is None")
-                # TODO: Should I try to get optimal image size like in processImage()? 
+                # TODO: Should I try to get optimal image size like in processImage()?
                 fileId = parentMessage.photo[-1].file_id
                 fileUniqueId = parentMessage.photo[-1].file_unique_id
             case MessageType.STICKER:
@@ -1783,7 +1805,7 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
                 return
-        
+
         mediaInfo = await context.bot.get_file(fileId)
         logger.debug(f"Media info: {mediaInfo}")
         mediaData = await mediaInfo.download_as_bytearray()
@@ -1797,7 +1819,7 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
             return
-        
+
         mimeType = magic.from_buffer(bytes(mediaData), mime=True)
         logger.debug(f"Mime type: {mimeType}")
         if not mimeType.startswith("image/"):
@@ -1809,7 +1831,7 @@ class BotHandlers:
                     tryParseInputJSON=False,
                 )
             return
-        
+
         reqMessages = [
             ModelMessage(
                 role="system",
@@ -1840,6 +1862,83 @@ class BotHandlers:
             context,
             messageText=llmRet.resultText,
             tryParseInputJSON=False,
+        )
+
+    async def draw_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /draw <prompt> command."""
+        # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        commandStr = ""
+        prompt = ensuredMessage.messageText
+
+        if ensuredMessage.isQuote and ensuredMessage.quoteText:
+            prompt = ensuredMessage.quoteText
+
+        elif ensuredMessage.isReply and ensuredMessage.replyText:
+            prompt = ensuredMessage.replyText
+
+        else:
+            for entity in message.entities:
+                if entity.type == MessageEntityType.BOT_COMMAND:
+                    commandStr = ensuredMessage.messageText[entity.offset:entity.offset+entity.length]
+                    prompt = ensuredMessage.messageText[entity.offset+entity.length:].strip()
+                    break
+
+        logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
+
+        if not prompt:
+            await self._sendMessage(
+                    ensuredMessage,
+                    context,
+                    messageText="Необходимо указать запрос для генерации изображение. Или послать команду ответом на сообщение с текстом (можно цитировать при необходимости).",
+                    saveMessage=False,
+                    tryParseInputJSON=False,
+                )
+            return
+
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
+
+        self._saveChatMessage(
+            ensuredMessage,
+            "user",
+        )
+        mlRet = await imageLLM.generateImage([ModelMessage(content=prompt)])
+        logger.debug(f"Generated image Data: {mlRet} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
+        if mlRet.status != ModelResultStatus.FINAL:
+            await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText=f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```",
+            )
+            return
+
+        if mlRet.mediaData is None:
+            logger.error(f"No image generated for {prompt}")
+            await self._sendMessage(
+                ensuredMessage,
+                context,
+                messageText=f"Ошибка генерации изображения, попробуйте позже.",
+            )
+            return
+
+        await self._sendMessage(
+            ensuredMessage,
+            context,
+            photoData=mlRet.mediaData,
+            photoCaption=f"Сгенерировал изображение по Вашему запросу:\n```\n{prompt}\n```",
+            mediaPrompt=prompt,
         )
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
