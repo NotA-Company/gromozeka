@@ -9,7 +9,7 @@ admin-can-change-settings = true
 # Bot nicknames for mention purposes. Comma-separated list
 bot-nicknames = "Громозека, Gro"
 # Message format for LLM, currently supported: text and json
-llm-message-format = "text"
+llm-message-format = "json"
 # Can we use tools
 use-tools = true
 # Should we save images to S3 for future using?
@@ -51,10 +51,27 @@ summary-fallback-model  = "openrouter/deepseek-chat-v3.1-free"
 image-parsing-model     = "openrouter/gemma-3-27b-it-free"
 image-generation-model  = "yandex-art"
 
-summary-prompt = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
+summary-prompt     = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
 parse-image-prompt = "Подробно опиши, что изображено на картинке"
-chat-prompt    = "Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола. При ответе ты можешь использовать Markdown форматирование."
+chat-prompt        = """
+Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола.
+"""
 
+chat-prompt-suffix = """
+Сообщения пользователей указаны в JSON-формате, где:
+* `login` - Логин пользователя.
+* `name` - Полное имя пользователя.
+* `date` - Время отправки сообщения (в UTC).
+* `messageId` - ID сообщения.
+* `type` - Тип сообщения: `text`, `image`, `sticker`
+* `text` - Текст сообщения.
+* `replyId` - ID сообщения, на которое отвечает пользователь. Указывается, если пользователь отвечает на сообщение.
+* `quote` - Цитата. Указывается, если пользователь в своём сообщении процитировал другое сообщение.
+* `media_description` - Описание, что изображено на изображении (при наличии изображения).
+
+Отвечай так же в JSON-формате, но заполняй только поле `text` (и `quote`, если нужно процитировать часть сообщения).
+В Тексте сообщения можно использовать Markdown форматирование.
+"""
 [database]
 # Database configuration
 path = "bot_data.db"
