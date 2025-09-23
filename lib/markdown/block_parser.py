@@ -128,6 +128,9 @@ class BlockParser:
             fence_chars = fence_match.group(1)
             language = fence_match.group(2).strip() or None
 
+        # Check if this is a malformed fence (language contains closing backticks)
+        is_malformed_fence = language and '```' in language
+
         self._advance()  # consume opening fence
 
         # Skip newline after opening fence
@@ -136,12 +139,35 @@ class BlockParser:
 
         # Collect code content until closing fence
         code_lines = []
+
+        # For malformed fences, don't consume content - treat as empty code block
+        if is_malformed_fence:
+            # Extract the actual code content from the malformed language part
+            if language and '```' in language:
+                # Split on the first occurrence of ```
+                parts = language.split('```', 1)
+                if len(parts) > 1:
+                    actual_language = parts[0].strip() or None
+                    code_content = parts[1] if parts[1] else ""
+                    return MDCodeBlock(code_content, actual_language, is_fenced=True)
+
         while not self._is_at_end():
-            if (self._current_token_is(TokenType.CODE_FENCE) and
-                self.current_token.content.startswith(fence_chars[0]) and # type: ignore
-                len(self.current_token.content) >= len(fence_chars)): # type: ignore
-                # Found closing fence
-                self._advance()
+            if self._current_token_is(TokenType.CODE_FENCE):
+                # Check if this is a valid closing fence
+                closing_fence_content = self.current_token.content # type: ignore
+                closing_match = re.match(r'^(```+|~~~+)(.*)$', closing_fence_content)
+                if closing_match:
+                    closing_fence_chars = closing_match.group(1)
+                    # Valid closing fence: same type, same or longer length, no language info
+                    if (closing_fence_chars[0] == fence_chars[0] and
+                        len(closing_fence_chars) >= len(fence_chars) and
+                        not closing_match.group(2).strip()):
+                        # Found valid closing fence
+                        self._advance()
+                        break
+
+            # Stop if we encounter another block-level element (safety mechanism)
+            if self._is_block_element_start():
                 break
 
             # Collect line content
@@ -402,6 +428,12 @@ class BlockParser:
             return True
 
         return False
+
+    def _peek_next_token_is(self, token_type: TokenType) -> bool:
+        """Check if the next token is of the specified type."""
+        next_pos = self.pos + 1
+        return (next_pos < len(self.tokens) and
+                self.tokens[next_pos].type == token_type)
 
     def _has_blank_line_ahead(self) -> bool:
         """Check if there's a blank line coming up."""
