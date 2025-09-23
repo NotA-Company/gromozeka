@@ -20,7 +20,8 @@ class AbstractModel(ABC):
         modelId: str,
         modelVersion: str,
         temperature: float,
-        contextSize: int
+        contextSize: int,
+        extraConfig: Dict[str, Any] = {},
     ):
         """Initialize model with provider and configuration, dood!
 
@@ -31,6 +32,8 @@ class AbstractModel(ABC):
             temperature: Temperature setting for generation
             context_size: Maximum context size in tokens
         """
+        self._config = extraConfig
+
         self.provider = provider
         self.modelId = modelId
         self.modelVersion = modelVersion
@@ -97,6 +100,9 @@ class AbstractModel(ABC):
             "model_version": self.modelVersion,
             "temperature": self.temperature,
             "context_size": self.contextSize,
+            "support_tools": self._config.get("support_tools", False),
+            "support_text": self._config.get("support_text", True),
+            "support_images": self._config.get("support_images", False),
         }
 
     def __str__(self) -> str:
