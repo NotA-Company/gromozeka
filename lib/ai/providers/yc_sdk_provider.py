@@ -26,10 +26,10 @@ class YcSdkModel(AbstractModel):
         extraConfig: Dict[str, Any] = {}
     ):
         """Initialize YC SDK model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize)
+        super().__init__(provider, modelId, modelVersion, temperature, contextSize,extraConfig)
         self._ycModel = None
         self.ycSDK = ycSDK
-        self._config = extraConfig
+    
         self.supportText = self._config.get("support_text", True)
         self.supportImages = self._config.get("support_images", False)
         self._initModel()

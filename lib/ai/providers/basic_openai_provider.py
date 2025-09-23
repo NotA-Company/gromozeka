@@ -30,9 +30,8 @@ class BasicOpenAIModel(AbstractModel):
         extraConfig: Dict[str, Any] = {}
     ):
         """Initialize basic OpenAI model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize)
+        super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
         self._client = openAiClient
-        self._config = extraConfig
         self._supportTools = self._config.get("support_tools", False)
 
     def _getModelId(self) -> str:
