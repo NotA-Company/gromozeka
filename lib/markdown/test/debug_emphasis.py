@@ -12,14 +12,14 @@ from lib.markdown import markdown_to_markdownv2
 def test_emphasis():
     test_cases = [
         '_italic_',
-        '*italic*', 
+        '*italic*',
         '**bold**',
         '__bold__',
         '~~strike~~',
         'Mixed: *_~*_~',
         'Single: * _ ~',
     ]
-    
+
     for case in test_cases:
         result = markdown_to_markdownv2(case)
         print(f"Input: {case!r}")

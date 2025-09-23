@@ -138,7 +138,7 @@ class BotHandlers:
 
         if allowBotOwners and username in self.botOwners:
             return True
-        
+
         if chat is not None:
             for admin in await chat.get_administrators():
                 #logger.debug(f"Got admin for chat {chat.id}: {admin}")
@@ -259,7 +259,7 @@ class BotHandlers:
                         caption=photoCaption, **replyKwargs
                     )
 
-                
+
             elif messageText is not None:
                 # Send text
 
@@ -658,7 +658,7 @@ class BotHandlers:
         """
         if not ensuredMessage.isReply or ensuredMessage.replyId is None:
             return False
-        
+
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
         if not chatSettings[ChatSettingsKey.ALLOW_REPLY].toBool():
             return False
@@ -746,10 +746,10 @@ class BotHandlers:
         if not customMentions:
             logger.error("No custom mentions found")
             return False
-        
+
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
-        
+
         myUserName = "@" + context.bot.username.lower()
         messageText = ensuredMessage.messageText
         mentionedAtBegin = False
@@ -949,14 +949,14 @@ class BotHandlers:
         answerToAdmin = chatSettings[ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN].toBool()
         if answerToAdmin and await self._isAdmin(ensuredMessage.user, ensuredMessage.chat, False):
             return False
-        
+
         randomFloat = random.random()
         treshold = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         logger.debug(f"Random float: {randomFloat}, need: {treshold}")
         if treshold < randomFloat:
             return False
         logger.debug(f"Random float: {randomFloat} < {treshold}, answering to message")
-        
+
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
         # Handle LLM Action
@@ -974,9 +974,9 @@ class BotHandlers:
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
             logger.error("Failed to send LLM reply")
             return False
-        
+
         return True
-    
+
     ###
     # Processing media
     ###
@@ -1324,14 +1324,14 @@ class BotHandlers:
         if not message:
             logger.error("Message undefined")
             return
-        
+
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
             ensuredMessage = EnsuredMessage.fromMessage(message)
         except Exception as e:
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
-        
+
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
         if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
             logger.info(f"Unauthorized /summary or /topic_summary command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
@@ -1802,7 +1802,7 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
         if not chatSettings[ChatSettingsKey.ALLOW_ANALYZE].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
             logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
@@ -1941,7 +1941,7 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
         if not chatSettings[ChatSettingsKey.ALLOW_DRAW].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
             logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")

@@ -21,19 +21,19 @@ class TestSpecialCharacters(unittest.TestCase):
     def test_original_issue_case(self):
         """Test the original reported issue: Test: '\"-*_<>~' """
         input_text = "Test: '\"-*_<>~' "
-        
+
         # Test MarkdownV2 output
         markdownv2_result = markdown_to_markdownv2(input_text)
         self.assertIn('\\*', markdownv2_result, "Asterisk should be escaped in MarkdownV2")
         self.assertIn('\\_', markdownv2_result, "Underscore should be escaped in MarkdownV2")
         self.assertIn('\\~', markdownv2_result, "Tilde should be escaped in MarkdownV2")
-        
+
         # Test HTML output
         html_result = markdown_to_html(input_text)
         self.assertIn('*', html_result, "Asterisk should be preserved in HTML")
         self.assertIn('_', html_result, "Underscore should be preserved in HTML")
         self.assertIn('~', html_result, "Tilde should be preserved in HTML")
-        
+
         # Test normalized markdown
         normalized_result = normalize_markdown(input_text)
         self.assertIn('*', normalized_result, "Asterisk should be preserved in normalized markdown")
@@ -50,11 +50,11 @@ class TestSpecialCharacters(unittest.TestCase):
             ("Text with _ in middle", "\\_"),
             ("Text with ~ in middle", "\\~"),
         ]
-        
+
         for input_text, expected_escape in test_cases:
             with self.subTest(input_text=input_text):
                 markdownv2_result = markdown_to_markdownv2(input_text)
-                self.assertIn(expected_escape, markdownv2_result, 
+                self.assertIn(expected_escape, markdownv2_result,
                              f"Expected {expected_escape} to be in MarkdownV2 output for: {input_text}")
 
     def test_multiple_special_characters(self):
@@ -67,14 +67,14 @@ class TestSpecialCharacters(unittest.TestCase):
             "In parentheses: (*_~)",
             "In brackets: [*_~]",
         ]
-        
+
         for input_text in test_cases:
             with self.subTest(input_text=input_text):
                 # Test that all formats preserve the characters
                 markdownv2_result = markdown_to_markdownv2(input_text)
                 html_result = markdown_to_html(input_text)
                 normalized_result = normalize_markdown(input_text)
-                
+
                 # Check that special characters are present in some form
                 # Note: Some characters might be consumed by valid markdown syntax
                 for char in ['*', '_', '~']:
@@ -82,12 +82,12 @@ class TestSpecialCharacters(unittest.TestCase):
                         # In MarkdownV2, character should be preserved either escaped or as part of formatting
                         char_count_input = input_text.count(char)
                         char_count_output = markdownv2_result.count(char) + markdownv2_result.count(f'\\{char}')
-                        
+
                         # Allow for some characters to be consumed by valid markdown formatting
                         # but ensure we don't lose ALL instances of a character
                         self.assertGreater(char_count_output, 0,
                                          f"Character {char} should appear in some form in MarkdownV2 for: {input_text}")
-                        
+
                         # In HTML and normalized, should be present (unless consumed by valid formatting)
                         # We'll be more lenient here since valid emphasis might consume characters
                         if char_count_input == 1:  # Single characters should definitely be preserved
@@ -105,7 +105,7 @@ class TestSpecialCharacters(unittest.TestCase):
             ("_italic_", "_italic_"),   # _ stays _ in MarkdownV2
             ("__bold__", "*bold*"),     # __ becomes * in MarkdownV2
         ]
-        
+
         for input_text, expected_pattern in test_cases:
             with self.subTest(input_text=input_text):
                 markdownv2_result = markdown_to_markdownv2(input_text)
@@ -120,14 +120,14 @@ class TestSpecialCharacters(unittest.TestCase):
             "Valid ~~strike~~ and standalone ~",
             "Mix: *italic* _ **bold** ~ ~~strike~~ *",
         ]
-        
+
         for input_text in test_cases:
             with self.subTest(input_text=input_text):
                 # Should not crash and should preserve all characters
                 markdownv2_result = markdown_to_markdownv2(input_text)
                 html_result = markdown_to_html(input_text)
                 normalized_result = normalize_markdown(input_text)
-                
+
                 # Results should not be empty
                 self.assertTrue(markdownv2_result.strip(), f"MarkdownV2 result should not be empty for: {input_text}")
                 self.assertTrue(html_result.strip(), f"HTML result should not be empty for: {input_text}")
@@ -147,7 +147,7 @@ class TestSpecialCharacters(unittest.TestCase):
             "Text*_~Text",  # No spaces
             " * _ ~ ",  # Only spaces and characters
         ]
-        
+
         for input_text in test_cases:
             with self.subTest(input_text=input_text):
                 # Should not crash
@@ -155,13 +155,13 @@ class TestSpecialCharacters(unittest.TestCase):
                     markdownv2_result = markdown_to_markdownv2(input_text)
                     html_result = markdown_to_html(input_text)
                     normalized_result = normalize_markdown(input_text)
-                    
+
                     # For non-empty input, should have some output
                     if input_text.strip():
                         self.assertTrue(markdownv2_result is not None, f"MarkdownV2 should not be None for: {repr(input_text)}")
                         self.assertTrue(html_result is not None, f"HTML should not be None for: {repr(input_text)}")
                         self.assertTrue(normalized_result is not None, f"Normalized should not be None for: {repr(input_text)}")
-                        
+
                 except Exception as e:
                     self.fail(f"Should not raise exception for input {repr(input_text)}: {e}")
 
@@ -172,12 +172,12 @@ class TestSpecialCharacters(unittest.TestCase):
         self.assertIn("\\*", result)
         self.assertIn("\\_", result)
         self.assertIn("\\~", result)
-        
+
         # Test in code spans (should not be escaped inside code)
         result = markdown_to_markdownv2("Code: `*_~` text")
         # The code span content should not be escaped, but text outside should be
         self.assertIn("`*_~`", result)  # Inside code span, not escaped
-        
+
         # Test in links
         result = markdown_to_markdownv2("Link: [text with *_~](http://example.com)")
         # Link text should have escaped characters
