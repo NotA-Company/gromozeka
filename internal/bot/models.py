@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 class LLMMessageFormat(StrEnum):
     JSON = "json"
     TEXT = "text"
+    SMART = "smart" # JSON for user messages and text for bot messages
 
 class MessageType(StrEnum):
     TEXT = "text"
