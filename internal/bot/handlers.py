@@ -141,7 +141,7 @@ class BotHandlers:
 
         if chat is not None:
             for admin in await chat.get_administrators():
-                #logger.debug(f"Got admin for chat {chat.id}: {admin}")
+                # logger.debug(f"Got admin for chat {chat.id}: {admin}")
                 if admin.user.username and username == admin.user.username.lower():
                     return True
 
@@ -258,7 +258,6 @@ class BotHandlers:
                     replyMessage = await message.reply_photo(
                         caption=photoCaption, **replyKwargs
                     )
-
 
             elif messageText is not None:
                 # Send text
@@ -520,7 +519,7 @@ class BotHandlers:
     async def _sendLLMChatMessage(
         self,
         ensuredMessage: EnsuredMessage,
-        messagesHistory: List[Dict[str, str]],
+        messagesHistory: List[ModelMessage],
         context: ContextTypes.DEFAULT_TYPE,
     ) -> bool:
         """Send a chat message to the LLM model."""
@@ -530,10 +529,9 @@ class BotHandlers:
         mlRet: Optional[ModelRunResult] = None
 
         try:
-            # mlRet = llmModel.runWithFallBack(ModelMessage.fromDictList(messagesHistory), self.getFallbackModel())
             mlRet = await self._generateTextViaLLM(
                 model=llmModel,
-                messages=ModelMessage.fromDictList(messagesHistory),
+                messages=messagesHistory,
                 fallbackModel=chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager),
                 ensuredMessage=ensuredMessage,
                 context=context,
@@ -683,7 +681,7 @@ class BotHandlers:
         parentId = ensuredMessage.replyId
         chat = ensuredMessage.chat
 
-        storedMessages: List[Dict[str, str]] = []
+        storedMessages: List[ModelMessage] = []
 
         storedMsg = self.db.getChatMessageByMessageId(
             chatId=chat.id,
@@ -696,14 +694,17 @@ class BotHandlers:
                 logger.error("message.reply_to_message is None, but should be Message()")
                 return False
             ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
-            storedMessages.append({
-                "role": "assistant",
-                "content": await ensuredReply.formatForLLM(self.db, format=llmMessageFormat)
-            })
-            storedMessages.append({
-                "role": "user",
-                "content": await ensuredMessage.formatForLLM(self.db, format=llmMessageFormat)
-            })
+            storedMessages.append(
+                await ensuredReply.toModelMessage(
+                    self.db, format=llmMessageFormat, role="assistant"
+                )
+            )
+            storedMessages.append(
+                await ensuredMessage.toModelMessage(
+                    self.db, format=llmMessageFormat, role="user"
+                )
+            )
+
         else:
             if storedMsg["message_category"] != "bot":
                 return False
@@ -714,18 +715,24 @@ class BotHandlers:
                 threadId=ensuredMessage.threadId,
             )
             storedMessages = [
-                {
-                    "role": "user" if storedMsg["message_category"] == "user" else "assistant",
-                    "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, storedMsg, format=llmMessageFormat),
-                }
+                await EnsuredMessage.fromDBChatMessage(storedMsg).toModelMessage(
+                    self.db,
+                    format=llmMessageFormat,
+                    role=(
+                        "user"
+                        if storedMsg["message_category"] == "user"
+                        else "assistant"
+                    ),
+                )
                 for storedMsg in _storedMessages
             ]
 
         reqMessages = [
-            {
-                "role": "system",
-                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
-            },
+            ModelMessage(
+                role="system",
+                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+            ),
         ] + storedMessages
 
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
@@ -861,10 +868,10 @@ class BotHandlers:
 
         # Handle LLM Action
         reqMessages = [
-            {
-                "role": "system",
-                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
-            },
+            ModelMessage(
+                role="system",
+                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+            ),
         ]
 
         # Add Parent message if any
@@ -872,10 +879,15 @@ class BotHandlers:
             ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
             if ensuredReply.messageType == MessageType.TEXT:
                 reqMessages.append(
-                    {
-                        "role": "assistant" if ensuredReply.user.id == context.bot.id else "user",
-                        "content": await ensuredReply.formatForLLM(self.db, format=llmMessageFormat),
-                    }
+                    await ensuredReply.toModelMessage(
+                        self.db,
+                        format=llmMessageFormat,
+                        role=(
+                            "assistant"
+                            if ensuredReply.user.id == context.bot.id
+                            else "user"
+                        ),
+                    ),
                 )
             else:
                 # Not text message, try to get it content from DB
@@ -887,20 +899,26 @@ class BotHandlers:
                     logger.error(f"Failed to get parent message (ChatId: {ensuredReply.chat.id}, MessageId: {ensuredReply.messageId})")
                 else:
                     reqMessages.append(
-                        {
-                            "role": "assistant" if ensuredReply.user.id == context.bot.id else "user",
-                            "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, storedReply, llmMessageFormat),
-                        }
+                        await EnsuredMessage.fromDBChatMessage(
+                            storedReply
+                        ).toModelMessage(
+                            self.db,
+                            format=llmMessageFormat,
+                            role=(
+                                "assistant"
+                                if ensuredReply.user.id == context.bot.id
+                                else "user"
+                            ),
+                        ),
                     )
 
         # Add user message
         reqMessages.append(
-            {
-                "role": "user",
-                "content": await ensuredMessage.formatForLLM(
-                    self.db, format=llmMessageFormat, replaceMessageText=messageText
-                ),
-            }
+            await ensuredMessage.toModelMessage(
+                self.db,
+                format=llmMessageFormat,
+                role="user",
+            ),
         )
 
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
@@ -920,17 +938,20 @@ class BotHandlers:
 
         # Handle LLM Action
         reqMessages = [
-            {
-                "role": "system",
-                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
-            },
+            ModelMessage(
+                role="system",
+                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+            ),
         ]
         for message in reversed(messages):
             reqMessages.append(
-                {
-                    "role": "assistant" if message["message_category"] == "bot" else "user",
-                    "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, message, llmMessageFormat),
-                }
+                await EnsuredMessage.fromDBChatMessage(message).toModelMessage(
+                    self.db,
+                    format=llmMessageFormat,
+                    role=(
+                        "user" if message["message_category"] == "user" else "assistant"
+                    ),
+                )
             )
 
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
@@ -952,7 +973,7 @@ class BotHandlers:
 
         randomFloat = random.random()
         treshold = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
-        #logger.debug(f"Random float: {randomFloat}, need: {treshold}")
+        # logger.debug(f"Random float: {randomFloat}, need: {treshold}")
         if treshold < randomFloat:
             return False
         logger.debug(f"Random float: {randomFloat} < {treshold}, answering to message")
@@ -961,14 +982,14 @@ class BotHandlers:
 
         # Handle LLM Action
         reqMessages = [
-            {
-                "role": "system",
-                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
-            },
-            {
-                "role": "user",
-                "content": await ensuredMessage.formatForLLM(self.db, format=llmMessageFormat),
-            }
+            ModelMessage(
+                role="system",
+                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+            ),
+            await ensuredMessage.toModelMessage(
+                self.db, format=llmMessageFormat, role="user"
+            ),
         ]
 
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
@@ -1406,7 +1427,7 @@ class BotHandlers:
             parsedMessages.append(
                 {
                     "role": "user",
-                    "content": await EnsuredMessage.formatDBChatMessageToLLM(self.db, msg, LLMMessageFormat.JSON, stripAtsign=True),
+                    "content": await EnsuredMessage.fromDBChatMessage(msg).formatForLLM(self.db, LLMMessageFormat.JSON, stripAtsign=True),
                 }
             )
 
@@ -1578,7 +1599,7 @@ class BotHandlers:
         for k, v in chatSettings.items():
             resp += f"`{k}`:```{k}\n{v}\n```\n"
 
-        #logger.debug(resp)
+        # logger.debug(resp)
         await self._sendMessage(
             ensuredMessage,
             context,

@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Union
 from telegram import Chat, Message, User
 import telegram.constants
 
+from lib.ai.models import ModelMessage
 import lib.utils as utils
 
 from .models import LLMMessageFormat, MediaProcessingInfo, MessageType
@@ -260,6 +261,7 @@ class EnsuredMessage:
         stripAtsign: bool = False,
     ) -> str:
         await self.updateMediaContent(db)
+
         messageText = self.messageText if replaceMessageText is None else replaceMessageText
         userName = self.user.name
         if stripAtsign:
@@ -295,17 +297,27 @@ class EnsuredMessage:
 
         raise ValueError(f"Invalid format: {format}")
 
-    @classmethod
-    async def formatDBChatMessageToLLM(
-        cls,
+    async def toModelMessage(
+        self,
         db: DatabaseWrapper,
-        data: Dict[str, Any],
         format: LLMMessageFormat = LLMMessageFormat.JSON,
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
-    ) -> str:
-        ensuredMessage = cls.fromDBChatMessage(data)
-        return await ensuredMessage.formatForLLM(db, format, replaceMessageText, stripAtsign)
+        role: str = "user",
+    ) -> ModelMessage:
+        """Convert the message to a model message."""
+
+        if format == LLMMessageFormat.SMART:
+            if role == "user":
+                format = LLMMessageFormat.JSON
+            else:
+                format = LLMMessageFormat.TEXT
+        return ModelMessage(
+            role=role,
+            content=await self.formatForLLM(
+                db, format, replaceMessageText, stripAtsign
+            ),
+        )
 
     def __str__(self) -> str:
         return json.dumps(
