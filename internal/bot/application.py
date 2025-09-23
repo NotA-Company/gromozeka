@@ -3,6 +3,7 @@ Telegram bot application setup and management for Gromozeka.
 """
 import asyncio
 import logging
+import random
 import sys
 from typing import Any, Awaitable, Dict
 from telegram import Update
@@ -115,6 +116,8 @@ class BotApplication:
         if self.botToken in ["", "YOUR_BOT_TOKEN_HERE"]:
             logger.error("Please set your bot token in config.toml!")
             sys.exit(1)
+
+        random.seed()
 
         # Create application
         self.application = Application.builder().token(self.botToken).concurrent_updates(PerTopicUpdateProcessor(128)).build()

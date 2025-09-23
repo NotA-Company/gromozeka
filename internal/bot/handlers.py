@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 import requests
 import magic
 
-from telegram import Chat, Update, Message
+from telegram import Chat, Update, Message, User
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 from telegram._files._basemedium import _BaseMedium
@@ -127,6 +127,25 @@ class BotHandlers:
     ###
     # Different helpers
     ###
+
+    async def _isAdmin(self, user: User, chat:Optional[Chat]=None, allowBotOwners:bool=True) -> bool:
+        """Check if the user is an admin (or bot owner)."""
+        # If chat is None, then we are checking if it's bot owner
+        username = user.username
+        if username is None:
+            return False
+        username.lower()
+
+        if allowBotOwners and username in self.botOwners:
+            return True
+        
+        if chat is not None:
+            for admin in await chat.get_administrators():
+                #logger.debug(f"Got admin for chat {chat.id}: {admin}")
+                if admin.user.username and username == admin.user.username.lower():
+                    return True
+
+        return False
 
     async def addTaskToQueue(self, task: asyncio.Task) -> None:
         """Add a task to the queue."""
@@ -564,7 +583,11 @@ class BotHandlers:
 
         match chatType:
             case Chat.PRIVATE:
-                return await self.handle_chat_message(update, context)
+                chatSettings = self.getChatSettings(chat.id)
+                if chatSettings[ChatSettingsKey.ALLOW_PRIVATE].toBool():
+                    return await self.handle_chat_message(update, context)
+                else:
+                    return
             case Chat.GROUP:
                 return await self.handle_chat_message(update, context)
             case Chat.SUPERGROUP:
@@ -624,6 +647,8 @@ class BotHandlers:
 
         if ensuredMessage.chat.type == Chat.PRIVATE:
             await self.handlePrivateMessage(update, context, ensuredMessage)
+        else:
+            await self.handleRandomMessage(update, context, ensuredMessage)
 
         logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
 
@@ -632,6 +657,10 @@ class BotHandlers:
         Check if message is a reply to our message and handle it
         """
         if not ensuredMessage.isReply or ensuredMessage.replyId is None:
+            return False
+        
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        if not chatSettings[ChatSettingsKey.ALLOW_REPLY].toBool():
             return False
 
         message = ensuredMessage.getBaseMessage()
@@ -649,7 +678,6 @@ class BotHandlers:
         # As it's resporse to our message, we need to wait for media to be processed if any
         await ensuredMessage.updateMediaContent(self.db)
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
         parentId = ensuredMessage.replyId
@@ -716,7 +744,12 @@ class BotHandlers:
         customMentions = chatSettings[ChatSettingsKey.BOT_NICKNAMES].toList()
         customMentions = [v.lower() for v in customMentions if v]
         if not customMentions:
+            logger.error("No custom mentions found")
             return False
+        
+        if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
+            return False
+        
         myUserName = "@" + context.bot.username.lower()
         messageText = ensuredMessage.messageText
         mentionedAtBegin = False
@@ -906,6 +939,44 @@ class BotHandlers:
 
         return True
 
+    async def handleRandomMessage(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> bool:
+        """ Randomly answer message with probability RANDOM_ANSWER_PROBABILITY """
+
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
+        if answerProbability <= 0.0:
+            return False
+        answerToAdmin = chatSettings[ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN].toBool()
+        if answerToAdmin and await self._isAdmin(ensuredMessage.user, ensuredMessage.chat, False):
+            return False
+        
+        randomFloat = random.random()
+        treshold = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
+        logger.debug(f"Random float: {randomFloat}, need: {treshold}")
+        if treshold < randomFloat:
+            return False
+        logger.debug(f"Random float: {randomFloat} < {treshold}, answering to message")
+        
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+
+        # Handle LLM Action
+        reqMessages = [
+            {
+                "role": "system",
+                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr(),
+            },
+            {
+                "role": "user",
+                "content": await ensuredMessage.formatForLLM(self.db, format=llmMessageFormat),
+            }
+        ]
+
+        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
+            logger.error("Failed to send LLM reply")
+            return False
+        
+        return True
+    
     ###
     # Processing media
     ###
@@ -1253,6 +1324,18 @@ class BotHandlers:
         if not message:
             logger.error("Message undefined")
             return
+        
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
+            return
+        
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
+            logger.info(f"Unauthorized /summary or /topic_summary command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
+            return
 
         maxBatches: Optional[int] = None
         maxMessages: Optional[int] = None
@@ -1269,13 +1352,6 @@ class BotHandlers:
                 logger.error(f"Invalid arguments: '{context.args[0:2]}' are not a valid number.")
             except IndexError:
                 pass
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
-            return
 
         commandStr = ""
         for entity in message.entities:
@@ -1548,23 +1624,16 @@ class BotHandlers:
 
         user = ensuredMessage.user
         chat = ensuredMessage.chat
-        chatType = chat.type
 
-        if chatType not in [Chat.GROUP, Chat.SUPERGROUP]:
+        chatSettings = self.getChatSettings(chat.id)
+        adminAllowedChangeSettings = chatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
+
+        isAdmin = await self._isAdmin(user, chat if adminAllowedChangeSettings else None, True)
+        if not isAdmin:
             await self._sendMessage(
                     ensuredMessage,
                     context,
-                    messageText="This command is only available in groups and supergroups for now.",
-                    saveMessage=False,
-                    tryParseInputJSON=False,
-                )
-            return
-
-        if not user.username:
-            await self._sendMessage(
-                    ensuredMessage,
-                    context,
-                    messageText="You need to have a username to change chat settings.",
+                    messageText="You are not allowed to change chat settings.",
                     saveMessage=False,
                     tryParseInputJSON=False,
                 )
@@ -1592,27 +1661,6 @@ class BotHandlers:
         if not context.args:
             # It is impossible, actually as we have checked it before, but we do it to make linters happy
             raise ValueError("No args provided")
-
-        chatSettings = self.getChatSettings(chat.id)
-        adminAllowedChangeSettings = chatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
-
-        allowedUsers = self.botOwners[:]
-        if adminAllowedChangeSettings:
-            for admin in await chat.get_administrators():
-                logger.debug(f"Got admin for chat {chat.id}: {admin}")
-                username = admin.user.username
-                if username:
-                    allowedUsers.append(username.lower())
-
-        if user.username.lower() not in allowedUsers:
-            await self._sendMessage(
-                    ensuredMessage,
-                    context,
-                    messageText="You are not allowed to change chat settings.",
-                    saveMessage=False,
-                    tryParseInputJSON=False,
-                )
-            return
 
         key = context.args[0]
         if isSet:
@@ -1754,6 +1802,11 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
+        
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        if not chatSettings[ChatSettingsKey.ALLOW_ANALYZE].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
+            logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
+            return
 
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self._sendMessage(
@@ -1788,7 +1841,6 @@ class BotHandlers:
                 )
             return
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
 
         mediaData: Optional[bytearray] = None
@@ -1889,6 +1941,11 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
+        
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        if not chatSettings[ChatSettingsKey.ALLOW_DRAW].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
+            logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
+            return
 
         commandStr = ""
         prompt = ensuredMessage.messageText
@@ -1918,7 +1975,6 @@ class BotHandlers:
                 )
             return
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
 
         self._saveChatMessage(
