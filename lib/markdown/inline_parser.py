@@ -143,7 +143,10 @@ class InlineParser:
                 nodes.append(text)
                 pos = new_pos
             else:
-                pos += 1  # Skip single character if nothing else matches
+                # If we can't parse as text and we're at a special character that failed to parse,
+                # treat it as literal text and advance by one character
+                nodes.append(MDText(content[pos]))
+                pos += 1
 
         return self._merge_adjacent_text_nodes(nodes)
 
@@ -445,26 +448,41 @@ class InlineParser:
                 nodes.append(text)
                 pos = new_pos
             else:
+                # If we can't parse as text and we're at a special character that failed to parse,
+                # treat it as literal text and advance by one character
+                nodes.append(MDText(content[pos]))
                 pos += 1
 
         return self._merge_adjacent_text_nodes(nodes)
 
     def _is_valid_underscore_position(self, content: str, pos: int, delim_count: int) -> bool:
         """Check if underscore emphasis is at valid word boundary."""
+        # For opening underscore: should not have alphanumeric before, should have alphanumeric after
+        # For closing underscore: should have alphanumeric before, should not have alphanumeric after
+        
         # Check character before
+        has_alnum_before = False
         if pos > 0:
             prev_char = content[pos - 1]
-            if prev_char.isalnum():
-                return False
+            has_alnum_before = prev_char.isalnum()
 
         # Check character after
+        has_alnum_after = False
         after_pos = pos + delim_count
         if after_pos < len(content):
             next_char = content[after_pos]
-            if next_char.isalnum():
-                return False
-
-        return True
+            has_alnum_after = next_char.isalnum()
+        
+        # For underscore emphasis to be valid:
+        # - Opening: no alnum before AND alnum after (start of word)
+        # - Closing: alnum before AND no alnum after (end of word)
+        # - Or both sides are non-alnum (standalone)
+        
+        is_opening = not has_alnum_before and has_alnum_after
+        is_closing = has_alnum_before and not has_alnum_after
+        is_standalone = not has_alnum_before and not has_alnum_after
+        
+        return is_opening or is_closing or is_standalone
 
     def _merge_adjacent_text_nodes(self, nodes: List[MDNode]) -> List[MDNode]:
         """Merge adjacent text nodes into single nodes."""
