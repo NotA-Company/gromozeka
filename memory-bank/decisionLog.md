@@ -692,3 +692,25 @@ This file records architectural and implementation decisions using a list format
 * Only initializes ConfigManager (not full GromozekBot) when --print-config is used
 * Comprehensive testing confirmed functionality works with both config.toml and config.toml.example files
 * No breaking changes to existing command line arguments or bot functionality
+[2025-09-23 09:17:45] - Fixed Critical HTML Output Issues in Markdown Parser
+
+## Decision
+
+* Fixed critical HTML output issues where fenced code blocks were consuming excessive content
+* Implemented malformed fence detection to prevent infinite content consumption
+* Added safety mechanisms to stop parsing at block-level elements
+
+## Rationale 
+
+* The original fenced code block parser was consuming content until EOF when it couldn't find proper closing fences
+* Malformed fences like `````test1 test2 test3`````` were causing the parser to eat subsequent content including separators and other blocks
+* This resulted in broken HTML output where multiple sections were incorrectly merged into single code blocks
+* Safety mechanisms prevent runaway parsing and ensure proper document structure
+
+## Implementation Details
+
+* Enhanced `_parse_fenced_code_block()` method in block_parser.py with malformed fence detection
+* Added logic to extract actual code content from malformed language parts containing closing backticks
+* Implemented safety mechanism to stop parsing when encountering other block-level elements
+* Fixed content consumption issues that were breaking document structure
+* All test cases now produce correct HTML output with proper separation between elements

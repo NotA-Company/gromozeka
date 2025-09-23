@@ -69,8 +69,8 @@ class Tokenizer:
         # Header markers (1-6 # characters followed by space)
         self.header_pattern = re.compile(r'^(#{1,6})\s+', re.MULTILINE)
 
-        # Code fences (3+ backticks or tildes)
-        self.code_fence_pattern = re.compile(r'^(```+|~~~+)(.*)$', re.MULTILINE)
+        # Code fences (3+ backticks or tildes) - can appear anywhere on line
+        self.code_fence_pattern = re.compile(r'(```+|~~~+)(.*)$', re.MULTILINE)
 
         # List markers
         self.unordered_list_pattern = re.compile(r'^(\s*)([-*+])\s+', re.MULTILINE)
@@ -238,6 +238,48 @@ class Tokenizer:
     def _try_tokenize_inline_elements(self) -> bool:
         """Try to tokenize inline elements."""
         remaining = self.text[self.pos:]
+
+        # Check for code fences - but only if they're proper fenced code blocks
+        match = self.code_fence_pattern.match(remaining)
+        if match:
+            fence = match.group(1)
+            language_raw = match.group(2)  # Don't strip yet
+            language = language_raw.strip()
+
+            full_match = match.group(0)
+            next_pos = self.pos + len(full_match)
+
+            # Check if this looks like a complete inline code span
+            # Case 1: Language part contains closing backticks (``` ... ```)
+            # Case 2: There's a matching closing fence later on the same line
+            if language_raw and '```' in language_raw:
+                # This looks like an inline code span, not a fenced code block
+                # Fall through to code span handling
+                pass
+            elif language and not (next_pos >= len(self.text) or self.text[next_pos] == '\n'):
+                # Language info but not followed by newline - check if there's a closing fence on same line
+                rest_of_line = self.text[next_pos:].split('\n')[0]
+                if '```' in rest_of_line:
+                    # There's a closing fence on the same line - treat as inline code span
+                    # Fall through to code span handling
+                    pass
+                else:
+                    # No closing fence on same line - treat as malformed, fall through to code span
+                    pass
+            else:
+                # Check if this is a valid fenced code block start
+                # A valid fenced code block must be followed by a newline (or end of input)
+                followed_by_newline_or_eof = (next_pos >= len(self.text) or self.text[next_pos] == '\n')
+
+                # Only treat as CODE_FENCE if followed by newline/EOF
+                if followed_by_newline_or_eof:
+                    self._add_token(TokenType.CODE_FENCE, fence + language)
+                    self._advance(len(full_match))
+                    return True
+                else:
+                    # Not followed by newline - treat as inline code span
+                    # Fall through to code span handling
+                    pass
 
         # Escape sequences
         match = self.escape_pattern.match(remaining)
