@@ -724,7 +724,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr(),
+                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             },
         ] + storedMessages
 
@@ -863,7 +863,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr(),
+                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             },
         ]
 
@@ -922,7 +922,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr(),
+                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             },
         ]
         for message in reversed(messages):
@@ -963,7 +963,7 @@ class BotHandlers:
         reqMessages = [
             {
                 "role": "system",
-                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr(),
+                "content": chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             },
             {
                 "role": "user",
