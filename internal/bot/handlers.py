@@ -952,7 +952,7 @@ class BotHandlers:
 
         randomFloat = random.random()
         treshold = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
-        logger.debug(f"Random float: {randomFloat}, need: {treshold}")
+        #logger.debug(f"Random float: {randomFloat}, need: {treshold}")
         if treshold < randomFloat:
             return False
         logger.debug(f"Random float: {randomFloat} < {treshold}, answering to message")
