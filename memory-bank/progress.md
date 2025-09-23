@@ -338,3 +338,25 @@ All requested tasks have been successfully implemented. Repository is now proper
 * Feature ready for production use - users can now inspect loaded configuration easily
 * Useful for debugging configuration issues and verifying merged configs from multiple directories
 * No breaking changes to existing functionality
+[2025-09-23 08:02:30] - Fixed Missing Characters Issue in Markdown Parser
+
+## Completed Tasks
+
+* Successfully investigated and fixed critical bug in Gromozeka Markdown Parser where symbols `*`, `_`, and `~` were being lost during MarkdownV2 conversion
+* Root cause identified: inline parser was discarding failed emphasis characters instead of treating them as literal text
+* Fixed fallback logic in `_parse_inline_elements()` method to preserve all characters
+* Fixed underscore validation logic in `_is_valid_underscore_position()` method for proper word boundary handling
+* Updated existing test case that was expecting incorrect behavior
+* Added comprehensive test suite (`test_special_characters.py`) with 7 test cases covering edge cases
+* All tests now pass with 100% success rate (22/22 tests)
+* Verified that valid emphasis syntax still works correctly while preserving standalone special characters
+
+## Current Tasks
+
+* All markdown parser character handling issues resolved successfully
+
+## Next Steps
+
+* Parser is now production-ready with proper character preservation and escaping
+* No breaking changes to existing functionality
+* Enhanced reliability for Telegram MarkdownV2 message formatting

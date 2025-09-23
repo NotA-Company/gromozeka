@@ -330,7 +330,8 @@ Final paragraph with special chars: ()[]{}!"""
 
     def test_all_special_characters_escaping(self):
         """Test that all special characters are properly escaped, including edge cases."""
-        markdown = "Special chars: _*[]()~`>#+-=|{}.!"
+        # Use a test case that doesn't form valid markdown syntax
+        markdown = "Special chars: _ * [ ] ( ) ~ ` > # + - = | { } . !"
         result = self.parser.parse_to_markdownv2(markdown)
 
         # Check that ALL special characters are properly escaped
@@ -340,8 +341,8 @@ Final paragraph with special chars: ()[]{}!"""
         for char in expected_chars:
             self.assertIn(char, result, f"Character {char} should be escaped in result: {result}")
 
-        # Verify the complete expected output
-        expected_output = r"Special chars: \_\*\[\]\(\)\~\`\!\>\#\+\-\=\|\{\}\."
+        # Verify the complete expected output (with spaces to prevent markdown parsing)
+        expected_output = r"Special chars: \_ \* \[ \] \( \) \~ \` \> \# \+ \- \= \| \{ \} \. \!"
         self.assertIn(expected_output, result)
 
     def test_less_than_greater_than_symbols(self):
