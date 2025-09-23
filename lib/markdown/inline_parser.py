@@ -100,7 +100,7 @@ class InlineParser:
                 nodes.append(autolink)
                 pos = new_pos
                 continue
-            
+
             # If we tried to parse an autolink but failed, and we're at a '<' character,
             # treat it as regular text instead of skipping it
             if content[pos] == '<' and new_pos == pos:
@@ -459,7 +459,7 @@ class InlineParser:
         """Check if underscore emphasis is at valid word boundary."""
         # For opening underscore: should not have alphanumeric before, should have alphanumeric after
         # For closing underscore: should have alphanumeric before, should not have alphanumeric after
-        
+
         # Check character before
         has_alnum_before = False
         if pos > 0:
@@ -472,16 +472,16 @@ class InlineParser:
         if after_pos < len(content):
             next_char = content[after_pos]
             has_alnum_after = next_char.isalnum()
-        
+
         # For underscore emphasis to be valid:
         # - Opening: no alnum before AND alnum after (start of word)
         # - Closing: alnum before AND no alnum after (end of word)
         # - Or both sides are non-alnum (standalone)
-        
+
         is_opening = not has_alnum_before and has_alnum_after
         is_closing = has_alnum_before and not has_alnum_after
         is_standalone = not has_alnum_before and not has_alnum_after
-        
+
         return is_opening or is_closing or is_standalone
 
     def _merge_adjacent_text_nodes(self, nodes: List[MDNode]) -> List[MDNode]:

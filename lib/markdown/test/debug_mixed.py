@@ -12,12 +12,12 @@ from lib.markdown import markdown_to_markdownv2
 def debug_mixed():
     test_case = 'Mixed: * _ ~ * _ ~'
     result = markdown_to_markdownv2(test_case)
-    
+
     print(f"Input: {test_case!r}")
     print(f"Output: {result!r}")
     print(f"Display: {result}")
     print()
-    
+
     # Check for each character
     for char in ['*', '_', '~']:
         escaped = f'\\{char}'

@@ -29,7 +29,7 @@ class YcSdkModel(AbstractModel):
         super().__init__(provider, modelId, modelVersion, temperature, contextSize,extraConfig)
         self._ycModel = None
         self.ycSDK = ycSDK
-    
+
         self.supportText = self._config.get("support_text", True)
         self.supportImages = self._config.get("support_images", False)
         self._initModel()
