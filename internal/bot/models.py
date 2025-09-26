@@ -47,7 +47,8 @@ class DelayedTaskFunction(StrEnum):
 
 class DelayedTask:
 
-    def __init__(self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]):
+    def __init__(self, taskId: str, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]):
+        self.taskId = taskId
         self.delayedUntil = delayedUntil
         self.function = function
         self.kwargs = kwargs
@@ -68,7 +69,7 @@ class DelayedTask:
         return not self.__eq__(other)
 
     def __repr__(self) -> str:
-        return f"DelayedTask(delayedUntil={self.delayedUntil}, function={self.function}, kwargs={self.kwargs})"
+        return f"DelayedTask(taskId={self.taskId}, delayedUntil={self.delayedUntil}, function={self.function}, kwargs={self.kwargs})"
 
     def __str__(self) -> str:
         return self.__repr__()

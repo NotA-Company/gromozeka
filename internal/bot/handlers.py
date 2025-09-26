@@ -10,6 +10,7 @@ import logging
 import random
 import time
 from typing import Any, Callable, Dict, List, Optional
+import uuid
 
 import requests
 import magic
@@ -215,7 +216,16 @@ class BotHandlers:
     async def initDelayedScheduler(self, bot: ExtBot) -> None:
         self._bot = bot
 
-        # TODO: Load Tasks from DB
+        tasks = self.db.getPendingDelayedTasks()
+        for task in tasks:
+            await self._addDelayedTask(
+                delayedUntil=float(task["delayed_ts"]),
+                function=task["function"],
+                kwargs=json.loads(task["kwargs"]),
+                taskId=task["id"],
+                skipDB=True,
+            )
+            logger.info(f"Restored delayed task: {task}")
 
         await self._processDelayedQueue()
 
@@ -224,6 +234,7 @@ class BotHandlers:
             try:
                 # logger.debug("_pDQ(): Iteration...")
                 # First - process background tasks if any
+                # TODO: Convert to delayed task with 1 minute delay
                 await self._processBackgroundTasks()
                 logger.debug("_pDQ(): Processed background tasks...")
 
@@ -273,7 +284,7 @@ class BotHandlers:
                     case _:
                         logger.error(f"Unknown function type: {delayedTask.function} in delayed task {delayedTask}")
 
-                # TODO: Update DB
+                self.db.updateDelayedTask(delayedTask.taskId, True)
                 self.delayedActionsQueue.task_done()
 
             except RuntimeError as e:
@@ -285,12 +296,29 @@ class BotHandlers:
                 logger.error(f"Error in delayed task processor: {e}")
                 logger.exception(e)
 
-    async def _addDelayedTask(self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]) -> None:
+    async def _addDelayedTask(
+        self,
+        delayedUntil: float,
+        function: DelayedTaskFunction,
+        kwargs: Dict[str, Any],
+        taskId: Optional[str] = None,
+        skipDB: bool = False,
+    ) -> None:
         """Add delayed task"""
-        task = DelayedTask(delayedUntil, function, kwargs)
-        # TODO: Save to DB
+        if taskId is None:
+            taskId = str(uuid.uuid4())
+
+        task = DelayedTask(taskId, delayedUntil, function, kwargs)
         # logger.debug(f"Adding delayed task: {task}")
         await self.delayedActionsQueue.put(task)
+        if not skipDB:
+            self.db.addDelayedTask(
+                taskId=taskId,
+                function=function,
+                kwargs=json.dumps(kwargs, ensure_ascii=False, default=str),
+                delayedTS=int(delayedUntil),
+            )
+
         logger.debug(f"Added delayed task: {task}")
 
     async def _sendMessage(
