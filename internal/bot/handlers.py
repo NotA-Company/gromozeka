@@ -15,7 +15,7 @@ import magic
 
 from telegram import Chat, Update, Message, User
 from telegram.constants import MessageEntityType
-from telegram.ext import ContextTypes
+from telegram.ext import ExtBot, ContextTypes
 from telegram._files._basemedium import _BaseMedium
 
 from lib.ai.abstract import AbstractModel, LLMAbstractTool
@@ -28,7 +28,7 @@ from internal.database.models import MediaStatus, MessageCategory
 from lib.markdown import markdown_to_markdownv2
 import lib.utils as utils
 from .ensured_message import EnsuredMessage
-from .models import LLMMessageFormat, MessageType, MediaProcessingInfo
+from .models import DelayedTask, DelayedTaskFunction, LLMMessageFormat, MessageType, MediaProcessingInfo
 from .chat_settings import ChatSettingsKey, ChatSettingsValue
 
 logger = logging.getLogger(__name__)
@@ -75,8 +75,11 @@ class BotHandlers:
             "chats": {},
         }
 
-        self.delayedQueue = asyncio.Queue()
+        self.asyncTasksQueue = asyncio.Queue()
         self.queueLastUpdated = time.time()
+
+        self.delayedActionsQueue = asyncio.PriorityQueue()
+        self._bot: Optional[ExtBot] = None
 
     ###
     # Helpers for getting needed Models or Prompts
@@ -147,24 +150,24 @@ class BotHandlers:
 
         return False
 
-    async def addTaskToQueue(self, task: asyncio.Task) -> None:
+    async def addTaskToAsyncedQueue(self, task: asyncio.Task) -> None:
         """Add a task to the queue."""
-        if self.delayedQueue.qsize() > MAX_QUEUE_LENGTH:
+        if self.asyncTasksQueue.qsize() > MAX_QUEUE_LENGTH:
             logger.info(f"Queue is full, processing oldest task")
-            oldTask = await self.delayedQueue.get()
+            oldTask = await self.asyncTasksQueue.get()
             if not isinstance(oldTask, asyncio.Task):
                 logger.error(f"Task {oldTask} is not a task, but a {type(oldTask)}")
             else:
                 await oldTask
-            self.delayedQueue.task_done()
+            self.asyncTasksQueue.task_done()
 
-        await self.delayedQueue.put(task)
+        await self.asyncTasksQueue.put(task)
         self.queueLastUpdated = time.time()
 
     async def _processBackgroundTasks(self) -> None:
         """Process background tasks."""
 
-        if self.delayedQueue.empty():
+        if self.asyncTasksQueue.empty():
             return
 
         if self.queueLastUpdated + MAX_QUEUE_AGE > time.time():
@@ -177,25 +180,97 @@ class BotHandlers:
 
         try:
             while True:
-                task = await self.delayedQueue.get_nowait()
+                task = await self.asyncTasksQueue.get_nowait()
                 if not isinstance(task, asyncio.Task):
                     logger.error(f"Task {task} is not a task, but a {type(task)}")
                 else:
                     await task
-                self.delayedQueue.task_done()
+                self.asyncTasksQueue.task_done()
         except asyncio.QueueEmpty:
             pass
         except Exception as e:
             logger.error(f"Error in background task: {e}")
             logger.exception(e)
 
-    # async def awaitMedia(self, fileUniqueId: str) -> Dict[str, Any]:
-    #    raise NotImplemented
+    async def initDelayedScheduler(self, bot: ExtBot) -> None:
+        self._bot = bot
+
+        # TODO: Load Tasks from DB
+
+        await self._processDelayedQueue()
+
+    async def _processDelayedQueue(self) -> None:
+        while True:
+            try:
+                # logger.debug("_pDQ(): Iteration...")
+                # First - process background tasks if any
+                await self._processBackgroundTasks()
+                logger.debug("_pDQ(): Processed background tasks...")
+
+                #while self.delayedActionsQueue.empty():
+                #    logger.debug(f"_pDQ(): Queue is empty...")
+                #    await asyncio.sleep(1)
+
+                #logger.debug(f"_pDQ(): {self.delayedActionsQueue}")
+                delayedTask = await self.delayedActionsQueue.get()
+
+                if not isinstance(delayedTask, DelayedTask):
+                    self.delayedActionsQueue.task_done()
+                    logger.error(f"Got wrong element from delayedActionsQueue: {type(delayedTask).__name__}#{repr(delayedTask)}")
+                    continue
+
+                if delayedTask.delayedUntil > time.time():
+                    self.delayedActionsQueue.task_done()
+                    await self.delayedActionsQueue.put(delayedTask)
+                    # TODO: Add some configured delay, maybe
+                    await asyncio.sleep(min(10, delayedTask.delayedUntil - time.time()))
+                    continue
+
+                logger.debug(f"_pDQ(): Got {delayedTask}...")
+
+                match delayedTask.function:
+                    case DelayedTaskFunction.SEND_MESSAGE:
+                        kwargs = delayedTask.kwargs
+                        message = Message(
+                            message_id=kwargs["messageId"],
+                            date=datetime.datetime.now(),
+                            chat=Chat(id=kwargs["chatId"], type=kwargs["chatType"]),
+                            from_user=User(
+                                id=kwargs["userId"], first_name="", is_bot=False
+                            ),
+                            text=kwargs["messageText"],
+                            message_thread_id=kwargs["threadId"],
+                        )
+                        message.set_bot(self._bot)
+                        ensuredMessage = EnsuredMessage.fromMessage(message)
+                        await self._sendMessage(
+                            replyToMessage=ensuredMessage,
+                            messageText=kwargs["messageText"],
+                            messageCategory=kwargs["messageCategory"],
+                            tryParseInputJSON=False,
+                        )
+                        pass
+                    case _:
+                        logger.error(f"Unknown function type: {delayedTask.function} in delayed task {delayedTask}")
+
+                # TODO: Update DB
+                self.delayedActionsQueue.task_done()
+
+            except Exception as e:
+                logger.error(f"Error in delayed task processor: {e}")
+                logger.exception(e)
+
+    async def _addDelayedTask(self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]) -> None:
+        """Add delayed task"""
+        task = DelayedTask(delayedUntil, function, kwargs)
+        # TODO: Save to DB
+        #logger.debug(f"Adding delayed task: {task}")
+        await self.delayedActionsQueue.put(task)
+        logger.debug(f"Added delayed task: {task}")
 
     async def _sendMessage(
         self,
         replyToMessage: EnsuredMessage,
-        context: ContextTypes.DEFAULT_TYPE,
         messageText: Optional[str] = None,
         addMessagePrefix: str = "",
         photoData: Optional[bytes] = None,
@@ -203,7 +278,6 @@ class BotHandlers:
         sendMessageKWargs: Optional[Dict[str, Any]] = None,
         tryMarkdownV2: bool = True,
         tryParseInputJSON: bool = True,
-        saveMessage: bool = True,
         sendErrorIfAny: bool = True,
         skipLogs: bool = False,
         mediaPrompt: Optional[str] = None,
@@ -277,9 +351,10 @@ class BotHandlers:
                             )
                             raise ValueError("No text field found in json reply")
                     except Exception as e:
-                        logger.debug(
-                            f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}"
-                        )
+                        pass
+                        # logger.debug(
+                        #    f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}"
+                        # )
 
                 replyKwargs = sendMessageKWargs.copy()
                 replyKwargs.update(
@@ -319,24 +394,23 @@ class BotHandlers:
                 if not skipLogs:
                     logger.debug(f"Sent message: {replyMessage}")
 
-                # Save message if needed
-                if saveMessage:
-                    ensuredReplyMessage = EnsuredMessage.fromMessage(replyMessage)
-                    if addMessagePrefix:
-                        replyText = ensuredReplyMessage.messageText
-                        if replyText.startswith(addMessagePrefix):
-                            replyText = replyText[len(addMessagePrefix) :]
-                            ensuredReplyMessage.messageText = replyText
-                    if replyMessage.photo:
-                        media = await self.processImage(ensuredReplyMessage, context, mediaPrompt)
-                        ensuredReplyMessage.setMediaProcessingInfo(media)
+                # Save message
+                ensuredReplyMessage = EnsuredMessage.fromMessage(replyMessage)
+                if addMessagePrefix:
+                    replyText = ensuredReplyMessage.messageText
+                    if replyText.startswith(addMessagePrefix):
+                        replyText = replyText[len(addMessagePrefix) :]
+                        ensuredReplyMessage.messageText = replyText
+                if replyMessage.photo:
+                    media = await self.processImage(ensuredReplyMessage, mediaPrompt)
+                    ensuredReplyMessage.setMediaProcessingInfo(media)
 
-                    if isGroupChat or isPrivate:
-                        self._saveChatMessage(
-                            ensuredReplyMessage, messageCategory=messageCategory
-                        )
-                    else:
-                        raise ValueError("Unknown chat type")
+                if isGroupChat or isPrivate:
+                    self._saveChatMessage(
+                        ensuredReplyMessage, messageCategory=messageCategory
+                    )
+                else:
+                    raise ValueError("Unknown chat type")
 
             except Exception as e:
                 logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
@@ -355,6 +429,27 @@ class BotHandlers:
             return False
 
         return True
+
+    async def _delayedSendMessage(
+        self,
+        ensuredMessage: EnsuredMessage,        delayedUntil: float,
+        messageText: str,
+        messageCategory: MessageCategory = MessageCategory.BOT,
+    ) -> None:
+        """Send a message after a delay."""
+
+        functionName = DelayedTaskFunction.SEND_MESSAGE
+        kwargs = {
+            "messageText": messageText,
+            "messageCategory": messageCategory,
+            "messageId": ensuredMessage.messageId,
+            "threadId": ensuredMessage.threadId,
+            "chatId": ensuredMessage.chat.id,
+            "userId": ensuredMessage.user.id,
+            "chatType": ensuredMessage.chat.type,
+        }
+
+        return await self._addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
 
     async def _generateTextViaLLM(
         self,
@@ -377,7 +472,6 @@ class BotHandlers:
             if mlRet.status != ModelResultStatus.FINAL:
                 ret = await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\nPrompt:\n```\n{image_prompt}\n```"
                 )
                 return json.dumps({"done": False, 'errorMessage': mlRet.resultText})
@@ -388,7 +482,6 @@ class BotHandlers:
 
             ret = await self._sendMessage(
                 ensuredMessage,
-                context,
                 photoData=mlRet.mediaData,
                 photoCaption=image_description,
                 mediaPrompt=image_prompt,
@@ -544,7 +637,6 @@ class BotHandlers:
             logger.exception(e)
             await self._sendMessage(
                 ensuredMessage,
-                context,
                 messageText=f"Error while sending LLM request: {type(e).__name__}",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
@@ -558,7 +650,6 @@ class BotHandlers:
 
         return await self._sendMessage(
             ensuredMessage,
-            context,
             messageText=mlRet.resultText,
             addMessagePrefix=addPrefix,
         )
@@ -570,9 +661,6 @@ class BotHandlers:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
         # logger.debug(f"Handling SOME message: {update}")
-
-        # process background tasks if any
-        await self._processBackgroundTasks()
 
         chat = update.effective_chat
         if not chat:
@@ -621,10 +709,10 @@ class BotHandlers:
                 # No special handling for text messages needed
                 pass
             case MessageType.IMAGE:
-                media = await self.processImage(ensuredMessage, context)
+                media = await self.processImage(ensuredMessage)
                 ensuredMessage.setMediaProcessingInfo(media)
             case MessageType.STICKER:
-                media = await self.processSticker(update, context, ensuredMessage)
+                media = await self.processSticker(ensuredMessage)
                 ensuredMessage.setMediaProcessingInfo(media)
 
             case _:
@@ -820,7 +908,6 @@ class BotHandlers:
             logger.debug(f"Found user for candidate of being '{userTitle}': {user}")
             return await self._sendMessage(
                 ensuredMessage,
-                context,
                 messageText=f"{user['username']} сегодня {userTitle}",
                 tryParseInputJSON=False,
             )
@@ -861,7 +948,6 @@ class BotHandlers:
 
                 return await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=response,
                     tryParseInputJSON=False,
                 )
@@ -1046,7 +1132,6 @@ class BotHandlers:
     async def _processMedia(
         self,
         ensuredMessage: EnsuredMessage,
-        context: ContextTypes.DEFAULT_TYPE,
         media: _BaseMedium,
         metadata: Dict[str, Any],
         mediaForLLM: Optional[_BaseMedium] = None,
@@ -1154,7 +1239,9 @@ class BotHandlers:
         if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
             # Do not redownload file if it was downloaded already
             if mediaData is None or mediaForLLM != media:
-                file = await context.bot.get_file(mediaForLLM.file_id)
+                if self._bot is None:
+                    raise RuntimeError("Bot is not initialized")
+                file = await self._bot.get_file(mediaForLLM.file_id)
                 logger.debug(f"{mediaType}#{ret.id} File info: {file}")
                 mediaData = await file.download_as_bytearray()
 
@@ -1194,7 +1281,7 @@ class BotHandlers:
             parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
             # logger.debug(f"{mediaType}#{ret.id} After Start")
             ret.task = parseTask
-            await self.addTaskToQueue(parseTask)
+            await self.addTaskToAsyncedQueue(parseTask)
             # logger.debug(f"{mediaType}#{ret.id} After Queued")
 
         if ret.task is None:
@@ -1202,7 +1289,7 @@ class BotHandlers:
 
         return ret
 
-    async def processSticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
+    async def processSticker(self, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
         """
         Process a sticker from message if needed
         """
@@ -1225,10 +1312,10 @@ class BotHandlers:
         }
 
         return await self._processMedia(
-            ensuredMessage, context=context, media=sticker, metadata=metadata
+            ensuredMessage, media=sticker, metadata=metadata
         )
 
-    async def processImage(self, ensuredMessage: EnsuredMessage, context: ContextTypes.DEFAULT_TYPE, prompt: Optional[str] = None) -> MediaProcessingInfo:
+    async def processImage(self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None) -> MediaProcessingInfo:
         """
         Process a photo from message if needed
         """
@@ -1253,10 +1340,10 @@ class BotHandlers:
 
         return await self._processMedia(
             ensuredMessage,
-            context=context,
             media=bestPhotoSize,
             mediaForLLM=llmPhotoSize,
             metadata=metadata,
+            prompt=prompt,
         )
 
     ###
@@ -1316,7 +1403,6 @@ class BotHandlers:
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
         await self._sendMessage(
             ensuredMessage,
-            context,
             messageText=help_text,
             tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -1335,7 +1421,6 @@ class BotHandlers:
             echo_text = " ".join(context.args)
             await self._sendMessage(
                 ensuredMessage,
-                context,
                 messageText=f"🔄 Echo: {echo_text}",
                 tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY
@@ -1343,7 +1428,6 @@ class BotHandlers:
         else:
             await self._sendMessage(
                 ensuredMessage,
-                context,
                 messageText="Please provide a message to echo!\nUsage: /echo <your message>",
                 tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR
@@ -1425,7 +1509,7 @@ class BotHandlers:
             threadId=threadId,
             limit=maxMessages,
             messageCategory=[MessageCategory.USER, MessageCategory.BOT]
-            
+
         )
 
         logger.debug(f"Messages: {messages}")
@@ -1522,7 +1606,6 @@ class BotHandlers:
         for msg in resMessages:
             await self._sendMessage(
                 ensuredMessage,
-                context,
                 messageText=msg,
                 tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY
@@ -1571,7 +1654,6 @@ class BotHandlers:
             if i % modelsPerMessage == (modelsPerMessage - 1):
                 await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=replyText,
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -1582,7 +1664,6 @@ class BotHandlers:
         if replyText:
             await self._sendMessage(
                 ensuredMessage,
-                context,
                 messageText=replyText,
                 tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -1620,7 +1701,6 @@ class BotHandlers:
 
         await self._sendMessage(
             ensuredMessage,
-            context,
             messageText=resp,
             tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -1663,7 +1743,6 @@ class BotHandlers:
         if not isAdmin:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="You are not allowed to change chat settings.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1673,7 +1752,6 @@ class BotHandlers:
         if isSet and (not context.args or len(context.args) < 2):
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="You need to specify a key and a value to change chat setting.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1682,7 +1760,6 @@ class BotHandlers:
         if not isSet and (not context.args or len(context.args) < 1):
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="You need to specify a key to clear chat setting.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1699,7 +1776,6 @@ class BotHandlers:
             self.setChatSettings(chat.id, {key: value})
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=f"Готово, теперь `{key}` = `{value}`",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -1708,7 +1784,6 @@ class BotHandlers:
             self.unsetChatSetting(chat.id, key)
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=f"Готово, теперь `{key}` сброшено в значение по умолчанию",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -1733,12 +1808,11 @@ class BotHandlers:
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         user = ensuredMessage.user
-        chat = ensuredMessage.chat
+        #chat = ensuredMessage.chat
 
         if not context.args or len(context.args) < 1:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="You need to specify test suite.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1748,7 +1822,6 @@ class BotHandlers:
         if not user.username:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="You need to have a username to run tests.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1760,7 +1833,6 @@ class BotHandlers:
         if user.username.lower() not in allowedUsers:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="You are not allowed to run tests.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1779,7 +1851,6 @@ class BotHandlers:
                     except ValueError as e:
                         await self._sendMessage(
                             ensuredMessage,
-                            context,
                             messageText=f"Invalid iterations count. {e}",
                             tryParseInputJSON=False,
                             messageCategory=MessageCategory.BOT_ERROR,
@@ -1791,7 +1862,6 @@ class BotHandlers:
                     except ValueError as e:
                         await self._sendMessage(
                             ensuredMessage,
-                            context,
                             messageText=f"Invalid delay. {e}",
                             tryParseInputJSON=False,
                             messageCategory=MessageCategory.BOT_ERROR,
@@ -1804,7 +1874,6 @@ class BotHandlers:
                     )
                     await self._sendMessage(
                         ensuredMessage,
-                        context,
                         messageText=f"Iteration {i}",
                         tryParseInputJSON=False,
                         skipLogs=True,
@@ -1812,10 +1881,17 @@ class BotHandlers:
                     )
                     await asyncio.sleep(delay)
 
+            case "delayedQueue":
+                await self._sendMessage(
+                    ensuredMessage,
+                    messageText=f"```\n{self.delayedActionsQueue}\n\n{self.delayedActionsQueue.qsize()}\n```",
+                    tryParseInputJSON=False,
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+
             case _:
                 await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=f"Unknown test suite: {suite}.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1846,7 +1922,6 @@ class BotHandlers:
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="Команда должна быть ответом на сообщение с медиа.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1869,7 +1944,6 @@ class BotHandlers:
         if not prompt:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="Необходимо указать запрос для анализа медиа.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1897,7 +1971,6 @@ class BotHandlers:
             case _:
                 await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1911,7 +1984,6 @@ class BotHandlers:
         if not mediaData:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="Не удалось получить данные медиа.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1923,7 +1995,6 @@ class BotHandlers:
         if not mimeType.startswith("image/"):
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1947,7 +2018,6 @@ class BotHandlers:
         if llmRet.status != ModelResultStatus.FINAL:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -1956,7 +2026,6 @@ class BotHandlers:
 
         await self._sendMessage(
             ensuredMessage,
-            context,
             messageText=llmRet.resultText,
             tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -2005,7 +2074,6 @@ class BotHandlers:
         if not prompt:
             await self._sendMessage(
                     ensuredMessage,
-                    context,
                     messageText="Необходимо указать запрос для генерации изображение. Или послать команду ответом на сообщение с текстом (можно цитировать при необходимости).",
                     tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -2019,7 +2087,6 @@ class BotHandlers:
         if mlRet.status != ModelResultStatus.FINAL:
             await self._sendMessage(
                 ensuredMessage,
-                context,
                 messageText=f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
@@ -2029,7 +2096,6 @@ class BotHandlers:
             logger.error(f"No image generated for {prompt}")
             await self._sendMessage(
                 ensuredMessage,
-                context,
                 messageText=f"Ошибка генерации изображения, попробуйте позже.",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
@@ -2037,10 +2103,72 @@ class BotHandlers:
 
         await self._sendMessage(
             ensuredMessage,
-            context,
             photoData=mlRet.mediaData,
             photoCaption=f"Сгенерировал изображение по Вашему запросу:\n```\n{prompt}\n```",
             mediaPrompt=prompt,
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+    async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /remind <time> command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage : Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+
+        delaySecs: int = 0
+        try:
+            if not context.args:
+                raise ValueError("No time specified")
+            delayStr = context.args[0]
+            delaySecs = utils.parseDelay(delayStr)
+        except Exception as e:
+            await self._sendMessage(
+                ensuredMessage,
+                messageText="Для команды `/remind` нужно указать время, через которое отправить напоминание в одном из форматов:\n"
+                "1. `DDdHHhMMmSSs`\n"
+                "2. `HH:MM[:SS]`\n",
+                tryParseInputJSON=False,
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            logger.error(f"Error while handling /remind command: {type(e).__name__}{e}")
+            # TODO: comment later after debug
+            logger.exception(e)
+            return
+
+        reminderText: Optional[str] = None
+        if len(context.args) > 1:
+            reminderText = " ".join(context.args[1:])
+
+        if reminderText is None and ensuredMessage.quoteText:
+            reminderText = ensuredMessage.quoteText
+
+        if reminderText is None:
+            reminderText = "⏰ Напоминание"
+
+        delayedTime = time.time() + delaySecs
+        await self._delayedSendMessage(
+            ensuredMessage,
+            delayedUntil=delayedTime,
+            messageText=reminderText,
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+        delayedDT = datetime.datetime.fromtimestamp(delayedTime, tz=datetime.timezone.utc)
+
+        await self._sendMessage(
+            ensuredMessage,
+            messageText=f"Напомню в {delayedDT.strftime('%Y-%m-%d %H:%M:%S%z')}",
+            tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
