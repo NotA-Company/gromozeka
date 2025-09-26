@@ -1511,6 +1511,7 @@ class BotHandlers:
                 context,
                 messageText=msg,
                 tryParseInputJSON=False,
+                #TODO: Add specific message category (liske bot-summary) to exclude it from different summarisations and other
             )
             time.sleep(1)
 
@@ -1578,6 +1579,8 @@ class BotHandlers:
             logger.error("Message undefined")
             return
 
+        moreDebug = True if context.args and context.args[0].lower() == "debug" else False
+
         ensuredMessage : Optional[EnsuredMessage] = None
         try:
             ensuredMessage = EnsuredMessage.fromMessage(message)
@@ -1599,7 +1602,10 @@ class BotHandlers:
         for k, v in chatSettings.items():
             resp += f"`{k}`:```{k}\n{v}\n```\n"
 
-        # logger.debug(resp)
+        if moreDebug:
+            logger.debug(resp)
+            logger.debug(repr(resp))
+
         await self._sendMessage(
             ensuredMessage,
             context,

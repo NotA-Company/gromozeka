@@ -26,7 +26,7 @@ def example():
     * Item 2
     * Item 3
 ```"""
-        
+
         # Test HTML output
         html = markdown_to_html(markdown)
         self.assertIn('<pre><code class="language-python">', html)
@@ -36,7 +36,7 @@ def example():
         # Should NOT contain <ul> or <li> tags
         self.assertNotIn('<ul>', html)
         self.assertNotIn('<li>', html)
-        
+
         # Test MarkdownV2 output
         markdownv2 = markdown_to_markdownv2(markdown)
         self.assertIn('```python', markdownv2)
@@ -54,7 +54,7 @@ Instructions:
 2. Second step
 3. Third step
 ```"""
-        
+
         # Test HTML output
         html = markdown_to_html(markdown)
         self.assertIn('<pre><code class="language-text">', html)
@@ -64,7 +64,7 @@ Instructions:
         # Should NOT contain <ol> or <li> tags
         self.assertNotIn('<ol>', html)
         self.assertNotIn('<li>', html)
-        
+
         # Test MarkdownV2 output
         markdownv2 = markdown_to_markdownv2(markdown)
         self.assertIn('```text', markdownv2)
@@ -89,7 +89,7 @@ Instructions:
    a. Sub-step a
    b. Sub-step b
 ```"""
-        
+
         # Test HTML output
         html = markdown_to_html(markdown)
         self.assertIn('<pre><code class="language-markdown">', html)
@@ -114,7 +114,7 @@ Test2:
 Test01:
 * Test02.
 ```"""
-        
+
         # Test normalized markdown
         normalized = normalize_markdown(markdown)
         self.assertIn('```chat-prompt', normalized)
@@ -122,7 +122,7 @@ Test01:
         self.assertIn('* Test4.', normalized)
         self.assertIn('```chat-prompt-suffix', normalized)
         self.assertIn('* Test02.', normalized)
-        
+
         # Test MarkdownV2 output
         markdownv2 = markdown_to_markdownv2(markdown)
         self.assertIn('```chat-prompt', markdownv2)
@@ -149,7 +149,7 @@ auth:
   2. Use strong passwords
   3. Regular backups
 ```"""
-        
+
         # Test HTML output
         html = markdown_to_html(markdown)
         self.assertIn('<pre><code class="language-yaml">', html)
@@ -175,7 +175,7 @@ Regular text:
 * Item 1
 * Item 2
 ```"""
-        
+
         # Test HTML output
         html = markdown_to_html(markdown)
         self.assertIn('<pre><code class="language-text">', html)
@@ -195,7 +195,7 @@ Regular text:
 1. Mixed with ordered list
 2. Should all be literal
 ```"""
-        
+
         # Test HTML output
         html = markdown_to_html(markdown)
         self.assertIn('<pre><code>', html)  # No language class
