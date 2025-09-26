@@ -133,9 +133,7 @@ class HTMLRenderer:
         content = self._escape_html(node.content) if self.escape_html else node.content
 
         if node.language:
-            class_attr = (
-                f' class="{self.code_class_prefix}{self._escape_html(node.language)}"'
-            )
+            class_attr = f' class="{self.code_class_prefix}{self._escape_html(node.language)}"'
             return f"<pre><code{class_attr}>{content}</code></pre>"
         else:
             return f"<pre><code>{content}</code></pre>"
@@ -215,9 +213,7 @@ class HTMLRenderer:
     def _render_image(self, node: MDImage) -> str:
         """Render image node."""
         url = self._escape_html(node.url) if self.escape_html else node.url
-        alt_text = (
-            self._escape_html(node.alt_text) if self.escape_html else node.alt_text
-        )
+        alt_text = self._escape_html(node.alt_text) if self.escape_html else node.alt_text
 
         # Build attributes
         attrs = [f'src="{url}"', f'alt="{alt_text}"']
@@ -284,9 +280,7 @@ class HTMLRenderer:
             content = match.group(1)
             return f"<li>{content}</li>"
 
-        return re.sub(
-            pattern, replace_func, html_content, flags=re.IGNORECASE | re.DOTALL
-        )
+        return re.sub(pattern, replace_func, html_content, flags=re.IGNORECASE | re.DOTALL)
 
     def _indent(self) -> str:
         """Get current indentation string."""
@@ -313,9 +307,7 @@ class MarkdownRenderer:
         """Initialize the Markdown renderer."""
         self.options = options or {}
         self.header_style = self.options.get("header_style", "atx")  # 'atx' or 'setext'
-        self.emphasis_style = self.options.get(
-            "emphasis_style", "asterisk"
-        )  # 'asterisk' or 'underscore'
+        self.emphasis_style = self.options.get("emphasis_style", "asterisk")  # 'asterisk' or 'underscore'
         self.list_marker = self.options.get("list_marker", "-")  # '-', '*', or '+'
 
     def render(self, document: MDDocument) -> str:
@@ -465,12 +457,8 @@ class MarkdownV2Renderer:
         self.options = options or {}
 
         # Renderer options
-        self.preserve_leading_spaces = self.options.get(
-            "preserve_leading_spaces", False
-        )
-        self.preserve_soft_line_breaks = self.options.get(
-            "preserve_soft_line_breaks", False
-        )
+        self.preserve_leading_spaces = self.options.get("preserve_leading_spaces", False)
+        self.preserve_soft_line_breaks = self.options.get("preserve_soft_line_breaks", False)
 
         self._escape = self._fallback_escape
 

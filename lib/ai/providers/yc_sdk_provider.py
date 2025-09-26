@@ -29,9 +29,7 @@ class YcSdkModel(AbstractModel):
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize YC SDK model, dood!"""
-        super().__init__(
-            provider, modelId, modelVersion, temperature, contextSize, extraConfig
-        )
+        super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
         self._ycModel = None
         self.ycSDK = ycSDK
 
@@ -45,14 +43,10 @@ class YcSdkModel(AbstractModel):
             kwargs: Dict[str, Any] = {}
 
             if self.supportText and self.supportImages:
-                raise ValueError(
-                    "Only one of support_text and support_images can be True for YC SDK model, dood"
-                )
+                raise ValueError("Only one of support_text and support_images can be True for YC SDK model, dood")
 
             if not self.supportText and not self.supportImages:
-                raise ValueError(
-                    "Either support_text or support_images must be True for YC SDK model, dood"
-                )
+                raise ValueError("Either support_text or support_images must be True for YC SDK model, dood")
 
             # Text generation Models
             if self.supportText:
@@ -62,9 +56,9 @@ class YcSdkModel(AbstractModel):
                     }
                 )
 
-                self._ycModel = self.ycSDK.models.completions(
-                    self.modelId, model_version=self.modelVersion
-                ).configure(**kwargs)
+                self._ycModel = self.ycSDK.models.completions(self.modelId, model_version=self.modelVersion).configure(
+                    **kwargs
+                )
 
             # Image generation Models
             if self.supportImages:
@@ -100,14 +94,10 @@ class YcSdkModel(AbstractModel):
             raise RuntimeError("Model not initialized, dood!")
 
         if tools:
-            raise NotImplementedError(
-                "Tools not supported by YC SDK models for now, dood!"
-            )
+            raise NotImplementedError("Tools not supported by YC SDK models for now, dood!")
 
         if not self.supportText:
-            raise NotImplementedError(
-                f"Text generation isn't supported by {self.modelId}, dood!"
-            )
+            raise NotImplementedError(f"Text generation isn't supported by {self.modelId}, dood!")
 
         try:
             # Convert messages to YC SDK format if needed
@@ -130,9 +120,7 @@ class YcSdkModel(AbstractModel):
             raise RuntimeError("Model not initialized, dood!")
 
         if not self.supportImages:
-            raise NotImplementedError(
-                f"Image generation isn't supported by {self.modelId}, dood"
-            )
+            raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
 
         # From docs:
         # # Sample 3: run with several messages specifying weight
@@ -143,17 +131,13 @@ class YcSdkModel(AbstractModel):
         resultStatus: ModelResultStatus = ModelResultStatus.UNKNOWN
 
         try:
-            operation = self._ycModel.run_deferred(
-                [message.toDict("text", skipRole=True) for message in messages]
-            )
+            operation = self._ycModel.run_deferred([message.toDict("text", skipRole=True) for message in messages])
             result = operation.wait()
             resultStatus = ModelResultStatus.FINAL
         except Exception as e:
             resultStatus = ModelResultStatus.ERROR
             errorMsg = str(e)
-            logger.error(
-                f"Error generating image with YC SDK model {self.modelId}: {type(e).__name__}#{e}"
-            )
+            logger.error(f"Error generating image with YC SDK model {self.modelId}: {type(e).__name__}#{e}")
             # logger.info(e.__dict__)
             ethicDetails = [
                 "it is not possible to generate an image from this request because it may violate the terms of use",
@@ -173,11 +157,7 @@ class YcSdkModel(AbstractModel):
         logger.debug(f"Image generation Result: {result}")
         return ModelRunResult(
             result,
-            (
-                ModelResultStatus.FINAL
-                if result.image_bytes
-                else ModelResultStatus.UNKNOWN
-            ),
+            (ModelResultStatus.FINAL if result.image_bytes else ModelResultStatus.UNKNOWN),
             mediaMimeType="image/jpeg",
             mediaData=result.image_bytes,
         )
@@ -207,13 +187,9 @@ class YcSdkProvider(AbstractLLMProvider):
             if not folder_id:
                 raise ValueError("folder_id is required for YC SDK provider, dood!")
 
-            logger.debug(
-                f"Initializing YC SDK provider with folder_id: {folder_id} and yc_profile: {yc_profile}, dood"
-            )
+            logger.debug(f"Initializing YC SDK provider with folder_id: {folder_id} and yc_profile: {yc_profile}, dood")
             # TODO: Add ability to configure somehow else
-            self._ycMlSDK = YCloudML(
-                folder_id=folder_id, auth=YandexCloudCLIAuth(), yc_profile=yc_profile
-            )
+            self._ycMlSDK = YCloudML(folder_id=folder_id, auth=YandexCloudCLIAuth(), yc_profile=yc_profile)
 
             logger.info("YC SDK provider initialized, dood!")
 

@@ -216,9 +216,7 @@ class MarkdownTestRunner:
                         if len(result.error.split("\n")) > 3:
                             print("    ...")
 
-        print(
-            f"\n{'🎉 ALL TESTS PASSED!' if failed_tests == 0 else '⚠️  SOME TESTS FAILED'}"
-        )
+        print(f"\n{'🎉 ALL TESTS PASSED!' if failed_tests == 0 else '⚠️  SOME TESTS FAILED'}")
 
         # Return appropriate exit code
         return 0 if failed_tests == 0 else 1

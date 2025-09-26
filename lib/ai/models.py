@@ -170,9 +170,7 @@ class ModelMessage:
                     "id": toolCall.id,
                     "function": {
                         "name": toolCall.name,
-                        "arguments": json.dumps(
-                            toolCall.parameters, ensure_ascii=False, default=str
-                        ),
+                        "arguments": json.dumps(toolCall.parameters, ensure_ascii=False, default=str),
                     },
                     "type": "function",
                 }
@@ -193,9 +191,7 @@ class ModelMessage:
 class ModelImageMessage(ModelMessage):
     """Message for model with image"""
 
-    def __init__(
-        self, role: str = "user", content: str = "", image: bytearray = bytearray()
-    ):
+    def __init__(self, role: str = "user", content: str = "", image: bytearray = bytearray()):
         super().__init__(role, content)
         self.image = image
 
@@ -290,9 +286,7 @@ class ModelRunResult:
                     "toolCalls": self.toolCalls,
                     "raw": str(self.result),
                     "mediaMimeType": self.mediaMimeType,
-                    "mediaData": (
-                        f"BinaryData({len(self.mediaData)})" if self.mediaData else None
-                    ),
+                    "mediaData": (f"BinaryData({len(self.mediaData)})" if self.mediaData else None),
                     "error": str(self.error) if self.error else "None",
                 },
                 ensure_ascii=False,
