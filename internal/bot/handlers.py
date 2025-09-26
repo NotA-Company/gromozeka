@@ -134,7 +134,7 @@ class BotHandlers:
         username = user.username
         if username is None:
             return False
-        username.lower()
+        username = username.lower()
 
         if allowBotOwners and username in self.botOwners:
             return True
