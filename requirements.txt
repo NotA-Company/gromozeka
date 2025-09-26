@@ -42,3 +42,4 @@ wrapt==1.17.3
 yandex-cloud-ml-sdk==0.15.0
 yandexcloud==0.360.0
 black==25.9.0
+flake8==7.1.1
