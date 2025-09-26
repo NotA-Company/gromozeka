@@ -418,10 +418,10 @@ class BlockParser:
 
     def _skip_whitespace_and_newlines(self) -> None:
         """Skip whitespace and newline tokens."""
-        while not self._is_at_end() and self.current_token.type in [
+        while not self._is_at_end() and self.current_token.type in [  # type: ignore
             TokenType.SPACE,
             TokenType.NEWLINE,
-        ]:  # type: ignore
+        ]:
             self._advance()
 
     def _skip_newlines(self) -> None:
