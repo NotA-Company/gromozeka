@@ -12,7 +12,7 @@ import threading
 from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 
-from .models import MediaStatus
+from .models import MediaStatus, MessageCategory
 from ..bot.models import MessageType
 
 logger = logging.getLogger(__name__)
@@ -247,7 +247,7 @@ class DatabaseWrapper:
         threadId: Optional[int] = None,
         messageText: str = "",
         messageType: MessageType = MessageType.TEXT,
-        messageCategory: str = "user",
+        messageCategory: MessageCategory = MessageCategory.UNSPECIFIED,
         rootMessageId: Optional[int] = None,
         quoteText: Optional[str] = None,
         mediaId: Optional[str] = None,
@@ -280,7 +280,7 @@ class DatabaseWrapper:
                     "threadId": threadId,
                     "messageText": messageText,
                     "messageType": messageType,
-                    "messageCategory": messageCategory,
+                    "messageCategory": str(messageCategory),
                     "rootMessageId": rootMessageId,
                     "quoteText": quoteText,
                     "mediaId": mediaId,
@@ -316,7 +316,14 @@ class DatabaseWrapper:
             logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
             return False
 
-    def getChatMessagesSince(self, chatId: int, sinceDateTime: Optional[datetime.datetime] = None, threadId: Optional[int] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def getChatMessagesSince(
+        self,
+        chatId: int,
+        sinceDateTime: Optional[datetime.datetime] = None,
+        threadId: Optional[int] = None,
+        limit: Optional[int] = None,
+        messageCategory: Optional[List[MessageCategory]] = None,
+    ) -> List[Dict[str, Any]]:
         """Get chat messages from a specific chat newer than the given date."""
         logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:
@@ -329,6 +336,7 @@ class DatabaseWrapper:
                         c.chat_id = :chatId
                         AND (:sinceDateTime IS NULL OR c.date > :sinceDateTime)
                         AND ((:threadId IS NULL) OR (c.thread_id = :threadId))
+                        AND ((:messageCategory IS NULL) OR (message_category in :messageCategory))
                     ORDER BY c.date DESC
                 """
                 if limit is not None:
@@ -340,6 +348,7 @@ class DatabaseWrapper:
                         "chatId": chatId,
                         "sinceDateTime": sinceDateTime,
                         "threadId": threadId,
+                        "messageCategory": messageCategory,
                     },
                 )
                 return [dict(row) for row in cursor.fetchall()]
