@@ -731,6 +731,7 @@ class BotHandlers:
             ModelMessage(
                 role="system",
                 content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                + "\n"
                 + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
         ] + storedMessages
@@ -870,7 +871,9 @@ class BotHandlers:
         reqMessages = [
             ModelMessage(
                 role="system",
-                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                + "\n"
+                + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
         ]
 
@@ -940,7 +943,9 @@ class BotHandlers:
         reqMessages = [
             ModelMessage(
                 role="system",
-                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr() + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                + "\n"
+                + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
         ]
         for message in reversed(messages):
@@ -985,6 +990,7 @@ class BotHandlers:
             ModelMessage(
                 role="system",
                 content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                + "\n"
                 + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
             await ensuredMessage.toModelMessage(
