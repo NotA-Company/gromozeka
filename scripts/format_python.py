@@ -3,14 +3,14 @@
 Script to format all Python files in the project using black.
 """
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 
 def find_python_files(root_dir: Path) -> list[Path]:
-    """Find all Python files in the given directory and subdirectories, excluding venv directory."""
+    """Find all Python files in the given directory and subdirectories,
+    excluding venv directory."""
     python_files = []
     for file_path in root_dir.rglob("*.py"):
         # Skip files in venv directory
