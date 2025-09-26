@@ -167,7 +167,8 @@ class BlockParser:
                         break
 
             # Stop if we encounter another block-level element (safety mechanism)
-            if self._is_block_element_start():
+            # But exclude LIST_MARKER since we're inside a code block
+            if self._is_block_element_start_excluding_lists():
                 break
 
             # Collect line content
@@ -477,6 +478,25 @@ class BlockParser:
             TokenType.BLOCKQUOTE_MARKER,
             TokenType.HORIZONTAL_RULE,
             TokenType.LIST_MARKER
+        ]
+
+        # Only consider indented code blocks if not ignoring them
+        if not self.ignore_indented_code_blocks:
+            is_block_start = is_block_start or self._is_indented_code_block()
+
+        return is_block_start
+
+    def _is_block_element_start_excluding_lists(self) -> bool:
+        """Check if current position starts a block element, excluding markdown syntax inside code blocks."""
+        if self._is_at_end():
+            return False
+
+        # Inside code blocks, only CODE_FENCE should be considered a block element
+        # All other markdown syntax should be treated as literal text
+        is_block_start = self.current_token.type in [ # type: ignore
+            TokenType.CODE_FENCE,
+            TokenType.HORIZONTAL_RULE  # Keep horizontal rule as it's less likely to appear in code
+            # Intentionally excluding: HEADER_MARKER, LIST_MARKER, BLOCKQUOTE_MARKER
         ]
 
         # Only consider indented code blocks if not ignoring them
