@@ -19,9 +19,7 @@ from internal.bot.application import BotApplication
 from lib.logging_utils import initLogging
 
 # Configure basic logging first
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -30,9 +28,7 @@ logger = logging.getLogger(__name__)
 class GromozekBot:
     """Main bot orchestrator that coordinates all components."""
 
-    def __init__(
-        self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None
-    ):
+    def __init__(self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None):
         """Initialize bot with all components."""
         # Initialize configuration
         self.config_manager = ConfigManager(config_path, config_dirs)
@@ -41,9 +37,7 @@ class GromozekBot:
         initLogging(self.config_manager.get_logging_config())
 
         # Initialize database
-        self.database_manager = DatabaseManager(
-            self.config_manager.get_database_config()
-        )
+        self.database_manager = DatabaseManager(self.config_manager.get_database_config())
 
         # Initialize LLM Manager
         self.llm_manager = LLMManager(self.config_manager.get_models_config())
@@ -187,9 +181,7 @@ def main():
         # Handle --print-config argument first
         if args.print_config:
             # Initialize only the config manager to load and print config
-            config_manager = ConfigManager(
-                config_path=args.config, config_dirs=args.config_dir
-            )
+            config_manager = ConfigManager(config_path=args.config, config_dirs=args.config_dir)
             pretty_print_config(config_manager)
             sys.exit(0)
 

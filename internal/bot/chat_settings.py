@@ -79,9 +79,7 @@ class ChatSettingsValue:
         return self.value.lower() == "true"
 
     def toList(self, separator: str = ",", dropEmpty: bool = True) -> List[str]:
-        return [
-            x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty
-        ]
+        return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]
 
     def toModel(self, modelManager: LLMManager) -> AbstractModel:
         ret = modelManager.getModel(self.value)

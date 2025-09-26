@@ -147,11 +147,7 @@ class Tokenizer:
 
         # Check if we're at start of line for block-level elements
         # Also check after consuming spaces if we're still logically at line start
-        if (
-            self.column == 1
-            or self._is_after_newline()
-            or self._is_after_line_start_spaces()
-        ):
+        if self.column == 1 or self._is_after_newline() or self._is_after_line_start_spaces():
             if self._try_tokenize_block_elements():
                 return True
 
@@ -262,9 +258,7 @@ class Tokenizer:
                 # This looks like an inline code span, not a fenced code block
                 # Fall through to code span handling
                 pass
-            elif language and not (
-                next_pos >= len(self.text) or self.text[next_pos] == "\n"
-            ):
+            elif language and not (next_pos >= len(self.text) or self.text[next_pos] == "\n"):
                 # Language info but not followed by newline - check if there's a closing fence on same line
                 rest_of_line = self.text[next_pos:].split("\n")[0]
                 if "```" in rest_of_line:
@@ -277,9 +271,7 @@ class Tokenizer:
             else:
                 # Check if this is a valid fenced code block start
                 # A valid fenced code block must be followed by a newline (or end of input)
-                followed_by_newline_or_eof = (
-                    next_pos >= len(self.text) or self.text[next_pos] == "\n"
-                )
+                followed_by_newline_or_eof = next_pos >= len(self.text) or self.text[next_pos] == "\n"
 
                 # Only treat as CODE_FENCE if followed by newline/EOF
                 if followed_by_newline_or_eof:
@@ -359,9 +351,7 @@ class Tokenizer:
                 c not in self.special_chars
                 and c not in "\n \t"
                 and not (self.column == 1 and c in "#>-*+")
-                and not (
-                    self.pos > 0 and self.text[self.pos - 1] == "\n" and c in "#>-*+"
-                )
+                and not (self.pos > 0 and self.text[self.pos - 1] == "\n" and c in "#>-*+")
             )
         )
 
@@ -392,9 +382,7 @@ class Tokenizer:
 
     def _add_token(self, token_type: TokenType, content: str) -> None:
         """Add a token to the token list."""
-        token = Token(
-            token_type, content, self.line, self.column - len(content), len(content)
-        )
+        token = Token(token_type, content, self.line, self.column - len(content), len(content))
         self.tokens.append(token)
 
     def _is_after_newline(self) -> bool:

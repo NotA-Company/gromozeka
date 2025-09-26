@@ -100,9 +100,7 @@ class TestTokenizer(unittest.TestCase):
 
         # Find emphasis marker tokens
         emphasis_tokens = [t for t in tokens if t.type == TokenType.EMPHASIS_MARKER]
-        self.assertEqual(
-            len(emphasis_tokens), 6
-        )  # 2 for italic, 4 for bold, 2 for strike
+        self.assertEqual(len(emphasis_tokens), 6)  # 2 for italic, 4 for bold, 2 for strike
 
 
 class TestBlockParser(unittest.TestCase):
@@ -146,9 +144,7 @@ class TestBlockParser(unittest.TestCase):
         # Indented code block
         indented_doc = self.parser.parse("    print('hello')\n    print('world')")
         # May have multiple children due to parsing behavior, check that at least one is a code block
-        code_blocks = [
-            child for child in indented_doc.children if isinstance(child, MDCodeBlock)
-        ]
+        code_blocks = [child for child in indented_doc.children if isinstance(child, MDCodeBlock)]
         self.assertGreaterEqual(len(code_blocks), 0)
         # self.assertFalse(code_blocks[0].is_fenced)
 
@@ -198,9 +194,7 @@ class TestInlineParser(unittest.TestCase):
         self.assertIsInstance(paragraph, MDParagraph)
 
         # Should have emphasis nodes
-        emphasis_nodes = [
-            child for child in paragraph.children if isinstance(child, MDEmphasis)
-        ]
+        emphasis_nodes = [child for child in paragraph.children if isinstance(child, MDEmphasis)]
         self.assertEqual(len(emphasis_nodes), 4)
 
         # Check emphasis types
@@ -215,9 +209,7 @@ class TestInlineParser(unittest.TestCase):
         doc = self.parser.parse("This is `inline code` in text.")
 
         paragraph = doc.children[0]
-        code_spans = [
-            child for child in paragraph.children if isinstance(child, MDCodeSpan)
-        ]
+        code_spans = [child for child in paragraph.children if isinstance(child, MDCodeSpan)]
         self.assertEqual(len(code_spans), 1)
         self.assertEqual(code_spans[0].content, "inline code")
 
@@ -252,9 +244,7 @@ class TestInlineParser(unittest.TestCase):
         doc = self.parser.parse("<https://example.com> <user@example.com>")
 
         paragraph = doc.children[0]
-        autolinks = [
-            child for child in paragraph.children if isinstance(child, MDAutolink)
-        ]
+        autolinks = [child for child in paragraph.children if isinstance(child, MDAutolink)]
         self.assertEqual(len(autolinks), 2)
 
         self.assertEqual(autolinks[0].url, "https://example.com")

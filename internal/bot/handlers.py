@@ -65,32 +65,24 @@ def makeEmptyAsyncTask() -> asyncio.Task:
 class BotHandlers:
     """Contains all bot command and message handlers."""
 
-    def __init__(
-        self, config: Dict[str, Any], database: DatabaseWrapper, llmManager: LLMManager
-    ):
+    def __init__(self, config: Dict[str, Any], database: DatabaseWrapper, llmManager: LLMManager):
         """Initialize handlers with database and LLM model."""
         self.config = config
         self.db = database
         self.llmManager = llmManager
 
         # Init different defaults
-        self.botOwners = [
-            username.lower() for username in self.config.get("bot_owners", [])
-        ]
+        self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
 
         botDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: ChatSettingsValue(v)
-            for k, v in self.config.get("defaults", {}).items()
-            if k in ChatSettingsKey
+            k: ChatSettingsValue(v) for k, v in self.config.get("defaults", {}).items() if k in ChatSettingsKey
         }
 
         self.chatDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
             k: ChatSettingsValue("") for k in ChatSettingsKey
         }
 
-        self.chatDefaults.update(
-            {k: v for k, v in botDefaults.items() if k in ChatSettingsKey}
-        )
+        self.chatDefaults.update({k: v for k, v in botDefaults.items() if k in ChatSettingsKey})
 
         # Init cache
         # TODO: Should I use something thread-safe?
@@ -114,17 +106,14 @@ class BotHandlers:
     # Chat settings Managenent
     ###
 
-    def getChatSettings(
-        self, chatId: int, returnDefault: bool = True
-    ) -> Dict[ChatSettingsKey, ChatSettingsValue]:
+    def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[ChatSettingsKey, ChatSettingsValue]:
         """Get the chat settings for the given chat."""
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
 
         if "settings" not in self.cache["chats"][chatId]:
             self.cache["chats"][chatId]["settings"] = {
-                k: ChatSettingsValue(v)
-                for k, v in self.db.getChatSettings(chatId).items()
+                k: ChatSettingsValue(v) for k, v in self.db.getChatSettings(chatId).items()
             }
 
         if returnDefault:
@@ -157,9 +146,7 @@ class BotHandlers:
     # Different helpers
     ###
 
-    async def _isAdmin(
-        self, user: User, chat: Optional[Chat] = None, allowBotOwners: bool = True
-    ) -> bool:
+    async def _isAdmin(self, user: User, chat: Optional[Chat] = None, allowBotOwners: bool = True) -> bool:
         """Check if the user is an admin (or bot owner)."""
         # If chat is None, then we are checking if it's bot owner
         username = user.username
@@ -212,7 +199,12 @@ class BotHandlers:
                 if not isinstance(task, asyncio.Task):
                     logger.error(f"Task {task} is not a task, but a {type(task)}")
                 else:
-                    await task
+                    try:
+                        await task
+                    except Exception as e:
+                        logger.error(f"Error in background task: {e}")
+                        logger.exception(e)
+
                 self.asyncTasksQueue.task_done()
         except asyncio.QueueEmpty:
             pass
@@ -265,9 +257,7 @@ class BotHandlers:
                             message_id=kwargs["messageId"],
                             date=datetime.datetime.now(),
                             chat=Chat(id=kwargs["chatId"], type=kwargs["chatType"]),
-                            from_user=User(
-                                id=kwargs["userId"], first_name="", is_bot=False
-                            ),
+                            from_user=User(id=kwargs["userId"], first_name="", is_bot=False),
                             text=kwargs["messageText"],
                             message_thread_id=kwargs["threadId"],
                         )
@@ -281,9 +271,7 @@ class BotHandlers:
                         )
                         pass
                     case _:
-                        logger.error(
-                            f"Unknown function type: {delayedTask.function} in delayed task {delayedTask}"
-                        )
+                        logger.error(f"Unknown function type: {delayedTask.function} in delayed task {delayedTask}")
 
                 # TODO: Update DB
                 self.delayedActionsQueue.task_done()
@@ -292,9 +280,7 @@ class BotHandlers:
                 logger.error(f"Error in delayed task processor: {e}")
                 logger.exception(e)
 
-    async def _addDelayedTask(
-        self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]
-    ) -> None:
+    async def _addDelayedTask(self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]) -> None:
         """Add delayed task"""
         task = DelayedTask(delayedUntil, function, kwargs)
         # TODO: Save to DB
@@ -358,15 +344,11 @@ class BotHandlers:
                             **replyKwargs,
                         )
                     except Exception as e:
-                        logger.error(
-                            f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}"
-                        )
+                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
                         # Probably error in markdown formatting, fallback to raw text
 
                 if replyMessage is None:
-                    replyMessage = await message.reply_photo(
-                        caption=photoCaption, **replyKwargs
-                    )
+                    replyMessage = await message.reply_photo(caption=photoCaption, **replyKwargs)
 
             elif messageText is not None:
                 # Send text
@@ -380,9 +362,7 @@ class BotHandlers:
                         elif "media_description" in jsonReply:
                             messageText = str(jsonReply["media_description"]).strip()
                         else:
-                            logger.warning(
-                                f"No text field found in json reply, fallback to text: {jsonReply}"
-                            )
+                            logger.warning(f"No text field found in json reply, fallback to text: {jsonReply}")
                             raise ValueError("No text field found in json reply")
                     except Exception:
                         pass
@@ -403,9 +383,7 @@ class BotHandlers:
                 # Try to send Message as MarkdownV2 first
                 if tryMarkdownV2:
                     try:
-                        messageTextParsed = markdown_to_markdownv2(
-                            addMessagePrefix + messageText
-                        )
+                        messageTextParsed = markdown_to_markdownv2(addMessagePrefix + messageText)
                         # logger.debug(f"Sending MarkdownV2: {replyText}")
                         replyMessage = await message.reply_text(
                             text=messageTextParsed,
@@ -413,15 +391,11 @@ class BotHandlers:
                             **replyKwargs,
                         )
                     except Exception as e:
-                        logger.error(
-                            f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}"
-                        )
+                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
                         # Probably error in markdown formatting, fallback to raw text
 
                 if replyMessage is None:
-                    replyMessage = await message.reply_text(
-                        text=addMessagePrefix + messageText, **replyKwargs
-                    )
+                    replyMessage = await message.reply_text(text=addMessagePrefix + messageText, **replyKwargs)
 
             try:
                 if replyMessage is None:
@@ -442,9 +416,7 @@ class BotHandlers:
                     ensuredReplyMessage.setMediaProcessingInfo(media)
 
                 if isGroupChat or isPrivate:
-                    self._saveChatMessage(
-                        ensuredReplyMessage, messageCategory=messageCategory
-                    )
+                    self._saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
                 else:
                     raise ValueError("Unknown chat type")
 
@@ -486,9 +458,7 @@ class BotHandlers:
             "chatType": ensuredMessage.chat.type,
         }
 
-        return await self._addDelayedTask(
-            delayedUntil=delayedUntil, function=functionName, kwargs=kwargs
-        )
+        return await self._addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
 
     async def _generateTextViaLLM(
         self,
@@ -502,21 +472,16 @@ class BotHandlers:
         """Call the LLM with the given messages."""
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
-        async def generateAndSendImage(
-            image_prompt: str, image_description: Optional[str] = None, **kwargs
-        ) -> str:
+        async def generateAndSendImage(image_prompt: str, image_description: Optional[str] = None, **kwargs) -> str:
             logger.debug(
                 f"Generating image: {image_prompt}. Image description: {image_description}, "
                 f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
-            model = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(
-                self.llmManager
-            )
+            model = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
 
             mlRet = await model.generateImage([ModelMessage(content=image_prompt)])
             logger.debug(
-                f"Generated image Data: {mlRet} for mcID: "
-                f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+                f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
             if mlRet.status != ModelResultStatus.FINAL:
                 ret = await self._sendMessage(
@@ -594,9 +559,7 @@ class BotHandlers:
             ret = await model.generateTextWithFallBack(
                 messages, fallbackModel=fallbackModel, tools=list(tools.values())
             )
-            logger.debug(
-                f"LLM returned: {ret} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
-            )
+            logger.debug(f"LLM returned: {ret} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 toolsUsed = True
                 newMessages = [ret.toModelMessage()]
@@ -614,9 +577,7 @@ class BotHandlers:
                         )
                     )
                 messages = messages + newMessages
-                logger.debug(
-                    f"Tools used: {newMessages} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
-                )
+                logger.debug(f"Tools used: {newMessages} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
             else:
                 break
 
@@ -625,9 +586,7 @@ class BotHandlers:
 
         return ret
 
-    def _saveChatMessage(
-        self, message: EnsuredMessage, messageCategory: MessageCategory
-    ) -> bool:
+    def _saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
         """Save a chat message to the database."""
         user = message.user
         chat = message.chat
@@ -689,9 +648,7 @@ class BotHandlers:
             mlRet = await self._generateTextViaLLM(
                 model=llmModel,
                 messages=messagesHistory,
-                fallbackModel=chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(
-                    self.llmManager
-                ),
+                fallbackModel=chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager),
                 ensuredMessage=ensuredMessage,
                 context=context,
                 useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
@@ -723,9 +680,7 @@ class BotHandlers:
     # Handling messages
     ###
 
-    async def handle_message(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
         # logger.debug(f"Handling SOME message: {update}")
 
@@ -751,9 +706,7 @@ class BotHandlers:
             case _:
                 logger.error(f"Unsupported chat type: {chatType}")
 
-    async def handle_chat_message(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_chat_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.debug(f"Handling group message: {update}")
         message = update.message
         if not message:
@@ -790,9 +743,7 @@ class BotHandlers:
 
         messageText = ensuredMessage.messageText
 
-        if not self._saveChatMessage(
-            ensuredMessage, messageCategory=MessageCategory.USER
-        ):
+        if not self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
             logger.error("Failed to save chat message")
 
         # Check if message is a reply to our message
@@ -841,9 +792,7 @@ class BotHandlers:
         # As it's resporse to our message, we need to wait for media to be processed if any
         await ensuredMessage.updateMediaContent(self.db)
 
-        llmMessageFormat = LLMMessageFormat(
-            chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr()
-        )
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
         parentId = ensuredMessage.replyId
         chat = ensuredMessage.chat
@@ -858,21 +807,11 @@ class BotHandlers:
         if storedMsg is None:
             logger.error("Failed to get parent message")
             if not message.reply_to_message:
-                logger.error(
-                    "message.reply_to_message is None, but should be Message()"
-                )
+                logger.error("message.reply_to_message is None, but should be Message()")
                 return False
             ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
-            storedMessages.append(
-                await ensuredReply.toModelMessage(
-                    self.db, format=llmMessageFormat, role="assistant"
-                )
-            )
-            storedMessages.append(
-                await ensuredMessage.toModelMessage(
-                    self.db, format=llmMessageFormat, role="user"
-                )
-            )
+            storedMessages.append(await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant"))
+            storedMessages.append(await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"))
 
         else:
             if storedMsg["message_category"] != "bot":
@@ -887,11 +826,7 @@ class BotHandlers:
                 await EnsuredMessage.fromDBChatMessage(storedMsg).toModelMessage(
                     self.db,
                     format=llmMessageFormat,
-                    role=(
-                        "user"
-                        if storedMsg["message_category"] == "user"
-                        else "assistant"
-                    ),
+                    role=("user" if storedMsg["message_category"] == "user" else "assistant"),
                 )
                 for storedMsg in _storedMessages
             ]
@@ -922,9 +857,7 @@ class BotHandlers:
 
         message = ensuredMessage.getBaseMessage()
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        llmMessageFormat = LLMMessageFormat(
-            chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr()
-        )
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
         customMentions = chatSettings[ChatSettingsKey.BOT_NICKNAMES].toList()
         customMentions = [v.lower() for v in customMentions if v]
         if not customMentions:
@@ -1062,11 +995,7 @@ class BotHandlers:
                     await ensuredReply.toModelMessage(
                         self.db,
                         format=llmMessageFormat,
-                        role=(
-                            "assistant"
-                            if ensuredReply.user.id == context.bot.id
-                            else "user"
-                        ),
+                        role=("assistant" if ensuredReply.user.id == context.bot.id else "user"),
                     ),
                 )
             else:
@@ -1082,16 +1011,10 @@ class BotHandlers:
                     )
                 else:
                     reqMessages.append(
-                        await EnsuredMessage.fromDBChatMessage(
-                            storedReply
-                        ).toModelMessage(
+                        await EnsuredMessage.fromDBChatMessage(storedReply).toModelMessage(
                             self.db,
                             format=llmMessageFormat,
-                            role=(
-                                "assistant"
-                                if ensuredReply.user.id == context.bot.id
-                                else "user"
-                            ),
+                            role=("assistant" if ensuredReply.user.id == context.bot.id else "user"),
                         ),
                     )
 
@@ -1120,13 +1043,9 @@ class BotHandlers:
         # If it message in private chat and no other methods catched message,
         # then just do LLM answer with context of last PRIVATE_CHAT_CONTEXT_LENGTH messages
 
-        messages = self.db.getChatMessagesSince(
-            ensuredMessage.chat.id, limit=PRIVATE_CHAT_CONTEXT_LENGTH
-        )
+        messages = self.db.getChatMessagesSince(ensuredMessage.chat.id, limit=PRIVATE_CHAT_CONTEXT_LENGTH)
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        llmMessageFormat = LLMMessageFormat(
-            chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr()
-        )
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
         # Handle LLM Action
         reqMessages = [
@@ -1142,9 +1061,7 @@ class BotHandlers:
                 await EnsuredMessage.fromDBChatMessage(message).toModelMessage(
                     self.db,
                     format=llmMessageFormat,
-                    role=(
-                        "user" if message["message_category"] == "user" else "assistant"
-                    ),
+                    role=("user" if message["message_category"] == "user" else "assistant"),
                 )
             )
 
@@ -1163,15 +1080,11 @@ class BotHandlers:
         """Randomly answer message with probability RANDOM_ANSWER_PROBABILITY"""
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        answerProbability = chatSettings[
-            ChatSettingsKey.RANDOM_ANSWER_PROBABILITY
-        ].toFloat()
+        answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
             return False
         answerToAdmin = chatSettings[ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN].toBool()
-        if answerToAdmin and await self._isAdmin(
-            ensuredMessage.user, ensuredMessage.chat, False
-        ):
+        if answerToAdmin and await self._isAdmin(ensuredMessage.user, ensuredMessage.chat, False):
             return False
 
         randomFloat = random.random()
@@ -1181,9 +1094,7 @@ class BotHandlers:
             return False
         logger.debug(f"Random float: {randomFloat} < {treshold}, answering to message")
 
-        llmMessageFormat = LLMMessageFormat(
-            chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr()
-        )
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
         # Handle LLM Action
         reqMessages = [
@@ -1193,9 +1104,7 @@ class BotHandlers:
                 + "\n"
                 + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
-            await ensuredMessage.toModelMessage(
-                self.db, format=llmMessageFormat, role="user"
-            ),
+            await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
         ]
 
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
@@ -1221,19 +1130,13 @@ class BotHandlers:
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
         try:
-            llmModel = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(
-                self.llmManager
-            )
-            logger.debug(
-                f"Prompting Image {ensuredMessage.mediaId} LLM for image with prompt: {messages[:1]}"
-            )
+            llmModel = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
+            logger.debug(f"Prompting Image {ensuredMessage.mediaId} LLM for image with prompt: {messages[:1]}")
             llmRet = await llmModel.generateText(messages)
             logger.debug(f"Image LLM Response: {llmRet}")
 
             if llmRet.status != ModelResultStatus.FINAL:
-                raise RuntimeError(
-                    f"Image LLM Response status is not FINAL: {llmRet.status}"
-                )
+                raise RuntimeError(f"Image LLM Response status is not FINAL: {llmRet.status}")
 
             description = llmRet.resultText
             self.db.updateMediaAttachment(
@@ -1390,9 +1293,7 @@ class BotHandlers:
             if mimeType.lower().startswith("image/"):
                 logger.debug(f"{mediaType}#{ret.id} is an image")
             else:
-                logger.warning(
-                    f"{mediaType}#{ret.id} is not an image, skipping parsing"
-                )
+                logger.warning(f"{mediaType}#{ret.id} is not an image, skipping parsing")
                 ret.task = makeEmptyAsyncTask()
                 self.db.updateMediaAttachment(
                     fileUniqueId=ret.id,
@@ -1414,9 +1315,7 @@ class BotHandlers:
             ]
 
             logger.debug(f"{mediaType}#{ret.id}: Asynchronously parsing image")
-            parseTask = asyncio.create_task(
-                self._parseImage(ensuredMessage, ret.id, messages)
-            )
+            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
             # logger.debug(f"{mediaType}#{ret.id} After Start")
             ret.task = parseTask
             await self.addTaskToAsyncedQueue(parseTask)
@@ -1427,9 +1326,7 @@ class BotHandlers:
 
         return ret
 
-    async def processSticker(
-        self, ensuredMessage: EnsuredMessage
-    ) -> MediaProcessingInfo:
+    async def processSticker(self, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
         """
         Process a sticker from message if needed
         """
@@ -1451,13 +1348,9 @@ class BotHandlers:
             "is_premium": sticker.premium_animation is not None,
         }
 
-        return await self._processMedia(
-            ensuredMessage, media=sticker, metadata=metadata
-        )
+        return await self._processMedia(ensuredMessage, media=sticker, metadata=metadata)
 
-    async def processImage(
-        self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
-    ) -> MediaProcessingInfo:
+    async def processImage(self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None) -> MediaProcessingInfo:
         """
         Process a photo from message if needed
         """
@@ -1492,9 +1385,7 @@ class BotHandlers:
     # COMMANDS Handlers
     ###
 
-    async def start_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
         user = update.effective_user
         if not user or not update.message:
@@ -1510,9 +1401,7 @@ class BotHandlers:
         await update.message.reply_text(welcome_message)
         logger.info(f"User {user.id} ({user.username}) started the bot")
 
-    async def help_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /help command."""
         if not update.message:
             logger.error("Message undefined")
@@ -1567,18 +1456,14 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def echo_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def echo_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /echo command."""
         if not update.message:
             logger.error("Message undefined")
             return
         ensuredMessage = EnsuredMessage.fromMessage(update.message)
 
-        self._saveChatMessage(
-            ensuredMessage, messageCategory=MessageCategory.USER_COMMAND
-        )
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         if context.args:
             echo_text = " ".join(context.args)
@@ -1596,9 +1481,7 @@ class BotHandlers:
                 messageCategory=MessageCategory.BOT_ERROR,
             )
 
-    async def summary_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /[topic_]summary [<messages> <chunks> <chatId> <threadId>]command."""
         message = update.message
         if not message:
@@ -1612,14 +1495,12 @@ class BotHandlers:
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
 
-        self._saveChatMessage(
-            ensuredMessage, messageCategory=MessageCategory.USER_COMMAND
-        )
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[
-            ChatSettingsKey.ALLOW_SUMMARY
-        ].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
+        if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool() and not await self._isAdmin(
+            ensuredMessage.user, None, True
+        ):
             logger.info(
                 f"Unauthorized /summary or /topic_summary command from {ensuredMessage.user} "
                 f"in chat {ensuredMessage.chat}"
@@ -1638,18 +1519,14 @@ class BotHandlers:
                 if maxBatches < 1:
                     maxBatches = None
             except ValueError:
-                logger.error(
-                    f"Invalid arguments: '{context.args[0:2]}' are not a valid number."
-                )
+                logger.error(f"Invalid arguments: '{context.args[0:2]}' are not a valid number.")
             except IndexError:
                 pass
 
         commandStr = ""
         for entity in message.entities:
             if entity.type == MessageEntityType.BOT_COMMAND:
-                commandStr = ensuredMessage.messageText[
-                    entity.offset : entity.offset + entity.length
-                ]
+                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
                 break
 
         logger.debug(f"Command string: {commandStr}")
@@ -1666,19 +1543,12 @@ class BotHandlers:
 
         userName = ensuredMessage.user.username
         # Allow bot owners to ask for summarisation of any chat
-        if (
-            userName
-            and userName.lower() in self.botOwners
-            and context.args
-            and len(context.args) >= 3
-        ):
+        if userName and userName.lower() in self.botOwners and context.args and len(context.args) >= 3:
             try:
                 targetChatId = int(context.args[2])
                 threadId = int(context.args[3])
             except ValueError:
-                logger.error(
-                    f"Invalid arguments: '{context.args[2:4]}' are not a valid number."
-                )
+                logger.error(f"Invalid arguments: '{context.args[2:4]}' are not a valid number.")
             except IndexError:
                 pass
 
@@ -1765,9 +1635,7 @@ class BotHandlers:
                     logger.debug(f"LLM Request messages: {reqMessages}")
                     mlRet = await llmModel.generateTextWithFallBack(
                         ModelMessage.fromDictList(reqMessages),
-                        chatSettings[ChatSettingsKey.SUMMARY_FALLBACK_MODEL].toModel(
-                            self.llmManager
-                        ),
+                        chatSettings[ChatSettingsKey.SUMMARY_FALLBACK_MODEL].toModel(self.llmManager),
                     )
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
@@ -1811,9 +1679,7 @@ class BotHandlers:
             )
             time.sleep(1)
 
-    async def models_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def models_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /models command."""
         modelsPerMessage = 4
         message = update.message
@@ -1828,9 +1694,7 @@ class BotHandlers:
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(
-            ensuredMessage, messageCategory=MessageCategory.USER_COMMAND
-        )
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         replyText = "**Доступные модели:**\n\n"
 
@@ -1872,18 +1736,14 @@ class BotHandlers:
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
-    async def chat_settings_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def chat_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /settings command."""
         message = update.message
         if not message:
             logger.error("Message undefined")
             return
 
-        moreDebug = (
-            True if context.args and context.args[0].lower() == "debug" else False
-        )
+        moreDebug = True if context.args and context.args[0].lower() == "debug" else False
 
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
@@ -1913,9 +1773,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def set_or_unset_chat_setting_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def set_or_unset_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /set <key> <value> command."""
         logger.debug(f"Got set or unset command: {update}")
 
@@ -1931,16 +1789,12 @@ class BotHandlers:
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(
-            ensuredMessage, messageCategory=MessageCategory.USER_COMMAND
-        )
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         commandStr = ""
         for entity in message.entities:
             if entity.type == MessageEntityType.BOT_COMMAND:
-                commandStr = ensuredMessage.messageText[
-                    entity.offset : entity.offset + entity.length
-                ]
+                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
                 break
 
         logger.debug(f"Command string: {commandStr}")
@@ -1950,13 +1804,9 @@ class BotHandlers:
         chat = ensuredMessage.chat
 
         chatSettings = self.getChatSettings(chat.id)
-        adminAllowedChangeSettings = chatSettings[
-            ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS
-        ].toBool()
+        adminAllowedChangeSettings = chatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
 
-        isAdmin = await self._isAdmin(
-            user, chat if adminAllowedChangeSettings else None, True
-        )
+        isAdmin = await self._isAdmin(user, chat if adminAllowedChangeSettings else None, True)
         if not isAdmin:
             await self._sendMessage(
                 ensuredMessage,
@@ -2006,9 +1856,7 @@ class BotHandlers:
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
-    async def test_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /test <suite> [<args>] command."""
         logger.debug(f"Got test command: {update}")
 
@@ -2024,9 +1872,7 @@ class BotHandlers:
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(
-            ensuredMessage, messageCategory=MessageCategory.USER_COMMAND
-        )
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         user = ensuredMessage.user
         # chat = ensuredMessage.chat
@@ -2090,9 +1936,7 @@ class BotHandlers:
                         pass
 
                 for i in range(iterationsCount):
-                    logger.debug(
-                        f"Iteration {i} of {iterationsCount} (delay is {delay}) {context.args[3:]}"
-                    )
+                    logger.debug(f"Iteration {i} of {iterationsCount} (delay is {delay}) {context.args[3:]}")
                     await self._sendMessage(
                         ensuredMessage,
                         messageText=f"Iteration {i}",
@@ -2118,9 +1962,7 @@ class BotHandlers:
                     messageCategory=MessageCategory.BOT_ERROR,
                 )
 
-    async def analyze_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def analyze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /analyze <prompt> command."""
         # Analyse media with given prompt. Should be reply to message with media.
         message = update.message
@@ -2138,12 +1980,10 @@ class BotHandlers:
         self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[
-            ChatSettingsKey.ALLOW_ANALYZE
-        ].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
-            logger.info(
-                f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}"
-            )
+        if not chatSettings[ChatSettingsKey.ALLOW_ANALYZE].toBool() and not await self._isAdmin(
+            ensuredMessage.user, None, True
+        ):
+            logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
             return
 
         if not ensuredMessage.isReply or not message.reply_to_message:
@@ -2162,12 +2002,8 @@ class BotHandlers:
         prompt = ensuredMessage.messageText
         for entity in message.entities:
             if entity.type == MessageEntityType.BOT_COMMAND:
-                commandStr = ensuredMessage.messageText[
-                    entity.offset : entity.offset + entity.length
-                ]
-                prompt = ensuredMessage.messageText[
-                    entity.offset + entity.length :
-                ].strip()
+                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
+                prompt = ensuredMessage.messageText[entity.offset + entity.length :].strip()
                 break
 
         logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
@@ -2181,9 +2017,7 @@ class BotHandlers:
             )
             return
 
-        parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(
-            self.llmManager
-        )
+        parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
 
         mediaData: Optional[bytearray] = None
         fileId: Optional[str] = None
@@ -2262,9 +2096,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def draw_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def draw_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /draw <prompt> command."""
         # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
         message = update.message
@@ -2279,17 +2111,13 @@ class BotHandlers:
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(
-            ensuredMessage, messageCategory=MessageCategory.USER_COMMAND
-        )
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[
-            ChatSettingsKey.ALLOW_DRAW
-        ].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
-            logger.info(
-                f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}"
-            )
+        if not chatSettings[ChatSettingsKey.ALLOW_DRAW].toBool() and not await self._isAdmin(
+            ensuredMessage.user, None, True
+        ):
+            logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
             return
 
         commandStr = ""
@@ -2304,12 +2132,8 @@ class BotHandlers:
         else:
             for entity in message.entities:
                 if entity.type == MessageEntityType.BOT_COMMAND:
-                    commandStr = ensuredMessage.messageText[
-                        entity.offset : entity.offset + entity.length
-                    ]
-                    prompt = ensuredMessage.messageText[
-                        entity.offset + entity.length :
-                    ].strip()
+                    commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
+                    prompt = ensuredMessage.messageText[entity.offset + entity.length :].strip()
                     break
 
         logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
@@ -2328,15 +2152,10 @@ class BotHandlers:
             )
             return
 
-        imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(
-            self.llmManager
-        )
+        imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
 
         mlRet = await imageLLM.generateImage([ModelMessage(content=prompt)])
-        logger.debug(
-            f"Generated image Data: {mlRet} for mcID: "
-            f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
-        )
+        logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
         if mlRet.status != ModelResultStatus.FINAL:
             await self._sendMessage(
                 ensuredMessage,
@@ -2365,9 +2184,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def remind_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /remind <time> command."""
         message = update.message
         if not message:
@@ -2424,9 +2241,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-        delayedDT = datetime.datetime.fromtimestamp(
-            delayedTime, tz=datetime.timezone.utc
-        )
+        delayedDT = datetime.datetime.fromtimestamp(delayedTime, tz=datetime.timezone.utc)
 
         await self._sendMessage(
             ensuredMessage,
@@ -2435,17 +2250,11 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def error_handler(
-        self, update: object, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
-        logger.error(
-            f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}"
-        )
+        logger.error(f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}")
         logger.exception(context.error)
 
-    async def handle_bot(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_bot(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle bot commands."""
         logger.debug(f"Handling bot command: {update}")

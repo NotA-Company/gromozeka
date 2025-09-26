@@ -86,35 +86,19 @@ class BotApplication:
         # self.handlers.initDelayedScheduler(self.application.bot)
 
         # Command handlers
-        self.application.add_handler(
-            CommandHandler("start", self.handlers.start_command)
-        )
+        self.application.add_handler(CommandHandler("start", self.handlers.start_command))
         self.application.add_handler(CommandHandler("help", self.handlers.help_command))
         self.application.add_handler(CommandHandler("echo", self.handlers.echo_command))
         self.application.add_handler(CommandHandler("test", self.handlers.test_command))
 
-        self.application.add_handler(
-            CommandHandler(["summary", "topic_summary"], self.handlers.summary_command)
-        )
-        self.application.add_handler(
-            CommandHandler("analyze", self.handlers.analyze_command)
-        )
+        self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
+        self.application.add_handler(CommandHandler("analyze", self.handlers.analyze_command))
         self.application.add_handler(CommandHandler("draw", self.handlers.draw_command))
-        self.application.add_handler(
-            CommandHandler("remind", self.handlers.remind_command)
-        )
+        self.application.add_handler(CommandHandler("remind", self.handlers.remind_command))
 
-        self.application.add_handler(
-            CommandHandler("models", self.handlers.models_command)
-        )
-        self.application.add_handler(
-            CommandHandler("settings", self.handlers.chat_settings_command)
-        )
-        self.application.add_handler(
-            CommandHandler(
-                ["set", "unset"], self.handlers.set_or_unset_chat_setting_command
-            )
-        )
+        self.application.add_handler(CommandHandler("models", self.handlers.models_command))
+        self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
+        self.application.add_handler(CommandHandler(["set", "unset"], self.handlers.set_or_unset_chat_setting_command))
 
         # Message handler for regular text messages
         # See
@@ -141,9 +125,7 @@ class BotApplication:
             )
         )
         # self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers.handle_photo))
-        self.application.add_handler(
-            MessageHandler(filters.VIA_BOT, self.handlers.handle_bot)
-        )
+        self.application.add_handler(MessageHandler(filters.VIA_BOT, self.handlers.handle_bot))
 
         # Error handler
         self.application.add_error_handler(self.handlers.error_handler)

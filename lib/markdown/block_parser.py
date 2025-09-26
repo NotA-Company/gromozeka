@@ -38,15 +38,9 @@ class BlockParser:
         self.options = options or {}
 
         # Parser options
-        self.preserve_leading_spaces = self.options.get(
-            "preserve_leading_spaces", False
-        )
-        self.preserve_soft_line_breaks = self.options.get(
-            "preserve_soft_line_breaks", False
-        )
-        self.ignore_indented_code_blocks = self.options.get(
-            "ignore_indented_code_blocks", True
-        )
+        self.preserve_leading_spaces = self.options.get("preserve_leading_spaces", False)
+        self.preserve_soft_line_breaks = self.options.get("preserve_soft_line_breaks", False)
+        self.ignore_indented_code_blocks = self.options.get("ignore_indented_code_blocks", True)
 
     def parse(self) -> MDDocument:
         """
@@ -193,9 +187,7 @@ class BlockParser:
 
             # Collect line content
             line_content = ""
-            while not self._is_at_end() and not self._current_token_is(
-                TokenType.NEWLINE
-            ):
+            while not self._is_at_end() and not self._current_token_is(TokenType.NEWLINE):
                 line_content += self.current_token.content  # type: ignore
                 self._advance()
 
@@ -221,9 +213,7 @@ class BlockParser:
 
             # Collect line content
             line_content = ""
-            while not self._is_at_end() and not self._current_token_is(
-                TokenType.NEWLINE
-            ):
+            while not self._is_at_end() and not self._current_token_is(TokenType.NEWLINE):
                 line_content += self.current_token.content  # type: ignore
                 self._advance()
 
@@ -240,9 +230,7 @@ class BlockParser:
         """Parse a block quote."""
         block_quote = MDBlockQuote()
 
-        while not self._is_at_end() and self._current_token_is(
-            TokenType.BLOCKQUOTE_MARKER
-        ):
+        while not self._is_at_end() and self._current_token_is(TokenType.BLOCKQUOTE_MARKER):
             self._advance()  # consume > marker
 
             # Skip optional space after >
@@ -251,17 +239,13 @@ class BlockParser:
 
             # Parse the quoted content as blocks
             quoted_content = []
-            while not self._is_at_end() and not self._current_token_is(
-                TokenType.NEWLINE
-            ):
+            while not self._is_at_end() and not self._current_token_is(TokenType.NEWLINE):
                 quoted_content.append(self.current_token)
                 self._advance()
 
             # Create a sub-parser for the quoted content
             if quoted_content:
-                sub_parser = BlockParser(
-                    quoted_content + [Token(TokenType.EOF, "", 0, 0)]
-                )
+                sub_parser = BlockParser(quoted_content + [Token(TokenType.EOF, "", 0, 0)])
                 sub_document = sub_parser.parse()
                 for child in sub_document.children:
                     block_quote.add_child(child)
@@ -373,9 +357,7 @@ class BlockParser:
 
         # Parse item content as blocks
         if item_content:
-            sub_parser = BlockParser(
-                item_content + [Token(TokenType.EOF, "", 0, 0)], self.options
-            )
+            sub_parser = BlockParser(item_content + [Token(TokenType.EOF, "", 0, 0)], self.options)
             sub_document = sub_parser.parse()
             for child in sub_document.children:
                 list_item.add_child(child)
@@ -390,10 +372,7 @@ class BlockParser:
         text_content = ""
         while not self._is_at_end():
             # Stop at blank line
-            if (
-                self._current_token_is(TokenType.NEWLINE)
-                and self._has_blank_line_ahead()
-            ):
+            if self._current_token_is(TokenType.NEWLINE) and self._has_blank_line_ahead():
                 break
 
             # Stop at block-level elements
@@ -427,9 +406,7 @@ class BlockParser:
     def _advance(self) -> None:
         """Move to the next token."""
         self.pos += 1
-        self.current_token = (
-            self.tokens[self.pos] if self.pos < len(self.tokens) else None
-        )
+        self.current_token = self.tokens[self.pos] if self.pos < len(self.tokens) else None
 
     def _is_at_end(self) -> bool:
         """Check if we're at the end of tokens."""
@@ -449,9 +426,7 @@ class BlockParser:
 
     def _skip_newlines(self) -> None:
         """Skip only newline tokens, preserving spaces for indented code blocks."""
-        while (
-            not self._is_at_end() and self.current_token.type == TokenType.NEWLINE
-        ):  # type: ignore
+        while not self._is_at_end() and self.current_token.type == TokenType.NEWLINE:  # type: ignore
             self._advance()
 
     def _is_indented_code_block(self) -> bool:
@@ -462,10 +437,7 @@ class BlockParser:
         # Count leading spaces
         spaces = 0
         temp_pos = self.pos
-        while (
-            temp_pos < len(self.tokens)
-            and self.tokens[temp_pos].type == TokenType.SPACE
-        ):
+        while temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.SPACE:
             spaces += len(self.tokens[temp_pos].content)
             temp_pos += 1
 
@@ -473,10 +445,7 @@ class BlockParser:
         # (list markers take precedence over code blocks)
         if spaces >= 4:
             # Check if there's a list marker after the spaces
-            if (
-                temp_pos < len(self.tokens)
-                and self.tokens[temp_pos].type == TokenType.LIST_MARKER
-            ):
+            if temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.LIST_MARKER:
                 return False  # It's a deeply nested list, not a code block
             return True
 
@@ -492,17 +461,11 @@ class BlockParser:
         temp_pos = self.pos
 
         # Skip current newline if any
-        if (
-            temp_pos < len(self.tokens)
-            and self.tokens[temp_pos].type == TokenType.NEWLINE
-        ):
+        if temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.NEWLINE:
             temp_pos += 1
 
         # Check for another newline (blank line)
-        return (
-            temp_pos < len(self.tokens)
-            and self.tokens[temp_pos].type == TokenType.NEWLINE
-        )
+        return temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.NEWLINE
 
     def _is_at_line_start(self) -> bool:
         """Check if we're at the start of a line."""
@@ -521,10 +484,7 @@ class BlockParser:
         ]:
             temp_pos += 1
 
-        return (
-            temp_pos < len(self.tokens)
-            and self.tokens[temp_pos].type == TokenType.LIST_MARKER
-        )
+        return temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.LIST_MARKER
 
     def _is_block_element_start(self) -> bool:
         """Check if current position starts a block element."""
@@ -574,10 +534,7 @@ class BlockParser:
         spaces_count = 0
 
         # Count spaces
-        while (
-            temp_pos < len(self.tokens)
-            and self.tokens[temp_pos].type == TokenType.SPACE
-        ):
+        while temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.SPACE:
             spaces_count += len(self.tokens[temp_pos].content)
             temp_pos += 1
 
@@ -642,9 +599,7 @@ class BlockParser:
             # Check if we've reached the beginning or a newline
             return temp_pos < 0 or self.tokens[temp_pos].type == TokenType.NEWLINE
 
-        def _token_is_at_line_start(
-            self, token: Token, token_list: List[Token]
-        ) -> bool:
+        def _token_is_at_line_start(self, token: Token, token_list: List[Token]) -> bool:
             """Check if a token is at the start of a line within a token list."""
             token_index = -1
             for i, t in enumerate(token_list):
@@ -675,11 +630,7 @@ class BlockParser:
 
         # Now count spaces from after the newline
         temp_pos += 1
-        while (
-            temp_pos < len(self.tokens)
-            and temp_pos < self.pos
-            and self.tokens[temp_pos].type == TokenType.SPACE
-        ):
+        while temp_pos < len(self.tokens) and temp_pos < self.pos and self.tokens[temp_pos].type == TokenType.SPACE:
             spaces += len(self.tokens[temp_pos].content)
             temp_pos += 1
 

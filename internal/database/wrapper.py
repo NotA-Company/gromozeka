@@ -342,9 +342,7 @@ class DatabaseWrapper:
 
                 return True
         except Exception as e:
-            logger.error(
-                f"Failed to save chat message from user {userId} in chat {chatId}: {e}"
-            )
+            logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
             return False
 
     def getChatMessagesSince(
@@ -356,9 +354,7 @@ class DatabaseWrapper:
         messageCategory: Optional[List[MessageCategory]] = None,
     ) -> List[Dict[str, Any]]:
         """Get chat messages from a specific chat newer than the given date."""
-        logger.debug(
-            f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})"
-        )
+        logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:
             with self.getCursor() as cursor:
                 query = f"""
@@ -395,9 +391,7 @@ class DatabaseWrapper:
         self, chatId: int, messageId: int, threadId: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         """Get a specific chat message by message_id, chat_id, and optional thread_id."""
-        logger.debug(
-            f"Getting chat message for chat {chatId}, thread {threadId}, message_id {messageId}"
-        )
+        logger.debug(f"Getting chat message for chat {chatId}, thread {threadId}, message_id {messageId}")
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -425,9 +419,7 @@ class DatabaseWrapper:
         self, chatId: int, rootMessageId: int, threadId: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Get all chat messages in a conversation thread by root message ID."""
-        logger.debug(
-            f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}"
-        )
+        logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -455,9 +447,7 @@ class DatabaseWrapper:
             )
             return []
 
-    def updateChatUser(
-        self, chatId: int, userId: int, username: str, fullName: str
-    ) -> bool:
+    def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> bool:
         """Store user as chat member + update username and updated_at."""
         try:
             with self.getCursor() as cursor:
@@ -481,9 +471,7 @@ class DatabaseWrapper:
                 )
                 return True
         except Exception as e:
-            logger.error(
-                f"Failed to update username for user {userId} in chat {chatId}: {e}"
-            )
+            logger.error(f"Failed to update username for user {userId} in chat {chatId}: {e}")
             return False
 
     def getChatUser(self, chatId: int, userId: int) -> Optional[Dict[str, Any]]:
@@ -503,9 +491,7 @@ class DatabaseWrapper:
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            logger.error(
-                f"Failed to get username for user {userId} in chat {chatId}: {e}"
-            )
+            logger.error(f"Failed to get username for user {userId} in chat {chatId}: {e}")
             return None
 
     def getChatUsers(

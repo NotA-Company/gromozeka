@@ -58,9 +58,7 @@ Another paragraph after the indented text."""
     if not has_code_default and has_code_enabled:
         print("✅ SUCCESS: Option works correctly, dood!")
         print("   - Default ignores indented code blocks (no <pre><code>)")
-        print(
-            "   - When disabled, indented code blocks are parsed (<pre><code> present)"
-        )
+        print("   - When disabled, indented code blocks are parsed (<pre><code> present)")
         return True
     else:
         print("❌ FAILURE: Option not working as expected, dood!")

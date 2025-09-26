@@ -47,9 +47,7 @@ class DelayedTaskFunction(StrEnum):
 
 class DelayedTask:
 
-    def __init__(
-        self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]
-    ):
+    def __init__(self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]):
         self.delayedUntil = delayedUntil
         self.function = function
         self.kwargs = kwargs

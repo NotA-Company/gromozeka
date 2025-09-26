@@ -14,9 +14,7 @@ logger = logging.getLogger(__name__)
 class ConfigManager:
     """Manages configuration loading and validation for Gromozeka bot."""
 
-    def __init__(
-        self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None
-    ):
+    def __init__(self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None):
         """Initialize ConfigManager with config file path and optional config directories."""
         self.config_path = config_path
         self.config_dirs = config_dirs or []
@@ -28,15 +26,11 @@ class ConfigManager:
         dir_path = Path(directory)
 
         if not dir_path.exists():
-            logger.warning(
-                f"Config directory {directory} does not exist, skipping, dood!"
-            )
+            logger.warning(f"Config directory {directory} does not exist, skipping, dood!")
             return toml_files
 
         if not dir_path.is_dir():
-            logger.warning(
-                f"Config path {directory} is not a directory, skipping, dood!"
-            )
+            logger.warning(f"Config path {directory} is not a directory, skipping, dood!")
             return toml_files
 
         try:
@@ -50,18 +44,12 @@ class ConfigManager:
 
         return sorted(toml_files)  # Sort for consistent ordering
 
-    def _merge_configs(
-        self, base_config: Dict[str, Any], new_config: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _merge_configs(self, base_config: Dict[str, Any], new_config: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively merge two configuration dictionaries, dood!"""
         merged = base_config.copy()
 
         for key, value in new_config.items():
-            if (
-                key in merged
-                and isinstance(merged[key], dict)
-                and isinstance(value, dict)
-            ):
+            if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
                 # Recursively merge nested dictionaries
                 merged[key] = self._merge_configs(merged[key], value)
             else:
@@ -105,9 +93,7 @@ class ConfigManager:
 
             # Load and merge configs from directories
             if self.config_dirs:
-                logger.info(
-                    f"Scanning {len(self.config_dirs)} config directories for .toml files, dood!"
-                )
+                logger.info(f"Scanning {len(self.config_dirs)} config directories for .toml files, dood!")
 
                 for config_dir in self.config_dirs:
                     toml_files = self._find_toml_files_recursive(config_dir)
