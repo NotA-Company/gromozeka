@@ -714,3 +714,42 @@ This file records architectural and implementation decisions using a list format
 * Implemented safety mechanism to stop parsing when encountering other block-level elements
 * Fixed content consumption issues that were breaking document structure
 * All test cases now produce correct HTML output with proper separation between elements
+
+[2025-09-26 10:26:30] - Fixed Code Block Parsing Issue with Lists and Other Markdown Syntax
+
+## Decision
+
+* Successfully fixed critical bug in Gromozeka Markdown Parser where code blocks containing lists, headers, and blockquotes were being improperly parsed
+* Modified `_is_block_element_start_excluding_lists()` method to exclude all markdown syntax tokens (HEADER_MARKER, LIST_MARKER, BLOCKQUOTE_MARKER) when inside fenced code blocks
+* Added comprehensive test suite with 7 test cases covering various scenarios
+
+## Rationale 
+
+* The original issue was that the fenced code block parser was breaking when it encountered markdown syntax inside code blocks
+* The parser was treating `*` (list markers), `#` (header markers), and `>` (blockquote markers) as block element starts even inside code blocks
+* This caused code blocks to be terminated prematurely and their content to be parsed as regular markdown outside the code block
+* The fix ensures that inside code blocks, only CODE_FENCE tokens are treated as block element starts, allowing all other content to be preserved as literal text
+
+## Implementation Details
+
+* Modified `_parse_fenced_code_block()` method to use `_is_block_element_start_excluding_lists()` instead of `_is_block_element_start()`
+* Created `_is_block_element_start_excluding_lists()` method that only considers CODE_FENCE and HORIZONTAL_RULE as block elements
+* Excluded HEADER_MARKER, LIST_MARKER, and BLOCKQUOTE_MARKER from block element detection inside code blocks
+* Added comprehensive test suite `test_code_blocks_with_lists.py` with 7 test cases covering:
+  - Unordered lists inside code blocks
+  - Ordered lists inside code blocks  
+  - Mixed lists with nested items
+  - Multiple code blocks with lists
+  - Headers and lists together
+  - Blockquotes and lists together
+  - Edge cases with empty code blocks
+* All tests pass with 100% success rate
+* Fix works correctly for HTML, MarkdownV2, and normalized markdown output
+* No breaking changes to existing functionality
+
+## Results
+
+* Code blocks now properly preserve all content including list markers, headers, and blockquotes as literal text
+* MarkdownV2 output correctly escapes content while maintaining code block structure
+* HTML output properly contains all content within `<pre><code>` tags without parsing markdown syntax
+* Original user case now works perfectly: code blocks with lists are preserved intact
