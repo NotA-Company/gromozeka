@@ -58,11 +58,12 @@ class TestNestedLists(unittest.TestCase):
         self.assertEqual(nested_list.list_type, ListType.UNORDERED)  # type: ignore
 
         # The nested list should have 3 items: Item 3.1, Item 3.2, Item 3.3
+        self.assertIsNotNone(nested_list)
         self.assertEqual(
-            len(nested_list.children),
-            3,  # type: ignore
-            f"Expected 3 items in nested list, got {len(nested_list.children)}",
-        )  # type: ignore
+            len(nested_list.children),  # type: ignore
+            3,
+            f"Expected 3 items in nested list, got {len(nested_list.children)}",  # type: ignore
+        )
 
         # Item 3.2 should have its own nested list with 2 items
         item_3_2 = nested_list.children[1]  # type: ignore
@@ -77,10 +78,10 @@ class TestNestedLists(unittest.TestCase):
 
         self.assertIsNotNone(deeply_nested_list, "Item 3.2 should contain a nested list")
         self.assertEqual(
-            len(deeply_nested_list.children),
-            2,  # type: ignore
-            f"Expected 2 items in deeply nested list, got {len(deeply_nested_list.children)}",
-        )  # type: ignore
+            len(deeply_nested_list.children),  # type: ignore
+            2,
+            f"Expected 2 items in deeply nested list, got {len(deeply_nested_list.children)}",  # type: ignore
+        )
 
     def test_simple_nested_lists(self):
         """Test simple nested lists."""
@@ -116,10 +117,10 @@ class TestNestedLists(unittest.TestCase):
 
         # The nested list should have 2 items: Item 2.1, Item 2.2
         self.assertEqual(
-            len(nested_list.children),
-            2,  # type: ignore
-            f"Expected 2 items in nested list, got {len(nested_list.children)}",
-        )  # type: ignore
+            len(nested_list.children),  # type: ignore
+            2,
+            f"Expected 2 items in nested list, got {len(nested_list.children)}",  # type: ignore
+        )
 
 
 if __name__ == "__main__":
