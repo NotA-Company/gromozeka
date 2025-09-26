@@ -7,7 +7,8 @@ This module tests the MarkdownV2Renderer class and integration with the main par
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 import unittest
 from lib.markdown import MarkdownParser, markdown_to_markdownv2, MarkdownV2Renderer
@@ -97,7 +98,7 @@ print("Hello World")
     x = 1 + 2"""
         result = self.parser.parse_to_markdownv2(markdown)
         # Should be converted to fenced code block
-        #self.assertIn("```", result)
+        # self.assertIn("```", result)
         self.assertIn('print\\("Hello World"\\)', result)
         self.assertIn("x \\= 1 \\+ 2", result)
 
@@ -293,7 +294,7 @@ Final paragraph with special chars: ()[]{}!"""
         markdown = "Line 1\n\nLine 2\n\n\nLine 3"
         result = self.parser.parse_to_markdownv2(markdown)
         # Should preserve paragraph breaks
-        lines = result.split('\n')
+        lines = result.split("\n")
         non_empty_lines = [line for line in lines if line.strip()]
         self.assertIn("Line 1", non_empty_lines)
         self.assertIn("Line 2", non_empty_lines)
@@ -301,7 +302,7 @@ Final paragraph with special chars: ()[]{}!"""
 
     def test_renderer_options(self):
         """Test renderer with custom options."""
-        renderer = MarkdownV2Renderer({'custom_option': True})
+        renderer = MarkdownV2Renderer({"custom_option": True})
         # Should not crash with custom options
         document = self.parser.parse("**Bold** text")
         result = renderer.render(document)
@@ -335,14 +336,36 @@ Final paragraph with special chars: ()[]{}!"""
         result = self.parser.parse_to_markdownv2(markdown)
 
         # Check that ALL special characters are properly escaped
-        expected_chars = [r"\_", r"\*", r"\[", r"\]", r"\(", r"\)", r"\~", r"\`",
-                         r"\!", r"\>", r"\#", r"\+", r"\-", r"\=", r"\|", r"\{", r"\}", r"\."]
+        expected_chars = [
+            r"\_",
+            r"\*",
+            r"\[",
+            r"\]",
+            r"\(",
+            r"\)",
+            r"\~",
+            r"\`",
+            r"\!",
+            r"\>",
+            r"\#",
+            r"\+",
+            r"\-",
+            r"\=",
+            r"\|",
+            r"\{",
+            r"\}",
+            r"\.",
+        ]
 
         for char in expected_chars:
-            self.assertIn(char, result, f"Character {char} should be escaped in result: {result}")
+            self.assertIn(
+                char, result, f"Character {char} should be escaped in result: {result}"
+            )
 
         # Verify the complete expected output (with spaces to prevent markdown parsing)
-        expected_output = r"Special chars: \_ \* \[ \] \( \) \~ \` \> \# \+ \- \= \| \{ \} \. \!"
+        expected_output = (
+            r"Special chars: \_ \* \[ \] \( \) \~ \` \> \# \+ \- \= \| \{ \} \. \!"
+        )
         self.assertIn(expected_output, result)
 
     def test_less_than_greater_than_symbols(self):
@@ -364,8 +387,16 @@ Final paragraph with special chars: ()[]{}!"""
         # Test that valid autolinks still work
         markdown3 = "Visit <https://example.com> and email <user@example.com>"
         result3 = self.parser.parse_to_markdownv2(markdown3)
-        self.assertIn("[https://example\\.com](https://example.com)", result3, "Valid autolinks should still work")
-        self.assertIn("[user@example\\.com](mailto:user@example.com)", result3, "Valid email autolinks should still work")
+        self.assertIn(
+            "[https://example\\.com](https://example.com)",
+            result3,
+            "Valid autolinks should still work",
+        )
+        self.assertIn(
+            "[user@example\\.com](mailto:user@example.com)",
+            result3,
+            "Valid email autolinks should still work",
+        )
 
 
 class TestMarkdownV2Integration(unittest.TestCase):
@@ -388,14 +419,14 @@ class TestMarkdownV2Integration(unittest.TestCase):
 
     def test_markdownv2_options(self):
         """Test MarkdownV2 options handling."""
-        parser = MarkdownParser({'markdownv2_options': {'test': True}})
+        parser = MarkdownParser({"markdownv2_options": {"test": True}})
         # Should not crash with custom options
         result = parser.parse_to_markdownv2("**Bold** text")
         self.assertIn("*Bold*", result)
 
     def test_set_markdownv2_option(self):
         """Test setting MarkdownV2 options dynamically."""
-        self.parser.set_option('markdownv2_test', True)
+        self.parser.set_option("markdownv2_test", True)
         # Should not crash
         result = self.parser.parse_to_markdownv2("**Bold** text")
         self.assertIn("*Bold*", result)

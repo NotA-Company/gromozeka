@@ -1,6 +1,7 @@
 """
 Yandex Cloud OpenAI-compatible provider for LLM models, dood!
 """
+
 import logging
 from typing import Dict, Any
 from openai import AsyncOpenAI
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 # See
 # https://yandex.cloud/ru/docs/foundation-models/concepts/openai-compatibility
 # For compatibility details
+
 
 class YcOpenaiModel(BasicOpenAIModel):
     """Yandex Cloud OpenAI-compatible model implementation, dood!"""
@@ -29,7 +31,15 @@ class YcOpenaiModel(BasicOpenAIModel):
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize YC OpenAI model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient, extraConfig)
+        super().__init__(
+            provider,
+            modelId,
+            modelVersion,
+            temperature,
+            contextSize,
+            openAiClient,
+            extraConfig,
+        )
         self._folderId = folderId
 
     def _getModelId(self) -> str:

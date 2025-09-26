@@ -1,6 +1,7 @@
 """
 Abstract base class for LLM models, dood!
 """
+
 from abc import ABC, abstractmethod
 import json
 import logging
@@ -10,6 +11,7 @@ import tiktoken
 from .models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
+
 
 class AbstractModel(ABC):
     """Abstract base class for all LLM models, dood!"""
@@ -44,7 +46,9 @@ class AbstractModel(ABC):
         self.tokensCountCoeff = 1.1
 
     @abstractmethod
-    async def generateText(self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateText(
+        self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
+    ) -> ModelRunResult:
         """Run the model with given messages, dood!
 
         Args:
@@ -60,13 +64,24 @@ class AbstractModel(ABC):
         """Generate Image"""
         raise NotImplementedError
 
-    async def generateTextWithFallBack(self, messages: Iterable[ModelMessage], fallbackModel: "AbstractModel", tools: Iterable[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateTextWithFallBack(
+        self,
+        messages: Iterable[ModelMessage],
+        fallbackModel: "AbstractModel",
+        tools: Iterable[LLMAbstractTool] = [],
+    ) -> ModelRunResult:
         """Run the model with given messages, dood!"""
         try:
             ret = await self.generateText(messages, tools)
-            if ret.status in [ModelResultStatus.UNSPECIFIED, ModelResultStatus.CONTENT_FILTER, ModelResultStatus.UNKNOWN]:
+            if ret.status in [
+                ModelResultStatus.UNSPECIFIED,
+                ModelResultStatus.CONTENT_FILTER,
+                ModelResultStatus.UNKNOWN,
+            ]:
                 logger.debug(f"Model {self.modelId} returned status {ret}")
-                raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
+                raise Exception(
+                    f"Model {self.modelId} returned status {ret.status.name}"
+                )
             return ret
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")

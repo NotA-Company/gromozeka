@@ -35,27 +35,37 @@ class MarkdownParser:
         self.options = options or {}
 
         # Parser options
-        self.strict_mode = self.options.get('strict_mode', False)
-        self.enable_extensions = self.options.get('enable_extensions', True)
-        self.max_nesting_depth = self.options.get('max_nesting_depth', 100)
-        self.preserve_leading_spaces = self.options.get('preserve_leading_spaces', False)
-        self.preserve_soft_line_breaks = self.options.get('preserve_soft_line_breaks', False)
-        self.ignore_indented_code_blocks = self.options.get('ignore_indented_code_blocks', True)
+        self.strict_mode = self.options.get("strict_mode", False)
+        self.enable_extensions = self.options.get("enable_extensions", True)
+        self.max_nesting_depth = self.options.get("max_nesting_depth", 100)
+        self.preserve_leading_spaces = self.options.get(
+            "preserve_leading_spaces", False
+        )
+        self.preserve_soft_line_breaks = self.options.get(
+            "preserve_soft_line_breaks", False
+        )
+        self.ignore_indented_code_blocks = self.options.get(
+            "ignore_indented_code_blocks", True
+        )
 
         # Initialize components
         self.inline_parser = InlineParser()
 
         # Rendering options
-        self.html_renderer = HTMLRenderer(self.options.get('html_options', {}))
-        self.markdown_renderer = MarkdownRenderer(self.options.get('markdown_options', {}))
-        self.markdownv2_renderer = MarkdownV2Renderer(self.options.get('markdownv2_options', {}))
+        self.html_renderer = HTMLRenderer(self.options.get("html_options", {}))
+        self.markdown_renderer = MarkdownRenderer(
+            self.options.get("markdown_options", {})
+        )
+        self.markdownv2_renderer = MarkdownV2Renderer(
+            self.options.get("markdownv2_options", {})
+        )
 
         # Statistics and debugging
         self.parse_stats = {
-            'tokens_processed': 0,
-            'blocks_parsed': 0,
-            'inline_elements_parsed': 0,
-            'errors': []
+            "tokens_processed": 0,
+            "blocks_parsed": 0,
+            "inline_elements_parsed": 0,
+            "errors": [],
         }
 
     def parse(self, markdown_text: str) -> MDDocument:
@@ -82,7 +92,7 @@ class MarkdownParser:
             # Stage 1: Tokenization
             tokenizer = Tokenizer(markdown_text)
             tokens = tokenizer.tokenize()
-            self.parse_stats['tokens_processed'] = len(tokens)
+            self.parse_stats["tokens_processed"] = len(tokens)
 
             # Stage 2: Block Parsing
             block_parser = BlockParser(tokens, self.options)
@@ -98,7 +108,7 @@ class MarkdownParser:
 
         except Exception as e:
             error_msg = f"Parsing failed: {str(e)}"
-            self.parse_stats['errors'].append(error_msg)
+            self.parse_stats["errors"].append(error_msg)
             if self.strict_mode:
                 raise RuntimeError(error_msg) from e
             else:
@@ -157,17 +167,17 @@ class MarkdownParser:
         try:
             document = self.parse(markdown_text)
             return {
-                'valid': True,
-                'errors': self.parse_stats['errors'],
-                'warnings': [],
-                'stats': self.parse_stats.copy()
+                "valid": True,
+                "errors": self.parse_stats["errors"],
+                "warnings": [],
+                "stats": self.parse_stats.copy(),
             }
         except Exception as e:
             return {
-                'valid': False,
-                'errors': [str(e)] + self.parse_stats['errors'],
-                'warnings': [],
-                'stats': self.parse_stats.copy()
+                "valid": False,
+                "errors": [str(e)] + self.parse_stats["errors"],
+                "warnings": [],
+                "stats": self.parse_stats.copy(),
             }
 
     def get_ast_json(self, markdown_text: str) -> Dict[str, Any]:
@@ -196,9 +206,11 @@ class MarkdownParser:
         elif isinstance(node, MDHeader):
             # Process header content for inline elements
             self._process_header_inline(node)
-        elif hasattr(node, 'children'):
+        elif hasattr(node, "children"):
             # Recursively process children
-            for child in node.children[:]:  # Copy list to avoid modification during iteration
+            for child in node.children[
+                :
+            ]:  # Copy list to avoid modification during iteration
                 self._process_inline_elements(child)
 
     def _process_paragraph_inline(self, paragraph: MDParagraph) -> None:
@@ -219,7 +231,7 @@ class MarkdownParser:
 
         # Parse inline elements
         inline_nodes = self.inline_parser.parse_inline_content(text_content)
-        self.parse_stats['inline_elements_parsed'] += len(inline_nodes)
+        self.parse_stats["inline_elements_parsed"] += len(inline_nodes)
 
         # Replace paragraph children with parsed inline nodes
         paragraph.children.clear()
@@ -244,7 +256,7 @@ class MarkdownParser:
 
         # Parse inline elements
         inline_nodes = self.inline_parser.parse_inline_content(text_content)
-        self.parse_stats['inline_elements_parsed'] += len(inline_nodes)
+        self.parse_stats["inline_elements_parsed"] += len(inline_nodes)
 
         # Replace header children with parsed inline nodes
         header.children.clear()
@@ -259,13 +271,13 @@ class MarkdownParser:
             document: The document to post-process
         """
         # Count blocks
-        self.parse_stats['blocks_parsed'] = self._count_blocks(document)
+        self.parse_stats["blocks_parsed"] = self._count_blocks(document)
 
         # Validate nesting depth
         max_depth = self._calculate_max_depth(document)
         if max_depth > self.max_nesting_depth:
             warning = f"Maximum nesting depth exceeded: {max_depth} > {self.max_nesting_depth}"
-            self.parse_stats['errors'].append(warning)
+            self.parse_stats["errors"].append(warning)
             if self.strict_mode:
                 raise RuntimeError(warning)
 
@@ -277,13 +289,18 @@ class MarkdownParser:
     def _count_blocks(self, node: MDNode) -> int:
         """Count the number of block-level elements in the document."""
         count = 0
-        if hasattr(node, 'node_type') and node.node_type.value in [
-            'paragraph', 'header', 'code_block', 'block_quote',
-            'list', 'list_item', 'horizontal_rule'
+        if hasattr(node, "node_type") and node.node_type.value in [
+            "paragraph",
+            "header",
+            "code_block",
+            "block_quote",
+            "list",
+            "list_item",
+            "horizontal_rule",
         ]:
             count += 1
 
-        if hasattr(node, 'children'):
+        if hasattr(node, "children"):
             for child in node.children:
                 count += self._count_blocks(child)
 
@@ -293,14 +310,16 @@ class MarkdownParser:
         """Calculate the maximum nesting depth in the document."""
         max_depth = current_depth
 
-        if hasattr(node, 'children'):
+        if hasattr(node, "children"):
             for child in node.children:
                 child_depth = self._calculate_max_depth(child, current_depth + 1)
                 max_depth = max(max_depth, child_depth)
 
         return max_depth
 
-    def _create_error_document(self, original_text: str, error_message: str) -> MDDocument:
+    def _create_error_document(
+        self, original_text: str, error_message: str
+    ) -> MDDocument:
         """
         Create a document containing the original text when parsing fails.
 
@@ -317,7 +336,7 @@ class MarkdownParser:
         document.add_child(paragraph)
 
         # Add error comment if in debug mode
-        if self.options.get('debug_mode', False):
+        if self.options.get("debug_mode", False):
             error_paragraph = MDParagraph()
             error_paragraph.add_child(MDText(f"<!-- Parse Error: {error_message} -->"))
             document.add_child(error_paragraph)
@@ -327,10 +346,10 @@ class MarkdownParser:
     def _reset_stats(self) -> None:
         """Reset parsing statistics."""
         self.parse_stats = {
-            'tokens_processed': 0,
-            'blocks_parsed': 0,
-            'inline_elements_parsed': 0,
-            'errors': []
+            "tokens_processed": 0,
+            "blocks_parsed": 0,
+            "inline_elements_parsed": 0,
+            "errors": [],
         }
 
     def get_stats(self) -> Dict[str, Any]:
@@ -353,21 +372,21 @@ class MarkdownParser:
         self.options[key] = value
 
         # Update component options if needed
-        if key.startswith('html_'):
+        if key.startswith("html_"):
             html_key = key[5:]  # Remove 'html_' prefix
-            if not hasattr(self, '_html_options'):
+            if not hasattr(self, "_html_options"):
                 self._html_options = {}
             self._html_options[html_key] = value
             self.html_renderer = HTMLRenderer(self._html_options)
-        elif key.startswith('markdown_'):
+        elif key.startswith("markdown_"):
             md_key = key[9:]  # Remove 'markdown_' prefix
-            if not hasattr(self, '_markdown_options'):
+            if not hasattr(self, "_markdown_options"):
                 self._markdown_options = {}
             self._markdown_options[md_key] = value
             self.markdown_renderer = MarkdownRenderer(self._markdown_options)
-        elif key.startswith('markdownv2_'):
+        elif key.startswith("markdownv2_"):
             mdv2_key = key[11:]  # Remove 'markdownv2_' prefix
-            if not hasattr(self, '_markdownv2_options'):
+            if not hasattr(self, "_markdownv2_options"):
                 self._markdownv2_options = {}
             self._markdownv2_options[mdv2_key] = value
             self.markdownv2_renderer = MarkdownV2Renderer(self._markdownv2_options)
@@ -389,7 +408,9 @@ class MarkdownParser:
 class MarkdownParseError(Exception):
     """Exception raised when Markdown parsing fails."""
 
-    def __init__(self, message: str, line: Optional[int] = None, column: Optional[int] = None):
+    def __init__(
+        self, message: str, line: Optional[int] = None, column: Optional[int] = None
+    ):
         """
         Initialize parse error.
 
@@ -412,6 +433,7 @@ class MarkdownParseError(Exception):
 
 
 # Convenience functions for quick parsing
+
 
 def parse_markdown(text: str, **options) -> MDDocument:
     """
@@ -470,10 +492,10 @@ def markdown_to_markdownv2(text: str, **options) -> str:
         MarkdownV2 string
     """
     # Enable preserve options by default for MarkdownV2 conversion
-    if 'preserve_leading_spaces' not in options:
-        options['preserve_leading_spaces'] = True
-    if 'preserve_soft_line_breaks' not in options:
-        options['preserve_soft_line_breaks'] = True
+    if "preserve_leading_spaces" not in options:
+        options["preserve_leading_spaces"] = True
+    if "preserve_soft_line_breaks" not in options:
+        options["preserve_soft_line_breaks"] = True
 
     parser = MarkdownParser(options)
     return parser.parse_to_markdownv2(text)

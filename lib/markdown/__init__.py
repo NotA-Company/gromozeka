@@ -36,7 +36,14 @@ MarkdownV2 Features:
 - Escapes special characters: _*[]()~`>#+-=|{}.!
 """
 
-from .parser import MarkdownParser, parse_markdown, markdown_to_html, normalize_markdown, validate_markdown, markdown_to_markdownv2
+from .parser import (
+    MarkdownParser,
+    parse_markdown,
+    markdown_to_html,
+    normalize_markdown,
+    validate_markdown,
+    markdown_to_markdownv2,
+)
 from .ast_nodes import *
 from .tokenizer import Tokenizer
 from .block_parser import BlockParser

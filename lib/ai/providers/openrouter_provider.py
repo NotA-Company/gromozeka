@@ -1,6 +1,7 @@
 """
 OpenRouter provider for LLM models, dood!
 """
+
 import logging
 from typing import Dict, Any
 from openai import AsyncOpenAI
@@ -25,7 +26,15 @@ class OpenrouterModel(BasicOpenAIModel):
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize OpenRouter model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize, openAiClient, extraConfig)
+        super().__init__(
+            provider,
+            modelId,
+            modelVersion,
+            temperature,
+            contextSize,
+            openAiClient,
+            extraConfig,
+        )
 
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get OpenRouter-specific extra parameters, dood!"""

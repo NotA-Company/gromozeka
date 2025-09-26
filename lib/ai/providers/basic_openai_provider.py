@@ -1,6 +1,7 @@
 """
 Basic OpenAI provider and model base classes for shared functionality, dood!
 """
+
 import json
 import logging
 from typing import Dict, Iterable, List, Any, Optional
@@ -8,9 +9,16 @@ from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 
 from ..abstract import AbstractModel, AbstractLLMProvider
-from ..models import LLMAbstractTool, LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
+from ..models import (
+    LLMAbstractTool,
+    LLMToolCall,
+    ModelMessage,
+    ModelResultStatus,
+    ModelRunResult,
+)
 
 logger = logging.getLogger(__name__)
+
 
 class OpenAIModelRunResult(ModelRunResult):
     """OpenAI model run result, dood!"""
@@ -27,10 +35,12 @@ class BasicOpenAIModel(AbstractModel):
         temperature: float,
         contextSize: int,
         openAiClient: AsyncOpenAI,
-        extraConfig: Dict[str, Any] = {}
+        extraConfig: Dict[str, Any] = {},
     ):
         """Initialize basic OpenAI model, dood!"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
+        super().__init__(
+            provider, modelId, modelVersion, temperature, contextSize, extraConfig
+        )
         self._client = openAiClient
         self._supportTools = self._config.get("support_tools", False)
 
@@ -42,7 +52,9 @@ class BasicOpenAIModel(AbstractModel):
         """Get extra parameters for the API call. Override in subclasses, dood!"""
         return {}
 
-    async def generateText(self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []) -> ModelRunResult:
+    async def generateText(
+        self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
+    ) -> ModelRunResult:
         """Run the OpenAI-compatible model with given messages, dood!
 
         Args:
@@ -55,7 +67,9 @@ class BasicOpenAIModel(AbstractModel):
             raise RuntimeError("OpenAI client not initialized, dood!")
 
         if not self._config.get("support_text", True):
-            raise NotImplementedError(f"Text generation isn't supported by {self.modelId}, dood!")
+            raise NotImplementedError(
+                f"Text generation isn't supported by {self.modelId}, dood!"
+            )
 
         kwargs: Dict[str, Any] = {}
         if tools and self._supportTools:
@@ -66,7 +80,7 @@ class BasicOpenAIModel(AbstractModel):
             # Prepare base parameters
             params = {
                 "model": self._getModelId(),
-                "messages": [message.toDict('content') for message in messages],  # type: ignore
+                "messages": [message.toDict("content") for message in messages],  # type: ignore
                 "temperature": self.temperature,
                 **kwargs,
             }
@@ -75,7 +89,9 @@ class BasicOpenAIModel(AbstractModel):
             params.update(self._getExtraParams())
 
             # Use OpenAI-compatible API
-            response: ChatCompletion = await self._client.chat.completions.create(**params)
+            response: ChatCompletion = await self._client.chat.completions.create(
+                **params
+            )
 
             # for chunk in response:
             #   if chunk.choices[0].delta.content is not None:
@@ -127,9 +143,13 @@ class BasicOpenAIModel(AbstractModel):
         """Generate an image via the OpenAI-compatible model, dood"""
 
         if not self._config.get("support_images", False):
-            raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
+            raise NotImplementedError(
+                f"Image generation isn't supported by {self.modelId}, dood"
+            )
 
-        raise NotImplementedError("Image generation isn't supported by OpenAI-compatible models yet, dood")
+        raise NotImplementedError(
+            "Image generation isn't supported by OpenAI-compatible models yet, dood"
+        )
 
 
 class BasicOpenAIProvider(AbstractLLMProvider):
@@ -149,7 +169,9 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         """Get the API key from config. Override if needed, dood!"""
         apiKey = self.config.get("api_key")
         if not apiKey:
-            raise ValueError("api_key is required for OpenAI-compatible provider, dood!")
+            raise ValueError(
+                "api_key is required for OpenAI-compatible provider, dood!"
+            )
         return apiKey
 
     def _getClientParams(self) -> Dict[str, Any]:
@@ -190,7 +212,9 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Create a model instance. Override in subclasses, dood!"""
-        raise NotImplementedError("Subclasses must implement _create_model_instance, dood!")
+        raise NotImplementedError(
+            "Subclasses must implement _create_model_instance, dood!"
+        )
 
     def addModel(
         self,
@@ -203,17 +227,23 @@ class BasicOpenAIProvider(AbstractLLMProvider):
     ) -> AbstractModel:
         """Add an OpenAI-compatible model, dood!"""
         if name in self.models:
-            logger.warning(f"Model {name} already exists in {self.__class__.__name__}, dood!")
+            logger.warning(
+                f"Model {name} already exists in {self.__class__.__name__}, dood!"
+            )
             return self.models[name]
 
         if not self._client:
             raise RuntimeError("OpenAI client not initialized, dood!")
 
         try:
-            model = self._createModelInstance(name, modelId, modelVersion, temperature, contextSize, extraConfig)
+            model = self._createModelInstance(
+                name, modelId, modelVersion, temperature, contextSize, extraConfig
+            )
 
             self.models[name] = model
-            logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), dood!")
+            logger.info(
+                f"Added {self.__class__.__name__} model {name} ({modelId}), dood!"
+            )
             return model
 
         except Exception as e:

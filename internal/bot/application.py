@@ -1,13 +1,20 @@
 """
 Telegram bot application setup and management for Gromozeka.
 """
+
 import asyncio
 import logging
 import random
 import sys
 from typing import Any, Awaitable, Dict
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, BaseUpdateProcessor
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    BaseUpdateProcessor,
+)
 
 from lib.ai.manager import LLMManager
 from internal.database.wrapper import DatabaseWrapper
@@ -15,14 +22,15 @@ from .handlers import BotHandlers
 
 logger = logging.getLogger(__name__)
 
+
 class PerTopicUpdateProcessor(BaseUpdateProcessor):
     """Update processor that processes updates parallel for each chatId + topicId"""
 
     async def initialize(self) -> None:
-      self.chatTopicMap: Dict[str, asyncio.Semaphore] = {}
+        self.chatTopicMap: Dict[str, asyncio.Semaphore] = {}
 
     async def shutdown(self) -> None:
-      pass
+        pass
 
     async def do_process_update(self, update, coroutine: Awaitable) -> None:
         # This method is called for every update
@@ -39,8 +47,7 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
                 topicId = update.message.message_thread_id
 
         key = f"{chatId}_{topicId}"
-        #logger.debug(f"Processing update for chatId: {chatId}, topicId: {topicId}")
-
+        # logger.debug(f"Processing update for chatId: {chatId}, topicId: {topicId}")
 
         topicSemaphore = self.chatTopicMap.get(key, None)
         if not isinstance(topicSemaphore, asyncio.Semaphore):
@@ -48,14 +55,20 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
             self.chatTopicMap[key] = topicSemaphore
 
         async with topicSemaphore:
-            #logger.debug(f"awaiting corutine for chatId: {chatId}, topicId: {topicId}")
+            # logger.debug(f"awaiting corutine for chatId: {chatId}, topicId: {topicId}")
             await coroutine
 
 
 class BotApplication:
     """Manages Telegram bot application setup and execution."""
 
-    def __init__(self, config: Dict[str, Any], botToken: str, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        botToken: str,
+        database: DatabaseWrapper,
+        llmManager: LLMManager,
+    ):
         """Initialize bot application with token, database, and LLM model."""
         self.config = config
         self.botToken = botToken
@@ -73,19 +86,35 @@ class BotApplication:
         # self.handlers.initDelayedScheduler(self.application.bot)
 
         # Command handlers
-        self.application.add_handler(CommandHandler("start", self.handlers.start_command))
+        self.application.add_handler(
+            CommandHandler("start", self.handlers.start_command)
+        )
         self.application.add_handler(CommandHandler("help", self.handlers.help_command))
         self.application.add_handler(CommandHandler("echo", self.handlers.echo_command))
         self.application.add_handler(CommandHandler("test", self.handlers.test_command))
 
-        self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
-        self.application.add_handler(CommandHandler("analyze", self.handlers.analyze_command))
+        self.application.add_handler(
+            CommandHandler(["summary", "topic_summary"], self.handlers.summary_command)
+        )
+        self.application.add_handler(
+            CommandHandler("analyze", self.handlers.analyze_command)
+        )
         self.application.add_handler(CommandHandler("draw", self.handlers.draw_command))
-        self.application.add_handler(CommandHandler("remind", self.handlers.remind_command))
+        self.application.add_handler(
+            CommandHandler("remind", self.handlers.remind_command)
+        )
 
-        self.application.add_handler(CommandHandler("models", self.handlers.models_command))
-        self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
-        self.application.add_handler(CommandHandler(["set", "unset"], self.handlers.set_or_unset_chat_setting_command))
+        self.application.add_handler(
+            CommandHandler("models", self.handlers.models_command)
+        )
+        self.application.add_handler(
+            CommandHandler("settings", self.handlers.chat_settings_command)
+        )
+        self.application.add_handler(
+            CommandHandler(
+                ["set", "unset"], self.handlers.set_or_unset_chat_setting_command
+            )
+        )
 
         # Message handler for regular text messages
         # See
@@ -105,9 +134,16 @@ class BotApplication:
         # VIDEO      - https://docs.python-telegram-bot.org/en/stable/telegram.video.html#telegram.Video
         # VideoNote  - https://docs.python-telegram-bot.org/en/stable/telegram.videonote.html#telegram.VideoNote
         # VOICE      - https://docs.python-telegram-bot.org/en/stable/telegram.voice.html#telegram.Voice
-        self.application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Sticker.ALL & ~filters.COMMAND, self.handlers.handle_message))
+        self.application.add_handler(
+            MessageHandler(
+                filters.TEXT | filters.PHOTO | filters.Sticker.ALL & ~filters.COMMAND,
+                self.handlers.handle_message,
+            )
+        )
         # self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers.handle_photo))
-        self.application.add_handler(MessageHandler(filters.VIA_BOT, self.handlers.handle_bot))
+        self.application.add_handler(
+            MessageHandler(filters.VIA_BOT, self.handlers.handle_bot)
+        )
 
         # Error handler
         self.application.add_error_handler(self.handlers.error_handler)

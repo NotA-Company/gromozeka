@@ -5,9 +5,11 @@ Test file for code block parsing fixes
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown
+
 
 def test_case(name, text):
     print(f"\n==== {name} ====")
@@ -15,6 +17,7 @@ def test_case(name, text):
     print(f"NORMALIZED: {repr(normalize_markdown(text))}")
     print(f"MARKDOWNV2: {repr(markdown_to_markdownv2(text))}")
     print(f"HTML: {repr(markdown_to_html(text))}")
+
 
 # Test cases from the original issue
 test_case("Test 1 - Inline code fence", "Test 1 ```test1 test2 test3```")

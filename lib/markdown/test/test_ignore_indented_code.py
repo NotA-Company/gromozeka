@@ -5,9 +5,11 @@ Test script for ignore_indented_code_blocks option in Gromozeka Markdown Parser
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from lib.markdown import MarkdownParser
+
 
 def test_ignore_indented_code_blocks():
     """Test that 4-space indented code blocks are ignored by default, dood!"""
@@ -38,7 +40,7 @@ Another paragraph after the indented text."""
 
     # Test with ignore_indented_code_blocks=False (enable indented code blocks)
     print("\n2. With ignore_indented_code_blocks=False:")
-    parser_enabled = MarkdownParser({'ignore_indented_code_blocks': False})
+    parser_enabled = MarkdownParser({"ignore_indented_code_blocks": False})
     html_enabled = parser_enabled.parse_to_html(markdown_text)
     print("HTML output:")
     print(html_enabled)
@@ -47,8 +49,8 @@ Another paragraph after the indented text."""
     print("\n" + "=" * 50)
     print("VERIFICATION:")
 
-    has_code_default = '<pre><code>' in html_default
-    has_code_enabled = '<pre><code>' in html_enabled
+    has_code_default = "<pre><code>" in html_default
+    has_code_enabled = "<pre><code>" in html_enabled
 
     print(f"Default (ignore=True) has <pre><code>: {has_code_default}")
     print(f"Enabled (ignore=False) has <pre><code>: {has_code_enabled}")
@@ -56,11 +58,14 @@ Another paragraph after the indented text."""
     if not has_code_default and has_code_enabled:
         print("✅ SUCCESS: Option works correctly, dood!")
         print("   - Default ignores indented code blocks (no <pre><code>)")
-        print("   - When disabled, indented code blocks are parsed (<pre><code> present)")
+        print(
+            "   - When disabled, indented code blocks are parsed (<pre><code> present)"
+        )
         return True
     else:
         print("❌ FAILURE: Option not working as expected, dood!")
         return False
+
 
 def test_fenced_code_still_works():
     """Test that fenced code blocks still work regardless of the option, dood!"""
@@ -81,7 +86,7 @@ Another paragraph."""
 
     # Test with both settings
     parser_default = MarkdownParser()  # ignore_indented_code_blocks=True
-    parser_enabled = MarkdownParser({'ignore_indented_code_blocks': False})
+    parser_enabled = MarkdownParser({"ignore_indented_code_blocks": False})
 
     html_default = parser_default.parse_to_html(markdown_text)
     html_enabled = parser_enabled.parse_to_html(markdown_text)
@@ -101,6 +106,7 @@ Another paragraph."""
     else:
         print("❌ FAILURE: Fenced code blocks broken, dood!")
         return False
+
 
 if __name__ == "__main__":
     print("Testing ignore_indented_code_blocks option, dood!")

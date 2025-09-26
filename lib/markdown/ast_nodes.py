@@ -12,6 +12,7 @@ from enum import Enum
 
 class NodeType(Enum):
     """Enumeration of all AST node types."""
+
     DOCUMENT = "document"
     PARAGRAPH = "paragraph"
     HEADER = "header"
@@ -30,6 +31,7 @@ class NodeType(Enum):
 
 class EmphasisType(Enum):
     """Types of emphasis formatting."""
+
     ITALIC = "italic"
     BOLD = "bold"
     BOLD_ITALIC = "bold_italic"
@@ -38,6 +40,7 @@ class EmphasisType(Enum):
 
 class ListType(Enum):
     """Types of lists."""
+
     UNORDERED = "unordered"
     ORDERED = "ordered"
 
@@ -47,15 +50,15 @@ class MDNode(ABC):
 
     def __init__(self, node_type: NodeType):
         self.node_type = node_type
-        self.children: List['MDNode'] = []
-        self.parent: Optional['MDNode'] = None
+        self.children: List["MDNode"] = []
+        self.parent: Optional["MDNode"] = None
 
-    def add_child(self, child: 'MDNode') -> None:
+    def add_child(self, child: "MDNode") -> None:
         """Add a child node."""
         child.parent = self
         self.children.append(child)
 
-    def remove_child(self, child: 'MDNode') -> None:
+    def remove_child(self, child: "MDNode") -> None:
         """Remove a child node."""
         if child in self.children:
             child.parent = None
@@ -79,7 +82,7 @@ class MDDocument(MDNode):
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
-            "children": [child.to_dict() for child in self.children]
+            "children": [child.to_dict() for child in self.children],
         }
 
 
@@ -92,7 +95,7 @@ class MDParagraph(MDNode):
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
-            "children": [child.to_dict() for child in self.children]
+            "children": [child.to_dict() for child in self.children],
         }
 
 
@@ -109,14 +112,16 @@ class MDHeader(MDNode):
         return {
             "type": self.node_type.value,
             "level": self.level,
-            "children": [child.to_dict() for child in self.children]
+            "children": [child.to_dict() for child in self.children],
         }
 
 
 class MDCodeBlock(MDNode):
     """Code block node with optional language identifier."""
 
-    def __init__(self, content: str, language: Optional[str] = None, is_fenced: bool = False):
+    def __init__(
+        self, content: str, language: Optional[str] = None, is_fenced: bool = False
+    ):
         super().__init__(NodeType.CODE_BLOCK)
         self.content = content
         self.language = language
@@ -127,7 +132,7 @@ class MDCodeBlock(MDNode):
             "type": self.node_type.value,
             "content": self.content,
             "language": self.language,
-            "is_fenced": self.is_fenced
+            "is_fenced": self.is_fenced,
         }
 
 
@@ -140,7 +145,7 @@ class MDBlockQuote(MDNode):
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
-            "children": [child.to_dict() for child in self.children]
+            "children": [child.to_dict() for child in self.children],
         }
 
 
@@ -161,7 +166,7 @@ class MDList(MDNode):
             "marker": self.marker,
             "start_number": self.start_number,
             "is_tight": self.is_tight,
-            "children": [child.to_dict() for child in self.children]
+            "children": [child.to_dict() for child in self.children],
         }
 
 
@@ -174,7 +179,7 @@ class MDListItem(MDNode):
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.node_type.value,
-            "children": [child.to_dict() for child in self.children]
+            "children": [child.to_dict() for child in self.children],
         }
 
 
@@ -186,10 +191,7 @@ class MDHorizontalRule(MDNode):
         self.marker = marker
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "type": self.node_type.value,
-            "marker": self.marker
-        }
+        return {"type": self.node_type.value, "marker": self.marker}
 
 
 class MDEmphasis(MDNode):
@@ -203,14 +205,16 @@ class MDEmphasis(MDNode):
         return {
             "type": self.node_type.value,
             "emphasis_type": self.emphasis_type.value,
-            "children": [child.to_dict() for child in self.children]
+            "children": [child.to_dict() for child in self.children],
         }
 
 
 class MDLink(MDNode):
     """Link node with URL and optional title."""
 
-    def __init__(self, url: str, title: Optional[str] = None, is_reference: bool = False):
+    def __init__(
+        self, url: str, title: Optional[str] = None, is_reference: bool = False
+    ):
         super().__init__(NodeType.LINK)
         self.url = url
         self.title = title
@@ -222,7 +226,7 @@ class MDLink(MDNode):
             "url": self.url,
             "title": self.title,
             "is_reference": self.is_reference,
-            "children": [child.to_dict() for child in self.children]
+            "children": [child.to_dict() for child in self.children],
         }
 
 
@@ -240,7 +244,7 @@ class MDImage(MDNode):
             "type": self.node_type.value,
             "url": self.url,
             "alt_text": self.alt_text,
-            "title": self.title
+            "title": self.title,
         }
 
 
@@ -252,10 +256,7 @@ class MDCodeSpan(MDNode):
         self.content = content
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "type": self.node_type.value,
-            "content": self.content
-        }
+        return {"type": self.node_type.value, "content": self.content}
 
 
 class MDText(MDNode):
@@ -266,10 +267,7 @@ class MDText(MDNode):
         self.content = content
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "type": self.node_type.value,
-            "content": self.content
-        }
+        return {"type": self.node_type.value, "content": self.content}
 
 
 class MDAutolink(MDNode):
@@ -284,5 +282,5 @@ class MDAutolink(MDNode):
         return {
             "type": self.node_type.value,
             "url": self.url,
-            "is_email": self.is_email
+            "is_email": self.is_email,
         }

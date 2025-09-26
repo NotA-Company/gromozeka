@@ -11,8 +11,10 @@ from lib.ai.manager import LLMManager
 
 logger = logging.getLogger(__name__)
 
+
 class ChatSettingsKey(StrEnum):
     """Enum for chat settings."""
+
     CHAT_MODEL = "chat-model"
     FALLBACK_MODEL = "fallback-model"
     SUMMARY_MODEL = "summary-model"
@@ -46,8 +48,10 @@ class ChatSettingsKey(StrEnum):
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
 
+
 class ChatSettingsValue:
     """Value of chat settings."""
+
     def __init__(self, value: Any):
         self.value = str(value).strip()
 
@@ -75,7 +79,9 @@ class ChatSettingsValue:
         return self.value.lower() == "true"
 
     def toList(self, separator: str = ",", dropEmpty: bool = True) -> List[str]:
-        return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]
+        return [
+            x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty
+        ]
 
     def toModel(self, modelManager: LLMManager) -> AbstractModel:
         ret = modelManager.getModel(self.value)

@@ -1,6 +1,7 @@
 """
 EnsuredMessage: wrapper around telegram.Message
 """
+
 import asyncio
 import datetime
 import json
@@ -22,7 +23,7 @@ from internal.database.wrapper import DatabaseWrapper
 
 logger = logging.getLogger(__name__)
 
-MAX_MEDIA_AWAIT_SECS = 300 # 5 minutes
+MAX_MEDIA_AWAIT_SECS = 300  # 5 minutes
 MEDIA_AWAIT_DELAY = 10
 
 """
@@ -53,16 +54,19 @@ Methods:
 Raises:
     ValueError: If the message's user or chat information is missing.
 """
+
+
 class EnsuredMessage:
 
-    def __init__(self,
-                 user: User,
-                 chat: Chat,
-                 messageId: int,
-                 date: datetime.datetime,
-                 messageText: str = "",
-                 messageType: MessageType = MessageType.UNKNOWN,
-                 ):
+    def __init__(
+        self,
+        user: User,
+        chat: Chat,
+        messageId: int,
+        date: datetime.datetime,
+        messageText: str = "",
+        messageType: MessageType = MessageType.UNKNOWN,
+    ):
 
         self._message: Optional[Message] = None
 
@@ -90,7 +94,7 @@ class EnsuredMessage:
         self._mediaProcessingInfo: Optional[MediaProcessingInfo] = None
 
     @classmethod
-    def fromMessage(cls, message: Message) -> 'EnsuredMessage':
+    def fromMessage(cls, message: Message) -> "EnsuredMessage":
         """Create EnsuredMessage from Telegram message"""
         if not message.from_user:
             raise ValueError("Message User undefined")
@@ -142,7 +146,11 @@ class EnsuredMessage:
                     ensuredMessage.quoteText = message.quote.text
 
         # If this is topic message, then set threadId
-        isTopicMessage = message.is_topic_message == True if message.is_topic_message is not None else False
+        isTopicMessage = (
+            message.is_topic_message == True
+            if message.is_topic_message is not None
+            else False
+        )
         if isTopicMessage:
             ensuredMessage.isTopicMessage = True
             ensuredMessage.threadId = message.message_thread_id
@@ -151,7 +159,7 @@ class EnsuredMessage:
         return ensuredMessage
 
     @classmethod
-    def fromDBChatMessage(cls, data: Dict[str, Any]) -> 'EnsuredMessage':
+    def fromDBChatMessage(cls, data: Dict[str, Any]) -> "EnsuredMessage":
         """Create EnsuredMessage from DB chat message"""
         ensuredMessage = EnsuredMessage(
             user=User(
@@ -247,7 +255,9 @@ class EnsuredMessage:
                 case MediaStatus.DONE:
                     return mediaAttachment
                 case _:
-                    logger.error(f"Media#{mediaId} has invalid status: {mediaAttachment['status']}")
+                    logger.error(
+                        f"Media#{mediaId} has invalid status: {mediaAttachment['status']}"
+                    )
                     return mediaAttachment
 
         logger.error(f"Media#{mediaId} processing timed out")
@@ -262,7 +272,9 @@ class EnsuredMessage:
     ) -> str:
         await self.updateMediaContent(db)
 
-        messageText = self.messageText if replaceMessageText is None else replaceMessageText
+        messageText = (
+            self.messageText if replaceMessageText is None else replaceMessageText
+        )
         userName = self.user.name
         if stripAtsign:
             userName = userName.lstrip("@")

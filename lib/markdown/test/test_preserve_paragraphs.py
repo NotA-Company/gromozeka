@@ -5,9 +5,11 @@ Test script for preserve options with regular paragraphs (not indented code bloc
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from lib.markdown.parser import markdown_to_markdownv2, MarkdownParser
+
 
 def test_preserve_paragraphs():
     """Test the new preserve options with regular paragraph text."""
@@ -76,9 +78,9 @@ continues here
     print(repr(test_text3))
 
     # Both enabled
-    result4a = markdown_to_markdownv2(test_text3,
-                                    preserve_leading_spaces=True,
-                                    preserve_soft_line_breaks=True)
+    result4a = markdown_to_markdownv2(
+        test_text3, preserve_leading_spaces=True, preserve_soft_line_breaks=True
+    )
     print("Both options enabled:")
     print(repr(result4a))
     print("Rendered:")
@@ -86,9 +88,9 @@ continues here
     print()
 
     # Both disabled
-    result4b = markdown_to_markdownv2(test_text3,
-                                    preserve_leading_spaces=False,
-                                    preserve_soft_line_breaks=False)
+    result4b = markdown_to_markdownv2(
+        test_text3, preserve_leading_spaces=False, preserve_soft_line_breaks=False
+    )
     print("Both options disabled:")
     print(repr(result4b))
     print("Rendered:")
@@ -96,6 +98,7 @@ continues here
     print()
 
     print("Tests completed, dood!")
+
 
 if __name__ == "__main__":
     test_preserve_paragraphs()

@@ -30,23 +30,26 @@ class InlineParser:
         """Compile regex patterns used for inline parsing."""
         # Link reference definitions
         self.ref_link_pattern = re.compile(
-            r'^\s*\[([^\]]+)\]:\s*([^\s]+)(?:\s+"([^"]*)")?',
-            re.MULTILINE
+            r'^\s*\[([^\]]+)\]:\s*([^\s]+)(?:\s+"([^"]*)")?', re.MULTILINE
         )
 
         # URL and email validation for autolinks
-        self.url_pattern = re.compile(
-            r'^https?://[^\s<>]+$'
-        )
-        self.email_pattern = re.compile(
-            r'^[^\s<>]+@[^\s<>]+\.[^\s<>]+$'
-        )
+        self.url_pattern = re.compile(r"^https?://[^\s<>]+$")
+        self.email_pattern = re.compile(r"^[^\s<>]+@[^\s<>]+\.[^\s<>]+$")
 
         # Emphasis delimiter patterns
         self.emphasis_delims = {
-            '*': {'single': EmphasisType.ITALIC, 'double': EmphasisType.BOLD, 'triple': EmphasisType.BOLD_ITALIC},
-            '_': {'single': EmphasisType.ITALIC, 'double': EmphasisType.BOLD, 'triple': EmphasisType.BOLD_ITALIC},
-            '~': {'double': EmphasisType.STRIKETHROUGH}
+            "*": {
+                "single": EmphasisType.ITALIC,
+                "double": EmphasisType.BOLD,
+                "triple": EmphasisType.BOLD_ITALIC,
+            },
+            "_": {
+                "single": EmphasisType.ITALIC,
+                "double": EmphasisType.BOLD,
+                "triple": EmphasisType.BOLD_ITALIC,
+            },
+            "~": {"double": EmphasisType.STRIKETHROUGH},
         }
 
     def parse_inline_content(self, content: str) -> List[MDNode]:
@@ -63,7 +66,7 @@ class InlineParser:
         self._extract_reference_links(content)
 
         # Remove reference link definitions from content
-        content = self.ref_link_pattern.sub('', content).strip()
+        content = self.ref_link_pattern.sub("", content).strip()
 
         if not content:
             return []
@@ -103,9 +106,9 @@ class InlineParser:
 
             # If we tried to parse an autolink but failed, and we're at a '<' character,
             # treat it as regular text instead of skipping it
-            if content[pos] == '<' and new_pos == pos:
+            if content[pos] == "<" and new_pos == pos:
                 # Add the '<' as regular text and advance position
-                nodes.append(MDText('<'))
+                nodes.append(MDText("<"))
                 pos += 1
                 continue
 
@@ -131,7 +134,7 @@ class InlineParser:
                 continue
 
             # 6. Escaped characters
-            if pos < len(content) and content[pos] == '\\' and pos + 1 < len(content):
+            if pos < len(content) and content[pos] == "\\" and pos + 1 < len(content):
                 # Add escaped character as plain text
                 nodes.append(MDText(content[pos + 1]))
                 pos += 2
@@ -150,26 +153,28 @@ class InlineParser:
 
         return self._merge_adjacent_text_nodes(nodes)
 
-    def _try_parse_code_span(self, content: str, pos: int) -> Tuple[Optional[MDCodeSpan], int]:
+    def _try_parse_code_span(
+        self, content: str, pos: int
+    ) -> Tuple[Optional[MDCodeSpan], int]:
         """Try to parse a code span at the current position."""
-        if pos >= len(content) or content[pos] != '`':
+        if pos >= len(content) or content[pos] != "`":
             return None, pos
 
         # Count opening backticks
         start_pos = pos
         backtick_count = 0
-        while pos < len(content) and content[pos] == '`':
+        while pos < len(content) and content[pos] == "`":
             backtick_count += 1
             pos += 1
 
         # Find closing backticks
         code_start = pos
         while pos < len(content):
-            if content[pos] == '`':
+            if content[pos] == "`":
                 # Count closing backticks
                 closing_count = 0
                 closing_start = pos
-                while pos < len(content) and content[pos] == '`':
+                while pos < len(content) and content[pos] == "`":
                     closing_count += 1
                     pos += 1
 
@@ -178,8 +183,11 @@ class InlineParser:
                     code_content = content[code_start:closing_start]
 
                     # Trim leading and trailing spaces if both present
-                    if (code_content.startswith(' ') and code_content.endswith(' ') and
-                        len(code_content) > 2):
+                    if (
+                        code_content.startswith(" ")
+                        and code_content.endswith(" ")
+                        and len(code_content) > 2
+                    ):
                         code_content = code_content[1:-1]
 
                     return MDCodeSpan(code_content), pos
@@ -189,17 +197,19 @@ class InlineParser:
         # No matching closing backticks found
         return None, start_pos
 
-    def _try_parse_autolink(self, content: str, pos: int) -> Tuple[Optional[MDAutolink], int]:
+    def _try_parse_autolink(
+        self, content: str, pos: int
+    ) -> Tuple[Optional[MDAutolink], int]:
         """Try to parse an autolink at the current position."""
-        if pos >= len(content) or content[pos] != '<':
+        if pos >= len(content) or content[pos] != "<":
             return None, pos
 
         # Find closing >
-        end_pos = content.find('>', pos + 1)
+        end_pos = content.find(">", pos + 1)
         if end_pos == -1:
             return None, pos
 
-        link_content = content[pos + 1:end_pos]
+        link_content = content[pos + 1 : end_pos]
 
         # Validate URL or email
         if self.url_pattern.match(link_content):
@@ -213,29 +223,29 @@ class InlineParser:
 
     def _try_parse_image(self, content: str, pos: int) -> Tuple[Optional[MDImage], int]:
         """Try to parse an image at the current position."""
-        if pos >= len(content) or not content[pos:].startswith('!['):
+        if pos >= len(content) or not content[pos:].startswith("!["):
             return None, pos
 
         # Find closing ]
-        bracket_pos = content.find(']', pos + 2)
+        bracket_pos = content.find("]", pos + 2)
         if bracket_pos == -1:
             return None, pos
 
-        alt_text = content[pos + 2:bracket_pos]
+        alt_text = content[pos + 2 : bracket_pos]
 
         # Check for inline link format ](url "title")
-        if (bracket_pos + 1 < len(content) and content[bracket_pos + 1] == '('):
-            paren_end = content.find(')', bracket_pos + 2)
+        if bracket_pos + 1 < len(content) and content[bracket_pos + 1] == "(":
+            paren_end = content.find(")", bracket_pos + 2)
             if paren_end != -1:
-                link_content = content[bracket_pos + 2:paren_end].strip()
+                link_content = content[bracket_pos + 2 : paren_end].strip()
                 url, title = self._parse_link_destination_and_title(link_content)
                 return MDImage(url, alt_text, title), paren_end + 1
 
         # Check for reference link format ][ref]
-        if (bracket_pos + 1 < len(content) and content[bracket_pos + 1] == '['):
-            ref_end = content.find(']', bracket_pos + 2)
+        if bracket_pos + 1 < len(content) and content[bracket_pos + 1] == "[":
+            ref_end = content.find("]", bracket_pos + 2)
             if ref_end != -1:
-                ref_label = content[bracket_pos + 2:ref_end].lower().strip()
+                ref_label = content[bracket_pos + 2 : ref_end].lower().strip()
                 if not ref_label:  # Empty reference uses alt text as label
                     ref_label = alt_text.lower().strip()
 
@@ -247,21 +257,21 @@ class InlineParser:
 
     def _try_parse_link(self, content: str, pos: int) -> Tuple[Optional[MDLink], int]:
         """Try to parse a link at the current position."""
-        if pos >= len(content) or content[pos] != '[':
+        if pos >= len(content) or content[pos] != "[":
             return None, pos
 
         # Find closing ]
-        bracket_pos = content.find(']', pos + 1)
+        bracket_pos = content.find("]", pos + 1)
         if bracket_pos == -1:
             return None, pos
 
-        link_text = content[pos + 1:bracket_pos]
+        link_text = content[pos + 1 : bracket_pos]
 
         # Check for inline link format ](url "title")
-        if (bracket_pos + 1 < len(content) and content[bracket_pos + 1] == '('):
-            paren_end = content.find(')', bracket_pos + 2)
+        if bracket_pos + 1 < len(content) and content[bracket_pos + 1] == "(":
+            paren_end = content.find(")", bracket_pos + 2)
             if paren_end != -1:
-                link_content = content[bracket_pos + 2:paren_end].strip()
+                link_content = content[bracket_pos + 2 : paren_end].strip()
                 url, title = self._parse_link_destination_and_title(link_content)
 
                 link = MDLink(url, title, is_reference=False)
@@ -273,10 +283,10 @@ class InlineParser:
                 return link, paren_end + 1
 
         # Check for reference link format ][ref]
-        if (bracket_pos + 1 < len(content) and content[bracket_pos + 1] == '['):
-            ref_end = content.find(']', bracket_pos + 2)
+        if bracket_pos + 1 < len(content) and content[bracket_pos + 1] == "[":
+            ref_end = content.find("]", bracket_pos + 2)
             if ref_end != -1:
-                ref_label = content[bracket_pos + 2:ref_end].lower().strip()
+                ref_label = content[bracket_pos + 2 : ref_end].lower().strip()
                 if not ref_label:  # Empty reference uses link text as label
                     ref_label = link_text.lower().strip()
 
@@ -293,13 +303,15 @@ class InlineParser:
 
         return None, pos
 
-    def _try_parse_emphasis(self, content: str, pos: int) -> Tuple[Optional[MDEmphasis], int]:
+    def _try_parse_emphasis(
+        self, content: str, pos: int
+    ) -> Tuple[Optional[MDEmphasis], int]:
         """Try to parse emphasis at the current position."""
         if pos >= len(content):
             return None, pos
 
         char = content[pos]
-        if char not in ['*', '_', '~']:
+        if char not in ["*", "_", "~"]:
             return None, pos
 
         # Count consecutive delimiter characters
@@ -310,23 +322,27 @@ class InlineParser:
             pos += 1
 
         # Handle strikethrough (requires exactly 2 tildes)
-        if char == '~' and delim_count == 2:
+        if char == "~" and delim_count == 2:
             return self._parse_strikethrough(content, start_pos)
 
         # Handle bold/italic emphasis
-        if char in ['*', '_'] and delim_count in [1, 2, 3]:
-            return self._parse_bold_italic_emphasis(content, start_pos, char, delim_count)
+        if char in ["*", "_"] and delim_count in [1, 2, 3]:
+            return self._parse_bold_italic_emphasis(
+                content, start_pos, char, delim_count
+            )
 
         return None, start_pos
 
-    def _parse_strikethrough(self, content: str, start_pos: int) -> Tuple[Optional[MDEmphasis], int]:
+    def _parse_strikethrough(
+        self, content: str, start_pos: int
+    ) -> Tuple[Optional[MDEmphasis], int]:
         """Parse strikethrough emphasis (~~text~~)."""
         # Find closing ~~
         pos = start_pos + 2
         while pos < len(content) - 1:
-            if content[pos:pos + 2] == '~~':
+            if content[pos : pos + 2] == "~~":
                 # Found closing delimiter
-                emphasis_content = content[start_pos + 2:pos]
+                emphasis_content = content[start_pos + 2 : pos]
                 if emphasis_content.strip():  # Must have non-whitespace content
                     emphasis = MDEmphasis(EmphasisType.STRIKETHROUGH)
                     # Parse content for nested inline elements
@@ -339,25 +355,29 @@ class InlineParser:
 
         return None, start_pos
 
-    def _parse_bold_italic_emphasis(self, content: str, start_pos: int, char: str, delim_count: int) -> Tuple[Optional[MDEmphasis], int]:
+    def _parse_bold_italic_emphasis(
+        self, content: str, start_pos: int, char: str, delim_count: int
+    ) -> Tuple[Optional[MDEmphasis], int]:
         """Parse bold/italic emphasis (*text*, **text**, ***text***)."""
         # For underscore, check word boundaries
-        if char == '_':
+        if char == "_":
             if not self._is_valid_underscore_position(content, start_pos, delim_count):
                 return None, start_pos
 
         # Find matching closing delimiter
         pos = start_pos + delim_count
         while pos <= len(content) - delim_count:
-            if content[pos:pos + delim_count] == char * delim_count:
+            if content[pos : pos + delim_count] == char * delim_count:
                 # Check for valid underscore position at end
-                if char == '_':
-                    if not self._is_valid_underscore_position(content, pos, delim_count):
+                if char == "_":
+                    if not self._is_valid_underscore_position(
+                        content, pos, delim_count
+                    ):
                         pos += 1
                         continue
 
                 # Found closing delimiter
-                emphasis_content = content[start_pos + delim_count:pos]
+                emphasis_content = content[start_pos + delim_count : pos]
                 if emphasis_content.strip():  # Must have non-whitespace content
                     # Determine emphasis type
                     if delim_count == 1:
@@ -384,7 +404,7 @@ class InlineParser:
             return None, pos
 
         start_pos = pos
-        special_chars = set('*_~`[!<\\')
+        special_chars = set("*_~`[!<\\")
 
         while pos < len(content) and content[pos] not in special_chars:
             pos += 1
@@ -395,7 +415,9 @@ class InlineParser:
 
         return None, pos
 
-    def _parse_link_destination_and_title(self, link_content: str) -> Tuple[str, Optional[str]]:
+    def _parse_link_destination_and_title(
+        self, link_content: str
+    ) -> Tuple[str, Optional[str]]:
         """Parse URL and optional title from link content."""
         link_content = link_content.strip()
 
@@ -403,14 +425,14 @@ class InlineParser:
         title_match = re.search(r'\s+"([^"]*)"$', link_content)
         if title_match:
             title = title_match.group(1)
-            url = link_content[:title_match.start()].strip()
+            url = link_content[: title_match.start()].strip()
             return url, title
 
         # Check for title in single quotes
         title_match = re.search(r"\s+'([^']*)'$", link_content)
         if title_match:
             title = title_match.group(1)
-            url = link_content[:title_match.start()].strip()
+            url = link_content[: title_match.start()].strip()
             return url, title
 
         # No title, just URL
@@ -437,7 +459,7 @@ class InlineParser:
                 continue
 
             # Escaped characters
-            if pos < len(content) and content[pos] == '\\' and pos + 1 < len(content):
+            if pos < len(content) and content[pos] == "\\" and pos + 1 < len(content):
                 nodes.append(MDText(content[pos + 1]))
                 pos += 2
                 continue
@@ -455,7 +477,9 @@ class InlineParser:
 
         return self._merge_adjacent_text_nodes(nodes)
 
-    def _is_valid_underscore_position(self, content: str, pos: int, delim_count: int) -> bool:
+    def _is_valid_underscore_position(
+        self, content: str, pos: int, delim_count: int
+    ) -> bool:
         """Check if underscore emphasis is at valid word boundary."""
         # For opening underscore: should not have alphanumeric before, should have alphanumeric after
         # For closing underscore: should have alphanumeric before, should not have alphanumeric after
