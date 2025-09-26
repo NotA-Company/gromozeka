@@ -5,9 +5,10 @@ import asyncio
 from enum import StrEnum
 import logging
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from telegram import Message
+from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
@@ -38,3 +39,34 @@ class MediaProcessingInfo:
         else:
             raise ValueError("Task is not set")
 
+
+class DelayedTaskFunction(StrEnum):
+    SEND_MESSAGE = "sendMessage"
+
+class DelayedTask:
+
+    def __init__(self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]):
+        self.delayedUntil = delayedUntil
+        self.function = function
+        self.kwargs = kwargs
+
+    def __lt__(self, other: "DelayedTask") -> bool:
+        return self.delayedUntil < other.delayedUntil
+
+    def __gt__(self, other: "DelayedTask") -> bool:
+        return self.delayedUntil > other.delayedUntil
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, DelayedTask):
+            return False
+
+        return self.delayedUntil == other.delayedUntil
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __repr__(self) -> str:
+        return f"DelayedTask(delayedUntil={self.delayedUntil}, function={self.function}, kwargs={self.kwargs})"
+
+    def __str__(self) -> str:
+        return self.__repr__()

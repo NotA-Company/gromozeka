@@ -5,8 +5,8 @@ cd `dirname $0`
 . ./.env
 
 [ -z "$ENV" ] && ENV="local"
-[ -z "$COMPRESSOR"] && COMPRESSOR="xz -9e"
-[ -z "$DO_PIP_UPDATE"] && DO_PIP_UPDATE="1"
+[ -z "$COMPRESSOR" ] && COMPRESSOR="xz -9e"
+[ -z "$DO_PIP_UPDATE" ] && DO_PIP_UPDATE="1"
 
 mkdir -p logs
 # Compress old logs
