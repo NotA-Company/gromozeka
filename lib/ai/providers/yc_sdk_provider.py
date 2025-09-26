@@ -3,7 +3,7 @@ Yandex Cloud SDK provider for LLM models, dood!
 """
 
 import logging
-from typing import Dict, Iterable, List, Any
+from typing import Dict, Iterable, Any
 
 from yandex_cloud_ml_sdk import YCloudML
 from yandex_cloud_ml_sdk.auth import YandexCloudCLIAuth

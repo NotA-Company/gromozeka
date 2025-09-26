@@ -10,8 +10,8 @@ import os
 # Add the lib directory to the path so we can import the markdown module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-from lib.markdown import MarkdownParser, markdown_to_html
-from lib.markdown.ast_nodes import *
+from lib.markdown import MarkdownParser  # noqa: E402
+from lib.markdown.ast_nodes import MDList, MDListItem, ListType  # noqa: E402
 
 
 class TestNestedLists(unittest.TestCase):

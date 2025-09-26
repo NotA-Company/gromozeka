@@ -12,7 +12,11 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_html, markdown_to_markdownv2, normalize_markdown
+from lib.markdown import (  # noqa: E402
+    markdown_to_html,
+    markdown_to_markdownv2,
+    normalize_markdown,
+)
 
 
 class TestCodeBlocksWithLists(unittest.TestCase):
