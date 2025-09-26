@@ -7,7 +7,7 @@ import sys
 import os
 
 # Add the lib directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 try:
     from lib.markdown import MarkdownParser, markdown_to_html
@@ -24,7 +24,7 @@ try:
         "> This is a blockquote",
         "[Link](https://example.com)",
         "![Image](image.jpg)",
-        "---"
+        "---",
     ]
 
     parser = MarkdownParser()

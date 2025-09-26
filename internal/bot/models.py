@@ -1,6 +1,7 @@
 """
 Models: Different data models for our bot
 """
+
 import asyncio
 from enum import StrEnum
 import logging
@@ -16,16 +17,18 @@ logger = logging.getLogger(__name__)
 class LLMMessageFormat(StrEnum):
     JSON = "json"
     TEXT = "text"
-    SMART = "smart" # JSON for user messages and text for bot messages
+    SMART = "smart"  # JSON for user messages and text for bot messages
+
 
 class MessageType(StrEnum):
     TEXT = "text"
     IMAGE = "image"
-    #VIDEO = "video"
-    #AUDIO = "audio"
-    #DOCUMENT = "document"
+    # VIDEO = "video"
+    # AUDIO = "audio"
+    # DOCUMENT = "document"
     STICKER = "sticker"
     UNKNOWN = "unknown"
+
 
 class MediaProcessingInfo:
     def __init__(self, id: str, type: MessageType, task: Optional[asyncio.Task] = None):
@@ -43,9 +46,12 @@ class MediaProcessingInfo:
 class DelayedTaskFunction(StrEnum):
     SEND_MESSAGE = "sendMessage"
 
+
 class DelayedTask:
 
-    def __init__(self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]):
+    def __init__(
+        self, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]
+    ):
         self.delayedUntil = delayedUntil
         self.function = function
         self.kwargs = kwargs

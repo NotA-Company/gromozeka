@@ -2,6 +2,7 @@
 Gromozeka - A minimal Telegram bot with TOML configuration and SQLite database.
 Refactored modular version.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,8 +20,7 @@ from lib.logging_utils import initLogging
 
 # Configure basic logging first
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -30,7 +30,9 @@ logger = logging.getLogger(__name__)
 class GromozekBot:
     """Main bot orchestrator that coordinates all components."""
 
-    def __init__(self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None):
+    def __init__(
+        self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None
+    ):
         """Initialize bot with all components."""
         # Initialize configuration
         self.config_manager = ConfigManager(config_path, config_dirs)
@@ -39,7 +41,9 @@ class GromozekBot:
         initLogging(self.config_manager.get_logging_config())
 
         # Initialize database
-        self.database_manager = DatabaseManager(self.config_manager.get_database_config())
+        self.database_manager = DatabaseManager(
+            self.config_manager.get_database_config()
+        )
 
         # Initialize LLM Manager
         self.llm_manager = LLMManager(self.config_manager.get_models_config())
@@ -63,29 +67,31 @@ def parse_arguments():
         description="Gromozeka - A minimal Telegram bot with TOML configuration and SQLite database, dood!"
     )
     parser.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         default="config.toml",
-        help="Path to configuration file (default: config.toml)"
+        help="Path to configuration file (default: config.toml)",
     )
     parser.add_argument(
         "--config-dir",
         action="append",
-        help="Directory to search for .toml config files recursively (can be specified multiple times), dood!"
+        help="Directory to search for .toml config files recursively (can be specified multiple times), dood!",
     )
     parser.add_argument(
-        "-d", "--daemon",
+        "-d",
+        "--daemon",
         action="store_true",
-        help="Run bot in background (daemon mode), dood!"
+        help="Run bot in background (daemon mode), dood!",
     )
     parser.add_argument(
         "--pid-file",
         default="gromozeka.pid",
-        help="PID file path for daemon mode (default: gromozeka.pid)"
+        help="PID file path for daemon mode (default: gromozeka.pid)",
     )
     parser.add_argument(
         "--print-config",
         action="store_true",
-        help="Pretty-print loaded configuration and exit, dood!"
+        help="Pretty-print loaded configuration and exit, dood!",
     )
     args = parser.parse_args()
     # Convert relative paths to absolute paths before daemon mode changes working directory
@@ -132,7 +138,7 @@ def daemonize(pid_file: str):
 
     # Write PID file
     try:
-        with open(pid_file, 'w') as f:
+        with open(pid_file, "w") as f:
             f.write(str(os.getpid()))
         logger.info(f"Daemon started with PID {os.getpid()}, dood!")
     except Exception as e:
@@ -143,9 +149,9 @@ def daemonize(pid_file: str):
     sys.stderr.flush()
 
     # Redirect to /dev/null
-    with open(os.devnull, 'r') as dev_null_r:
+    with open(os.devnull, "r") as dev_null_r:
         os.dup2(dev_null_r.fileno(), sys.stdin.fileno())
-    with open(os.devnull, 'w') as dev_null_w:
+    with open(os.devnull, "w") as dev_null_w:
         os.dup2(dev_null_w.fileno(), sys.stdout.fileno())
         os.dup2(dev_null_w.fileno(), sys.stderr.fileno())
 
@@ -181,7 +187,9 @@ def main():
         # Handle --print-config argument first
         if args.print_config:
             # Initialize only the config manager to load and print config
-            config_manager = ConfigManager(config_path=args.config, config_dirs=args.config_dir)
+            config_manager = ConfigManager(
+                config_path=args.config, config_dirs=args.config_dir
+            )
             pretty_print_config(config_manager)
             sys.exit(0)
 

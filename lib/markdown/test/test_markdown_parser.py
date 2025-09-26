@@ -10,11 +10,18 @@ import sys
 import os
 
 # Add the lib directory to the path so we can import the markdown module
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from lib.markdown import (
-    MarkdownParser, parse_markdown, markdown_to_html, normalize_markdown,
-    validate_markdown, Tokenizer, BlockParser, InlineParser, HTMLRenderer
+    MarkdownParser,
+    parse_markdown,
+    markdown_to_html,
+    normalize_markdown,
+    validate_markdown,
+    Tokenizer,
+    BlockParser,
+    InlineParser,
+    HTMLRenderer,
 )
 from lib.markdown.ast_nodes import *
 from lib.markdown.tokenizer import TokenType
@@ -80,7 +87,9 @@ class TestTokenizer(unittest.TestCase):
 
         # Find emphasis marker tokens
         emphasis_tokens = [t for t in tokens if t.type == TokenType.EMPHASIS_MARKER]
-        self.assertEqual(len(emphasis_tokens), 6)  # 2 for italic, 4 for bold, 2 for strike
+        self.assertEqual(
+            len(emphasis_tokens), 6
+        )  # 2 for italic, 4 for bold, 2 for strike
 
 
 class TestBlockParser(unittest.TestCase):
@@ -108,9 +117,9 @@ class TestBlockParser(unittest.TestCase):
         self.assertIsInstance(doc.children[1], MDHeader)
         self.assertIsInstance(doc.children[2], MDHeader)
 
-        self.assertEqual(doc.children[0].level, 1) # type: ignore
-        self.assertEqual(doc.children[1].level, 2) # type: ignore
-        self.assertEqual(doc.children[2].level, 3) # type: ignore
+        self.assertEqual(doc.children[0].level, 1)  # type: ignore
+        self.assertEqual(doc.children[1].level, 2)  # type: ignore
+        self.assertEqual(doc.children[2].level, 3)  # type: ignore
 
     def test_code_block_parsing(self):
         """Test parsing of code blocks."""
@@ -118,15 +127,17 @@ class TestBlockParser(unittest.TestCase):
         fenced_doc = self.parser.parse("```python\nprint('hello')\n```")
         self.assertEqual(len(fenced_doc.children), 1)
         self.assertIsInstance(fenced_doc.children[0], MDCodeBlock)
-        self.assertTrue(fenced_doc.children[0].is_fenced) # type: ignore
-        self.assertEqual(fenced_doc.children[0].language, "python") # type: ignore
+        self.assertTrue(fenced_doc.children[0].is_fenced)  # type: ignore
+        self.assertEqual(fenced_doc.children[0].language, "python")  # type: ignore
 
         # Indented code block
         indented_doc = self.parser.parse("    print('hello')\n    print('world')")
         # May have multiple children due to parsing behavior, check that at least one is a code block
-        code_blocks = [child for child in indented_doc.children if isinstance(child, MDCodeBlock)]
+        code_blocks = [
+            child for child in indented_doc.children if isinstance(child, MDCodeBlock)
+        ]
         self.assertGreaterEqual(len(code_blocks), 0)
-        #self.assertFalse(code_blocks[0].is_fenced)
+        # self.assertFalse(code_blocks[0].is_fenced)
 
     def test_blockquote_parsing(self):
         """Test parsing of block quotes."""
@@ -141,14 +152,14 @@ class TestBlockParser(unittest.TestCase):
         unordered_doc = self.parser.parse("- Item 1\n- Item 2\n- Item 3")
         self.assertEqual(len(unordered_doc.children), 1)
         self.assertIsInstance(unordered_doc.children[0], MDList)
-        self.assertEqual(unordered_doc.children[0].list_type, ListType.UNORDERED) # type: ignore
+        self.assertEqual(unordered_doc.children[0].list_type, ListType.UNORDERED)  # type: ignore
         self.assertEqual(len(unordered_doc.children[0].children), 3)
 
         # Ordered list
         ordered_doc = self.parser.parse("1. First\n2. Second\n3. Third")
         self.assertEqual(len(ordered_doc.children), 1)
         self.assertIsInstance(ordered_doc.children[0], MDList)
-        self.assertEqual(ordered_doc.children[0].list_type, ListType.ORDERED) # type: ignore
+        self.assertEqual(ordered_doc.children[0].list_type, ListType.ORDERED)  # type: ignore
 
     def test_horizontal_rule_parsing(self):
         """Test parsing of horizontal rules."""
@@ -174,7 +185,9 @@ class TestInlineParser(unittest.TestCase):
         self.assertIsInstance(paragraph, MDParagraph)
 
         # Should have emphasis nodes
-        emphasis_nodes = [child for child in paragraph.children if isinstance(child, MDEmphasis)]
+        emphasis_nodes = [
+            child for child in paragraph.children if isinstance(child, MDEmphasis)
+        ]
         self.assertEqual(len(emphasis_nodes), 4)
 
         # Check emphasis types
@@ -189,7 +202,9 @@ class TestInlineParser(unittest.TestCase):
         doc = self.parser.parse("This is `inline code` in text.")
 
         paragraph = doc.children[0]
-        code_spans = [child for child in paragraph.children if isinstance(child, MDCodeSpan)]
+        code_spans = [
+            child for child in paragraph.children if isinstance(child, MDCodeSpan)
+        ]
         self.assertEqual(len(code_spans), 1)
         self.assertEqual(code_spans[0].content, "inline code")
 
@@ -221,10 +236,12 @@ class TestInlineParser(unittest.TestCase):
 
     def test_autolink_parsing(self):
         """Test parsing of autolinks."""
-        doc = self.parser.parse('<https://example.com> <user@example.com>')
+        doc = self.parser.parse("<https://example.com> <user@example.com>")
 
         paragraph = doc.children[0]
-        autolinks = [child for child in paragraph.children if isinstance(child, MDAutolink)]
+        autolinks = [
+            child for child in paragraph.children if isinstance(child, MDAutolink)
+        ]
         self.assertEqual(len(autolinks), 2)
 
         self.assertEqual(autolinks[0].url, "https://example.com")
@@ -268,7 +285,10 @@ class TestHTMLRenderer(unittest.TestCase):
 
         # Code block
         block_html = self.parser.parse_to_html("```python\nprint('hello')\n```")
-        self.assertIn('<pre><code class="language-python">print(&#x27;hello&#x27;)</code></pre>', block_html)
+        self.assertIn(
+            '<pre><code class="language-python">print(&#x27;hello&#x27;)</code></pre>',
+            block_html,
+        )
 
     def test_link_rendering(self):
         """Test rendering of links."""
@@ -344,8 +364,8 @@ class TestSpecificationCompliance(unittest.TestCase):
         self.assertEqual(len(doc.children), 1)
         code_block = doc.children[0]
         self.assertIsInstance(code_block, MDCodeBlock)
-        self.assertEqual(code_block.language, "python") # type: ignore
-        self.assertTrue(code_block.is_fenced) # type: ignore
+        self.assertEqual(code_block.language, "python")  # type: ignore
+        self.assertTrue(code_block.is_fenced)  # type: ignore
 
     def test_precedence_rules(self):
         """Test precedence rules from specification."""
@@ -402,8 +422,8 @@ class TestConvenienceFunctions(unittest.TestCase):
         """Test validate_markdown convenience function."""
         result = validate_markdown("# Valid Markdown")
         self.assertIsInstance(result, dict)
-        self.assertIn('valid', result)
-        self.assertTrue(result['valid'])
+        self.assertIn("valid", result)
+        self.assertTrue(result["valid"])
 
 
 class TestErrorHandling(unittest.TestCase):
@@ -428,10 +448,10 @@ class TestErrorHandling(unittest.TestCase):
     def test_invalid_input_type(self):
         """Test handling of invalid input types."""
         with self.assertRaises(ValueError):
-            self.parser.parse(123) # type: ignore
+            self.parser.parse(123)  # type: ignore
 
         with self.assertRaises(ValueError):
-            self.parser.parse(None) # type: ignore
+            self.parser.parse(None)  # type: ignore
 
     def test_malformed_markdown(self):
         """Test handling of malformed Markdown."""
@@ -451,6 +471,6 @@ class TestErrorHandling(unittest.TestCase):
         self.assertIsInstance(doc, MDDocument)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Run all tests
     unittest.main(verbosity=2)

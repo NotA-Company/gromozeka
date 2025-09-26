@@ -6,3 +6,5 @@ requests==2.32.5
 tiktoken==0.11.0
 tomli==2.0.1
 yandex-cloud-ml-sdk==0.15.0
+
+black==25.9.0
