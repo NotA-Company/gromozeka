@@ -9,16 +9,7 @@ This directory contains comprehensive tests for the Gromozeka Markdown Parser, d
 - **`test_markdownv2_renderer.py`** - Specific tests for MarkdownV2 renderer functionality
 
 ### Demo & Examples
-- **`simple_test.py`** - Basic functionality demonstration
-- **`comprehensive_demo.py`** - Full feature demonstration
-- **`demo_markdownv2.py`** - MarkdownV2 functionality demo
-- **`markdownv2_examples.py`** - MarkdownV2 usage examples
 - **`MarkdownV2_test2.py`** - Real-world MarkdownV2 conversion example
-
-### Debug Scripts
-- **`debug_test.py`** - Basic debugging script for parser issues
-- **`debug_indented_code.py`** - Debug script for indented code block issues
-- **`debug_indented_detailed.py`** - Detailed debugging for indented code blocks
 
 ## Running Tests
 
