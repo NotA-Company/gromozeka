@@ -913,7 +913,7 @@ class BotHandlers:
         messageTextLower = messageText.lower()
 
         ###
-        # Random choose from users who were active today
+        # Who today: Random choose from users who were active today
         ###
         whoToday = "кто сегодня "
         if messageTextLower.startswith(whoToday):
@@ -930,6 +930,10 @@ class BotHandlers:
             )
 
             user = users[random.randint(0, len(users) - 1)]
+            while user["user_id"] == context.bot.id:
+                # Do not allow bot to choose itself
+                user = users[random.randint(0, len(users) - 1)]
+
             logger.debug(f"Found user for candidate of being '{userTitle}': {user}")
             return await self._sendMessage(
                 ensuredMessage,
