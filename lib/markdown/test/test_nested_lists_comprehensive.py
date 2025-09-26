@@ -75,9 +75,7 @@ class TestNestedLists(unittest.TestCase):
                 deeply_nested_list = child
                 break
 
-        self.assertIsNotNone(
-            deeply_nested_list, "Item 3.2 should contain a nested list"
-        )
+        self.assertIsNotNone(deeply_nested_list, "Item 3.2 should contain a nested list")
         self.assertEqual(
             len(deeply_nested_list.children),
             2,  # type: ignore

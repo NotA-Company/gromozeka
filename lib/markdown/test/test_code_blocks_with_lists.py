@@ -184,9 +184,7 @@ Regular text:
         # Test HTML output
         html = markdown_to_html(markdown)
         self.assertIn('<pre><code class="language-text">', html)
-        self.assertIn(
-            "&gt; This is a quote", html
-        )  # HTML entities are correctly encoded
+        self.assertIn("&gt; This is a quote", html)  # HTML entities are correctly encoded
         self.assertIn("&gt; * and a list item", html)
         self.assertIn("* Item 1", html)
         # Should NOT contain blockquote or list tags

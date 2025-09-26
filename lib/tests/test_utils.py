@@ -15,16 +15,12 @@ class TestUtils(unittest.TestCase):
     def test_parse_delay_days_hours_minutes_seconds_format(self):
         """Test parsing delay in DDdHHhMMmSSs format with all components"""
         # Test various combinations with all components
-        self.assertEqual(
-            parseDelay("1d2h30m15s"), 95415
-        )  # 1 day, 2 hours, 30 minutes, 15 seconds
+        self.assertEqual(parseDelay("1d2h30m15s"), 95415)  # 1 day, 2 hours, 30 minutes, 15 seconds
         self.assertEqual(parseDelay("0d1h0m0s"), 3600)  # 1 hour
         self.assertEqual(parseDelay("0d0h30m0s"), 1800)  # 30 minutes
         self.assertEqual(parseDelay("0d0h0m45s"), 45)  # 45 seconds
         self.assertEqual(parseDelay("2d0h0m0s"), 172800)  # 2 days
-        self.assertEqual(
-            parseDelay("1d1h1m1s"), 90061
-        )  # 1 day, 1 hour, 1 minute, 1 second
+        self.assertEqual(parseDelay("1d1h1m1s"), 90061)  # 1 day, 1 hour, 1 minute, 1 second
 
     def test_parse_delay_optional_sections_format(self):
         """Test parsing delay in DDdHHhMMmSSs format with optional sections"""

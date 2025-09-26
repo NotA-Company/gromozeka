@@ -361,14 +361,10 @@ Final paragraph with special chars: ()[]{}!"""
         ]
 
         for char in expected_chars:
-            self.assertIn(
-                char, result, f"Character {char} should be escaped in result: {result}"
-            )
+            self.assertIn(char, result, f"Character {char} should be escaped in result: {result}")
 
         # Verify the complete expected output (with spaces to prevent markdown parsing)
-        expected_output = (
-            r"Special chars: \_ \* \[ \] \( \) \~ \` \> \# \+ \- \= \| \{ \} \. \!"
-        )
+        expected_output = r"Special chars: \_ \* \[ \] \( \) \~ \` \> \# \+ \- \= \| \{ \} \. \!"
         self.assertIn(expected_output, result)
 
     def test_less_than_greater_than_symbols(self):

@@ -38,9 +38,7 @@ class InlineParser:
     def _compile_patterns(self) -> None:
         """Compile regex patterns used for inline parsing."""
         # Link reference definitions
-        self.ref_link_pattern = re.compile(
-            r'^\s*\[([^\]]+)\]:\s*([^\s]+)(?:\s+"([^"]*)")?', re.MULTILINE
-        )
+        self.ref_link_pattern = re.compile(r'^\s*\[([^\]]+)\]:\s*([^\s]+)(?:\s+"([^"]*)")?', re.MULTILINE)
 
         # URL and email validation for autolinks
         self.url_pattern = re.compile(r"^https?://[^\s<>]+$")
@@ -162,9 +160,7 @@ class InlineParser:
 
         return self._merge_adjacent_text_nodes(nodes)
 
-    def _try_parse_code_span(
-        self, content: str, pos: int
-    ) -> Tuple[Optional[MDCodeSpan], int]:
+    def _try_parse_code_span(self, content: str, pos: int) -> Tuple[Optional[MDCodeSpan], int]:
         """Try to parse a code span at the current position."""
         if pos >= len(content) or content[pos] != "`":
             return None, pos
@@ -192,11 +188,7 @@ class InlineParser:
                     code_content = content[code_start:closing_start]
 
                     # Trim leading and trailing spaces if both present
-                    if (
-                        code_content.startswith(" ")
-                        and code_content.endswith(" ")
-                        and len(code_content) > 2
-                    ):
+                    if code_content.startswith(" ") and code_content.endswith(" ") and len(code_content) > 2:
                         code_content = code_content[1:-1]
 
                     return MDCodeSpan(code_content), pos
@@ -206,9 +198,7 @@ class InlineParser:
         # No matching closing backticks found
         return None, start_pos
 
-    def _try_parse_autolink(
-        self, content: str, pos: int
-    ) -> Tuple[Optional[MDAutolink], int]:
+    def _try_parse_autolink(self, content: str, pos: int) -> Tuple[Optional[MDAutolink], int]:
         """Try to parse an autolink at the current position."""
         if pos >= len(content) or content[pos] != "<":
             return None, pos
@@ -312,9 +302,7 @@ class InlineParser:
 
         return None, pos
 
-    def _try_parse_emphasis(
-        self, content: str, pos: int
-    ) -> Tuple[Optional[MDEmphasis], int]:
+    def _try_parse_emphasis(self, content: str, pos: int) -> Tuple[Optional[MDEmphasis], int]:
         """Try to parse emphasis at the current position."""
         if pos >= len(content):
             return None, pos
@@ -336,15 +324,11 @@ class InlineParser:
 
         # Handle bold/italic emphasis
         if char in ["*", "_"] and delim_count in [1, 2, 3]:
-            return self._parse_bold_italic_emphasis(
-                content, start_pos, char, delim_count
-            )
+            return self._parse_bold_italic_emphasis(content, start_pos, char, delim_count)
 
         return None, start_pos
 
-    def _parse_strikethrough(
-        self, content: str, start_pos: int
-    ) -> Tuple[Optional[MDEmphasis], int]:
+    def _parse_strikethrough(self, content: str, start_pos: int) -> Tuple[Optional[MDEmphasis], int]:
         """Parse strikethrough emphasis (~~text~~)."""
         # Find closing ~~
         pos = start_pos + 2
@@ -379,9 +363,7 @@ class InlineParser:
             if content[pos : pos + delim_count] == char * delim_count:
                 # Check for valid underscore position at end
                 if char == "_":
-                    if not self._is_valid_underscore_position(
-                        content, pos, delim_count
-                    ):
+                    if not self._is_valid_underscore_position(content, pos, delim_count):
                         pos += 1
                         continue
 
@@ -424,9 +406,7 @@ class InlineParser:
 
         return None, pos
 
-    def _parse_link_destination_and_title(
-        self, link_content: str
-    ) -> Tuple[str, Optional[str]]:
+    def _parse_link_destination_and_title(self, link_content: str) -> Tuple[str, Optional[str]]:
         """Parse URL and optional title from link content."""
         link_content = link_content.strip()
 
@@ -486,9 +466,7 @@ class InlineParser:
 
         return self._merge_adjacent_text_nodes(nodes)
 
-    def _is_valid_underscore_position(
-        self, content: str, pos: int, delim_count: int
-    ) -> bool:
+    def _is_valid_underscore_position(self, content: str, pos: int, delim_count: int) -> bool:
         """Check if underscore emphasis is at valid word boundary."""
         # For opening underscore: should not have alphanumeric before, should have alphanumeric after
         # For closing underscore: should have alphanumeric before, should not have alphanumeric after

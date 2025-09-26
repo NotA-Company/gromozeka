@@ -92,6 +92,4 @@ def parseDelay(delayStr: str) -> int:
         except ValueError:
             pass  # Will raise ValueError at end
 
-    raise ValueError(
-        f"Invalid delay format: {delayStr}. Expected formats: '[DDd][HHh][MMm][SSs]' or 'HH:MM[:SS]'"
-    )
+    raise ValueError(f"Invalid delay format: {delayStr}. Expected formats: '[DDd][HHh][MMm][SSs]' or 'HH:MM[:SS]'")

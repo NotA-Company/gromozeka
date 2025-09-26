@@ -119,9 +119,7 @@ class MDHeader(MDNode):
 class MDCodeBlock(MDNode):
     """Code block node with optional language identifier."""
 
-    def __init__(
-        self, content: str, language: Optional[str] = None, is_fenced: bool = False
-    ):
+    def __init__(self, content: str, language: Optional[str] = None, is_fenced: bool = False):
         super().__init__(NodeType.CODE_BLOCK)
         self.content = content
         self.language = language
@@ -212,9 +210,7 @@ class MDEmphasis(MDNode):
 class MDLink(MDNode):
     """Link node with URL and optional title."""
 
-    def __init__(
-        self, url: str, title: Optional[str] = None, is_reference: bool = False
-    ):
+    def __init__(self, url: str, title: Optional[str] = None, is_reference: bool = False):
         super().__init__(NodeType.LINK)
         self.url = url
         self.title = title

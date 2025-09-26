@@ -38,7 +38,7 @@ lint:
 
 # Format Python files using black
 format:
-	$(PYTHON) scripts/format_python.py
+	$(BLACK) --exclude venv .
 
 # Run all tests
 test:

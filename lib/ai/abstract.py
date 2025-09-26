@@ -79,9 +79,7 @@ class AbstractModel(ABC):
                 ModelResultStatus.UNKNOWN,
             ]:
                 logger.debug(f"Model {self.modelId} returned status {ret}")
-                raise Exception(
-                    f"Model {self.modelId} returned status {ret.status.name}"
-                )
+                raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
             return ret
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")

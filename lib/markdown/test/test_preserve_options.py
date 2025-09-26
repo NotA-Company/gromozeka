@@ -14,9 +14,7 @@ from lib.markdown import markdown_to_markdownv2  # noqa: E402
 def test_preserve_options():
     """Test the new preserve options for MarkdownV2 conversion."""
 
-    print(
-        "Testing preserve_leading_spaces and preserve_soft_line_breaks options, dood!"
-    )
+    print("Testing preserve_leading_spaces and preserve_soft_line_breaks options, dood!")
     print("=" * 70)
 
     # Test text with leading spaces and soft line breaks
@@ -39,9 +37,7 @@ Final line"""
 
     # Test 2: Explicitly disable both options
     print("2. With both options disabled:")
-    result2 = markdown_to_markdownv2(
-        test_text, preserve_leading_spaces=False, preserve_soft_line_breaks=False
-    )
+    result2 = markdown_to_markdownv2(test_text, preserve_leading_spaces=False, preserve_soft_line_breaks=False)
     print(repr(result2))
     print("Rendered:")
     print(result2)
@@ -49,9 +45,7 @@ Final line"""
 
     # Test 3: Only preserve leading spaces
     print("3. Only preserve leading spaces:")
-    result3 = markdown_to_markdownv2(
-        test_text, preserve_leading_spaces=True, preserve_soft_line_breaks=False
-    )
+    result3 = markdown_to_markdownv2(test_text, preserve_leading_spaces=True, preserve_soft_line_breaks=False)
     print(repr(result3))
     print("Rendered:")
     print(result3)
@@ -59,9 +53,7 @@ Final line"""
 
     # Test 4: Only preserve soft line breaks
     print("4. Only preserve soft line breaks:")
-    result4 = markdown_to_markdownv2(
-        test_text, preserve_leading_spaces=False, preserve_soft_line_breaks=True
-    )
+    result4 = markdown_to_markdownv2(test_text, preserve_leading_spaces=False, preserve_soft_line_breaks=True)
     print(repr(result4))
     print("Rendered:")
     print(result4)

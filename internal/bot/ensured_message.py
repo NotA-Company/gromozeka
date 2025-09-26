@@ -146,11 +146,7 @@ class EnsuredMessage:
                     ensuredMessage.quoteText = message.quote.text
 
         # If this is topic message, then set threadId
-        isTopicMessage = (
-            message.is_topic_message is True
-            if message.is_topic_message is not None
-            else False
-        )
+        isTopicMessage = message.is_topic_message is True if message.is_topic_message is not None else False
         if isTopicMessage:
             ensuredMessage.isTopicMessage = True
             ensuredMessage.threadId = message.message_thread_id
@@ -256,9 +252,7 @@ class EnsuredMessage:
                 case MediaStatus.DONE:
                     return mediaAttachment
                 case _:
-                    logger.error(
-                        f"Media#{mediaId} has invalid status: {mediaAttachment['status']}"
-                    )
+                    logger.error(f"Media#{mediaId} has invalid status: {mediaAttachment['status']}")
                     return mediaAttachment
 
         logger.error(f"Media#{mediaId} processing timed out")
@@ -273,9 +267,7 @@ class EnsuredMessage:
     ) -> str:
         await self.updateMediaContent(db)
 
-        messageText = (
-            self.messageText if replaceMessageText is None else replaceMessageText
-        )
+        messageText = self.messageText if replaceMessageText is None else replaceMessageText
         userName = self.user.name
         if stripAtsign:
             userName = userName.lstrip("@")
@@ -327,9 +319,7 @@ class EnsuredMessage:
                 format = LLMMessageFormat.TEXT
         return ModelMessage(
             role=role,
-            content=await self.formatForLLM(
-                db, format, replaceMessageText, stripAtsign
-            ),
+            content=await self.formatForLLM(db, format, replaceMessageText, stripAtsign),
         )
 
     def __str__(self) -> str:

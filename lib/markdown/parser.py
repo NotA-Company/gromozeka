@@ -38,27 +38,17 @@ class MarkdownParser:
         self.strict_mode = self.options.get("strict_mode", False)
         self.enable_extensions = self.options.get("enable_extensions", True)
         self.max_nesting_depth = self.options.get("max_nesting_depth", 100)
-        self.preserve_leading_spaces = self.options.get(
-            "preserve_leading_spaces", False
-        )
-        self.preserve_soft_line_breaks = self.options.get(
-            "preserve_soft_line_breaks", False
-        )
-        self.ignore_indented_code_blocks = self.options.get(
-            "ignore_indented_code_blocks", True
-        )
+        self.preserve_leading_spaces = self.options.get("preserve_leading_spaces", False)
+        self.preserve_soft_line_breaks = self.options.get("preserve_soft_line_breaks", False)
+        self.ignore_indented_code_blocks = self.options.get("ignore_indented_code_blocks", True)
 
         # Initialize components
         self.inline_parser = InlineParser()
 
         # Rendering options
         self.html_renderer = HTMLRenderer(self.options.get("html_options", {}))
-        self.markdown_renderer = MarkdownRenderer(
-            self.options.get("markdown_options", {})
-        )
-        self.markdownv2_renderer = MarkdownV2Renderer(
-            self.options.get("markdownv2_options", {})
-        )
+        self.markdown_renderer = MarkdownRenderer(self.options.get("markdown_options", {}))
+        self.markdownv2_renderer = MarkdownV2Renderer(self.options.get("markdownv2_options", {}))
 
         # Statistics and debugging
         self.parse_stats = {
@@ -208,9 +198,7 @@ class MarkdownParser:
             self._process_header_inline(node)
         elif hasattr(node, "children"):
             # Recursively process children
-            for child in node.children[
-                :
-            ]:  # Copy list to avoid modification during iteration
+            for child in node.children[:]:  # Copy list to avoid modification during iteration
                 self._process_inline_elements(child)
 
     def _process_paragraph_inline(self, paragraph: MDParagraph) -> None:
@@ -317,9 +305,7 @@ class MarkdownParser:
 
         return max_depth
 
-    def _create_error_document(
-        self, original_text: str, error_message: str
-    ) -> MDDocument:
+    def _create_error_document(self, original_text: str, error_message: str) -> MDDocument:
         """
         Create a document containing the original text when parsing fails.
 
@@ -408,9 +394,7 @@ class MarkdownParser:
 class MarkdownParseError(Exception):
     """Exception raised when Markdown parsing fails."""
 
-    def __init__(
-        self, message: str, line: Optional[int] = None, column: Optional[int] = None
-    ):
+    def __init__(self, message: str, line: Optional[int] = None, column: Optional[int] = None):
         """
         Initialize parse error.
 

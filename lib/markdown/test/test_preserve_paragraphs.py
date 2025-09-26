@@ -78,9 +78,7 @@ continues here
     print(repr(test_text3))
 
     # Both enabled
-    result4a = markdown_to_markdownv2(
-        test_text3, preserve_leading_spaces=True, preserve_soft_line_breaks=True
-    )
+    result4a = markdown_to_markdownv2(test_text3, preserve_leading_spaces=True, preserve_soft_line_breaks=True)
     print("Both options enabled:")
     print(repr(result4a))
     print("Rendered:")
@@ -88,9 +86,7 @@ continues here
     print()
 
     # Both disabled
-    result4b = markdown_to_markdownv2(
-        test_text3, preserve_leading_spaces=False, preserve_soft_line_breaks=False
-    )
+    result4b = markdown_to_markdownv2(test_text3, preserve_leading_spaces=False, preserve_soft_line_breaks=False)
     print("Both options disabled:")
     print(repr(result4b))
     print("Rendered:")

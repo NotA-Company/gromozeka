@@ -28,12 +28,8 @@ class TestSpecialCharacters(unittest.TestCase):
 
         # Test MarkdownV2 output
         markdownv2_result = markdown_to_markdownv2(input_text)
-        self.assertIn(
-            "\\*", markdownv2_result, "Asterisk should be escaped in MarkdownV2"
-        )
-        self.assertIn(
-            "\\_", markdownv2_result, "Underscore should be escaped in MarkdownV2"
-        )
+        self.assertIn("\\*", markdownv2_result, "Asterisk should be escaped in MarkdownV2")
+        self.assertIn("\\_", markdownv2_result, "Underscore should be escaped in MarkdownV2")
         self.assertIn("\\~", markdownv2_result, "Tilde should be escaped in MarkdownV2")
 
         # Test HTML output
@@ -54,9 +50,7 @@ class TestSpecialCharacters(unittest.TestCase):
             normalized_result,
             "Underscore should be preserved in normalized markdown",
         )
-        self.assertIn(
-            "~", normalized_result, "Tilde should be preserved in normalized markdown"
-        )
+        self.assertIn("~", normalized_result, "Tilde should be preserved in normalized markdown")
 
     def test_individual_special_characters(self):
         """Test individual special characters that can be emphasis markers."""
@@ -102,9 +96,7 @@ class TestSpecialCharacters(unittest.TestCase):
                     if char in input_text:
                         # In MarkdownV2, character should be preserved either escaped or as part of formatting
                         char_count_input = input_text.count(char)
-                        char_count_output = markdownv2_result.count(
-                            char
-                        ) + markdownv2_result.count(f"\\{char}")
+                        char_count_output = markdownv2_result.count(char) + markdownv2_result.count(f"\\{char}")
 
                         # Allow for some characters to be consumed by valid markdown formatting
                         # but ensure we don't lose ALL instances of a character
@@ -116,9 +108,7 @@ class TestSpecialCharacters(unittest.TestCase):
 
                         # In HTML and normalized, should be present (unless consumed by valid formatting)
                         # We'll be more lenient here since valid emphasis might consume characters
-                        if (
-                            char_count_input == 1
-                        ):  # Single characters should definitely be preserved
+                        if char_count_input == 1:  # Single characters should definitely be preserved
                             self.assertIn(
                                 char,
                                 html_result,
@@ -218,9 +208,7 @@ class TestSpecialCharacters(unittest.TestCase):
                         )
 
                 except Exception as e:
-                    self.fail(
-                        f"Should not raise exception for input {repr(input_text)}: {e}"
-                    )
+                    self.fail(f"Should not raise exception for input {repr(input_text)}: {e}")
 
     def test_escaping_in_different_contexts(self):
         """Test that escaping works correctly in different contexts."""
