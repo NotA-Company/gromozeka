@@ -356,6 +356,19 @@ class DatabaseWrapper:
         """Get chat messages from a specific chat newer than the given date."""
         logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:
+            params = {
+                        "chatId": chatId,
+                        "sinceDateTime": sinceDateTime,
+                        "threadId": threadId,
+                        "messageCategory": None if messageCategory is None else True,
+                    }
+            
+            placeholders = []
+            if messageCategory is not None:
+                for i, category in enumerate(messageCategory):
+                    placeholders.append(f":messageCategory{i}")
+                    params[f"messageCategory{i}"] = category
+
             with self.getCursor() as cursor:
                 query = f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX}  FROM chat_messages c
@@ -365,7 +378,7 @@ class DatabaseWrapper:
                         c.chat_id = :chatId
                         AND (:sinceDateTime IS NULL OR c.date > :sinceDateTime)
                         AND ((:threadId IS NULL) OR (c.thread_id = :threadId))
-                        AND ((:messageCategory IS NULL) OR (message_category in :messageCategory))
+                        AND ((:messageCategory IS NULL) OR (message_category IN ({", ".join(placeholders)})))
                     ORDER BY c.date DESC
                 """
                 if limit is not None:
@@ -373,12 +386,7 @@ class DatabaseWrapper:
 
                 cursor.execute(
                     query,
-                    {
-                        "chatId": chatId,
-                        "sinceDateTime": sinceDateTime,
-                        "threadId": threadId,
-                        "messageCategory": messageCategory,
-                    },
+                    params,
                 )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
