@@ -12,13 +12,12 @@ Usage:
 """
 
 import sys
-import os
 import unittest
 import importlib.util
 from pathlib import Path
 import traceback
 import io
-from typing import List, Tuple, Dict, Any
+from typing import List, Dict
 
 # Add the project root to the path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -98,8 +97,8 @@ class MarkdownTestRunner:
 
             if not success:
                 errors = []
-                for test, traceback in result.errors + result.failures:
-                    errors.append(f"{test}: {traceback}")
+                for test, tb in result.errors + result.failures:
+                    errors.append(f"{test}: {tb}")
                 error = "\n".join(errors)
 
             return TestResult(file_path.name, success, output, error)
@@ -199,7 +198,7 @@ class MarkdownTestRunner:
         print(f"Total tests: {total_tests}")
         print(f"Passed: {passed_tests} ✅")
         print(f"Failed: {failed_tests} ❌")
-        print(f"Success rate: {(passed_tests/total_tests)*100:.1f}%")
+        print(f"Success rate: {(passed_tests / total_tests) * 100:.1f}%")
 
         # Show failed tests details
         if failed_tests > 0:

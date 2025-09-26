@@ -8,7 +8,7 @@ import json
 import logging
 
 import time
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from telegram import Chat, Message, User
 import telegram.constants
@@ -147,7 +147,7 @@ class EnsuredMessage:
 
         # If this is topic message, then set threadId
         isTopicMessage = (
-            message.is_topic_message == True
+            message.is_topic_message is True
             if message.is_topic_message is not None
             else False
         )
@@ -242,13 +242,14 @@ class EnsuredMessage:
                     mediaUpdated = mediaAttachment["updated_at"]
                     if not isinstance(mediaUpdated, datetime.datetime):
                         logger.error(
-                            f"Media#{mediaId} attachment `updated_at` is not a datetime: {type(mediaUpdated["updated_at"]).__name__}({mediaUpdated["updated_at"]})"
+                            f"Media#{mediaId} attachment `updated_at` is not a datetime: "
+                            f"{type(mediaUpdated).__name__}({mediaUpdated})"
                         )
                         return mediaAttachment
 
                     if utils.getAgeInSecs(mediaUpdated) > MAX_MEDIA_AWAIT_SECS:
                         logger.warning(
-                            f"Media#{mediaId} is pending for too long ({time.time() - mediaAttachment["updated_at"].timestamp()})"
+                            f"Media#{mediaId} is pending for too long ({time.time() - mediaUpdated.timestamp()})"
                         )
                         return mediaAttachment
                     await asyncio.sleep(MEDIA_AWAIT_DELAY)

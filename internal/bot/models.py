@@ -8,8 +8,6 @@ import logging
 
 from typing import Any, Dict, Optional
 
-from telegram import Message
-from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 

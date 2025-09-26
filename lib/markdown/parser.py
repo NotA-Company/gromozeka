@@ -5,9 +5,9 @@ This module provides the main MarkdownParser class that orchestrates
 tokenization, block parsing, inline parsing, and rendering.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from .ast_nodes import MDDocument, MDNode, MDParagraph, MDText, MDHeader
-from .tokenizer import Tokenizer, Token
+from .tokenizer import Tokenizer
 from .block_parser import BlockParser
 from .inline_parser import InlineParser
 from .renderer import HTMLRenderer, MarkdownRenderer, MarkdownV2Renderer
@@ -165,7 +165,7 @@ class MarkdownParser:
             Dictionary containing validation results
         """
         try:
-            document = self.parse(markdown_text)
+            self.parse(markdown_text)
             return {
                 "valid": True,
                 "errors": self.parse_stats["errors"],

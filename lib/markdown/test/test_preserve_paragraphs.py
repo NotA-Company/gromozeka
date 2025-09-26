@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown.parser import markdown_to_markdownv2, MarkdownParser
+from lib.markdown import markdown_to_markdownv2  # noqa: E402
 
 
 def test_preserve_paragraphs():

@@ -6,9 +6,21 @@ code blocks, lists, block quotes, and horizontal rules.
 """
 
 import re
-from typing import List, Optional, Tuple, Iterator, Dict, Any
-from .ast_nodes import *
-from .tokenizer import Token, TokenType, Tokenizer
+from typing import List, Optional, Dict, Any
+from .ast_nodes import (
+    MDNode,
+    MDDocument,
+    MDParagraph,
+    MDHeader,
+    MDCodeBlock,
+    MDBlockQuote,
+    MDList,
+    MDListItem,
+    MDHorizontalRule,
+    MDText,
+    ListType,
+)
+from .tokenizer import Token, TokenType
 
 
 class BlockParser:
@@ -595,6 +607,23 @@ class BlockParser:
             return spaces
 
         def _is_list_marker_at_line_start(self) -> bool:
+            """Check if current LIST_MARKER token is at the logical start of a line."""
+            if not self._current_token_is(TokenType.LIST_MARKER):
+                return False
+
+            # If we're at position 0, we're at the start
+            if self.pos == 0:
+                return True
+
+            # Look backwards to see if we have only spaces and/or a newline before this marker
+            temp_pos = self.pos - 1
+
+            # Skip any spaces immediately before the marker
+            while temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.SPACE:
+                temp_pos -= 1
+
+            # Check if we've reached the beginning or a newline
+            return temp_pos < 0 or self.tokens[temp_pos].type == TokenType.NEWLINE
             """Check if current LIST_MARKER token is at the logical start of a line."""
             if not self._current_token_is(TokenType.LIST_MARKER):
                 return False

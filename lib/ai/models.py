@@ -144,8 +144,8 @@ class ModelMessage:
         return cls(d["role"], content, contentKey)
 
     @classmethod
-    def fromDictList(cls, l: List[Dict[str, Any]]) -> List["ModelMessage"]:
-        return [cls.fromDict(d) for d in l]
+    def fromDictList(cls, dictList: List[Dict[str, Any]]) -> List["ModelMessage"]:
+        return [cls.fromDict(d) for d in dictList]
 
     def toDict(
         self,
