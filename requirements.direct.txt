@@ -8,3 +8,4 @@ tomli==2.0.1
 yandex-cloud-ml-sdk==0.15.0
 
 black==25.9.0
+flake8==7.1.1
