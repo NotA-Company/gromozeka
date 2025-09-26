@@ -79,6 +79,10 @@ class MarkdownTestRunner:
         try:
             # Load the module
             spec = importlib.util.spec_from_file_location(file_path.stem, file_path)
+            if spec is None:
+                raise RuntimeError("spec is None")
+            if spec.loader is None:
+                raise RuntimeError("spec.loader is None")
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
@@ -122,6 +126,10 @@ class MarkdownTestRunner:
 
             # Load and execute the module
             spec = importlib.util.spec_from_file_location(file_path.stem, file_path)
+            if spec is None:
+                raise RuntimeError("spec is None")
+            if spec.loader is None:
+                raise RuntimeError("spec.loader is None")
             module = importlib.util.module_from_spec(spec)
 
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
@@ -185,7 +193,7 @@ class MarkdownTestRunner:
                     if result.error:
                         print(f"    Error: {result.error.split(chr(10))[0]}")
 
-    def print_summary(self) -> None:
+    def print_summary(self) -> int:
         """Print test execution summary."""
         print("\n" + "=" * 60)
         print("📊 TEST SUMMARY")
