@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-from lib.markdown import MarkdownParser
+from lib.markdown import MarkdownParser  # noqa: E402
 
 
 def test_ignore_indented_code_blocks():

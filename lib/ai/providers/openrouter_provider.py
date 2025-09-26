@@ -40,8 +40,10 @@ class OpenrouterModel(BasicOpenAIModel):
         """Get OpenRouter-specific extra parameters, dood!"""
         return {
             "extra_headers": {
-                "HTTP-Referer": "https://sourcecraft.dev/notacompany/gromozeka",  # Optional. Site URL for rankings on openrouter.ai.
-                "X-Title": "Gromozeka AI Bot",  # Optional. Site title for rankings on openrouter.ai.
+                # Optional. Site URL for rankings on openrouter.ai.
+                "HTTP-Referer": "https://sourcecraft.dev/notacompany/gromozeka",
+                # Optional. Site title for rankings on openrouter.ai.
+                "X-Title": "Gromozeka AI Bot",
             },
             # "max_tokens": min(4096, self.context_size)  # Reasonable default
         }

@@ -5,10 +5,9 @@ Comprehensive test for code block parsing fixes
 
 import sys
 import os
+from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-
-from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown
 
 
 def test_case(name, text, expected_behavior):

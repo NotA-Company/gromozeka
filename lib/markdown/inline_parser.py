@@ -6,9 +6,18 @@ code spans, and autolinks within block elements.
 """
 
 import re
-from typing import List, Optional, Tuple, Dict
-from .ast_nodes import *
-from .tokenizer import Token, TokenType
+from typing import Optional, Tuple, Dict
+from .ast_nodes import (
+    MDNode,
+    MDText,
+    MDCodeSpan,
+    MDAutolink,
+    MDImage,
+    MDLink,
+    MDEmphasis,
+    EmphasisType,
+    List,
+)
 
 
 class InlineParser:

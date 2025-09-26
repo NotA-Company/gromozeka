@@ -19,6 +19,9 @@ install: venv
 	$(PIP) install -r requirements.txt
 	@echo "Dependencies installed"
 
+activate: venv
+	. $(VENV_PATH)/bin/activate
+
 # Update requirements.txt
 requirements:
 	$(PIP) freeze > requirements.txt
@@ -30,7 +33,8 @@ run:
 
 # Run linter on entire project (excluding venv)
 lint:
-	$(FLAKE8) --exclude=$(VENV_PATH) .
+#	$(FLAKE8) --exclude=$(VENV_PATH) .
+	$(FLAKE8) .
 
 # Format Python files using black
 format:

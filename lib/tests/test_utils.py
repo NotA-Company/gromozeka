@@ -7,7 +7,7 @@ import os
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-from lib.utils import parseDelay
+from lib.utils import parseDelay  # noqa: E402
 
 
 class TestUtils(unittest.TestCase):

@@ -10,9 +10,12 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-import unittest
-from lib.markdown import MarkdownParser, markdown_to_markdownv2, MarkdownV2Renderer
-from lib.markdown.ast_nodes import *
+import unittest  # noqa: E402
+from lib.markdown import (  # noqa: E402
+    MarkdownParser,
+    markdown_to_markdownv2,
+    MarkdownV2Renderer,
+)
 
 
 class TestMarkdownV2Renderer(unittest.TestCase):

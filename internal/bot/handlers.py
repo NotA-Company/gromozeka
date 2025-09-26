@@ -181,7 +181,7 @@ class BotHandlers:
     async def addTaskToAsyncedQueue(self, task: asyncio.Task) -> None:
         """Add a task to the queue."""
         if self.asyncTasksQueue.qsize() > MAX_QUEUE_LENGTH:
-            logger.info(f"Queue is full, processing oldest task")
+            logger.info("Queue is full, processing oldest task")
             oldTask = await self.asyncTasksQueue.get()
             if not isinstance(oldTask, asyncio.Task):
                 logger.error(f"Task {oldTask} is not a task, but a {type(oldTask)}")
@@ -384,7 +384,7 @@ class BotHandlers:
                                 f"No text field found in json reply, fallback to text: {jsonReply}"
                             )
                             raise ValueError("No text field found in json reply")
-                    except Exception as e:
+                    except Exception:
                         pass
                         # logger.debug(
                         #    f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}"
@@ -506,7 +506,8 @@ class BotHandlers:
             image_prompt: str, image_description: Optional[str] = None, **kwargs
         ) -> str:
             logger.debug(
-                f"Generating image: {image_prompt}. Image description: {image_description}, mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+                f"Generating image: {image_prompt}. Image description: {image_description}, "
+                f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
             model = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(
                 self.llmManager
@@ -514,12 +515,16 @@ class BotHandlers:
 
             mlRet = await model.generateImage([ModelMessage(content=image_prompt)])
             logger.debug(
-                f"Generated image Data: {mlRet} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+                f"Generated image Data: {mlRet} for mcID: "
+                f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
             if mlRet.status != ModelResultStatus.FINAL:
                 ret = await self._sendMessage(
                     ensuredMessage,
-                    messageText=f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\nPrompt:\n```\n{image_prompt}\n```",
+                    messageText=(
+                        f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\n"
+                        f"Prompt:\n```\n{image_prompt}\n```"
+                    ),
                 )
                 return json.dumps({"done": False, "errorMessage": mlRet.resultText})
 
@@ -562,7 +567,10 @@ class BotHandlers:
             )
             tools["generate_and_send_image"] = LLMToolFunction(
                 name="generate_and_send_image",
-                description="Generate and send an image. ALWAYS use it if user ask to generate/paint/draw an image/picture/photo",
+                description=(
+                    "Generate and send an image. ALWAYS use it if user ask to "
+                    "generate/paint/draw an image/picture/photo"
+                ),
                 parameters=[
                     LLMFunctionParameter(
                         name="image_prompt",
@@ -1020,7 +1028,8 @@ class BotHandlers:
                 )
                 if storedReply is None:
                     logger.error(
-                        f"Failed to get parent message (ChatId: {ensuredReply.chat.id}, MessageId: {ensuredReply.messageId})"
+                        f"Failed to get parent message (ChatId: {ensuredReply.chat.id}, "
+                        f"MessageId: {ensuredReply.messageId})"
                     )
                 else:
                     response = storedReply.get("media_description", None)
@@ -1068,7 +1077,8 @@ class BotHandlers:
                 )
                 if storedReply is None:
                     logger.error(
-                        f"Failed to get parent message (ChatId: {ensuredReply.chat.id}, MessageId: {ensuredReply.messageId})"
+                        f"Failed to get parent message (ChatId: {ensuredReply.chat.id}, "
+                        f"MessageId: {ensuredReply.messageId})"
                     )
                 else:
                     reqMessages.append(
@@ -1281,7 +1291,8 @@ class BotHandlers:
             logger.debug(f"Media#{ret.id} already in database")
             if mediaAttachment["media_type"] != mediaType:
                 raise RuntimeError(
-                    f"Media#{ret.id} already present in database and it is not an {mediaType} but {mediaAttachment['media_type']}"
+                    f"Media#{ret.id} already present in database and it is not an "
+                    f"{mediaType} but {mediaAttachment['media_type']}"
                 )
 
             # Only skip processing if Media in DB is in right status
@@ -1295,13 +1306,15 @@ class BotHandlers:
                         mediaDate = mediaAttachment["updated_at"]
                         if not isinstance(mediaDate, datetime.datetime):
                             logger.error(
-                                f"{mediaType}#{ret.id} `updated_at` is not a datetime: {type(mediaDate).__name__}({mediaDate})"
+                                f"{mediaType}#{ret.id} `updated_at` is not a datetime: "
+                                f"{type(mediaDate).__name__}({mediaDate})"
                             )
                             mediaDate = datetime.datetime.fromisoformat(mediaDate)
 
                         if utils.getAgeInSecs(mediaDate) > PROCESSING_TIMEOUT:
                             logger.warning(
-                                f"{mediaType}#{ret.id} already in database but in status {mediaAttachment['status']} and is too old ({mediaDate}), reprocessing it"
+                                f"{mediaType}#{ret.id} already in database but in status "
+                                f"{mediaAttachment['status']} and is too old ({mediaDate}), reprocessing it"
                             )
                         else:
                             ret.task = makeEmptyAsyncTask()
@@ -1512,23 +1525,37 @@ class BotHandlers:
             "**Поддерживаемые команды:**\n"
             "`/start` - Начать работу с ботом\n"
             "`/help` - Показать список доступных команд\n"
-            "`/echo` `<message>` - Просто ответить переданным (для тестирования живости бота)\n"
-            "`/test` `<test_name> [<test_args>]` - Запустить тест (доступно только владельцам бота, используется для тестирования)\n"
+            "`/echo` `<message>` - Просто ответить переданным "
+            "(для тестирования живости бота)\n"
+            "`/test` `<test_name> [<test_args>]` - Запустить тест "
+            "(доступно только владельцам бота, используется для тестирования)\n"
             "\n"
-            "`/summary` `[<messages_count>=0] [<chunks_count>=0]` - Суммаризировать сообщения в чате за сегодня (при указании количества сообщений - суммаризировать последние N сообщений)\n"
-            "`/topic_summary` `[<messages_count>=0] [<chunks_count>=0]` - Суммаризировать сообщения в топике чата за сегодня (при указании количества сообщений - суммаризировать последние N сообщений)\n"
-            "`/analyze` `<prompt>` Проанализировать медиа (на данный момент доступен только анализ картинок и статических стикеров), используя указанный промпт\n"
-            "`/draw` `[<prompt>]` Сгенерировать изображение, используя указанный промпт. Так же может быть ответом на сообщение (или цитированием части сообщения)\n"
+            "`/summary` `[<messages_count>=0] [<chunks_count>=0]` - "
+            "Суммаризировать сообщения в чате за сегодня "
+            "(при указании количества сообщений - суммаризировать последние N сообщений)\n"
+            "`/topic_summary` `[<messages_count>=0] [<chunks_count>=0]` - "
+            "Суммаризировать сообщения в топике чата за сегодня "
+            "(при указании количества сообщений - суммаризировать последние N сообщений)\n"
+            "`/analyze` `<prompt>` Проанализировать медиа "
+            "(на данный момент доступен только анализ картинок и статических стикеров), "
+            "используя указанный промпт\n"
+            "`/draw` `[<prompt>]` Сгенерировать изображение, используя указанный промпт. "
+            "Так же может быть ответом на сообщение (или цитированием части сообщения)\n"
             "\n"
             "`/models` - вывести список доступных моделей и их параметров\n"
             "`/settings` - вывести список настроек чата\n"
-            "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата, доступно только владельцам бота и админимтраторам чата (если это разрешено настройками)\n"
+            "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата, "
+            "доступно только владельцам бота и админимтраторам чата "
+            "(если это разрешено настройками)\n"
             "\n"
             "**Так же этот бот может:**\n"
             "* Анализировать картинки и стикеры и отвечать на вопросы по ним\n"
             "* Логировать все сообщения и вести некоторую статистику\n"
-            "* Поддерживать беседу, если она затрагивает бота (ответ на сообщение бота, указание логина бота в любом месте сообщения или начало сообщения с имени бота или личный чат с ботом)\n"
-            '* Специально отвечать на запросы "`Кто сегодня ...`" и "`Что там?`" (должно быть ответом на сообщение с медиа)\n'
+            "* Поддерживать беседу, если она затрагивает бота "
+            "(ответ на сообщение бота, указание логина бота в любом месте сообщения "
+            "или начало сообщения с имени бота или личный чат с ботом)\n"
+            '* Специально отвечать на запросы "`Кто сегодня ...`" и "`Что там?`" '
+            "(должно быть ответом на сообщение с медиа)\n"
             "* Что-нибудь еше: Мы открыты к фич-реквестам\n"
         )
 
@@ -1594,7 +1621,8 @@ class BotHandlers:
             ChatSettingsKey.ALLOW_SUMMARY
         ].toBool() and not await self._isAdmin(ensuredMessage.user, None, True):
             logger.info(
-                f"Unauthorized /summary or /topic_summary command from {ensuredMessage.user} in chat {ensuredMessage.chat}"
+                f"Unauthorized /summary or /topic_summary command from {ensuredMessage.user} "
+                f"in chat {ensuredMessage.chat}"
             )
             return
 
@@ -1655,7 +1683,8 @@ class BotHandlers:
                 pass
 
         logger.debug(
-            f"Getting summary for chat {targetChatId}, thread {threadId}, maxBatches {maxBatches}, maxMessages {maxMessages}"
+            f"Getting summary for chat {targetChatId}, thread {threadId}, "
+            f"maxBatches {maxBatches}, maxMessages {maxMessages}"
         )
         today = datetime.datetime.now(datetime.timezone.utc)
         today = today.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1699,7 +1728,9 @@ class BotHandlers:
         batchLength = len(parsedMessages) // batchesCount
 
         logger.debug(
-            f"Summarisation: estimated total tokens: {tokensCount}, max tokens: {maxTokens}, messages count: {len(parsedMessages)}, batches count: {batchesCount}, batch length: {batchLength}"
+            f"Summarisation: estimated total tokens: {tokensCount}, max tokens: {maxTokens}, "
+            f"messages count: {len(parsedMessages)}, batches count: {batchesCount}, "
+            f"batch length: {batchLength}"
         )
 
         resMessages = []
@@ -1718,7 +1749,8 @@ class BotHandlers:
                 if tokensCount > maxTokens:
                     if currentBatchLen == 1:
                         resMessages.append(
-                            f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: Batch has too many tokens ({tokensCount})"
+                            f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: "
+                            f"Batch has too many tokens ({tokensCount})"
                         )
                         break
                     currentBatchLen = int(currentBatchLen // (tokensCount / maxTokens))
@@ -1739,11 +1771,12 @@ class BotHandlers:
                     )
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
-                    logger.error(
-                        f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}#{e}"
+                    logger.error(  # type: ignore
+                        f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: "
+                        f"{type(e).__name__}#{e}"
                     )
                     resMessages.append(
-                        f"Error while running LLM for batch {startPos}:{startPos+currentBatchLen}: {type(e).__name__}"
+                        f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: {type(e).__name__}"
                     )
                     break
 
@@ -2154,7 +2187,6 @@ class BotHandlers:
 
         mediaData: Optional[bytearray] = None
         fileId: Optional[str] = None
-        fileUniqueId: Optional[str] = None
 
         match parentEnsuredMessage.messageType:
             case MessageType.IMAGE:
@@ -2162,12 +2194,11 @@ class BotHandlers:
                     raise ValueError("Photo is None")
                 # TODO: Should I try to get optimal image size like in processImage()?
                 fileId = parentMessage.photo[-1].file_id
-                fileUniqueId = parentMessage.photo[-1].file_unique_id
             case MessageType.STICKER:
                 if parentMessage.sticker is None:
                     raise ValueError("Sticker is None")
                 fileId = parentMessage.sticker.file_id
-                fileUniqueId = parentMessage.sticker.file_unique_id
+                # Removed unused variable fileUniqueId
             case _:
                 await self._sendMessage(
                     ensuredMessage,
@@ -2284,9 +2315,14 @@ class BotHandlers:
         logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
 
         if not prompt:
+            # Fixed f-string missing placeholders
             await self._sendMessage(
                 ensuredMessage,
-                messageText="Необходимо указать запрос для генерации изображение. Или послать команду ответом на сообщение с текстом (можно цитировать при необходимости).",
+                messageText=(
+                    "Необходимо указать запрос для генерации изображение. "
+                    "Или послать команду ответом на сообщение с текстом "
+                    "(можно цитировать при необходимости)."
+                ),
                 tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
@@ -2298,12 +2334,16 @@ class BotHandlers:
 
         mlRet = await imageLLM.generateImage([ModelMessage(content=prompt)])
         logger.debug(
-            f"Generated image Data: {mlRet} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+            f"Generated image Data: {mlRet} for mcID: "
+            f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
         )
         if mlRet.status != ModelResultStatus.FINAL:
             await self._sendMessage(
                 ensuredMessage,
-                messageText=f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```",
+                messageText=(
+                    f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n"
+                    f"{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```"
+                ),
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2312,7 +2352,7 @@ class BotHandlers:
             logger.error(f"No image generated for {prompt}")
             await self._sendMessage(
                 ensuredMessage,
-                messageText=f"Ошибка генерации изображения, попробуйте позже.",
+                messageText="Ошибка генерации изображения, попробуйте позже.",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2352,9 +2392,12 @@ class BotHandlers:
         except Exception as e:
             await self._sendMessage(
                 ensuredMessage,
-                messageText="Для команды `/remind` нужно указать время, через которое отправить напоминание в одном из форматов:\n"
-                "1. `DDdHHhMMmSSs`\n"
-                "2. `HH:MM[:SS]`\n",
+                messageText=(
+                    "Для команды `/remind` нужно указать время, через которое отправить "
+                    "напоминание в одном из форматов:\n"
+                    "1. `DDdHHhMMmSSs`\n"
+                    "2. `HH:MM[:SS]`\n"
+                ),
                 tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )

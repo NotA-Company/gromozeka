@@ -4,7 +4,6 @@ Common utilities for Gromozeka bot.
 
 import datetime
 import logging
-from typing import Union
 
 logger = logging.getLogger(__name__)
 

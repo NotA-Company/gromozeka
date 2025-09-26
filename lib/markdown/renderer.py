@@ -6,8 +6,27 @@ Markdown AST into various output formats including HTML and MarkdownV2.
 """
 
 import html
-from typing import Dict, Any, List
-from .ast_nodes import *
+from typing import Dict, Any
+from .ast_nodes import (
+    MDNode,
+    MDDocument,
+    MDParagraph,
+    MDHeader,
+    MDCodeBlock,
+    MDBlockQuote,
+    MDList,
+    MDListItem,
+    MDHorizontalRule,
+    MDEmphasis,
+    MDLink,
+    MDImage,
+    MDCodeSpan,
+    MDText,
+    MDAutolink,
+    EmphasisType,
+    ListType,
+    Optional,
+)
 
 
 class HTMLRenderer:
@@ -256,7 +275,10 @@ class HTMLRenderer:
         import re
 
         # Pattern to match <li><p>content</p></li> where content doesn't contain other block elements
-        pattern = r"<li><p>((?:(?!</?(?:p|div|blockquote|pre|ul|ol|li|h[1-6])\b)[^<]|<(?!/?(?:p|div|blockquote|pre|ul|ol|li|h[1-6])\b)[^>]*>)*)</p></li>"
+        pattern = (
+            r"<li><p>((?:(?!</?(?:p|div|blockquote|pre|ul|ol|li|h[1-6])\b)[^<]|"
+            r"<(?!/?(?:p|div|blockquote|pre|ul|ol|li|h[1-6])\b)[^>]*>)*)</p></li>"
+        )
 
         def replace_func(match):
             content = match.group(1)
@@ -450,18 +472,7 @@ class MarkdownV2Renderer:
             "preserve_soft_line_breaks", False
         )
 
-        # Import escaping function from telegram_markdown module
-        try:
-            import sys
-            import os
-
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-            from lib.telegram_markdown import escapeMarkdownV2
-
-            self._escape = escapeMarkdownV2
-        except ImportError:
-            # Fallback escaping if telegram_markdown is not available
-            self._escape = self._fallback_escape
+        self._escape = self._fallback_escape
 
     def render(self, document: MDDocument) -> str:
         """Render a Markdown document to MarkdownV2 format."""

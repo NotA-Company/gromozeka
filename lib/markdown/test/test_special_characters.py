@@ -12,8 +12,11 @@ import os
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-
-from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown
+from lib.markdown import (  # noqa: E402
+    markdown_to_markdownv2,
+    markdown_to_html,
+    normalize_markdown,
+)
 
 
 class TestSpecialCharacters(unittest.TestCase):
