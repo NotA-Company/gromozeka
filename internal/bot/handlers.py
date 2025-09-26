@@ -280,7 +280,7 @@ class BotHandlers:
                 logger.error(f"Error in delayed task processor: {e}")
                 if str(e) == "Event loop is closed":
                     break
-                
+
             except Exception as e:
                 logger.error(f"Error in delayed task processor: {e}")
                 logger.exception(e)
