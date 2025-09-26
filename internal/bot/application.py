@@ -69,6 +69,9 @@ class BotApplication:
         if not self.application:
             logger.error("Application not initialized!")
             return
+
+        # self.handlers.initDelayedScheduler(self.application.bot)
+
         # Command handlers
         self.application.add_handler(CommandHandler("start", self.handlers.start_command))
         self.application.add_handler(CommandHandler("help", self.handlers.help_command))
@@ -78,6 +81,7 @@ class BotApplication:
         self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
         self.application.add_handler(CommandHandler("analyze", self.handlers.analyze_command))
         self.application.add_handler(CommandHandler("draw", self.handlers.draw_command))
+        self.application.add_handler(CommandHandler("remind", self.handlers.remind_command))
 
         self.application.add_handler(CommandHandler("models", self.handlers.models_command))
         self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
@@ -102,14 +106,20 @@ class BotApplication:
         # VideoNote  - https://docs.python-telegram-bot.org/en/stable/telegram.videonote.html#telegram.VideoNote
         # VOICE      - https://docs.python-telegram-bot.org/en/stable/telegram.voice.html#telegram.Voice
         self.application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Sticker.ALL & ~filters.COMMAND, self.handlers.handle_message))
-        #self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers.handle_photo))
+        # self.application.add_handler(MessageHandler(filters.PHOTO, self.handlers.handle_photo))
         self.application.add_handler(MessageHandler(filters.VIA_BOT, self.handlers.handle_bot))
-
 
         # Error handler
         self.application.add_error_handler(self.handlers.error_handler)
 
         logger.info("Bot handlers configured successfully")
+
+    async def postInit(self, application: Application):
+        """Post-initialization tasks."""
+        if self.application is None:
+            raise RuntimeError("Application not initialized")
+
+        asyncio.create_task(self.handlers.initDelayedScheduler(self.application.bot))
 
     def run(self):
         """Start the bot."""
@@ -120,8 +130,13 @@ class BotApplication:
         random.seed()
 
         # Create application
-        self.application = Application.builder().token(self.botToken).concurrent_updates(PerTopicUpdateProcessor(128)).build()
-
+        self.application = (
+            Application.builder()
+            .token(self.botToken)
+            .concurrent_updates(PerTopicUpdateProcessor(128))
+            .post_init(self.postInit)
+            .build()
+        )
 
         # Setup handlers
         self.setupHandlers()
