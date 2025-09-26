@@ -5,9 +5,11 @@ Test script to reproduce the issue with missing < symbols in MarkdownV2 conversi
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from lib.markdown import markdown_to_markdownv2
+
 
 def test_less_than_symbol():
     """Test that < symbols are preserved in MarkdownV2 conversion"""
@@ -29,18 +31,19 @@ def test_less_than_symbol():
     print(result)
 
     # Check if < symbol is preserved
-    if '<' in result:
+    if "<" in result:
         print("\n✅ SUCCESS: < symbol is preserved")
     else:
         print("\n❌ FAILURE: < symbol is missing!")
 
     # Check if > symbol is preserved
-    if '>' in result:
+    if ">" in result:
         print("✅ SUCCESS: > symbol is preserved")
     else:
         print("❌ FAILURE: > symbol is missing!")
 
-    return '<' in result and '>' in result
+    return "<" in result and ">" in result
+
 
 if __name__ == "__main__":
     success = test_less_than_symbol()

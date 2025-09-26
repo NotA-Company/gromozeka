@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_THREAD_ID: int = 0
 
-MEDIA_TABLE_TABLE_ALIAS="ma"
-MEDIA_TABLE_PREFIX = 'media_'
+MEDIA_TABLE_TABLE_ALIAS = "ma"
+MEDIA_TABLE_PREFIX = "media_"
 MEDIA_FIELDS_WITH_PREFIX = f"""
 {MEDIA_TABLE_TABLE_ALIAS}.file_unique_id as {MEDIA_TABLE_PREFIX}file_unique_id,
 {MEDIA_TABLE_TABLE_ALIAS}.file_id        as {MEDIA_TABLE_PREFIX}file_id,
@@ -36,12 +36,14 @@ MEDIA_FIELDS_WITH_PREFIX = f"""
 {MEDIA_TABLE_TABLE_ALIAS}.updated_at     as {MEDIA_TABLE_PREFIX}updated_at
 """.strip()
 
+
 def convert_timestamp(val: bytes) -> datetime.datetime:
-    valStr = val.decode('utf-8')
+    valStr = val.decode("utf-8")
     ret = dateutil.parser.parse(valStr)
-    #logger.debug(f"Converted {valStr} to {repr(ret)}")
+    # logger.debug(f"Converted {valStr} to {repr(ret)}")
     return ret
-    #return datetime.datetime.strptime(valStr, '%Y-%m-%d %H:%M:%S')
+    # return datetime.datetime.strptime(valStr, '%Y-%m-%d %H:%M:%S')
+
 
 sqlite3.register_converter("timestamp", convert_timestamp)
 
@@ -61,12 +63,12 @@ class DatabaseWrapper:
 
     def _getConnection(self) -> sqlite3.Connection:
         """Get a thread-local database connection."""
-        if not hasattr(self._local, 'connection'):
+        if not hasattr(self._local, "connection"):
             self._local.connection = sqlite3.connect(
                 self.dbPath,
                 timeout=self.timeout,
                 check_same_thread=False,
-                detect_types=sqlite3.PARSE_DECLTYPES
+                detect_types=sqlite3.PARSE_DECLTYPES,
             )
             self._local.connection.row_factory = sqlite3.Row
         return self._local.connection
@@ -89,24 +91,27 @@ class DatabaseWrapper:
 
     def close(self):
         """Close database connections."""
-        if hasattr(self._local, 'connection'):
+        if hasattr(self._local, "connection"):
             self._local.connection.close()
 
     def _initDatabase(self):
         """Initialize the database with required tables."""
         with self.getCursor() as cursor:
             # Settings table for storing key-value pairs
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """)
+            """
+            )
 
             # Chat messages table for storing detailed chat message information
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS chat_messages (
                     chat_id INTEGER NOT NULL,                       -- Chat ID
                     message_id INTEGER NOT NULL,                    -- Message ID (unique for ChatID)
@@ -123,10 +128,12 @@ class DatabaseWrapper:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Date, when this message was added to DB
                     PRIMARY KEY (chat_id, message_id)
                 )
-            """)
+            """
+            )
 
             # Chat-specific settings
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS chat_settings (
                     chat_id INTEGER NOT NULL,
                     key TEXT NOT NULL,
@@ -135,10 +142,12 @@ class DatabaseWrapper:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (chat_id, key)
                 )
-            """)
+            """
+            )
 
             # Per-chat known users + some stats (messages count + last seen)
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS chat_users (
                     chat_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
@@ -149,10 +158,12 @@ class DatabaseWrapper:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (chat_id, user_id)
                 )
-            """)
+            """
+            )
 
             # Chat stats (currently only messages count per date)
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS chat_stats (
                     chat_id INTEGER NOT NULL,
                     date TIMESTAMP NOT NULL,
@@ -161,10 +172,12 @@ class DatabaseWrapper:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (chat_id, date)
                 )
-            """)
+            """
+            )
 
             # Chat user stats (currently only messages count per date)
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS chat_user_stats (
                     chat_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
@@ -174,11 +187,13 @@ class DatabaseWrapper:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (chat_id, user_id, date)
                 )
-            """)
+            """
+            )
 
             # Table with saved Media info (see MessageType for currenlty supported media)
             # PhotoSize(file_id='Ag...Q', file_size=47717, file_unique_id='A..y', height=320, width=320)
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS media_attachments (
                     file_unique_id TEXT PRIMARY KEY,        -- Unique id of media - said thait it will be preserver for time
                     file_id TEXT,                           -- FileID for getting file content (dunno, why i save it into database)
@@ -194,7 +209,8 @@ class DatabaseWrapper:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """)
+            """
+            )
 
     def setSetting(self, key: str, value: str) -> bool:
         """Set a configuration setting."""
@@ -222,7 +238,7 @@ class DatabaseWrapper:
             with self.getCursor() as cursor:
                 cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
                 row = cursor.fetchone()
-                return row['value'] if row else default
+                return row["value"] if row else default
         except Exception as e:
             logger.error(f"Failed to get setting {key}: {e}")
             return default
@@ -232,7 +248,7 @@ class DatabaseWrapper:
         try:
             with self.getCursor() as cursor:
                 cursor.execute("SELECT * FROM settings")
-                return {row['key']: row['value'] for row in cursor.fetchall()}
+                return {row["key"]: row["value"] for row in cursor.fetchall()}
         except Exception as e:
             logger.error(f"Failed to get settings: {e}")
             return {}
@@ -258,7 +274,8 @@ class DatabaseWrapper:
         try:
             with self.getCursor() as cursor:
                 today = date.replace(hour=0, minute=0, second=0, microsecond=0)
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO chat_messages
                     (date, chat_id, user_id, message_id,
                         reply_id, thread_id, message_text, message_type,
@@ -271,49 +288,62 @@ class DatabaseWrapper:
                         :messageCategory, :rootMessageId, :quoteText,
                         :mediaId
                         )
-                """, {
-                    "date": date,
-                    "chatId": chatId,
-                    "userId": userId,
-                    "messageId": messageId,
-                    "replyId": replyId,
-                    "threadId": threadId,
-                    "messageText": messageText,
-                    "messageType": messageType,
-                    "messageCategory": str(messageCategory),
-                    "rootMessageId": rootMessageId,
-                    "quoteText": quoteText,
-                    "mediaId": mediaId,
-                })
+                """,
+                    {
+                        "date": date,
+                        "chatId": chatId,
+                        "userId": userId,
+                        "messageId": messageId,
+                        "replyId": replyId,
+                        "threadId": threadId,
+                        "messageText": messageText,
+                        "messageType": messageType,
+                        "messageCategory": str(messageCategory),
+                        "rootMessageId": rootMessageId,
+                        "quoteText": quoteText,
+                        "mediaId": mediaId,
+                    },
+                )
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE chat_users
                     SET messages_count = messages_count + 1,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE chat_id = ? AND user_id = ?
-                """, (chatId, userId))
+                """,
+                    (chatId, userId),
+                )
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO chat_stats
                     (chat_id, date, messages_count, updated_at)
                     VALUES (?, ?, 1, CURRENT_TIMESTAMP)
                     ON CONFLICT (chat_id, date) DO UPDATE SET
                         messages_count = messages_count + 1,
                         updated_at = CURRENT_TIMESTAMP
-                """, (chatId, today))
+                """,
+                    (chatId, today),
+                )
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO chat_user_stats
                     (chat_id, user_id, date, messages_count, updated_at)
                     VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
                     ON CONFLICT (chat_id, user_id, date) DO UPDATE SET
                         messages_count = messages_count + 1,
                         updated_at = CURRENT_TIMESTAMP
-                """, (chatId, userId, today))
+                """,
+                    (chatId, userId, today),
+                )
 
                 return True
         except Exception as e:
-            logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
+            logger.error(
+                f"Failed to save chat message from user {userId} in chat {chatId}: {e}"
+            )
             return False
 
     def getChatMessagesSince(
@@ -325,7 +355,9 @@ class DatabaseWrapper:
         messageCategory: Optional[List[MessageCategory]] = None,
     ) -> List[Dict[str, Any]]:
         """Get chat messages from a specific chat newer than the given date."""
-        logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
+        logger.debug(
+            f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})"
+        )
         try:
             with self.getCursor() as cursor:
                 query = f"""
@@ -353,7 +385,9 @@ class DatabaseWrapper:
                 )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Failed to get chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId}): {e}")
+            logger.error(
+                f"Failed to get chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId}): {e}"
+            )
             return []
 
     def getChatMessageByMessageId(
@@ -381,14 +415,18 @@ class DatabaseWrapper:
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            logger.error(f"Failed to get chat message for chat {chatId}, thread {threadId}, message_id {messageId}: {e}")
+            logger.error(
+                f"Failed to get chat message for chat {chatId}, thread {threadId}, message_id {messageId}: {e}"
+            )
             return None
 
     def getChatMessagesByRootId(
         self, chatId: int, rootMessageId: int, threadId: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Get all chat messages in a conversation thread by root message ID."""
-        logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
+        logger.debug(
+            f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}"
+        )
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -410,7 +448,9 @@ class DatabaseWrapper:
                 )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Failed to get chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}: {e}")
+            logger.error(
+                f"Failed to get chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}: {e}"
+            )
             return []
 
     def updateChatUser(
@@ -439,24 +479,31 @@ class DatabaseWrapper:
                 )
                 return True
         except Exception as e:
-            logger.error(f"Failed to update username for user {userId} in chat {chatId}: {e}")
+            logger.error(
+                f"Failed to update username for user {userId} in chat {chatId}: {e}"
+            )
             return False
 
     def getChatUser(self, chatId: int, userId: int) -> Optional[Dict[str, Any]]:
         """Get the username of a user in a chat."""
         try:
             with self.getCursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT * FROM chat_users
                     WHERE
                         chat_id = ?
                         AND user_id = ?
                     LIMIT 1
-                """, (chatId, userId))
+                """,
+                    (chatId, userId),
+                )
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            logger.error(f"Failed to get username for user {userId} in chat {chatId}: {e}")
+            logger.error(
+                f"Failed to get username for user {userId} in chat {chatId}: {e}"
+            )
             return None
 
     def getChatUsers(
@@ -493,12 +540,15 @@ class DatabaseWrapper:
         """Set a setting for a chat."""
         try:
             with self.getCursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT OR REPLACE INTO chat_settings
                         (chat_id, key, value, updated_at)
                     VALUES
                         (?, ?, ?, CURRENT_TIMESTAMP)
-                """, (chatId, key, value))
+                """,
+                    (chatId, key, value),
+                )
                 return True
         except Exception as e:
             logger.error(f"Failed to set setting {key} for chat {chatId}: {e}")
@@ -508,11 +558,14 @@ class DatabaseWrapper:
         """UnSet a setting for a chat."""
         try:
             with self.getCursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     DELETE FROM chat_settings
                     WHERE chat_id = ?
                         AND key = ?
-                """, (chatId, key))
+                """,
+                    (chatId, key),
+                )
                 return True
         except Exception as e:
             logger.error(f"Failed to unset setting {key} for chat {chatId}: {e}")
@@ -522,15 +575,18 @@ class DatabaseWrapper:
         """Get a setting for a chat."""
         try:
             with self.getCursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT value FROM chat_settings
                     WHERE
                         chat_id = ?
                         AND setting = ?
                     LIMIT 1
-                """, (chatId, setting))
+                """,
+                    (chatId, setting),
+                )
                 row = cursor.fetchone()
-                return row['value'] if row else None
+                return row["value"] if row else None
         except Exception as e:
             logger.error(f"Failed to get setting {setting} for chat {chatId}: {e}")
             return None
@@ -539,11 +595,14 @@ class DatabaseWrapper:
         """Get all settings for a chat."""
         try:
             with self.getCursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT key, value FROM chat_settings
                     WHERE chat_id = ?
-                """, (chatId,))
-                return {row['key']: row['value'] for row in cursor.fetchall()}
+                """,
+                    (chatId,),
+                )
+                return {row["key"]: row["value"] for row in cursor.fetchall()}
         except Exception as e:
             logger.error(f"Failed to get settings for chat {chatId}: {e}")
             return {}
@@ -609,36 +668,39 @@ class DatabaseWrapper:
         """Update a media attachment in the database."""
         try:
             query = ""
-            values = {"fileUniqueId": fileUniqueId }
+            values = {"fileUniqueId": fileUniqueId}
 
             if status is not None:
                 query += "status = :status, "
-                values['status'] = status
+                values["status"] = status
             if metadata is not None:
                 query += "metadata = :metadata, "
-                values['metadata'] = metadata
+                values["metadata"] = metadata
             if mimeType is not None:
                 query += "mime_type = :mimeType, "
-                values['mimeType'] = mimeType
+                values["mimeType"] = mimeType
             if localUrl is not None:
                 query += "local_url = :localUrl, "
-                values['localUrl'] = localUrl
+                values["localUrl"] = localUrl
             if description is not None:
                 query += "description = :description, "
-                values['description'] = description
+                values["description"] = description
             if prompt is not None:
                 query += "prompt = :prompt, "
-                values['prompt'] = prompt
+                values["prompt"] = prompt
 
             with self.getCursor() as cursor:
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     UPDATE media_attachments
                     SET
                         {query}
                         updated_at = CURRENT_TIMESTAMP
                     WHERE
                         file_unique_id = :fileUniqueId
-                """, values)
+                """,
+                    values,
+                )
                 return True
         except Exception as e:
             logger.error(f"Failed to update media attachment: {e}")
@@ -648,10 +710,13 @@ class DatabaseWrapper:
         """Get a media attachment from the database."""
         try:
             with self.getCursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT * FROM media_attachments
                     WHERE file_unique_id = ?
-                """, (fileUniqueId,))
+                """,
+                    (fileUniqueId,),
+                )
 
                 row = cursor.fetchone()
                 return dict(row) if row else None

@@ -28,10 +28,10 @@ class HTMLRenderer:
         self.options = options or {}
 
         # Default rendering options
-        self.escape_html = self.options.get('escape_html', True)
-        self.add_line_breaks = self.options.get('add_line_breaks', True)
-        self.code_class_prefix = self.options.get('code_class_prefix', 'language-')
-        self.indent_size = self.options.get('indent_size', 2)
+        self.escape_html = self.options.get("escape_html", True)
+        self.add_line_breaks = self.options.get("add_line_breaks", True)
+        self.code_class_prefix = self.options.get("code_class_prefix", "language-")
+        self.indent_size = self.options.get("indent_size", 2)
 
         # Current indentation level for pretty printing
         self._indent_level = 0
@@ -53,7 +53,7 @@ class HTMLRenderer:
         for child in document.children:
             html_parts.append(self._render_node(child))
 
-        return '\n'.join(html_parts)
+        return "\n".join(html_parts)
 
     def _render_node(self, node: MDNode) -> str:
         """Render a single AST node to HTML."""
@@ -94,7 +94,7 @@ class HTMLRenderer:
         html_parts = []
         for child in node.children:
             html_parts.append(self._render_node(child))
-        return '\n'.join(html_parts)
+        return "\n".join(html_parts)
 
     def _render_paragraph(self, node: MDParagraph) -> str:
         """Render paragraph node."""
@@ -114,7 +114,9 @@ class HTMLRenderer:
         content = self._escape_html(node.content) if self.escape_html else node.content
 
         if node.language:
-            class_attr = f' class="{self.code_class_prefix}{self._escape_html(node.language)}"'
+            class_attr = (
+                f' class="{self.code_class_prefix}{self._escape_html(node.language)}"'
+            )
             return f"<pre><code{class_attr}>{content}</code></pre>"
         else:
             return f"<pre><code>{content}</code></pre>"
@@ -125,7 +127,7 @@ class HTMLRenderer:
         for child in node.children:
             content.append(self._render_node(child))
 
-        inner_html = '\n'.join(content)
+        inner_html = "\n".join(content)
         return f"<blockquote>\n{inner_html}\n</blockquote>"
 
     def _render_list(self, node: MDList) -> str:
@@ -141,7 +143,7 @@ class HTMLRenderer:
         for child in node.children:
             content.append(self._render_node(child))
 
-        inner_html = '\n'.join(content)
+        inner_html = "\n".join(content)
 
         if node.is_tight:
             # Tight list - no <p> tags around single paragraph items
@@ -155,7 +157,7 @@ class HTMLRenderer:
         for child in node.children:
             content.append(self._render_node(child))
 
-        inner_html = '\n'.join(content)
+        inner_html = "\n".join(content)
         return f"<li>{inner_html}</li>"
 
     def _render_horizontal_rule(self, node: MDHorizontalRule) -> str:
@@ -188,13 +190,15 @@ class HTMLRenderer:
             title = self._escape_html(node.title) if self.escape_html else node.title
             attrs.append(f'title="{title}"')
 
-        attr_string = ' '.join(attrs)
+        attr_string = " ".join(attrs)
         return f"<a {attr_string}>{content}</a>"
 
     def _render_image(self, node: MDImage) -> str:
         """Render image node."""
         url = self._escape_html(node.url) if self.escape_html else node.url
-        alt_text = self._escape_html(node.alt_text) if self.escape_html else node.alt_text
+        alt_text = (
+            self._escape_html(node.alt_text) if self.escape_html else node.alt_text
+        )
 
         # Build attributes
         attrs = [f'src="{url}"', f'alt="{alt_text}"']
@@ -202,7 +206,7 @@ class HTMLRenderer:
             title = self._escape_html(node.title) if self.escape_html else node.title
             attrs.append(f'title="{title}"')
 
-        attr_string = ' '.join(attrs)
+        attr_string = " ".join(attrs)
         return f"<img {attr_string}>"
 
     def _render_code_span(self, node: MDCodeSpan) -> str:
@@ -223,7 +227,7 @@ class HTMLRenderer:
         display_url = url
 
         # For email autolinks, add mailto: prefix
-        if node.is_email and not url.startswith('mailto:'):
+        if node.is_email and not url.startswith("mailto:"):
             url = f"mailto:{url}"
 
         if self.escape_html:
@@ -237,7 +241,7 @@ class HTMLRenderer:
         content_parts = []
         for child in node.children:
             content_parts.append(self._render_node(child))
-        return ''.join(content_parts)
+        return "".join(content_parts)
 
     def _escape_html(self, text: str) -> str:
         """Escape HTML special characters."""
@@ -252,17 +256,19 @@ class HTMLRenderer:
         import re
 
         # Pattern to match <li><p>content</p></li> where content doesn't contain other block elements
-        pattern = r'<li><p>((?:(?!</?(?:p|div|blockquote|pre|ul|ol|li|h[1-6])\b)[^<]|<(?!/?(?:p|div|blockquote|pre|ul|ol|li|h[1-6])\b)[^>]*>)*)</p></li>'
+        pattern = r"<li><p>((?:(?!</?(?:p|div|blockquote|pre|ul|ol|li|h[1-6])\b)[^<]|<(?!/?(?:p|div|blockquote|pre|ul|ol|li|h[1-6])\b)[^>]*>)*)</p></li>"
 
         def replace_func(match):
             content = match.group(1)
             return f"<li>{content}</li>"
 
-        return re.sub(pattern, replace_func, html_content, flags=re.IGNORECASE | re.DOTALL)
+        return re.sub(
+            pattern, replace_func, html_content, flags=re.IGNORECASE | re.DOTALL
+        )
 
     def _indent(self) -> str:
         """Get current indentation string."""
-        return ' ' * (self._indent_level * self.indent_size)
+        return " " * (self._indent_level * self.indent_size)
 
     def _increase_indent(self) -> None:
         """Increase indentation level."""
@@ -284,9 +290,11 @@ class MarkdownRenderer:
     def __init__(self, options: Optional[Dict[str, Any]] = None):
         """Initialize the Markdown renderer."""
         self.options = options or {}
-        self.header_style = self.options.get('header_style', 'atx')  # 'atx' or 'setext'
-        self.emphasis_style = self.options.get('emphasis_style', 'asterisk')  # 'asterisk' or 'underscore'
-        self.list_marker = self.options.get('list_marker', '-')  # '-', '*', or '+'
+        self.header_style = self.options.get("header_style", "atx")  # 'atx' or 'setext'
+        self.emphasis_style = self.options.get(
+            "emphasis_style", "asterisk"
+        )  # 'asterisk' or 'underscore'
+        self.list_marker = self.options.get("list_marker", "-")  # '-', '*', or '+'
 
     def render(self, document: MDDocument) -> str:
         """Render a Markdown document back to Markdown."""
@@ -296,10 +304,10 @@ class MarkdownRenderer:
         markdown_parts = []
         for i, child in enumerate(document.children):
             if i > 0:
-                markdown_parts.append('')  # Add blank line between blocks
+                markdown_parts.append("")  # Add blank line between blocks
             markdown_parts.append(self._render_node(child))
 
-        return '\n'.join(markdown_parts)
+        return "\n".join(markdown_parts)
 
     def _render_node(self, node: MDNode) -> str:
         """Render a single AST node back to Markdown."""
@@ -310,19 +318,19 @@ class MarkdownRenderer:
             return f"{'#' * node.level} {content}"
         elif isinstance(node, MDCodeBlock):
             if node.is_fenced:
-                fence = '```'
-                lang = node.language or ''
+                fence = "```"
+                lang = node.language or ""
                 return f"{fence}{lang}\n{node.content}\n{fence}"
             else:
                 # Indent each line with 4 spaces
-                lines = node.content.split('\n')
-                indented_lines = ['    ' + line for line in lines]
-                return '\n'.join(indented_lines)
+                lines = node.content.split("\n")
+                indented_lines = ["    " + line for line in lines]
+                return "\n".join(indented_lines)
         elif isinstance(node, MDBlockQuote):
             content = self._render_children(node)
-            lines = content.split('\n')
-            quoted_lines = ['> ' + line for line in lines]
-            return '\n'.join(quoted_lines)
+            lines = content.split("\n")
+            quoted_lines = ["> " + line for line in lines]
+            return "\n".join(quoted_lines)
         elif isinstance(node, MDList):
             return self._render_list(node)
         elif isinstance(node, MDListItem):
@@ -342,12 +350,12 @@ class MarkdownRenderer:
             if node.title:
                 return f'[{content}]({node.url} "{node.title}")'
             else:
-                return f'[{content}]({node.url})'
+                return f"[{content}]({node.url})"
         elif isinstance(node, MDImage):
             if node.title:
                 return f'![{node.alt_text}]({node.url} "{node.title}")'
             else:
-                return f'![{node.alt_text}]({node.url})'
+                return f"![{node.alt_text}]({node.url})"
         elif isinstance(node, MDCodeSpan):
             return f"`{node.content}`"
         elif isinstance(node, MDText):
@@ -368,7 +376,7 @@ class MarkdownRenderer:
         for child in node.children:
             if isinstance(child, MDListItem):
                 list_items.append(self._render_list_item(child))
-        return '\n'.join(list_items)
+        return "\n".join(list_items)
 
     def _render_list_item(self, node: MDListItem) -> str:
         """Render list item node."""
@@ -383,10 +391,10 @@ class MarkdownRenderer:
                 text_parts.append(self._render_node(child))
 
         # Render the main text content
-        text_content = ''.join(text_parts)
+        text_content = "".join(text_parts)
 
         # Determine list marker based on list type
-        if hasattr(node, 'parent') and isinstance(node.parent, MDList):
+        if hasattr(node, "parent") and isinstance(node.parent, MDList):
             if node.parent.list_type == ListType.ORDERED:
                 # For ordered lists, we need the item number
                 item_index = node.parent.children.index(node) + 1
@@ -405,21 +413,21 @@ class MarkdownRenderer:
         for nested_list in nested_lists:
             nested_content = self._render_list(nested_list)
             # Indent each line of the nested list
-            nested_lines = nested_content.split('\n')
+            nested_lines = nested_content.split("\n")
             for line in nested_lines:
                 if line.strip():  # Don't indent empty lines
-                    result_lines.append('   ' + line)  # 3 spaces for nesting
+                    result_lines.append("   " + line)  # 3 spaces for nesting
                 else:
                     result_lines.append(line)
 
-        return '\n'.join(result_lines)
+        return "\n".join(result_lines)
 
     def _render_children(self, node: MDNode) -> str:
         """Render all children of a node."""
         content_parts = []
         for child in node.children:
             content_parts.append(self._render_node(child))
-        return ''.join(content_parts)
+        return "".join(content_parts)
 
 
 class MarkdownV2Renderer:
@@ -435,15 +443,21 @@ class MarkdownV2Renderer:
         self.options = options or {}
 
         # Renderer options
-        self.preserve_leading_spaces = self.options.get('preserve_leading_spaces', False)
-        self.preserve_soft_line_breaks = self.options.get('preserve_soft_line_breaks', False)
+        self.preserve_leading_spaces = self.options.get(
+            "preserve_leading_spaces", False
+        )
+        self.preserve_soft_line_breaks = self.options.get(
+            "preserve_soft_line_breaks", False
+        )
 
         # Import escaping function from telegram_markdown module
         try:
             import sys
             import os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
             from lib.telegram_markdown import escapeMarkdownV2
+
             self._escape = escapeMarkdownV2
         except ImportError:
             # Fallback escaping if telegram_markdown is not available
@@ -458,10 +472,10 @@ class MarkdownV2Renderer:
         for i, child in enumerate(document.children):
             if i > 0:
                 # Add blank line between block elements
-                parts.append('')
+                parts.append("")
             parts.append(self._render_node(child))
 
-        return '\n'.join(parts)
+        return "\n".join(parts)
 
     def _render_node(self, node: MDNode) -> str:
         """Render a single AST node to MarkdownV2."""
@@ -495,16 +509,16 @@ class MarkdownV2Renderer:
             return self._render_autolink(node)
         else:
             # Fallback for unknown node types
-            return self._escape(f"[Unknown: {type(node).__name__}]", 'general')
+            return self._escape(f"[Unknown: {type(node).__name__}]", "general")
 
     def _render_document(self, node: MDDocument) -> str:
         """Render document node."""
         parts = []
         for i, child in enumerate(node.children):
             if i > 0:
-                parts.append('')  # Blank line between blocks
+                parts.append("")  # Blank line between blocks
             parts.append(self._render_node(child))
-        return '\n'.join(parts)
+        return "\n".join(parts)
 
     def _render_paragraph(self, node: MDParagraph) -> str:
         """Render paragraph node."""
@@ -518,11 +532,11 @@ class MarkdownV2Renderer:
         """Render header node - headers are not supported in MarkdownV2, render as bold."""
         content = self._render_children(node)
         # MarkdownV2 doesn't support headers so return as is
-        return '\\#' * node.level + ' ' + content.strip()
+        return "\\#" * node.level + " " + content.strip()
 
     def _render_code_block(self, node: MDCodeBlock) -> str:
         """Render code block node."""
-        content = self._escape(node.content, 'pre_code')
+        content = self._escape(node.content, "pre_code")
 
         if node.language:
             return f"```{node.language}\n{content}\n```"
@@ -534,13 +548,13 @@ class MarkdownV2Renderer:
         parts = []
         for child in node.children:
             child_content = self._render_node(child)
-            lines = child_content.split('\n')
+            lines = child_content.split("\n")
             for line in lines:
                 if line.strip():
                     parts.append(f">{line}")
                 else:
-                    parts.append('>')
-        return '\n'.join(parts)
+                    parts.append(">")
+        return "\n".join(parts)
 
     def _render_list(self, node: MDList) -> str:
         """Render list node - lists are not directly supported in MarkdownV2."""
@@ -549,7 +563,7 @@ class MarkdownV2Renderer:
         for child in node.children:
             if isinstance(child, MDListItem):
                 list_items.append(self._render_list_item(child))
-        return '\n'.join(list_items)
+        return "\n".join(list_items)
 
     def _render_list_item(self, node: MDListItem) -> str:
         """Render list item node."""
@@ -564,14 +578,14 @@ class MarkdownV2Renderer:
                 text_parts.append(self._render_node(child))
 
         # Render the main text content
-        text_content = ''.join(text_parts)
+        text_content = "".join(text_parts)
 
         # Determine list marker based on list type
-        if hasattr(node, 'parent') and isinstance(node.parent, MDList):
+        if hasattr(node, "parent") and isinstance(node.parent, MDList):
             if node.parent.list_type == ListType.ORDERED:
                 # For ordered lists, we need the item number
                 item_index = node.parent.children.index(node) + 1
-                start_num = getattr(node.parent, 'start_number', 1) + item_index - 1
+                start_num = getattr(node.parent, "start_number", 1) + item_index - 1
                 marker = f"{start_num}\\."
             else:
                 # For unordered lists, use bullet
@@ -587,18 +601,18 @@ class MarkdownV2Renderer:
         for nested_list in nested_lists:
             nested_content = self._render_list(nested_list)
             # Indent each line of the nested list
-            nested_lines = nested_content.split('\n')
+            nested_lines = nested_content.split("\n")
             for line in nested_lines:
                 if line.strip():  # Don't indent empty lines
-                    result_lines.append('   ' + line)  # 3 spaces for nesting
+                    result_lines.append("   " + line)  # 3 spaces for nesting
                 else:
                     result_lines.append(line)
 
-        return '\n'.join(result_lines)
+        return "\n".join(result_lines)
 
     def _render_horizontal_rule(self, node: MDHorizontalRule) -> str:
         """Render horizontal rule - not supported in MarkdownV2, use escaped dashes."""
-        return self._escape("---", 'general')
+        return self._escape("---", "general")
 
     def _render_emphasis(self, node: MDEmphasis) -> str:
         """Render emphasis node using MarkdownV2 syntax."""
@@ -619,14 +633,14 @@ class MarkdownV2Renderer:
     def _render_link(self, node: MDLink) -> str:
         """Render link node."""
         content = self._render_children(node)
-        escaped_url = self._escape(node.url, 'link_url')
+        escaped_url = self._escape(node.url, "link_url")
 
         # If both content and URL are empty, this might be a false positive link
         # that consumed emphasis markers. In that case, reconstruct the likely original text.
         if not content.strip() and not node.url.strip():
             # This is likely a case where _*[]()~`! was parsed as an empty link
             # We need to escape these characters as they would appear in the original text
-            return self._escape("_*[]()~`!", 'general')
+            return self._escape("_*[]()~`!", "general")
 
         return f"[{content}]({escaped_url})"
 
@@ -634,11 +648,11 @@ class MarkdownV2Renderer:
         """Render image node using custom emoji syntax if possible."""
         # MarkdownV2 supports custom emoji: ![👍](tg://emoji?id=5368324170671202286)
         # For regular images, we'll use a link format
-        escaped_alt = self._escape(node.alt_text, 'general')
-        escaped_url = self._escape(node.url, 'link_url')
+        escaped_alt = self._escape(node.alt_text, "general")
+        escaped_url = self._escape(node.url, "link_url")
 
         # Check if this looks like a Telegram emoji URL
-        if 'tg://emoji' in node.url:
+        if "tg://emoji" in node.url:
             return f"![{escaped_alt}]({escaped_url})"
         else:
             # Regular image - convert to link since MarkdownV2 doesn't support images
@@ -646,23 +660,23 @@ class MarkdownV2Renderer:
 
     def _render_code_span(self, node: MDCodeSpan) -> str:
         """Render inline code span."""
-        content = self._escape(node.content, 'pre_code')
+        content = self._escape(node.content, "pre_code")
         return f"`{content}`"
 
     def _render_text(self, node: MDText) -> str:
         """Render text node with proper escaping."""
-        return self._escape(node.content, 'general')
+        return self._escape(node.content, "general")
 
     def _render_autolink(self, node: MDAutolink) -> str:
         """Render autolink node."""
         url = node.url
         display_url = node.url
 
-        if node.is_email and not url.startswith('mailto:'):
+        if node.is_email and not url.startswith("mailto:"):
             url = f"mailto:{url}"
 
-        escaped_url = self._escape(url, 'link_url')
-        escaped_display = self._escape(display_url, 'general')
+        escaped_url = self._escape(url, "link_url")
+        escaped_display = self._escape(display_url, "general")
         return f"[{escaped_display}]({escaped_url})"
 
     def _render_children(self, node: MDNode) -> str:
@@ -670,23 +684,23 @@ class MarkdownV2Renderer:
         parts = []
         for child in node.children:
             parts.append(self._render_node(child))
-        return ''.join(parts)
+        return "".join(parts)
 
-    def _fallback_escape(self, text: str, context: str = 'general') -> str:
+    def _fallback_escape(self, text: str, context: str = "general") -> str:
         """Fallback escaping function if telegram_markdown module is not available."""
-        if context == 'pre_code':
-            chars_to_escape = '`\\'
-        elif context == 'link_url':
-            chars_to_escape = ')\\'
+        if context == "pre_code":
+            chars_to_escape = "`\\"
+        elif context == "link_url":
+            chars_to_escape = ")\\"
         else:  # general
-            chars_to_escape = '_*[]()~`>#+-=|{}.!'
+            chars_to_escape = "_*[]()~`>#+-=|{}.!"
 
         # Escape backslashes first
-        result = text.replace('\\', '\\\\')
+        result = text.replace("\\", "\\\\")
 
         # Escape other special characters
         for char in chars_to_escape:
-            if char != '\\':  # Already escaped backslashes
-                result = result.replace(char, f'\\{char}')
+            if char != "\\":  # Already escaped backslashes
+                result = result.replace(char, f"\\{char}")
 
         return result

@@ -1,12 +1,14 @@
 """
 Logging utilities for Gromozeka bot.
 """
+
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+
 
 def getLogLevelByStr(levelStr: str, default: Optional[int] = None) -> Optional[int]:
     """Get log level by string."""
@@ -32,7 +34,9 @@ def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None
     logLevel = localLogger.getEffectiveLevel()
 
     # Create formatter
-    logFormat = config.get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logFormat = config.get(
+        "format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     formatter = logging.Formatter(logFormat)
 
     # Clear existing handlers to avoid duplicates
@@ -50,7 +54,9 @@ def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None
         consoleHandler.setLevel(consoleLogLevel)
         consoleHandler.setFormatter(formatter)
         localLogger.addHandler(consoleHandler)
-        logger.info(f"Logging {localLogger.name} to console, logLevel: {consoleLogLevel}")
+        logger.info(
+            f"Logging {localLogger.name} to console, logLevel: {consoleLogLevel}"
+        )
 
     fileLogs = {}
     if "file" in config:
@@ -90,9 +96,13 @@ def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None
             fileHandler.setLevel(fileLogLevel)
             fileHandler.setFormatter(formatter)
             localLogger.addHandler(fileHandler)
-            logger.info(f"Logging {localLogger.name}#{logType} to file: {logFile}, logLevel: {fileLogLevel}")
+            logger.info(
+                f"Logging {localLogger.name}#{logType} to file: {logFile}, logLevel: {fileLogLevel}"
+            )
         except Exception as e:
-            logger.error(f"Failed to setup {logType} logging for {localLogger.name}: {e}")
+            logger.error(
+                f"Failed to setup {logType} logging for {localLogger.name}: {e}"
+            )
 
 
 def initLogging(config: Dict[str, Any]) -> None:

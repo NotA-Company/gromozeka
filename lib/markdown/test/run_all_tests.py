@@ -24,6 +24,7 @@ from typing import List, Tuple, Dict, Any
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+
 class TestResult:
     """Container for test execution results."""
 
@@ -32,6 +33,7 @@ class TestResult:
         self.success = success
         self.output = output
         self.error = error
+
 
 class MarkdownTestRunner:
     """Comprehensive test runner for all markdown tests."""
@@ -54,12 +56,7 @@ class MarkdownTestRunner:
 
     def categorize_tests(self, test_files: List[Path]) -> Dict[str, List[Path]]:
         """Categorize test files by type."""
-        categories = {
-            "unittest": [],
-            "demo": [],
-            "debug": [],
-            "examples": []
-        }
+        categories = {"unittest": [], "demo": [], "debug": [], "examples": []}
 
         for file_path in test_files:
             name = file_path.name.lower()
@@ -82,9 +79,7 @@ class MarkdownTestRunner:
         """Run a unittest-based test file."""
         try:
             # Load the module
-            spec = importlib.util.spec_from_file_location(
-                file_path.stem, file_path
-            )
+            spec = importlib.util.spec_from_file_location(file_path.stem, file_path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
@@ -114,7 +109,7 @@ class MarkdownTestRunner:
                 file_path.name,
                 False,
                 "",
-                f"Failed to run unittest: {str(e)}\n{traceback.format_exc()}"
+                f"Failed to run unittest: {str(e)}\n{traceback.format_exc()}",
             )
 
     def run_script_file(self, file_path: Path) -> TestResult:
@@ -127,16 +122,14 @@ class MarkdownTestRunner:
             stderr_capture = io.StringIO()
 
             # Load and execute the module
-            spec = importlib.util.spec_from_file_location(
-                file_path.stem, file_path
-            )
+            spec = importlib.util.spec_from_file_location(file_path.stem, file_path)
             module = importlib.util.module_from_spec(spec)
 
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
                 spec.loader.exec_module(module)
 
                 # If module has a main function, call it
-                if hasattr(module, 'main'):
+                if hasattr(module, "main"):
                     module.main()
 
             output = stdout_capture.getvalue()
@@ -153,7 +146,7 @@ class MarkdownTestRunner:
                 file_path.name,
                 False,
                 "",
-                f"Failed to run script: {str(e)}\n{traceback.format_exc()}"
+                f"Failed to run script: {str(e)}\n{traceback.format_exc()}",
             )
 
     def run_all_tests(self) -> None:
@@ -217,14 +210,16 @@ class MarkdownTestRunner:
                     print(f"  • {result.name}")
                     if result.error:
                         # Show first few lines of error
-                        error_lines = result.error.split('\n')[:3]
+                        error_lines = result.error.split("\n")[:3]
                         for line in error_lines:
                             if line.strip():
                                 print(f"    {line}")
-                        if len(result.error.split('\n')) > 3:
+                        if len(result.error.split("\n")) > 3:
                             print("    ...")
 
-        print(f"\n{'🎉 ALL TESTS PASSED!' if failed_tests == 0 else '⚠️  SOME TESTS FAILED'}")
+        print(
+            f"\n{'🎉 ALL TESTS PASSED!' if failed_tests == 0 else '⚠️  SOME TESTS FAILED'}"
+        )
 
         # Return appropriate exit code
         return 0 if failed_tests == 0 else 1
@@ -248,6 +243,7 @@ class MarkdownTestRunner:
                     print("Output:")
                     print(result.output)
 
+
 def main():
     """Main entry point."""
     runner = MarkdownTestRunner()
@@ -269,6 +265,7 @@ def main():
         print(f"\n\n💥 Unexpected error in test runner: {e}")
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

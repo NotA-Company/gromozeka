@@ -12,6 +12,7 @@ from enum import Enum
 
 class TokenType(Enum):
     """Types of tokens recognized by the tokenizer."""
+
     TEXT = "text"
     NEWLINE = "newline"
     SPACE = "space"
@@ -34,6 +35,7 @@ class TokenType(Enum):
 
 class Token(NamedTuple):
     """A token with type, content, line and column position."""
+
     type: TokenType
     content: str
     line: int
@@ -43,7 +45,7 @@ class Token(NamedTuple):
     def __post_init__(self):
         # Calculate length if not provided
         if self.length == 0:
-            object.__setattr__(self, 'length', len(self.content))
+            object.__setattr__(self, "length", len(self.content))
 
 
 class Tokenizer:
@@ -67,40 +69,40 @@ class Tokenizer:
     def _compile_patterns(self) -> None:
         """Compile regex patterns used for tokenization."""
         # Header markers (1-6 # characters followed by space)
-        self.header_pattern = re.compile(r'^(#{1,6})\s+', re.MULTILINE)
+        self.header_pattern = re.compile(r"^(#{1,6})\s+", re.MULTILINE)
 
         # Code fences (3+ backticks or tildes) - can appear anywhere on line
-        self.code_fence_pattern = re.compile(r'(```+|~~~+)(.*)$', re.MULTILINE)
+        self.code_fence_pattern = re.compile(r"(```+|~~~+)(.*)$", re.MULTILINE)
 
         # List markers
-        self.unordered_list_pattern = re.compile(r'^(\s*)([-*+])\s+', re.MULTILINE)
-        self.ordered_list_pattern = re.compile(r'^(\s*)(\d+\.)\s+', re.MULTILINE)
+        self.unordered_list_pattern = re.compile(r"^(\s*)([-*+])\s+", re.MULTILINE)
+        self.ordered_list_pattern = re.compile(r"^(\s*)(\d+\.)\s+", re.MULTILINE)
 
         # Block quote marker
-        self.blockquote_pattern = re.compile(r'^(\s*)(>)\s?', re.MULTILINE)
+        self.blockquote_pattern = re.compile(r"^(\s*)(>)\s?", re.MULTILINE)
 
         # Horizontal rules (3+ -, *, or _ with optional spaces)
-        self.hr_pattern = re.compile(r'^(\s*)([-*_])\s*\2\s*\2[\s\2]*$', re.MULTILINE)
+        self.hr_pattern = re.compile(r"^(\s*)([-*_])\s*\2\s*\2[\s\2]*$", re.MULTILINE)
 
         # Emphasis markers
-        self.emphasis_pattern = re.compile(r'(\*{1,3}|_{1,3}|~~)')
+        self.emphasis_pattern = re.compile(r"(\*{1,3}|_{1,3}|~~)")
 
         # Links and images
-        self.link_start_pattern = re.compile(r'\[')
-        self.image_start_pattern = re.compile(r'!\[')
-        self.link_end_pattern = re.compile(r'\]\(([^)]*)\)')
+        self.link_start_pattern = re.compile(r"\[")
+        self.image_start_pattern = re.compile(r"!\[")
+        self.link_end_pattern = re.compile(r"\]\(([^)]*)\)")
 
         # Code spans (backticks)
-        self.code_span_pattern = re.compile(r'(`+)([^`]*?)\1')
+        self.code_span_pattern = re.compile(r"(`+)([^`]*?)\1")
 
         # Autolinks
-        self.autolink_pattern = re.compile(r'<([^<>\s]+@[^<>\s]+|https?://[^<>\s]+)>')
+        self.autolink_pattern = re.compile(r"<([^<>\s]+@[^<>\s]+|https?://[^<>\s]+)>")
 
         # Escape sequences
-        self.escape_pattern = re.compile(r'\\(.)')
+        self.escape_pattern = re.compile(r"\\(.)")
 
         # Special characters that need tokenization
-        self.special_chars = set('*_[]()~`>#+-=|{}.!')
+        self.special_chars = set("*_[]()~`>#+-=|{}.!")
 
     def tokenize(self) -> List[Token]:
         """
@@ -130,22 +132,26 @@ class Tokenizer:
             True if special syntax was found and tokenized, False otherwise.
         """
         # Check for newlines first
-        if self._current_char() == '\n':
-            self._add_token(TokenType.NEWLINE, '\n')
+        if self._current_char() == "\n":
+            self._add_token(TokenType.NEWLINE, "\n")
             self._advance()
             self.line += 1
             self.column = 1
             return True
 
         # Check for spaces and tabs
-        if self._current_char() in ' \t':
-            spaces = self._consume_while(lambda c: c in ' \t')
+        if self._current_char() in " \t":
+            spaces = self._consume_while(lambda c: c in " \t")
             self._add_token(TokenType.SPACE, spaces)
             return True
 
         # Check if we're at start of line for block-level elements
         # Also check after consuming spaces if we're still logically at line start
-        if self.column == 1 or self._is_after_newline() or self._is_after_line_start_spaces():
+        if (
+            self.column == 1
+            or self._is_after_newline()
+            or self._is_after_line_start_spaces()
+        ):
             if self._try_tokenize_block_elements():
                 return True
 
@@ -154,7 +160,7 @@ class Tokenizer:
 
     def _try_tokenize_block_elements(self) -> bool:
         """Try to tokenize block-level elements."""
-        remaining = self.text[self.pos:]
+        remaining = self.text[self.pos :]
 
         # Header markers
         match = self.header_pattern.match(remaining)
@@ -163,8 +169,8 @@ class Tokenizer:
             self._add_token(TokenType.HEADER_MARKER, marker)
             self._advance(len(marker))
             # Skip the space after header marker
-            if self._current_char() == ' ':
-                self._add_token(TokenType.SPACE, ' ')
+            if self._current_char() == " ":
+                self._add_token(TokenType.SPACE, " ")
                 self._advance()
             return True
 
@@ -188,8 +194,8 @@ class Tokenizer:
             self._add_token(TokenType.BLOCKQUOTE_MARKER, marker)
             self._advance(len(marker))
             # Skip optional space after >
-            if self._current_char() == ' ':
-                self._add_token(TokenType.SPACE, ' ')
+            if self._current_char() == " ":
+                self._add_token(TokenType.SPACE, " ")
                 self._advance()
             return True
 
@@ -212,8 +218,8 @@ class Tokenizer:
             self._add_token(TokenType.LIST_MARKER, marker)
             self._advance(len(marker))
             # Skip space after marker
-            if self._current_char() == ' ':
-                self._add_token(TokenType.SPACE, ' ')
+            if self._current_char() == " ":
+                self._add_token(TokenType.SPACE, " ")
                 self._advance()
             return True
 
@@ -228,8 +234,8 @@ class Tokenizer:
             self._add_token(TokenType.LIST_MARKER, marker)
             self._advance(len(marker))
             # Skip space after marker
-            if self._current_char() == ' ':
-                self._add_token(TokenType.SPACE, ' ')
+            if self._current_char() == " ":
+                self._add_token(TokenType.SPACE, " ")
                 self._advance()
             return True
 
@@ -237,7 +243,7 @@ class Tokenizer:
 
     def _try_tokenize_inline_elements(self) -> bool:
         """Try to tokenize inline elements."""
-        remaining = self.text[self.pos:]
+        remaining = self.text[self.pos :]
 
         # Check for code fences - but only if they're proper fenced code blocks
         match = self.code_fence_pattern.match(remaining)
@@ -252,14 +258,16 @@ class Tokenizer:
             # Check if this looks like a complete inline code span
             # Case 1: Language part contains closing backticks (``` ... ```)
             # Case 2: There's a matching closing fence later on the same line
-            if language_raw and '```' in language_raw:
+            if language_raw and "```" in language_raw:
                 # This looks like an inline code span, not a fenced code block
                 # Fall through to code span handling
                 pass
-            elif language and not (next_pos >= len(self.text) or self.text[next_pos] == '\n'):
+            elif language and not (
+                next_pos >= len(self.text) or self.text[next_pos] == "\n"
+            ):
                 # Language info but not followed by newline - check if there's a closing fence on same line
-                rest_of_line = self.text[next_pos:].split('\n')[0]
-                if '```' in rest_of_line:
+                rest_of_line = self.text[next_pos:].split("\n")[0]
+                if "```" in rest_of_line:
                     # There's a closing fence on the same line - treat as inline code span
                     # Fall through to code span handling
                     pass
@@ -269,7 +277,9 @@ class Tokenizer:
             else:
                 # Check if this is a valid fenced code block start
                 # A valid fenced code block must be followed by a newline (or end of input)
-                followed_by_newline_or_eof = (next_pos >= len(self.text) or self.text[next_pos] == '\n')
+                followed_by_newline_or_eof = (
+                    next_pos >= len(self.text) or self.text[next_pos] == "\n"
+                )
 
                 # Only treat as CODE_FENCE if followed by newline/EOF
                 if followed_by_newline_or_eof:
@@ -298,23 +308,23 @@ class Tokenizer:
         # Autolinks
         match = self.autolink_pattern.match(remaining)
         if match:
-            self._add_token(TokenType.AUTOLINK_START, '<')
+            self._add_token(TokenType.AUTOLINK_START, "<")
             self._advance(1)
             self._add_token(TokenType.TEXT, match.group(1))
             self._advance(len(match.group(1)))
-            self._add_token(TokenType.AUTOLINK_END, '>')
+            self._add_token(TokenType.AUTOLINK_END, ">")
             self._advance(1)
             return True
 
         # Images (must come before links)
-        if remaining.startswith('!['):
-            self._add_token(TokenType.IMAGE_START, '![')
+        if remaining.startswith("!["):
+            self._add_token(TokenType.IMAGE_START, "![")
             self._advance(2)
             return True
 
         # Links
-        if remaining.startswith('['):
-            self._add_token(TokenType.LINK_START, '[')
+        if remaining.startswith("["):
+            self._add_token(TokenType.LINK_START, "[")
             self._advance(1)
             return True
 
@@ -344,25 +354,29 @@ class Tokenizer:
 
     def _tokenize_text(self) -> None:
         """Tokenize regular text content."""
-        text = self._consume_while(lambda c: (
-            c not in self.special_chars and
-            c not in '\n \t' and
-            not (self.column == 1 and c in '#>-*+') and
-            not (self.pos > 0 and self.text[self.pos-1] == '\n' and c in '#>-*+')
-        ))
+        text = self._consume_while(
+            lambda c: (
+                c not in self.special_chars
+                and c not in "\n \t"
+                and not (self.column == 1 and c in "#>-*+")
+                and not (
+                    self.pos > 0 and self.text[self.pos - 1] == "\n" and c in "#>-*+"
+                )
+            )
+        )
 
         if text:
             self._add_token(TokenType.TEXT, text)
 
     def _current_char(self) -> str:
         """Get the current character or empty string if at end."""
-        return self.text[self.pos] if self.pos < len(self.text) else ''
+        return self.text[self.pos] if self.pos < len(self.text) else ""
 
     def _advance(self, count: int = 1) -> None:
         """Advance position by count characters."""
         for _ in range(count):
             if self.pos < len(self.text):
-                if self.text[self.pos] == '\n':
+                if self.text[self.pos] == "\n":
                     self.line += 1
                     self.column = 1
                 else:
@@ -374,18 +388,20 @@ class Tokenizer:
         start = self.pos
         while self.pos < len(self.text) and predicate(self.text[self.pos]):
             self._advance()
-        return self.text[start:self.pos]
+        return self.text[start : self.pos]
 
     def _add_token(self, token_type: TokenType, content: str) -> None:
         """Add a token to the token list."""
-        token = Token(token_type, content, self.line, self.column - len(content), len(content))
+        token = Token(
+            token_type, content, self.line, self.column - len(content), len(content)
+        )
         self.tokens.append(token)
 
     def _is_after_newline(self) -> bool:
         """Check if we're at the start of a line (after newline)."""
         if self.pos == 0:
             return True
-        return self.text[self.pos - 1] == '\n'
+        return self.text[self.pos - 1] == "\n"
 
     def _is_after_line_start_spaces(self) -> bool:
         """Check if we're after spaces at the start of a line."""
@@ -396,9 +412,9 @@ class Tokenizer:
         temp_pos = self.pos - 1
         while temp_pos >= 0:
             char = self.text[temp_pos]
-            if char == '\n':
+            if char == "\n":
                 return True  # Found newline, so we're after line-start spaces
-            elif char not in ' \t':
+            elif char not in " \t":
                 return False  # Found non-space character, not at line start
             temp_pos -= 1
 

@@ -1,6 +1,7 @@
 """
 LLM Manager for coordinating multiple LLM providers and models, dood!
 """
+
 import logging
 from typing import Dict, List, Any, Optional
 
@@ -53,7 +54,9 @@ class LLMManager:
                         "Unknown provider type {providerType} for provider {provider_name}, dood!"
                     )
 
-                self.providers[provider_name] = providerTypes[providerType](provider_config)
+                self.providers[provider_name] = providerTypes[providerType](
+                    provider_config
+                )
                 logger.info(
                     f"Initialized {provider_name} provider with type {providerType}, dood!"
                 )
@@ -77,7 +80,9 @@ class LLMManager:
                 contextSize = modelConfig.get("context", 32768)
 
                 if providerName not in self.providers:
-                    logger.warning(f"Provider {providerName} not available for model {modelName}, dood!")
+                    logger.warning(
+                        f"Provider {providerName} not available for model {modelName}, dood!"
+                    )
                     continue
 
                 provider = self.providers[providerName]
@@ -91,10 +96,14 @@ class LLMManager:
                 )
 
                 self.modelRegistry[modelName] = providerName
-                logger.info(f"Added model {modelName} to provider {providerName}, dood!")
+                logger.info(
+                    f"Added model {modelName} to provider {providerName}, dood!"
+                )
 
             except Exception as e:
-                logger.error(f"Failed to initialize model {modelConfig.get('name', 'unknown')}: {e}")
+                logger.error(
+                    f"Failed to initialize model {modelConfig.get('name', 'unknown')}: {e}"
+                )
 
     def listModels(self) -> List[str]:
         """List all available models across all providers, dood!
