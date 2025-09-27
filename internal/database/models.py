@@ -30,3 +30,4 @@ class MessageCategory(StrEnum):
     BOT = "bot"
     BOT_COMMAND_REPLY = "bot-command-reply"
     BOT_ERROR = "bot-error"
+    BOT_SUMMARY = "bot-summary"

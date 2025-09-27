@@ -759,7 +759,6 @@ class BotHandlers:
             parentMsg = self.db.getChatMessageByMessageId(
                 chatId=chat.id,
                 messageId=replyId,
-                threadId=message.threadId,
             )
             if parentMsg:
                 rootMessageId = parentMsg["root_message_id"]
@@ -962,7 +961,6 @@ class BotHandlers:
         storedMsg = self.db.getChatMessageByMessageId(
             chatId=chat.id,
             messageId=parentId,
-            threadId=ensuredMessage.threadId,
         )
         if storedMsg is None:
             logger.error("Failed to get parent message")
@@ -974,7 +972,8 @@ class BotHandlers:
             storedMessages.append(await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"))
 
         else:
-            if storedMsg["message_category"] != "bot":
+            if storedMsg["user_id"] != context.bot.id:
+                logger.error(f"Parent message is not from us: {storedMsg}")
                 return False
 
             _storedMessages: List[Dict[str, Any]] = self.db.getChatMessagesByRootId(
@@ -1865,7 +1864,7 @@ class BotHandlers:
                 ensuredMessage,
                 messageText=msg,
                 tryParseInputJSON=False,
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                messageCategory=MessageCategory.BOT_SUMMARY,
             )
             time.sleep(1)
 
