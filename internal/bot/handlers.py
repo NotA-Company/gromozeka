@@ -86,10 +86,28 @@ class BotHandlers:
         self.chatDefaults.update({k: v for k, v in botDefaults.items() if k in ChatSettingsKey})
 
         # Init cache
-        # TODO: Should I use something thread-safe?
+        # TODO: Should I use something thread-safe? or just better
         self.cache: Dict[str, Dict[Any, Any]] = {
             "chats": {},
+            "chatUsers": {},
         }
+        # Cache structure:
+        # cache: Dict[str, Dict[str, Any] = {
+        #     "chats": Dict[int, Any]= {
+        #         "<chatId>": Dict[str, Any] = {
+        #             "settings": Dict[ChatSettingsKey, ChatSettingsValue] = {
+        #                 ...
+        #             },
+        #         },
+        #     },
+        #     "chatUsers": Dict[str, Any] = {
+        #         "<chatId>:<userId>": Dict[str, Any] = {
+        #             "data": Dict[str, str|List["str"]] = {
+        #                 ...
+        #             },
+        #         },
+        #     },
+        #  }
 
         self.asyncTasksQueue = asyncio.Queue()
         self.queueLastUpdated = time.time()
@@ -142,6 +160,55 @@ class BotHandlers:
 
         if "settings" in self.cache["chats"][chatId]:
             self.cache["chats"][chatId].pop("settings", None)
+
+    ###
+    # User Data Management
+    ###
+
+    def getUserData(self, chatId: int, userId: int) -> Dict[str, str | List[str]]:
+        """Get the user data for the given chat."""
+        # TODO: Move to separate function
+        userKey = f"{chatId}:{userId}"
+
+        if userKey not in self.cache["chatUsers"]:
+            self.cache["chatUsers"][userKey] = {}
+        if "data" not in self.cache["chatUsers"][userKey]:
+            userData = {k: json.loads(v) for k, v in self.db.getUserKnowledge(chatId, userId).items()}
+            self.cache["chatUsers"][userKey]["data"] = userData
+
+        return self.cache["chatUsers"][userKey]["data"]
+
+    def setUserData(
+        self, chatId: int, userId: int, key: str, value: str | List[str], append: bool = False
+    ) -> str | List[str]:
+        """Set specific user data for the given chat."""
+        # TODO: Move to separate function
+        userKey = f"{chatId}:{userId}"
+
+        userData = self.getUserData(chatId, userId)
+
+        if key in userData and append:
+            _data = userData[key]
+            if isinstance(value, list):
+                value = [str(v).strip() for v in value]
+            else:
+                value = [str(value).strip()]
+
+            if isinstance(_data, list):
+                userData[key] = _data + value
+            else:
+                userData[key] = [str(_data)] + value
+        else:
+            userData[key] = value
+
+        self.cache["chatUsers"][userKey]["data"][key] = userData[key]
+        self.db.addUserKnowledge(
+            userId=userId, chatId=chatId, key=key, data=json.dumps(userData[key], ensure_ascii=False, default=str)
+        )
+        return userData[key]
+
+    def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
+        ensuredMessage.setUserData(self.getUserData(ensuredMessage.chat.id, ensuredMessage.user.id))
 
     ###
     # Different helpers
@@ -525,7 +592,7 @@ class BotHandlers:
                         f"Prompt:\n```\n{image_prompt}\n```"
                     ),
                 )
-                return json.dumps({"done": False, "errorMessage": mlRet.resultText})
+                return json.dumps({"done": False, "errorMessage": mlRet.resultText}, ensure_ascii=False, default=str)
 
             if mlRet.mediaData is None:
                 logger.error(f"No image generated for {image_prompt}")
@@ -544,10 +611,17 @@ class BotHandlers:
             # TODO: Check if content is text content
             return str(requests.get(url).content)
 
+        async def setUserData(key: str, data: str, append: bool = False, **kwargs) -> str:
+            newData = self.setUserData(
+                chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, key=key, value=data, append=append
+            )
+            return json.dumps({"done": True, "key": key, "data": newData}, ensure_ascii=False, default=str)
+
         tools: Dict[str, LLMAbstractTool] = {}
         functions: Dict[str, Callable] = {
             "get_url_content": getUrlContent,
             "generate_and_send_image": generateAndSendImage,
+            "add_user_data": setUserData,
         }
 
         if useTools:
@@ -585,6 +659,39 @@ class BotHandlers:
                     ),
                 ],
                 function=functions["generate_and_send_image"],
+            )
+            tools["add_user_data"] = LLMToolFunction(
+                name="add_user_data",
+                description=(
+                    "Add some data/knowledge about user, sent last messagr. "
+                    "Use it if you learned something new about user or user asked you to add such knowledge. "
+                    "Will return new data for given key."
+                ),
+                parameters=[
+                    LLMFunctionParameter(
+                        name="key",
+                        description="Key for data (for structured data usage)",
+                        type=LLMParameterType.STRING,
+                        required=True,
+                    ),
+                    LLMFunctionParameter(
+                        name="data",
+                        description="Data/knowledbe you want to remember",
+                        type=LLMParameterType.STRING,
+                        required=True,
+                    ),
+                    LLMFunctionParameter(
+                        name="append",
+                        description=(
+                            "True: Append data to existing data, "
+                            "False: replace existing data for given key. "
+                            "Default: False"
+                        ),
+                        type=LLMParameterType.BOOLEAN,
+                        required=False,
+                    ),
+                ],
+                function=functions["add_user_data"],
             )
 
         ret: Optional[ModelRunResult] = None
@@ -742,10 +849,11 @@ class BotHandlers:
 
     async def handle_chat_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.debug(f"Handling group message: {update}")
+
         message = update.message
         if not message:
             # Not new message, ignore
-            # logger.error("Message undefined")
+            logger.warning(f"Message undefined in {update}")
             return
 
         ensuredMessage: Optional[EnsuredMessage] = None
@@ -754,6 +862,8 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
+
+        self._updateEMessageUserData(ensuredMessage)
 
         user = ensuredMessage.user
         # chat = ensuredMessage.chat
@@ -773,9 +883,7 @@ class BotHandlers:
 
             case _:
                 logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
-                return
-
-        messageText = ensuredMessage.messageText
+                # return
 
         if not self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
             logger.error("Failed to save chat message")
@@ -793,7 +901,7 @@ class BotHandlers:
         else:
             await self.handleRandomMessage(update, context, ensuredMessage)
 
-        logger.info(f"Handled message from {user.id}: {messageText[:50]}...")
+        logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
 
     async def handleReply(
         self,
@@ -856,14 +964,22 @@ class BotHandlers:
                 rootMessageId=storedMsg["root_message_id"],
                 threadId=ensuredMessage.threadId,
             )
-            storedMessages = [
-                await EnsuredMessage.fromDBChatMessage(storedMsg).toModelMessage(
-                    self.db,
-                    format=llmMessageFormat,
-                    role=("user" if storedMsg["message_category"] == "user" else "assistant"),
+            storedMessages = []
+            lastMessageId = len(_storedMessages) - 1
+
+            for i, storedMsg in enumerate(_storedMessages):
+                eMsg = EnsuredMessage.fromDBChatMessage(storedMsg)
+                # TODO: Should I add userData to each message?
+                if i == lastMessageId:
+                    self._updateEMessageUserData(eMsg)
+
+                storedMessages.append(
+                    await eMsg.toModelMessage(
+                        self.db,
+                        format=llmMessageFormat,
+                        role="user" if storedMsg["message_category"] == "user" else "assistant",
+                    )
                 )
-                for storedMsg in _storedMessages
-            ]
 
         reqMessages = [
             ModelMessage(
@@ -1028,6 +1144,7 @@ class BotHandlers:
         # Add Parent message if any
         if ensuredMessage.isReply and message.reply_to_message:
             ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
+            self._updateEMessageUserData(ensuredReply)
             if ensuredReply.messageType == MessageType.TEXT:
                 reqMessages.append(
                     await ensuredReply.toModelMessage(
@@ -1048,8 +1165,10 @@ class BotHandlers:
                         f"MessageId: {ensuredReply.messageId})"
                     )
                 else:
+                    eStoredReply = EnsuredMessage.fromDBChatMessage(storedReply)
+                    self._updateEMessageUserData(eStoredReply)
                     reqMessages.append(
-                        await EnsuredMessage.fromDBChatMessage(storedReply).toModelMessage(
+                        await eStoredReply.toModelMessage(
                             self.db,
                             format=llmMessageFormat,
                             role=("assistant" if ensuredReply.user.id == context.bot.id else "user"),
@@ -1094,9 +1213,15 @@ class BotHandlers:
                 + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
         ]
-        for message in reversed(messages):
+        lastMessageIndex = len(messages) - 1
+        for i, message in enumerate(reversed(messages)):
+            eMessage = EnsuredMessage.fromDBChatMessage(message)
+            # TODO: Should i setUserData for each message?
+            if i == lastMessageIndex:
+                self._updateEMessageUserData(eMessage)
+
             reqMessages.append(
-                await EnsuredMessage.fromDBChatMessage(message).toModelMessage(
+                await eMessage.toModelMessage(
                     self.db,
                     format=llmMessageFormat,
                     role=("user" if message["message_category"] == "user" else "assistant"),
@@ -1134,6 +1259,8 @@ class BotHandlers:
 
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
+        # TODO: Should I put whole discussion?
+        # Or last X messages in chat
         # Handle LLM Action
         reqMessages = [
             ModelMessage(

@@ -93,6 +93,8 @@ class EnsuredMessage:
         self.mediaId: Optional[str] = None
         self._mediaProcessingInfo: Optional[MediaProcessingInfo] = None
 
+        self.userData: Optional[Dict[str, Any]] = None
+
     @classmethod
     def fromMessage(cls, message: Message) -> "EnsuredMessage":
         """Create EnsuredMessage from Telegram message"""
@@ -191,6 +193,9 @@ class EnsuredMessage:
         logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
         return ensuredMessage
 
+    def setUserData(self, userData: Dict[str, Any]):
+        self.userData = userData.copy()
+
     def getBaseMessage(self) -> Message:
         if self._message is None:
             raise ValueError("Message is not set")
@@ -287,7 +292,10 @@ class EnsuredMessage:
                     ret["quote"] = self.quoteText
 
                 if self.mediaContent:
-                    ret["media_description"] = self.mediaContent
+                    ret["mediaDescription"] = self.mediaContent
+
+                if self.userData:
+                    ret["userData"] = self.userData
 
                 # logger.debug(f"EM.formatForLLM():{self} -> {ret}")
                 return json.dumps(ret, ensure_ascii=False)
@@ -319,7 +327,9 @@ class EnsuredMessage:
                 format = LLMMessageFormat.TEXT
         return ModelMessage(
             role=role,
-            content=await self.formatForLLM(db, format, replaceMessageText, stripAtsign),
+            content=await self.formatForLLM(
+                db=db, format=format, replaceMessageText=replaceMessageText, stripAtsign=stripAtsign
+            ),
         )
 
     def __str__(self) -> str:
