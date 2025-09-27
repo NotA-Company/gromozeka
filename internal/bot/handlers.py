@@ -193,6 +193,7 @@ class BotHandlers:
         # TODO: Do it properly
         # Little hack to avoid concurency in processing queue
         self.queueLastUpdated = time.time()
+        # TODO: Process only existing elements to avoid endless processing new ones
 
         try:
             while True:
@@ -236,7 +237,7 @@ class BotHandlers:
                 # First - process background tasks if any
                 # TODO: Convert to delayed task with 1 minute delay
                 await self._processBackgroundTasks()
-                logger.debug("_pDQ(): Processed background tasks...")
+                # logger.debug("_pDQ(): Processed background tasks...")
 
                 # while self.delayedActionsQueue.empty():
                 #    logger.debug(f"_pDQ(): Queue is empty...")
