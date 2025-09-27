@@ -173,7 +173,7 @@ class BotHandlers:
         if userKey not in self.cache["chatUsers"]:
             self.cache["chatUsers"][userKey] = {}
         if "data" not in self.cache["chatUsers"][userKey]:
-            userData = {k: json.loads(v) for k, v in self.db.getUserKnowledge(chatId, userId).items()}
+            userData = {k: json.loads(v) for k, v in self.db.getUserKnowledge(userId=userId, chatId=chatId).items()}
             self.cache["chatUsers"][userKey]["data"] = userData
 
         return self.cache["chatUsers"][userKey]["data"]
