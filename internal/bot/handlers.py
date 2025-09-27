@@ -1613,6 +1613,10 @@ class BotHandlers:
             "`/remind` `<DDdHHhMMmSSs|HH:MM[:SS]>` - напомнить указанный текст через "
             "указанное время (можно использовать цитирование или ответ на сообщение)\n"
             "\n"
+            "`/get_my_data` - Показать запомненную информацию о Вас в текущем чате\n"
+            "`/delete_my_data` `<key>` - Удалить информацию о Вас по указанному ключу\n"
+            "`/clear_my_data` - Очистить все сзнания о Вас в этом чате\n"
+            "\n"
             "`/models` - вывести список доступных моделей и их параметров\n"
             "`/settings` - вывести список настроек чата\n"
             "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата, "
@@ -2442,7 +2446,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def get_my_data_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def get_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /get_my_data command."""
 
         message = update.message
@@ -2469,7 +2473,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def delete_my_data_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def delete_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /delete_my_data <key> command."""
 
         message = update.message
@@ -2511,7 +2515,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def clear_my_data_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def clear_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /clear_my_data command."""
 
         message = update.message
@@ -2539,7 +2543,7 @@ class BotHandlers:
 
         await self._sendMessage(
             ensuredMessage,
-            messageText=f"Готово, память о вас очищена.",
+            messageText=f"Готово, память о Вас очищена.",
             tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
