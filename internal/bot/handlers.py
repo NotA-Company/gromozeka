@@ -795,7 +795,11 @@ class BotHandlers:
         context: ContextTypes.DEFAULT_TYPE,
     ) -> bool:
         """Send a chat message to the LLM model."""
-        logger.debug(f"LLM Request messages: {messagesHistory}")
+        # For logging purposes
+        messageHistoryStr = ""
+        for msg in messagesHistory:
+            messageHistoryStr += f"\t{repr(msg)}\n"
+        logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
         mlRet: Optional[ModelRunResult] = None
@@ -2136,6 +2140,13 @@ class BotHandlers:
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
+            case "dumpCache":
+                await self._sendMessage(
+                    ensuredMessage,
+                    messageText=f"```json\n{json.dumps(self.cache, indent=2, ensure_ascii=False, default=str)}\n```",
+                    tryParseInputJSON=False,
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
             case _:
                 await self._sendMessage(
                     ensuredMessage,
@@ -2431,6 +2442,33 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             messageText=f"Напомню в {delayedDT.strftime('%Y-%m-%d %H:%M:%S%z')}",
+            tryParseInputJSON=False,
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+    async def my_data_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /my_data command."""
+
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self._updateEMessageUserData(ensuredMessage)
+
+        await self._sendMessage(
+            ensuredMessage,
+            messageText=(
+                f"```json\n{json.dumps(ensuredMessage.userData, indent=2, ensure_ascii=False, default=str)}\n```"
+            ),
             tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )

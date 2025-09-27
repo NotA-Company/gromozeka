@@ -182,7 +182,7 @@ class ModelMessage:
         return ret
 
     def __str__(self) -> str:
-        return json.dumps(self.toDict(), ensure_ascii=False)
+        return json.dumps(self.toDict(), ensure_ascii=False, default=str)
 
     def __repr__(self) -> str:
         return f"ModelMessage({str(self)})"
