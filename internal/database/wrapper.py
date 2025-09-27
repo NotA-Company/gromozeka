@@ -172,7 +172,8 @@ class DatabaseWrapper:
             """
             )
 
-            # TODO: Add chats-table (chat_id, chat_name, something else) and think how to not update it on every message (use cache?)
+            # TODO: Add chats-table (chat_id, chat_name, something else) and think
+            # how to not update it on every message (use cache?)
 
             # Chat stats (currently only messages count per date)
             cursor.execute(
