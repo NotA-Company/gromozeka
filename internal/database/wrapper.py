@@ -164,6 +164,7 @@ class DatabaseWrapper:
                     user_id INTEGER NOT NULL,
                     username TEXT NOT NULL,
                     full_name TEXT NOT NULL,
+                    timezone TEXT,
                     messages_count INTEGER DEFAULT 0 NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -226,17 +227,35 @@ class DatabaseWrapper:
             """
             )
 
+            # Table for delayed tasks
+            # TODO: Think about dropping old task, which is_done == True
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS delayed_tasks (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    delayed_ts INTEGER NOT NULL,
-                    function TEXT NOT NULL,
-                    kwargs TEXT NOT NULL,
-                    is_done BOOLEAN NOT NULL DEFAULT FALSE,
+                    id TEXT PRIMARY KEY NOT NULL,           -- Unique task ID (usually uuid)
+                    delayed_ts INTEGER NOT NULL,            -- DelayedTS (in bot's timezone. Or it Timestamp? dunno)
+                    function TEXT NOT NULL,                 -- Function to call (see DelayedTaskFunction)
+                    kwargs TEXT NOT NULL,                   -- Function args (JSON-serialized Dict[str, Any])
+                    is_done BOOLEAN NOT NULL DEFAULT FALSE, -- If task is done
 
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
+
+            # Some knowledge about user, collected during discussion
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_data (
+                    user_id INTEGER NOT NULL,    -- User ID
+                    chat_id INTEGER NOT NULL,    -- Chat ID (We store user's data for each chat individually)
+                    key TEXT NOT NULL,           -- Key
+                    data TEXT NOT NULL,          -- JSON-serialized data (str | List[str])
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, chat_id, key)
                 )
             """
             )
@@ -812,3 +831,49 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get pending delayed tasks: {e}")
             return []
+
+    def addUserKnowledge(self, userId: int, chatId: int, key: str, data: str) -> bool:
+        """Add user knowledge to the database."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO user_data
+                        (user_id, chat_id, key, data)
+                    VALUES
+                        (:userId, :chatId, :key, :data)
+                    ON CONFLICT DO UPDATE SET
+                        data = :data,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    {
+                        "userId": userId,
+                        "chatId": chatId,
+                        "key": key,
+                        "data": data,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add user knowledge: {e}")
+            return False
+
+    def getUserKnowledge(self, userId: int, chatId: int) -> Dict[str, str]:
+        """Get user knowledge from the database."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM user_data
+                    WHERE
+                        user_id = :userId AND chat_id = :chatId
+                """,
+                    {
+                        "userId": userId,
+                        "chatId": chatId,
+                    },
+                )
+                return {row["key"]: row["data"] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.error(f"Failed to get user knowledge: {e}")
+            return {}
