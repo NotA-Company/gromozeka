@@ -1467,6 +1467,8 @@ class BotHandlers:
             "используя указанный промпт\n"
             "`/draw` `[<prompt>]` Сгенерировать изображение, используя указанный промпт. "
             "Так же может быть ответом на сообщение (или цитированием части сообщения)\n"
+            "`/remind` `<DDdHHhMMmSSs|HH:MM[:SS]>` - напомнить указанный текст через "
+            "указанное время (можно использовать цитирование или ответ на сообщение)\n"
             "\n"
             "`/models` - вывести список доступных моделей и их параметров\n"
             "`/settings` - вывести список настроек чата\n"
@@ -2266,6 +2268,9 @@ class BotHandlers:
 
         if reminderText is None and ensuredMessage.quoteText:
             reminderText = ensuredMessage.quoteText
+
+        if reminderText is None and ensuredMessage.replyText:
+            reminderText = ensuredMessage.replyText
 
         if reminderText is None:
             reminderText = "⏰ Напоминание"
