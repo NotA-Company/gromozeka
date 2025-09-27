@@ -190,7 +190,7 @@ class EnsuredMessage:
         ensuredMessage.mediaContent = data["media_description"]
         ensuredMessage.mediaId = data["media_id"]
 
-        logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
+        # logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
         return ensuredMessage
 
     def setUserData(self, userData: Dict[str, Any]):
@@ -298,7 +298,7 @@ class EnsuredMessage:
                     ret["userData"] = self.userData
 
                 # logger.debug(f"EM.formatForLLM():{self} -> {ret}")
-                return json.dumps(ret, ensure_ascii=False)
+                return json.dumps(ret, ensure_ascii=False, default=str)
 
             case LLMMessageFormat.TEXT:
                 ret = messageText
@@ -308,7 +308,10 @@ class EnsuredMessage:
                     ret = f"<quote>{self.quoteText}</quote>\n\n{ret}"
                 return ret
 
-        raise ValueError(f"Invalid format: {format}")
+            case _:
+                raise ValueError(f"Invalid format: {format}")
+
+        raise RuntimeError("Unreacible code has been reached")
 
     async def toModelMessage(
         self,
@@ -350,6 +353,7 @@ class EnsuredMessage:
                 "isTopicMessage": self.isTopicMessage,
                 "mediaId": self.mediaId,
                 "mediaContent": self.mediaContent,
+                "userData": "{...}" if self.userData else None,
             },
             ensure_ascii=False,
             default=str,
