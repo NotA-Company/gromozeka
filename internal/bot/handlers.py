@@ -984,13 +984,11 @@ class BotHandlers:
                 threadId=ensuredMessage.threadId,
             )
             storedMessages = []
-            lastMessageId = len(_storedMessages) - 1
+            # lastMessageId = len(_storedMessages) - 1
 
-            for i, storedMsg in enumerate(_storedMessages):
+            for storedMsg in _storedMessages:
                 eMsg = EnsuredMessage.fromDBChatMessage(storedMsg)
-                # TODO: Should I add userData to each message?
-                if i == lastMessageId:
-                    self._updateEMessageUserData(eMsg)
+                self._updateEMessageUserData(eMsg)
 
                 storedMessages.append(
                     await eMsg.toModelMessage(
@@ -1232,12 +1230,10 @@ class BotHandlers:
                 + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
         ]
-        lastMessageIndex = len(messages) - 1
-        for i, message in enumerate(reversed(messages)):
+
+        for message in reversed(messages):
             eMessage = EnsuredMessage.fromDBChatMessage(message)
-            # TODO: Should i setUserData for each message?
-            if i == lastMessageIndex:
-                self._updateEMessageUserData(eMessage)
+            self._updateEMessageUserData(eMessage)
 
             reqMessages.append(
                 await eMessage.toModelMessage(
