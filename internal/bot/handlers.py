@@ -885,9 +885,6 @@ class BotHandlers:
         self._updateEMessageUserData(ensuredMessage)
 
         user = ensuredMessage.user
-        # chat = ensuredMessage.chat
-
-        media = {}
 
         match ensuredMessage.messageType:
             case MessageType.TEXT:
@@ -949,6 +946,8 @@ class BotHandlers:
 
         if not isReplyToMyMessage:
             return False
+
+        logger.debug("It is reply to our message, processing reply...")
 
         # As it's resporse to our message, we need to wait for media to be processed if any
         await ensuredMessage.updateMediaContent(self.db)
@@ -1071,6 +1070,11 @@ class BotHandlers:
 
         if not mentionedByNick and not mentionedAtBegin and not mentionedMe:
             return False
+
+        logger.debug(
+            f"Mention found, processing... (mentionByNick={mentionedByNick}, "
+            f"mentionAtBegin={mentionedAtBegin}, mentionedMe={mentionedMe})"
+        )
 
         messageTextLower = messageText.lower()
 
@@ -2504,7 +2508,7 @@ class BotHandlers:
         userId = ensuredMessage.user.id
         key = context.args[0]
         self.db.deleteUserData(userId=userId, chatId=chatId, key=key)
-        #It Do exist due to _updateEMessageUserData()
+        # It Do exist due to _updateEMessageUserData()
         # TODO: Maybe move to proper method?
         self.cache["chatUsers"][f"{chatId}:{userId}"].pop("data", None)
 
@@ -2537,16 +2541,17 @@ class BotHandlers:
         userId = ensuredMessage.user.id
 
         self.db.clearUserData(userId=userId, chatId=chatId)
-        #It Do exist due to _updateEMessageUserData()
+        # It Do exist due to _updateEMessageUserData()
         # TODO: Maybe move to proper method?
         self.cache["chatUsers"][f"{chatId}:{userId}"].pop("data", None)
 
         await self._sendMessage(
             ensuredMessage,
-            messageText=f"Готово, память о Вас очищена.",
+            messageText="Готово, память о Вас очищена.",
             tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
+
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
         logger.error(f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}")
