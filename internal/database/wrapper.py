@@ -443,10 +443,10 @@ class DatabaseWrapper:
             return []
 
     def getChatMessageByMessageId(
-        self, chatId: int, messageId: int, threadId: Optional[int] = None
+        self, chatId: int, messageId: int
     ) -> Optional[Dict[str, Any]]:
         """Get a specific chat message by message_id, chat_id, and optional thread_id."""
-        logger.debug(f"Getting chat message for chat {chatId}, thread {threadId}, message_id {messageId}")
+        logger.debug(f"Getting chat message for chat {chatId}, message_id {messageId}")
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -457,16 +457,15 @@ class DatabaseWrapper:
                     WHERE
                         c.chat_id = :chatId
                         AND c.message_id = :messageId
-                        AND ((:threadId IS NULL) OR (c.thread_id = :threadId))
                     LIMIT 1
                 """,
-                    {"chatId": chatId, "messageId": messageId, "threadId": threadId},
+                    {"chatId": chatId, "messageId": messageId},
                 )
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
             logger.error(
-                f"Failed to get chat message for chat {chatId}, thread {threadId}, message_id {messageId}: {e}"
+                f"Failed to get chat message for chat {chatId}, message_id {messageId}: {e}"
             )
             return None
 
