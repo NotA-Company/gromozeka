@@ -173,7 +173,7 @@ class BotHandlers:
         if userKey not in self.cache["chatUsers"]:
             self.cache["chatUsers"][userKey] = {}
         if "data" not in self.cache["chatUsers"][userKey]:
-            userData = {k: json.loads(v) for k, v in self.db.getUserKnowledge(userId=userId, chatId=chatId).items()}
+            userData = {k: json.loads(v) for k, v in self.db.getUserData(userId=userId, chatId=chatId).items()}
             self.cache["chatUsers"][userKey]["data"] = userData
 
         return self.cache["chatUsers"][userKey]["data"]
@@ -202,7 +202,7 @@ class BotHandlers:
             userData[key] = value
 
         self.cache["chatUsers"][userKey]["data"][key] = userData[key]
-        self.db.addUserKnowledge(
+        self.db.addUserData(
             userId=userId, chatId=chatId, key=key, data=json.dumps(userData[key], ensure_ascii=False, default=str)
         )
         return userData[key]
@@ -2442,8 +2442,8 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def my_data_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /my_data command."""
+    async def get_my_data_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /get_my_data command."""
 
         message = update.message
         if not message:
@@ -2469,6 +2469,80 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
+    async def delete_my_data_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /delete_my_data <key> command."""
+
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self._updateEMessageUserData(ensuredMessage)
+
+        if not context.args:
+            await self._sendMessage(
+                ensuredMessage,
+                messageText=("Для команды `/delete_my_data` нужно указать ключ, который нужно удалить."),
+                tryParseInputJSON=False,
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        chatId = ensuredMessage.chat.id
+        userId = ensuredMessage.user.id
+        key = context.args[0]
+        self.db.deleteUserData(userId=userId, chatId=chatId, key=key)
+        #It Do exist due to _updateEMessageUserData()
+        # TODO: Maybe move to proper method?
+        self.cache["chatUsers"][f"{chatId}:{userId}"].pop("data", None)
+
+        await self._sendMessage(
+            ensuredMessage,
+            messageText=f"Готово, ключ {key} успешно удален.",
+            tryParseInputJSON=False,
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+    async def clear_my_data_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /clear_my_data command."""
+
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self._updateEMessageUserData(ensuredMessage)
+
+        chatId = ensuredMessage.chat.id
+        userId = ensuredMessage.user.id
+
+        self.db.clearUserData(userId=userId, chatId=chatId)
+        #It Do exist due to _updateEMessageUserData()
+        # TODO: Maybe move to proper method?
+        self.cache["chatUsers"][f"{chatId}:{userId}"].pop("data", None)
+
+        await self._sendMessage(
+            ensuredMessage,
+            messageText=f"Готово, память о вас очищена.",
+            tryParseInputJSON=False,
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
         logger.error(f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}")
