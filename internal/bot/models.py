@@ -69,7 +69,10 @@ class DelayedTask:
         return not self.__eq__(other)
 
     def __repr__(self) -> str:
-        return f"DelayedTask(taskId={self.taskId}, delayedUntil={self.delayedUntil}, function={self.function}, kwargs={self.kwargs})"
+        return (
+            f"DelayedTask(taskId={self.taskId}, delayedUntil={self.delayedUntil}, "
+            "function={self.function}, kwargs={self.kwargs})"
+        )
 
     def __str__(self) -> str:
         return self.__repr__()
