@@ -663,8 +663,23 @@ class BotHandlers:
             tools["add_user_data"] = LLMToolFunction(
                 name="add_user_data",
                 description=(
-                    "Add some data/knowledge about user, sent last messagr. "
-                    "Use it if you learned something new about user or user asked you to add such knowledge. "
+                    "Add some data/knowledge about user, sent last message. "
+                    "Use it in following cases:\n"
+                    "1. User asked to learn/remember something about him/her.\n"
+                    "2. You learned new information about user "
+                    "(e.g., real name, birth dare, what he like, etc).\n"
+                    "3. You want to remember something relating to user.\n"
+                    "4. There is some new information, you didn't know before.\n"
+                    "5. When you needs to store information related to the user "
+                    "to improve interaction quality (e.g., remembering formatting preferences, "
+                    "command usage frequency, communication style).\n"
+                    "6. When you receives confirmation of information from the user "
+                    "(e.g., the user confirms their email address, phone number, or other contact details)."
+                    "7. When you analyzes user behavior and makes conclusions that could be helpful for "
+                    "personalization (e.g., determining user's active hours, preferred discussion topics)."
+                    "8. When user provides information that could be used to improve the service "
+                    "(e.g., feedback, suggestions, feature improvement ideas)."
+                    "\n"
                     "Will return new data for given key."
                 ),
                 parameters=[
