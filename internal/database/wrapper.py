@@ -832,7 +832,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to get pending delayed tasks: {e}")
             return []
 
-    def addUserKnowledge(self, userId: int, chatId: int, key: str, data: str) -> bool:
+    def addUserData(self, userId: int, chatId: int, key: str, data: str) -> bool:
         """Add user knowledge to the database."""
         try:
             with self.getCursor() as cursor:
@@ -858,7 +858,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to add user knowledge: {e}")
             return False
 
-    def getUserKnowledge(self, userId: int, chatId: int) -> Dict[str, str]:
+    def getUserData(self, userId: int, chatId: int) -> Dict[str, str]:
         """Get user knowledge from the database."""
         try:
             with self.getCursor() as cursor:
@@ -877,3 +877,45 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get user knowledge: {e}")
             return {}
+
+    def deleteUserData(self, userId: int, chatId: int, key: str) -> bool:
+        """Delete specific user data"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM user_data
+                    WHERE chat_id = :chatId AND
+                        user_id = :userId AND
+                        key = :key
+                    """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                        "key": key,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete user {chatId}:{userId} data {key}: {e}")
+            return False
+
+    def clearUserData(self, userId: int, chatId: int) -> bool:
+        """Clear all user data in chat"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM user_data
+                    WHERE chat_id = :chatId AND
+                        user_id = :userId
+                    """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to clear user {chatId}:{userId} data: {e}")
+            return False

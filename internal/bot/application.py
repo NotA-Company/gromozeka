@@ -96,7 +96,9 @@ class BotApplication:
         self.application.add_handler(CommandHandler("draw", self.handlers.draw_command))
         self.application.add_handler(CommandHandler("remind", self.handlers.remind_command))
 
-        self.application.add_handler(CommandHandler("my_data", self.handlers.my_data_command_handler))
+        self.application.add_handler(CommandHandler("get_my_data", self.handlers.get_my_data_command_handler))
+        self.application.add_handler(CommandHandler("delete_my_data", self.handlers.delete_my_data_command_handler))
+        self.application.add_handler(CommandHandler("clear_my_data", self.handlers.clear_my_data_command_handler))
 
         self.application.add_handler(CommandHandler("models", self.handlers.models_command))
         self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
