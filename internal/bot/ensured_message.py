@@ -168,7 +168,11 @@ class EnsuredMessage:
             ),
             chat=Chat(
                 id=data["chat_id"],
-                type=telegram.constants.ChatType.SUPERGROUP,
+                type=(
+                    telegram.constants.ChatType.PRIVATE
+                    if data["user_id"] == data["chat_id"]
+                    else telegram.constants.ChatType.SUPERGROUP
+                ),
             ),
             messageId=data["message_id"],
             date=data["date"],

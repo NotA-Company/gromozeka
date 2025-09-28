@@ -1263,9 +1263,12 @@ class BotHandlers:
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
+            # logger.debug(f"answerProbability is {answerProbability} ({chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toStr()})")
             return False
+
         answerToAdmin = chatSettings[ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN].toBool()
-        if answerToAdmin and await self._isAdmin(ensuredMessage.user, ensuredMessage.chat, False):
+        if (not answerToAdmin) and await self._isAdmin(ensuredMessage.user, ensuredMessage.chat, False):
+            # logger.debug(f"answerToAdmin is {answerToAdmin}, skipping")
             return False
 
         randomFloat = random.random()
@@ -1277,9 +1280,56 @@ class BotHandlers:
 
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
-        # TODO: Should I put whole discussion?
-        # Or last X messages in chat
         # Handle LLM Action
+        parentId = ensuredMessage.replyId
+        chat = ensuredMessage.chat
+
+        storedMessages: List[ModelMessage] = []
+        _storedMessages: List[Dict[str, Any]] = []
+
+        # TODO: Add method for getting whole discussion
+        if parentId is not None:
+            storedMsg = self.db.getChatMessageByMessageId(
+                chatId=chat.id,
+                messageId=parentId,
+            )
+            if storedMsg is None:
+                logger.error(f"Failed to get parent message by id#{parentId}")
+                return False
+
+            _storedMessages: List[Dict[str, Any]] = self.db.getChatMessagesByRootId(
+                chatId=chat.id,
+                rootMessageId=storedMsg["root_message_id"],
+                threadId=ensuredMessage.threadId,
+            )
+
+        else:  # replyId is None, getting last X messages for context
+            _storedMessages = list(
+                reversed(
+                    self.db.getChatMessagesSince(
+                        chatId=ensuredMessage.chat.id,
+                        threadId=ensuredMessage.threadId,
+                        limit=PRIVATE_CHAT_CONTEXT_LENGTH,
+                    )
+                )
+            )
+
+        for storedMsg in _storedMessages:
+            eMsg = EnsuredMessage.fromDBChatMessage(storedMsg)
+            self._updateEMessageUserData(eMsg)
+
+            storedMessages.append(
+                await eMsg.toModelMessage(
+                    self.db,
+                    format=llmMessageFormat,
+                    role="user" if storedMsg["message_category"] == "user" else "assistant",
+                )
+            )
+
+        if not storedMessages:
+            logger.error("Somehow storedMessages are empty, fallback to single message")
+            storedMessages.append(await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"))
+
         reqMessages = [
             ModelMessage(
                 role="system",
@@ -1287,8 +1337,7 @@ class BotHandlers:
                 + "\n"
                 + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
-            await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
-        ]
+        ] + storedMessages
 
         if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
             logger.error("Failed to send LLM reply")
