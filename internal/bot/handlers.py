@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 
 import random
 import time
@@ -346,7 +347,6 @@ class BotHandlers:
                             replyToMessage=ensuredMessage,
                             messageText=kwargs["messageText"],
                             messageCategory=kwargs["messageCategory"],
-                            tryParseInputJSON=False,
                         )
                         pass
                     case _:
@@ -398,7 +398,7 @@ class BotHandlers:
         photoCaption: Optional[str] = None,
         sendMessageKWargs: Optional[Dict[str, Any]] = None,
         tryMarkdownV2: bool = True,
-        tryParseInputJSON: bool = True,
+        tryParseInputJSON: bool = False,
         sendErrorIfAny: bool = True,
         skipLogs: bool = False,
         mediaPrompt: Optional[str] = None,
@@ -465,11 +465,8 @@ class BotHandlers:
                         else:
                             logger.warning(f"No text field found in json reply, fallback to text: {jsonReply}")
                             raise ValueError("No text field found in json reply")
-                    except Exception:
-                        pass
-                        # logger.debug(
-                        #    f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}"
-                        # )
+                    except Exception as e:
+                        logger.debug(f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}")
 
                 replyKwargs = sendMessageKWargs.copy()
                 replyKwargs.update(
@@ -801,6 +798,7 @@ class BotHandlers:
         logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
         mlRet: Optional[ModelRunResult] = None
 
         try:
@@ -829,10 +827,44 @@ class BotHandlers:
         if mlRet.isToolsUsed:
             addPrefix += chatSettings[ChatSettingsKey.TOOLS_USED_PREFIX].toStr()
 
+        lmRetText = mlRet.resultText.strip()
+        imagePrompt: Optional[str] = None
+        # Check if <media-description> is in the message
+        if llmMessageFormat != LLMMessageFormat.JSON:
+            if lmRetText.startswith("<media-description>"):
+                # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText
+                match = re.search(r'^<media-description>(.*?)</media-description>(.*?)', lmRetText, re.DOTALL)
+                if match:
+                    imagePrompt = match.group(1).strip()
+                    lmRetText = match.group(2).strip()
+                    logger.debug(f"Found <media-description> in answer, generating image ('{imagePrompt}' + '{lmRetText}')")
+        
+        # TODO: Treat JSON format as well
+
+        # TODO: Add separate method for generating+sending photo
+        if imagePrompt is not None:
+            imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
+
+            imgMLRet = await imageGenerationModel.generateImage([ModelMessage(content=imagePrompt)])
+            logger.debug(
+                f"Generated image Data: {imgMLRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+            )
+            if imgMLRet.status == ModelResultStatus.FINAL and imgMLRet.mediaData is not None:
+                return await self._sendMessage(
+                ensuredMessage,
+                photoData=imgMLRet.mediaData,
+                photoCaption=lmRetText,
+                mediaPrompt=imagePrompt,
+            )
+
+            # Something went wrong, log and fallback to ordinary message
+            logger.error(f"Failed generating Image by prompt '{imagePrompt}': {imgMLRet}")
+
         return await self._sendMessage(
             ensuredMessage,
-            messageText=mlRet.resultText,
+            messageText=lmRetText,
             addMessagePrefix=addPrefix,
+            tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON
         )
 
     ###
@@ -1103,7 +1135,6 @@ class BotHandlers:
             return await self._sendMessage(
                 ensuredMessage,
                 messageText=f"{user['username']} сегодня {userTitle}",
-                tryParseInputJSON=False,
             )
 
         # End of Who Today
@@ -1146,7 +1177,6 @@ class BotHandlers:
                 return await self._sendMessage(
                     ensuredMessage,
                     messageText=response,
-                    tryParseInputJSON=False,
                 )
 
         # End of What There
@@ -1690,7 +1720,6 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             messageText=help_text,
-            tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
@@ -1708,14 +1737,12 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"🔄 Echo: {echo_text}",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
         else:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="Please provide a message to echo!\nUsage: /echo <your message>",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
 
@@ -1912,7 +1939,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText=msg,
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_SUMMARY,
             )
             time.sleep(1)
@@ -1960,7 +1986,6 @@ class BotHandlers:
                 await self._sendMessage(
                     ensuredMessage,
                     messageText=replyText,
-                    tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
                 replyText = ""
@@ -1970,7 +1995,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText=replyText,
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
@@ -2007,7 +2031,6 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             messageText=resp,
-            tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
@@ -2049,7 +2072,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="You are not allowed to change chat settings.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2058,7 +2080,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="You need to specify a key and a value to change chat setting.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2066,7 +2087,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="You need to specify a key to clear chat setting.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2082,7 +2102,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{key}` = `{value}`",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
         else:
@@ -2090,7 +2109,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{key}` сброшено в значение по умолчанию",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
@@ -2119,7 +2137,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="You need to specify test suite.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2128,7 +2145,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="You need to have a username to run tests.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2139,7 +2155,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="You are not allowed to run tests.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2157,7 +2172,6 @@ class BotHandlers:
                         await self._sendMessage(
                             ensuredMessage,
                             messageText=f"Invalid iterations count. {e}",
-                            tryParseInputJSON=False,
                             messageCategory=MessageCategory.BOT_ERROR,
                         )
                         pass
@@ -2168,7 +2182,6 @@ class BotHandlers:
                         await self._sendMessage(
                             ensuredMessage,
                             messageText=f"Invalid delay. {e}",
-                            tryParseInputJSON=False,
                             messageCategory=MessageCategory.BOT_ERROR,
                         )
                         pass
@@ -2178,8 +2191,7 @@ class BotHandlers:
                     await self._sendMessage(
                         ensuredMessage,
                         messageText=f"Iteration {i}",
-                        tryParseInputJSON=False,
-                        skipLogs=True,
+                        skipLogs=True,  # Do not spam logs
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     )
                     await asyncio.sleep(delay)
@@ -2188,7 +2200,6 @@ class BotHandlers:
                 await self._sendMessage(
                     ensuredMessage,
                     messageText=f"```\n{self.delayedActionsQueue}\n\n{self.delayedActionsQueue.qsize()}\n```",
-                    tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
@@ -2196,14 +2207,12 @@ class BotHandlers:
                 await self._sendMessage(
                     ensuredMessage,
                     messageText=f"```json\n{json.dumps(self.cache, indent=2, ensure_ascii=False, default=str)}\n```",
-                    tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
             case _:
                 await self._sendMessage(
                     ensuredMessage,
                     messageText=f"Unknown test suite: {suite}.",
-                    tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
                 )
 
@@ -2235,7 +2244,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение с медиа.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2257,7 +2265,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="Необходимо указать запрос для анализа медиа.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2282,7 +2289,6 @@ class BotHandlers:
                 await self._sendMessage(
                     ensuredMessage,
                     messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
-                    tryParseInputJSON=False,
                     messageCategory=MessageCategory.BOT_ERROR,
                 )
                 return
@@ -2295,7 +2301,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText="Не удалось получить данные медиа.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2306,7 +2311,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2329,7 +2333,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2337,7 +2340,6 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             messageText=llmRet.resultText,
-            tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
@@ -2392,7 +2394,6 @@ class BotHandlers:
                     "Или послать команду ответом на сообщение с текстом "
                     "(можно цитировать при необходимости)."
                 ),
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2460,7 +2461,6 @@ class BotHandlers:
                     "1. `DDdHHhMMmSSs`\n"
                     "2. `HH:MM[:SS]`\n"
                 ),
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             logger.error(f"Error while handling /remind command: {type(e).__name__}{e}")
@@ -2494,7 +2494,6 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             messageText=f"Напомню в {delayedDT.strftime('%Y-%m-%d %H:%M:%S%z')}",
-            tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
@@ -2521,7 +2520,6 @@ class BotHandlers:
             messageText=(
                 f"```json\n{json.dumps(ensuredMessage.userData, indent=2, ensure_ascii=False, default=str)}\n```"
             ),
-            tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
@@ -2547,7 +2545,6 @@ class BotHandlers:
             await self._sendMessage(
                 ensuredMessage,
                 messageText=("Для команды `/delete_my_data` нужно указать ключ, который нужно удалить."),
-                tryParseInputJSON=False,
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
@@ -2563,7 +2560,6 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             messageText=f"Готово, ключ {key} успешно удален.",
-            tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
@@ -2596,7 +2592,6 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             messageText="Готово, память о Вас очищена.",
-            tryParseInputJSON=False,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
