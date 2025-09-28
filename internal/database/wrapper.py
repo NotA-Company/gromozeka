@@ -442,9 +442,7 @@ class DatabaseWrapper:
             )
             return []
 
-    def getChatMessageByMessageId(
-        self, chatId: int, messageId: int
-    ) -> Optional[Dict[str, Any]]:
+    def getChatMessageByMessageId(self, chatId: int, messageId: int) -> Optional[Dict[str, Any]]:
         """Get a specific chat message by message_id, chat_id, and optional thread_id."""
         logger.debug(f"Getting chat message for chat {chatId}, message_id {messageId}")
         try:
@@ -464,9 +462,7 @@ class DatabaseWrapper:
                 row = cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            logger.error(
-                f"Failed to get chat message for chat {chatId}, message_id {messageId}: {e}"
-            )
+            logger.error(f"Failed to get chat message for chat {chatId}, message_id {messageId}: {e}")
             return None
 
     def getChatMessagesByRootId(
