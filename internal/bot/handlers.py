@@ -1746,6 +1746,7 @@ class BotHandlers:
             return
 
         ensuredMessage = EnsuredMessage.fromMessage(update.message)
+        isBotOwner = await self._isAdmin(ensuredMessage.user, allowBotOwners=True)
 
         help_text = (
             "🤖 **Gromozeka Bot Help**\n\n"
@@ -1754,8 +1755,6 @@ class BotHandlers:
             "`/help` - Показать список доступных команд\n"
             "`/echo` `<message>` - Просто ответить переданным "
             "(для тестирования живости бота)\n"
-            "`/test` `<test_name> [<test_args>]` - Запустить тест "
-            "(доступно только владельцам бота, используется для тестирования)\n"
             "\n"
             "`/summary` `[<messages_count>=0] [<chunks_count>=0]` - "
             "Суммаризировать сообщения в чате за сегодня "
@@ -1775,12 +1774,6 @@ class BotHandlers:
             "`/delete_my_data` `<key>` - Удалить информацию о Вас по указанному ключу\n"
             "`/clear_my_data` - Очистить все сзнания о Вас в этом чате\n"
             "\n"
-            "`/models` - вывести список доступных моделей и их параметров\n"
-            "`/settings` - вывести список настроек чата\n"
-            "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата, "
-            "доступно только владельцам бота и админимтраторам чата "
-            "(если это разрешено настройками)\n"
-            "\n"
             "**Так же этот бот может:**\n"
             "* Анализировать картинки и стикеры и отвечать на вопросы по ним\n"
             "* Логировать все сообщения и вести некоторую статистику\n"
@@ -1790,6 +1783,19 @@ class BotHandlers:
             '* Специально отвечать на запросы "`Кто сегодня ...`" и "`Что там?`" '
             "(должно быть ответом на сообщение с медиа)\n"
             "* Что-нибудь еше: Мы открыты к фич-реквестам\n"
+        )
+
+        if isBotOwner:
+            help_text +=(
+            "\n\n"
+            "**Команды, доступные только владельцам бота:**\n"
+            "`/test` `<test_name> [<test_args>]` - Запустить тест "
+            "(используется для тестирования)\n"
+            "`/models` - вывести список доступных моделей и их параметров\n"
+            "`/settings` - вывести список настроек чата\n"
+            "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата, "
+            "доступно только владельцам бота и админимтраторам чата "
+            "(если это разрешено настройками)\n"
         )
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
@@ -2034,6 +2040,11 @@ class BotHandlers:
             logger.error(f"Error while ensuring message: {e}")
             return
 
+        if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
+            logger.warning(f"OWNER ONLY command `/models` by not owner {ensuredMessage.user}")
+            await self.handle_message(update=update, context=context)
+            return
+        
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         replyText = "**Доступные модели:**\n\n"
@@ -2090,6 +2101,11 @@ class BotHandlers:
             logger.error(f"Error while ensuring message: {e}")
             return
 
+        if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
+            logger.warning(f"OWNER ONLY command `/settings` by not owner {ensuredMessage.user}")
+            await self.handle_message(update=update, context=context)
+            return
+        
         self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
 
         # user = ensuredMessage.user
@@ -2111,7 +2127,7 @@ class BotHandlers:
         )
 
     async def set_or_unset_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /set <key> <value> command."""
+        """Handle /[un]set <key> <value> command."""
         logger.debug(f"Got set or unset command: {update}")
 
         message = update.message
@@ -2125,6 +2141,11 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
+        
+        if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
+            logger.warning(f"OWNER ONLY command `/[un]set` by not owner {ensuredMessage.user}")
+            await self.handle_message(update=update, context=context)
+            return
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
@@ -2137,20 +2158,19 @@ class BotHandlers:
         logger.debug(f"Command string: {commandStr}")
         isSet = commandStr.startswith("/set")
 
-        user = ensuredMessage.user
         chat = ensuredMessage.chat
 
-        chatSettings = self.getChatSettings(chat.id)
-        adminAllowedChangeSettings = chatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
-
-        isAdmin = await self._isAdmin(user, chat if adminAllowedChangeSettings else None, True)
-        if not isAdmin:
-            await self._sendMessage(
-                ensuredMessage,
-                messageText="You are not allowed to change chat settings.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
+        # user = ensuredMessage.user
+        # chatSettings = self.getChatSettings(chat.id)
+        # adminAllowedChangeSettings = chatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
+        # isAdmin = await self._isAdmin(user, chat if adminAllowedChangeSettings else None, True)
+        # if not isAdmin:
+        #     await self._sendMessage(
+        #         ensuredMessage,
+        #         messageText="You are not allowed to change chat settings.",
+        #         messageCategory=MessageCategory.BOT_ERROR,
+        #     )
+        #     return
 
         if isSet and (not context.args or len(context.args) < 2):
             await self._sendMessage(
@@ -2203,11 +2223,13 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
+        
+        if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
+            logger.warning(f"OWNER ONLY command `/test` by not owner {ensuredMessage.user}")
+            await self.handle_message(update=update, context=context)
+            return
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
-        user = ensuredMessage.user
-        # chat = ensuredMessage.chat
 
         if not context.args or len(context.args) < 1:
             await self._sendMessage(
@@ -2217,23 +2239,24 @@ class BotHandlers:
             )
             return
 
-        if not user.username:
-            await self._sendMessage(
-                ensuredMessage,
-                messageText="You need to have a username to run tests.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
+        # user = ensuredMessage.user
+        # if not user.username:
+        #     await self._sendMessage(
+        #         ensuredMessage,
+        #         messageText="You need to have a username to run tests.",
+        #         messageCategory=MessageCategory.BOT_ERROR,
+        #     )
+        #     return
 
-        allowedUsers = self.botOwners[:]
+        # allowedUsers = self.botOwners[:]
 
-        if user.username.lower() not in allowedUsers:
-            await self._sendMessage(
-                ensuredMessage,
-                messageText="You are not allowed to run tests.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
+        # if user.username.lower() not in allowedUsers:
+        #     await self._sendMessage(
+        #         ensuredMessage,
+        #         messageText="You are not allowed to run tests.",
+        #         messageCategory=MessageCategory.BOT_ERROR,
+        #     )
+        #     return
 
         suite = context.args[0]
 
