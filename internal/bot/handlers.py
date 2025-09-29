@@ -833,12 +833,14 @@ class BotHandlers:
         if llmMessageFormat != LLMMessageFormat.JSON:
             if lmRetText.startswith("<media-description>"):
                 # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText
-                match = re.search(r'^<media-description>(.*?)</media-description>(.*?)', lmRetText, re.DOTALL)
+                match = re.search(r"^<media-description>(.*?)</media-description>(.*?)", lmRetText, re.DOTALL)
                 if match:
                     imagePrompt = match.group(1).strip()
                     lmRetText = match.group(2).strip()
-                    logger.debug(f"Found <media-description> in answer, generating image ('{imagePrompt}' + '{lmRetText}')")
-        
+                    logger.debug(
+                        f"Found <media-description> in answer, generating image ('{imagePrompt}' + '{lmRetText}')"
+                    )
+
         # TODO: Treat JSON format as well
 
         # TODO: Add separate method for generating+sending photo
@@ -851,11 +853,11 @@ class BotHandlers:
             )
             if imgMLRet.status == ModelResultStatus.FINAL and imgMLRet.mediaData is not None:
                 return await self._sendMessage(
-                ensuredMessage,
-                photoData=imgMLRet.mediaData,
-                photoCaption=lmRetText,
-                mediaPrompt=imagePrompt,
-            )
+                    ensuredMessage,
+                    photoData=imgMLRet.mediaData,
+                    photoCaption=lmRetText,
+                    mediaPrompt=imagePrompt,
+                )
 
             # Something went wrong, log and fallback to ordinary message
             logger.error(f"Failed generating Image by prompt '{imagePrompt}': {imgMLRet}")
@@ -864,7 +866,7 @@ class BotHandlers:
             ensuredMessage,
             messageText=lmRetText,
             addMessagePrefix=addPrefix,
-            tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON
+            tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON,
         )
 
     ###
@@ -1160,6 +1162,7 @@ class BotHandlers:
             response = DUNNO_EMOJI
             if ensuredReply.messageType != MessageType.TEXT:
                 # Not text message, try to get it content from DB
+
                 storedReply = self.db.getChatMessageByMessageId(
                     chatId=ensuredReply.chat.id,
                     messageId=ensuredReply.messageId,
@@ -1170,7 +1173,9 @@ class BotHandlers:
                         f"MessageId: {ensuredReply.messageId})"
                     )
                 else:
-                    response = storedReply.get("media_description", None)
+                    eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply)
+                    await eStoredMsg.updateMediaContent(self.db)
+                    response = eStoredMsg.mediaContent
                     if response is None or response == "":
                         response = DUNNO_EMOJI
 
@@ -1293,7 +1298,10 @@ class BotHandlers:
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
-            # logger.debug(f"answerProbability is {answerProbability} ({chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toStr()})")
+            # logger.debug(
+            #    f"answerProbability is {answerProbability} "
+            #    f"({chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toStr()})"
+            # )
             return False
 
         answerToAdmin = chatSettings[ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN].toBool()

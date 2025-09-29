@@ -24,7 +24,7 @@ from internal.database.wrapper import DatabaseWrapper
 logger = logging.getLogger(__name__)
 
 MAX_MEDIA_AWAIT_SECS = 300  # 5 minutes
-MEDIA_AWAIT_DELAY = 10
+MEDIA_AWAIT_DELAY = 2.5
 
 """
 A class to encapsulate and ensure the presence of essential message attributes from a Telegram message.
@@ -225,12 +225,12 @@ class EnsuredMessage:
         if self.mediaId is None:
             return
 
-        mediaAttachment = await self.__class__.awaitMedia(db, self.mediaId)
+        mediaAttachment = await self.__class__._awaitMedia(db, self.mediaId)
         if mediaAttachment.get("description", None) is not None:
             self.mediaContent = mediaAttachment["description"]
 
     @classmethod
-    async def awaitMedia(cls, db: DatabaseWrapper, mediaId: str) -> Dict[str, Any]:
+    async def _awaitMedia(cls, db: DatabaseWrapper, mediaId: str) -> Dict[str, Any]:
         """
         Await the media content of the message from DB.
         """
@@ -241,6 +241,11 @@ class EnsuredMessage:
             if mediaAttachment is None:
                 logger.error(f"Media#{mediaId} not found")
                 return {}
+
+            logger.debug(
+                f"Media#{mediaId} awaiting for proper status (current: "
+                f"{mediaAttachment['status']}) ({time.time() - startTime} secs passed)"
+            )
 
             match MediaStatus(str(mediaAttachment["status"])):
                 case MediaStatus.PENDING:
