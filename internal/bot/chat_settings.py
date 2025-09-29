@@ -4,12 +4,21 @@ Telegram bot chat settings.
 
 from enum import StrEnum
 import logging
-from typing import Any, List
+from typing import Any, Dict, List, TypedDict
 
 from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager
 
 logger = logging.getLogger(__name__)
+
+
+class ChatSettingsType(StrEnum):
+    """Enum for chat settings."""
+
+    STRING = "string"
+    INT = "int"
+    FLOAT = "float"
+    BOOL = "bool"
 
 
 class ChatSettingsKey(StrEnum):
@@ -87,3 +96,92 @@ class ChatSettingsValue:
             logger.error(f"Model {self.value} not found")
             raise ValueError(f"Model {self.value} not found")
         return ret
+
+
+class ChatSettingsInfoValue(TypedDict):
+    type: ChatSettingsType
+    short: str
+    long: str
+
+
+_chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
+    ChatSettingsKey.CHAT_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный промпт для чата",
+        "long": 'Влияет на "личность" бота.',
+    },
+    ChatSettingsKey.BOT_NICKNAMES: {
+        "type": ChatSettingsType.STRING,
+        "short": "Список никнеймов бота",
+        "long": "Бот будет отзываться на эти имена, если оно стоит первым в сообщении опльзователя",
+    },
+    ChatSettingsKey.USE_TOOLS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Использовать ли инструменты",
+        "long": (
+            "Можно ли использовать боту различные инструменты?\n"
+            "В данный момент доступны: \n"
+            "1. Получение содержимого веб-страницы\n"
+            "2. Генерация изображений\n"
+            "3. Запоминение информации о пользователе"
+        ),
+    },
+    ChatSettingsKey.SAVE_IMAGES: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Сохранять изображения (Unimplemented)",
+        "long": "Не реализовано в данный момент",
+    },
+    ChatSettingsKey.PARSE_IMAGES: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Обрабатывать изображения",
+        "long": "Должен ли бот анализировать изображения используя LLM для дальнейшего использования в разговоре",
+    },
+    ChatSettingsKey.ALLOW_DRAW: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Разрешить рисовать",
+        "long": "Разрешить команду `/draw` для генерации изображений",
+    },
+    ChatSettingsKey.ALLOW_ANALYZE: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Разрешить анализировать",
+        "long": "Разрешить команду `/analyze` для анализа изображений указанным запросом",
+    },
+    ChatSettingsKey.ALLOW_SUMMARY: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Разрешить сводку",
+        "long": "Разрешить команду `/summary`/`/topic_summary` для суммаризации сообщений за сегодня",
+    },
+    ChatSettingsKey.ALLOW_MENTION: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Реагировать на упоминания",
+        "long": "Должен ли бот реагировать на его упоминания в чате",
+    },
+    ChatSettingsKey.ALLOW_REPLY: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Реагировать на ответы",
+        "long": "Должен ли бот реагировать на ответы на его сообщения",
+    },
+    ChatSettingsKey.RANDOM_ANSWER_PROBABILITY: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "Вероятность случайного ответа",
+        "long": "(0-1) Вероятность, что бот решит ответить на произвольное сообщение в чате",
+    },
+    ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Случайный ответ на сообщений админов",
+        "long": "Отвечать ли при этом на сообщения администраторов чата",
+    },
+    ChatSettingsKey.TOOLS_USED_PREFIX: {
+        "type": ChatSettingsType.STRING,
+        "short": "Префикс для инструментов",
+        "long": "Префикс у сообщения, если были использованы какие-либо инструменты",
+    },
+    ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: {
+        "type": ChatSettingsType.STRING,
+        "short": "Префикс для ошибок",
+        "long": "Префикс у сообщения если по каким либо причинам была использована запасная модель генерации текста",
+    },
+}
+
+def getChatSettingsInfo() -> Dict[ChatSettingsKey, ChatSettingsInfoValue]:
+    return _chatSettingsInfo.copy()
