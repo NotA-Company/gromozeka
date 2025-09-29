@@ -14,6 +14,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
     BaseUpdateProcessor,
+    CallbackQueryHandler,
 )
 
 from lib.ai.manager import LLMManager
@@ -103,6 +104,8 @@ class BotApplication:
         self.application.add_handler(CommandHandler("models", self.handlers.models_command))
         self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
         self.application.add_handler(CommandHandler(["set", "unset"], self.handlers.set_or_unset_chat_setting_command))
+        self.application.add_handler(CommandHandler("configure", self.handlers.configure_command))
+        self.application.add_handler(CallbackQueryHandler(self.handlers.handle_button))
 
         # Message handler for regular text messages
         # See

@@ -16,10 +16,11 @@ import uuid
 import requests
 import magic
 
-from telegram import Chat, Update, Message, User
+from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update, Message, User
 from telegram.constants import MessageEntityType
 from telegram.ext import ExtBot, ContextTypes
 from telegram._files._basemedium import _BaseMedium
+from telegram._utils.types import ReplyMarkup
 
 from lib.ai.abstract import AbstractModel, LLMAbstractTool
 from lib.ai.models import (
@@ -47,6 +48,7 @@ from .models import (
     MediaProcessingInfo,
 )
 from .chat_settings import ChatSettingsKey, ChatSettingsValue
+from internal.bot import chat_settings
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,8 @@ MAX_QUEUE_LENGTH = 10
 MAX_QUEUE_AGE = 30 * 60  # 30 minutes
 PROCESSING_TIMEOUT = 30 * 60  # 30 minutes
 PRIVATE_CHAT_CONTEXT_LENGTH = 50
+CHAT_ICON = "👥"
+PRIVATE_ICON = "👤"
 
 
 def makeEmptyAsyncTask() -> asyncio.Task:
@@ -91,21 +95,24 @@ class BotHandlers:
         self.cache: Dict[str, Dict[Any, Any]] = {
             "chats": {},
             "chatUsers": {},
+            "users": {},
         }
         # Cache structure:
         # cache: Dict[str, Dict[str, Any] = {
         #     "chats": Dict[int, Any]= {
         #         "<chatId>": Dict[str, Any] = {
-        #             "settings": Dict[ChatSettingsKey, ChatSettingsValue] = {
-        #                 ...
-        #             },
+        #             "settings": Dict[ChatSettingsKey, ChatSettingsValue] = {...},
+        #             "info": Dict[str, any] = {...},
         #         },
         #     },
         #     "chatUsers": Dict[str, Any] = {
         #         "<chatId>:<userId>": Dict[str, Any] = {
-        #             "data": Dict[str, str|List["str"]] = {
-        #                 ...
-        #             },
+        #             "data": Dict[str, str|List["str"]] = {...},
+        #         },
+        #     },
+        #     "users": Dict[int, Any] = {
+        #         <userId>: Dict[str, Any] = {
+        #             "activeConfigureId": messageId: Optional[int],
         #         },
         #     },
         #  }
@@ -126,8 +133,11 @@ class BotHandlers:
     # Chat settings Managenent
     ###
 
-    def getChatSettings(self, chatId: int, returnDefault: bool = True) -> Dict[ChatSettingsKey, ChatSettingsValue]:
+    def getChatSettings(self, chatId: Optional[int], returnDefault: bool = True) -> Dict[ChatSettingsKey, ChatSettingsValue]:
         """Get the chat settings for the given chat."""
+        if chatId is None:
+            return self.chatDefaults.copy()
+
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
 
@@ -403,7 +413,8 @@ class BotHandlers:
         skipLogs: bool = False,
         mediaPrompt: Optional[str] = None,
         messageCategory: MessageCategory = MessageCategory.BOT,
-    ) -> bool:
+        replyMarkup: Optional[ReplyMarkup] = None,
+    ) -> Optional[Message]:
         """Send a message to the chat or user."""
 
         if photoData is None and messageText is None:
@@ -423,15 +434,21 @@ class BotHandlers:
         if sendMessageKWargs is None:
             sendMessageKWargs = {}
 
+        replyKwargs = sendMessageKWargs.copy()
+        replyKwargs.update(
+            {
+                "reply_to_message_id": replyToMessage.messageId,
+                "message_thread_id": replyToMessage.threadId,
+                "reply_markup": replyMarkup,
+            }
+        )
+
         try:
             if photoData is not None:
                 # Send photo
-                replyKwargs = sendMessageKWargs.copy()
                 replyKwargs.update(
                     {
                         "photo": photoData,
-                        "reply_to_message_id": replyToMessage.messageId,
-                        "message_thread_id": replyToMessage.threadId,
                     }
                 )
 
@@ -467,14 +484,6 @@ class BotHandlers:
                             raise ValueError("No text field found in json reply")
                     except Exception as e:
                         logger.debug(f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}")
-
-                replyKwargs = sendMessageKWargs.copy()
-                replyKwargs.update(
-                    {
-                        "reply_to_message_id": replyToMessage.messageId,
-                        "message_thread_id": replyToMessage.threadId,
-                    }
-                )
 
                 if not skipLogs:
                     logger.debug(f"Sending reply to {replyToMessage}")
@@ -522,7 +531,7 @@ class BotHandlers:
                 logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
                 logger.exception(e)
                 # Message was sent, so return True anyway
-                return True
+                return replyMessage
 
         except Exception as e:
             logger.error(f"Error while sending message: {type(e).__name__}#{e}")
@@ -532,9 +541,9 @@ class BotHandlers:
                     f"Error while sending message: {type(e).__name__}#{e}",
                     reply_to_message_id=replyToMessage.messageId,
                 )
-            return False
+            return None
 
-        return True
+        return replyMessage
 
     async def _delayedSendMessage(
         self,
@@ -739,6 +748,46 @@ class BotHandlers:
 
         return ret
 
+    def _getChatInfo(self, chatId: int) -> Dict[str, Any]:
+        """Get Chat info from cache or DB"""
+
+        if chatId not in self.cache["chats"]:
+            self.cache["chats"][chatId] = {}
+        if "info" not in self.cache["chats"][chatId]:
+            self.cache["chats"][chatId]["info"] = self.db.getChatInfo(chatId)
+
+        return self.cache["chats"][chatId]["info"]
+
+    def _updateChatInfo(self, chat: Chat) -> None:
+        """Update Chat info. Do not save it to DB if it is in cache and wasn't changed"""
+
+        chatId = chat.id
+
+        if chatId not in self.cache["chats"]:
+            self.cache["chats"][chatId] = {}
+        if "info" not in self.cache["chats"][chatId]:
+            self.cache["chats"][chatId]["info"] = {}
+
+        cachedInfo = self.cache["chats"][chatId]["info"]
+
+        if any(
+            [
+                chat.title != cachedInfo.get("title", None),
+                chat.username != cachedInfo.get("username", None),
+                chat.is_forum != cachedInfo.get("is_forum", None),
+                chat.type != cachedInfo.get("type", None),
+            ]
+        ):
+            cachedInfo = {
+                "chat_id": chat.id,
+                "title": chat.title,
+                "username": chat.username,
+                "is_forum": chat.is_forum,
+                "type": chat.type,
+            }
+            self.cache["chats"][chatId]["info"] = cachedInfo
+            self.db.addChatInfo(chatId, type=chat.type, title=chat.title, username=chat.username, isForum=chat.is_forum)
+
     def _saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
         """Save a chat message to the database."""
         user = message.user
@@ -759,6 +808,8 @@ class BotHandlers:
             )
             if parentMsg:
                 rootMessageId = parentMsg["root_message_id"]
+
+        self._updateChatInfo(chat)
 
         self.db.updateChatUser(
             chatId=chat.id,
@@ -857,7 +908,7 @@ class BotHandlers:
                     photoData=imgMLRet.mediaData,
                     photoCaption=lmRetText,
                     mediaPrompt=imagePrompt,
-                )
+                ) is not None
 
             # Something went wrong, log and fallback to ordinary message
             logger.error(f"Failed generating Image by prompt '{imagePrompt}': {imgMLRet}")
@@ -867,7 +918,7 @@ class BotHandlers:
             messageText=lmRetText,
             addMessagePrefix=addPrefix,
             tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON,
-        )
+        ) is not None
 
     ###
     # Handling messages
@@ -885,6 +936,23 @@ class BotHandlers:
 
         match chatType:
             case Chat.PRIVATE:
+                if update.effective_user is not None and update.message is not None and update.message.text is not None:
+                    user = update.effective_user
+                    userId = user.id
+                    activeConfigureId = self.cache["users"].get(userId, {}).get("activeConfigureId", None)
+                    if activeConfigureId is not None:
+                        await self._handle_chat_configuration(
+                            data={
+                                "a": "sv",
+                                "c": activeConfigureId["chatId"],
+                                "k": activeConfigureId["key"],
+                                "v": update.message.text,
+                            },
+                            message=activeConfigureId["message"],
+                            user=user,
+                        )
+                        return
+
                 chatSettings = self.getChatSettings(chat.id)
                 if chatSettings[ChatSettingsKey.ALLOW_PRIVATE].toBool():
                     return await self.handle_chat_message(update, context)
@@ -1137,7 +1205,7 @@ class BotHandlers:
             return await self._sendMessage(
                 ensuredMessage,
                 messageText=f"{user['username']} сегодня {userTitle}",
-            )
+            ) is not None
 
         # End of Who Today
 
@@ -1182,7 +1250,7 @@ class BotHandlers:
                 return await self._sendMessage(
                     ensuredMessage,
                     messageText=response,
-                )
+                ) is not None
 
         # End of What There
 
@@ -2602,6 +2670,339 @@ class BotHandlers:
             messageText="Готово, память о Вас очищена.",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
+
+    async def _handle_chat_configuration(self, data: Dict[str, Any], message: Message, user: User) -> bool:
+        """Parses the CallbackQuery and updates the message text."""
+
+        def myJSONDump(data: Any) -> str:
+            return json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":"), sort_keys=True)
+
+        exitButton = InlineKeyboardButton("Закончить настройку", callback_data=myJSONDump({"a": "cancel"}))
+        action = data.get("a", None)
+        # if "k" in data:
+        #    action = "set_key"
+        match action:
+            case "init":
+                userChats = self.db.getUserChats(user.id)
+                keyboard: List[List[InlineKeyboardButton]] = []
+                # chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+
+                for chat in userChats:
+                    chatObj = Chat(
+                        id=chat["chat_id"],
+                        type=chat["type"],
+                        title=chat["title"],
+                        username=chat["username"],
+                        is_forum=chat["is_forum"],
+                    )
+                    if await self._isAdmin(user=user, chat=chatObj, allowBotOwners=True):
+                        buttonTitle: str = f"#{chat['chat_id']}"
+                        if chat["title"]:
+                            buttonTitle = f"{CHAT_ICON} {chat['title']} ({chat["type"]})"
+                        elif chat["username"]:
+                            buttonTitle = f"{PRIVATE_ICON} {chat['username']} ({chat["type"]})"
+
+                        keyboard.append(
+                            [
+                                InlineKeyboardButton(
+                                    buttonTitle,
+                                    callback_data=myJSONDump({"c": chat["chat_id"], "a": "chat"}),
+                                )
+                            ]
+                        )
+
+                if not keyboard:
+                    await message.edit_text("Вы не являетесь администратором ни в одном чате.")
+                    return False
+
+                keyboard.append([exitButton])
+                await message.edit_text(text="Выберите чат для настройки:", reply_markup=InlineKeyboardMarkup(keyboard))
+            case "chat":
+                chatId = data.get("c", None)
+                if chatId is None:
+                    logger.error(f"handle_button: chatId is None in {data}")
+                    return False
+
+                if not isinstance(chatId, int):
+                    logger.error(f"handle_button: wrong chatId: {type(chatId).__name__}#{chatId}")
+                    return False
+
+                chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
+
+                if not await self._isAdmin(user=user, chat=chatObj):
+                    logger.error(f"handle_button: user#{user.id} is not admin in {chatId}")
+                    await message.edit_text(text=f"Вы не являетесь администратором в выбранном чате")
+                    return False
+
+                chatInfo = self._getChatInfo(chatId)
+
+                logger.debug(f"handle_button: chatInfo: {chatInfo}")
+                resp = f"Настраиваем чат **{chatInfo['title'] or chatInfo['username']}#{chatId}**:\n"
+                chatSettings = self.getChatSettings(chatId)
+                defaultChatSettings = self.getChatSettings(None)
+
+                chatOptions = chat_settings.getChatSettingsInfo()
+                keyboard: List[List[InlineKeyboardButton]] = []
+
+                for key, option in chatOptions.items():
+                    wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
+                    resp += (
+                        "\n\n\n"
+                        f"## **{option['short']}** (`{key}`):\n"
+                        f" {option['long']}\n"
+                        f" Тип: **{option['type']}**\n"
+                        f" Изменено: **{'Да' if wasChanged else 'Нет'}**\n"
+                        # f" Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
+                        # f" Значение по умолчанию:\n```\n{defaultChatSettings[key].toStr()}\n```\n"
+                    )
+                    keyTitle = option["short"]
+                    if wasChanged:
+                        keyTitle += " (*)"
+                    keyboard.append(
+                        [InlineKeyboardButton(keyTitle, callback_data=myJSONDump({"c": chatId, "k": key, "a": "sk"}))]
+                    )
+
+                keyboard.append([InlineKeyboardButton("<< Назад", callback_data=myJSONDump({"a": "init"}))])
+                keyboard.append([exitButton])
+
+                respMD = markdown_to_markdownv2(resp)
+                # logger.debug(resp)
+                # logger.debug(respMD)
+                try:
+                    await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+                except Exception as e:
+                    logger.exception(e)
+                    await message.edit_text(text=f"Error while editing message: {e}")
+                    return False
+
+            case "sk":
+                chatId = data.get("c", None)
+                key = data.get("k", None)
+
+                if chatId is None or key is None:
+                    logger.error(f"handle_button: chatId or key is None in {data}")
+                    return False
+
+                chatInfo = self._getChatInfo(chatId)
+                chatSettings = self.getChatSettings(chatId)
+                defaultChatSettings = self.getChatSettings(None)
+
+                chatOptions = chat_settings.getChatSettingsInfo()
+
+                try:
+                    key = ChatSettingsKey(key)
+                except ValueError:
+                    logger.error(f"handle_button: wrong key: {key}")
+                    return False
+
+                if key not in chatOptions:
+                    logger.error(f"handle_button: wrong key: {key}")
+                    await message.edit_text(text=f"Unknown key: {key}")
+                    return False
+
+                chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
+                if not await self._isAdmin(user=user, chat=chatObj):
+                    logger.error(f"handle_button: user#{user.id} is not admin in {chatId} ({data})")
+                    await message.edit_text(text=f"Вы не являетесь администратором в выбранном чате")
+                    return False
+
+                userId = user.id
+                if userId not in self.cache["users"]:
+                    self.cache["users"][userId] = {}
+                self.cache["users"][userId]["activeConfigureId"] = {
+                    "chatId": chatId,
+                    "key": key,
+                    "message": message,
+                }
+
+                keyboard: List[List[InlineKeyboardButton]] = []
+                wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
+
+                resp = (
+                    f"Настройка ключа **{chatOptions[key]['short']}** (`{key}`) в чате "
+                    f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}):\n\n"
+                    f"Тип: **{chatOptions[key]['type']}**\n"
+                    f"Был ли изменён: **{'Да' if wasChanged else 'Нет'}**\n"
+                    f"Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
+                    f"Значение по умолчанию:\n```\n{defaultChatSettings[key].toStr()}\n```\n\n"
+                    "Введите новое значение или нажмите нужную кнопку под сообщением"
+                )
+
+                if chatOptions[key]["type"] == "bool":
+                    keyboard.append(
+                        [InlineKeyboardButton("Включить (True)", callback_data=myJSONDump({"a": "s+", "c": chatId, "k": key}))]
+                    )
+                    keyboard.append(
+                        [InlineKeyboardButton("Выключить (False)", callback_data=myJSONDump({"a": "s-", "c": chatId, "k": key}))]
+                    )
+
+                keyboard.append(
+                    [InlineKeyboardButton("Сбросить в значение по умолчанию", callback_data=myJSONDump({"a": "s#", "c": chatId, "k": key}))]
+                )
+                keyboard.append([InlineKeyboardButton("<< Назад", callback_data=myJSONDump({"a": "chat", "c": chatId}))])
+                keyboard.append([exitButton])
+
+                respMD = markdown_to_markdownv2(resp)
+                # logger.debug(resp)
+                # logger.debug(respMD)
+                try:
+                    await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+                except Exception as e:
+                    logger.exception(e)
+                    await message.edit_text(text=f"Error while editing message: {e}")
+                    return False
+
+            case "s+" | "s-" | "s#" | "sv":
+                chatId = data.get("c", None)
+                key = data.get("k", None)
+
+                userId = user.id
+                if userId not in self.cache["users"]:
+                    self.cache["users"][userId] = {}
+
+                self.cache["users"][userId].pop("activeConfigureId", None)
+
+                if chatId is None or key is None:
+                    logger.error(f"handle_button: chatId or key is None in {data}")
+                    return False
+
+                chatInfo = self._getChatInfo(chatId)
+                chatOptions = chat_settings.getChatSettingsInfo()
+
+                try:
+                    key = ChatSettingsKey(key)
+                except ValueError:
+                    logger.error(f"handle_button: wrong key: {key}")
+                    return False
+
+                if key not in chatOptions:
+                    logger.error(f"handle_button: wrong key: {key}")
+                    await message.edit_text(text=f"Unknown key: {key}")
+                    return False
+
+                chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
+                if not await self._isAdmin(user=user, chat=chatObj):
+                    logger.error(f"handle_button: user#{user.id} is not admin in {chatId} ({data})")
+                    await message.edit_text(text=f"Вы не являетесь администратором в выбранном чате")
+                    return False
+
+                keyboard: List[List[InlineKeyboardButton]] = []
+
+                resp = ""
+
+                if action == "s+":
+                    self.setChatSettings(chatId, {key: True})
+                elif action == "s-":
+                    self.setChatSettings(chatId, {key: True})
+                elif action == "s#":
+                    self.unsetChatSetting(chatId, key)
+                elif action == "sv":
+                    self.setChatSettings(chatId, {key: data.get("v", None)})
+                else:
+                    logger.error(f"handle_button: wrong action: {action}")
+                    raise RuntimeError(f"handle_button: wrong action: {action}")
+
+                chatSettings = self.getChatSettings(chatId)
+
+                resp = (
+                    f"Ключа **{chatOptions[key]['short']}** (`{key}`) в чате "
+                    f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}) успешно изменён:\n\n"
+                    f"Новое значение:\n```\n{chatSettings[key].toStr()}\n```\n"
+                    "Введите новое значение или нажмите нужную кнопку под сообщением"
+                )
+
+                keyboard.append([InlineKeyboardButton("<< К настройкам чата", callback_data=myJSONDump({"a": "sk", "c": chatId, "key": key}))])
+                keyboard.append([exitButton])
+
+                respMD = markdown_to_markdownv2(resp)
+                # logger.debug(resp)
+                # logger.debug(respMD)
+                try:
+                    await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+                except Exception as e:
+                    logger.exception(e)
+                    await message.edit_text(text=f"Error while editing message: {e}")
+                    return False
+
+            case "cancel":
+                await message.edit_text(text=f"Настройка закончена, буду ждать вас снова")
+            case _:
+                logger.error(f"handle_button: unknown action: {data}")
+                await message.edit_text(text=f"Unknown action: {action}")
+                return False
+
+        return True
+
+    async def configure_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /configure command."""
+
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+
+        msg = await self._sendMessage(
+            ensuredMessage,
+            messageText="Загружаю настройки....",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+        # TODO: Add support for /configure <chatId>
+        if msg is not None:
+            await self._handle_chat_configuration({"a": "init"}, message=msg, user=ensuredMessage.user)
+        else:
+            logger.error("Message undefined")
+            return
+
+    async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Parses the CallbackQuery and updates the message text."""
+
+        query = update.callback_query
+        if query is None:
+            logger.error(f"CallbackQuery undefined in {update}")
+            return
+
+        # CallbackQueries need to be answered, even if no notification to the user is needed
+        # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+        # await query.answer(text=query.data)
+        # TODO: Answer something cool
+        await query.answer()
+
+        if query.data is None:
+            logger.error(f"CallbackQuery data undefined in {query}")
+            return
+
+        user = query.from_user
+
+        data: Optional[Dict[str, Any]] = None
+        try:
+            data = json.loads(query.data)
+        except Exception as e:
+            logger.error(f"Error while parsing callback query data: {e}")
+            return
+
+        if data is None:
+            logger.error(f"handle_button: data is None")
+            return
+
+        if query.message is None:
+            logger.error(f"handle_button: message is None in {query}")
+            return
+
+        if not isinstance(query.message, Message):
+            logger.error(f"handle_button: message is not a Message in {query}")
+            return
+
+        await self._handle_chat_configuration(data, query.message, user)
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
