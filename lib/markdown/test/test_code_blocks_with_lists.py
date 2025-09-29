@@ -212,5 +212,47 @@ Regular text:
         self.assertNotIn("<li>", html)
 
 
+    def test_list_item_containing_code_block_with_lists(self):
+        """Test list item containing a code block with list markers inside."""
+        markdown = """* Test 1:
+Test 2:
+```
+Code
+* Code 1.
+* Code 2.
+* Code 3.
+
+Code
+```"""
+
+        # Test HTML output - should have one list item with a code block containing all content
+        html = markdown_to_html(markdown)
+        self.assertIn("<ul>", html)
+        self.assertIn("<li>", html)
+        self.assertIn("<p>Test 1: Test 2:</p>", html)
+        self.assertIn('<pre><code>Code\n* Code 1.\n* Code 2.\n* Code 3.\n\nCode</code></pre>', html)
+        # Should NOT have multiple list items
+        self.assertEqual(html.count("<li>"), 1)
+
+        # Test normalized markdown
+        normalized = normalize_markdown(markdown)
+        self.assertIn("- Test 1: Test 2:```", normalized)
+        self.assertIn("Code\n* Code 1.\n* Code 2.\n* Code 3.\n\nCode", normalized)
+        # Should NOT have the list markers parsed as separate list items
+        self.assertNotIn("- Code 1.", normalized)
+        self.assertNotIn("- Code 2.", normalized)
+        self.assertNotIn("- Code 3.", normalized)
+
+        # Test MarkdownV2 output
+        markdownv2 = markdown_to_markdownv2(markdown)
+        self.assertIn("• Test 1:", markdownv2)
+        self.assertIn("```", markdownv2)
+        self.assertIn("Code\n* Code 1.\n* Code 2.\n* Code 3.\n\nCode", markdownv2)
+        # Should NOT have the list markers parsed as separate list items
+        self.assertNotIn("• Code 1\\.", markdownv2)
+        self.assertNotIn("• Code 2\\.", markdownv2)
+        self.assertNotIn("• Code 3\\.", markdownv2)
+
+
 if __name__ == "__main__":
     unittest.main()
