@@ -173,8 +173,19 @@ class DatabaseWrapper:
             """
             )
 
-            # TODO: Add chats-table (chat_id, chat_name, something else) and think
-            # how to not update it on every message (use cache?)
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_info (
+                    chat_id INTEGER PRIMARY KEY,
+                    title TEXT,
+                    username TEXT,
+                    type TEXT NOT NULL,
+                    is_forum BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
 
             # Chat stats (currently only messages count per date)
             cursor.execute(
@@ -914,3 +925,83 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to clear user {chatId}:{userId} data: {e}")
             return False
+
+    def addChatInfo(
+        self,
+        chatId: int,
+        type: str,
+        title: Optional[str] = None,
+        username: Optional[str] = None,
+        isForum: Optional[bool] = False,
+    ) -> bool:
+        """Add chat info to the database."""
+        if isForum is None:
+            isForum = False
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO chat_info
+                        (chat_id, type, title, username, is_forum)
+                    VALUES
+                        (:chatId, :type, :title, :username, :isForum)
+                    ON CONFLICT DO UPDATE SET
+                        type = :type,
+                        title = :title,
+                        username = :username,
+                        is_forum = :isForum,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    {
+                        "chatId": chatId,
+                        "type": type,
+                        "title": title,
+                        "username": username,
+                        "isForum": isForum,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add chat info: {e}")
+            logger.exception(e)
+            return False
+
+    def getUserChats(self, userId: int) -> List[Dict[str, Any]]:
+        """Get chats, user was seen in"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT ci.* FROM chat_info ci
+                    JOIN chat_users cu ON cu.chat_id = ci.chat_id
+                    WHERE
+                        user_id = :userId
+                """,
+                    {
+                        "userId": userId,
+                    },
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get user#{userId} chats: {e}")
+            logger.exception(e)
+            return []
+        
+    def getChatInfo(self, chatId: int) -> Dict[str, Any]:
+        """Get chat info from the database."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM chat_info
+                    WHERE
+                        chat_id = :chatId
+                """,
+                    {
+                        "chatId": chatId,
+                    },
+                )
+                return dict(cursor.fetchone())
+        except Exception as e:
+            logger.error(f"Failed to get chat info: {e}")
+            return {}
