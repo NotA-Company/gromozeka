@@ -180,11 +180,6 @@ class BlockParser:
                         self._advance()
                         break
 
-            # Stop if we encounter another block-level element (safety mechanism)
-            # But exclude LIST_MARKER since we're inside a code block
-            if self._is_block_element_start_excluding_lists():
-                break
-
             # Collect line content
             line_content = ""
             while not self._is_at_end() and not self._current_token_is(TokenType.NEWLINE):
@@ -316,37 +311,59 @@ class BlockParser:
 
         # Collect item content until next list marker at same or lesser indentation
         item_content = []
+        inside_code_block = False
+        code_fence_chars = None
+        
         while not self._is_at_end():
-            # Check if we've reached a nested list (more indented list marker)
-            if (
-                self._current_token_is(TokenType.LIST_MARKER)
-                and self._is_at_line_start()
-                and self._get_current_indentation() > current_indentation
-            ):
-                # Parse the entire nested list and add it as a child
-                nested_list = self._parse_list()
-                list_item.add_child(nested_list)
-                continue
+            # Track code block state
+            if self._current_token_is(TokenType.CODE_FENCE):
+                fence_content = self.current_token.content  # type: ignore
+                fence_match = re.match(r"^(```+|~~~+)(.*)$", fence_content)
+                if fence_match:
+                    fence_chars = fence_match.group(1)
+                    if not inside_code_block:
+                        # Entering code block
+                        inside_code_block = True
+                        code_fence_chars = fence_chars
+                    elif code_fence_chars and fence_chars[0] == code_fence_chars[0] and len(fence_chars) >= len(code_fence_chars):
+                        # Exiting code block with matching fence
+                        inside_code_block = False
+                        code_fence_chars = None
 
-            # Check if we've reached another list item at same indentation (sibling)
-            if (
-                self._current_token_is(TokenType.LIST_MARKER)
-                and self._is_list_marker_at_line_start()
-                and self._get_current_indentation() == current_indentation
-            ):
-                break
+            # Only check for list markers if we're not inside a code block
+            if not inside_code_block:
+                # Check if we've reached a nested list (more indented list marker)
+                if (
+                    self._current_token_is(TokenType.LIST_MARKER)
+                    and self._is_at_line_start()
+                    and self._get_current_indentation() > current_indentation
+                ):
+                    # Parse the entire nested list and add it as a child
+                    nested_list = self._parse_list()
+                    list_item.add_child(nested_list)
+                    continue
 
-            # Check if we've reached a list item at lesser indentation (parent level)
-            if (
-                self._current_token_is(TokenType.LIST_MARKER)
-                and self._is_list_marker_at_line_start()
-                and self._get_current_indentation() < current_indentation
-            ):
-                break
+                # Check if we've reached another list item at same indentation (sibling)
+                if (
+                    self._current_token_is(TokenType.LIST_MARKER)
+                    and self._is_list_marker_at_line_start()
+                    and self._get_current_indentation() == current_indentation
+                ):
+                    break
+
+                # Check if we've reached a list item at lesser indentation (parent level)
+                if (
+                    self._current_token_is(TokenType.LIST_MARKER)
+                    and self._is_list_marker_at_line_start()
+                    and self._get_current_indentation() < current_indentation
+                ):
+                    break
 
             # Check for end of item (blank line followed by non-list content)
+            # But don't break if we're inside a code block
             if (
-                self._current_token_is(TokenType.NEWLINE)
+                not inside_code_block
+                and self._current_token_is(TokenType.NEWLINE)
                 and self._has_blank_line_ahead()
                 and not self._next_is_list_continuation()
             ):
