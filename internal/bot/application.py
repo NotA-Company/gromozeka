@@ -8,6 +8,7 @@ import random
 import sys
 from typing import Any, Awaitable, Dict
 from telegram import Update
+import telegram
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -145,6 +146,31 @@ class BotApplication:
             raise RuntimeError("Application not initialized")
 
         asyncio.create_task(self.handlers.initDelayedScheduler(self.application.bot))
+
+        # Configure Commands
+        DefaultCommands = [
+            ("/draw", "Generate image by given prompt"),
+            ("/analyze", "Analyze media in answered message by given prompt"),
+            ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)")
+        ]
+        ChatCommands = [
+            ("/summary", "Summarisation of chat's messages for a day"),
+            ("/topic_summary", "Summarisation of topic's messages for a day"),
+        ]
+        PrivateCommands = [
+            ("/configure", "Start bot configuration"),
+            ("/help", "Print help"),
+            ("/start", "Start bot interaction")
+        ]
+
+        await self.application.bot.set_my_commands(commands=DefaultCommands, scope=telegram.BotCommandScopeDefault())
+        await self.application.bot.set_my_commands(
+            commands=DefaultCommands + PrivateCommands, scope=telegram.BotCommandScopeAllPrivateChats()
+        )
+        await self.application.bot.set_my_commands(
+            commands=DefaultCommands + ChatCommands, scope=telegram.BotCommandScopeAllGroupChats()
+        )
+        # * :class:`telegram.BotCommandScopeAllChatAdministrators`
 
     def run(self):
         """Start the bot."""
