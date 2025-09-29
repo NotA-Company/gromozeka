@@ -611,7 +611,7 @@ class BotHandlers:
                 mediaPrompt=image_prompt,
             )
 
-            return json.dumps({"done": ret})
+            return json.dumps({"done": ret is not None})
 
         async def getUrlContent(url: str, **kwargs) -> str:
             # TODO: Check if content is text content
