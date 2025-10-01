@@ -1414,7 +1414,7 @@ class BotHandlers:
                 reversed(
                     self.db.getChatMessagesSince(
                         chatId=ensuredMessage.chat.id,
-                        threadId=ensuredMessage.threadId,
+                        threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
                         limit=PRIVATE_CHAT_CONTEXT_LENGTH,
                     )
                 )
