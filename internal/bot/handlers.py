@@ -17,7 +17,7 @@ import requests
 import magic
 
 from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update, Message, User
-from telegram.constants import MessageEntityType
+from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ExtBot, ContextTypes
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
@@ -2729,7 +2729,11 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             photoData=mlRet.mediaData,
-            photoCaption=f"Сгенерировал изображение по Вашему запросу:\n```\n{prompt[:1900]}\n```",
+            photoCaption=(
+                "Сгенерировал изображение по Вашему запросу:\n```\n"
+                f"{prompt[:MessageLimit.CAPTION_LENGTH - 60]}"
+                "\n```"
+            ),
             mediaPrompt=prompt,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
