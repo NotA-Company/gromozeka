@@ -133,7 +133,9 @@ class BotHandlers:
     # Chat settings Managenent
     ###
 
-    def getChatSettings(self, chatId: Optional[int], returnDefault: bool = True) -> Dict[ChatSettingsKey, ChatSettingsValue]:
+    def getChatSettings(
+        self, chatId: Optional[int], returnDefault: bool = True
+    ) -> Dict[ChatSettingsKey, ChatSettingsValue]:
         """Get the chat settings for the given chat."""
         if chatId is None:
             return self.chatDefaults.copy()
@@ -903,22 +905,28 @@ class BotHandlers:
                 f"Generated image Data: {imgMLRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
             if imgMLRet.status == ModelResultStatus.FINAL and imgMLRet.mediaData is not None:
-                return await self._sendMessage(
-                    ensuredMessage,
-                    photoData=imgMLRet.mediaData,
-                    photoCaption=lmRetText,
-                    mediaPrompt=imagePrompt,
-                ) is not None
+                return (
+                    await self._sendMessage(
+                        ensuredMessage,
+                        photoData=imgMLRet.mediaData,
+                        photoCaption=lmRetText,
+                        mediaPrompt=imagePrompt,
+                    )
+                    is not None
+                )
 
             # Something went wrong, log and fallback to ordinary message
             logger.error(f"Failed generating Image by prompt '{imagePrompt}': {imgMLRet}")
 
-        return await self._sendMessage(
-            ensuredMessage,
-            messageText=lmRetText,
-            addMessagePrefix=addPrefix,
-            tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON,
-        ) is not None
+        return (
+            await self._sendMessage(
+                ensuredMessage,
+                messageText=lmRetText,
+                addMessagePrefix=addPrefix,
+                tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON,
+            )
+            is not None
+        )
 
     ###
     # Handling messages
@@ -1202,10 +1210,13 @@ class BotHandlers:
                 user = users[random.randint(0, len(users) - 1)]
 
             logger.debug(f"Found user for candidate of being '{userTitle}': {user}")
-            return await self._sendMessage(
-                ensuredMessage,
-                messageText=f"{user['username']} сегодня {userTitle}",
-            ) is not None
+            return (
+                await self._sendMessage(
+                    ensuredMessage,
+                    messageText=f"{user['username']} сегодня {userTitle}",
+                )
+                is not None
+            )
 
         # End of Who Today
 
@@ -1247,10 +1258,13 @@ class BotHandlers:
                     if response is None or response == "":
                         response = DUNNO_EMOJI
 
-                return await self._sendMessage(
-                    ensuredMessage,
-                    messageText=response,
-                ) is not None
+                return (
+                    await self._sendMessage(
+                        ensuredMessage,
+                        messageText=response,
+                    )
+                    is not None
+                )
 
         # End of What There
 
@@ -1786,17 +1800,17 @@ class BotHandlers:
         )
 
         if isBotOwner:
-            help_text +=(
-            "\n\n"
-            "**Команды, доступные только владельцам бота:**\n"
-            "`/test` `<test_name> [<test_args>]` - Запустить тест "
-            "(используется для тестирования)\n"
-            "`/models` - вывести список доступных моделей и их параметров\n"
-            "`/settings` - вывести список настроек чата\n"
-            "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата, "
-            "доступно только владельцам бота и админимтраторам чата "
-            "(если это разрешено настройками)\n"
-        )
+            help_text += (
+                "\n\n"
+                "**Команды, доступные только владельцам бота:**\n"
+                "`/test` `<test_name> [<test_args>]` - Запустить тест "
+                "(используется для тестирования)\n"
+                "`/models` - вывести список доступных моделей и их параметров\n"
+                "`/settings` - вывести список настроек чата\n"
+                "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата, "
+                "доступно только владельцам бота и админимтраторам чата "
+                "(если это разрешено настройками)\n"
+            )
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
         await self._sendMessage(
@@ -1828,94 +1842,29 @@ class BotHandlers:
                 messageCategory=MessageCategory.BOT_ERROR,
             )
 
-    async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /[topic_]summary [<messages> <chunks> <chatId> <threadId>]command."""
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
+    async def _doSummarization(
+        self,
+        ensuredMessage: EnsuredMessage,
+        chatId: int,
+        threadId: Optional[int],
+        chatSettings: Dict[ChatSettingsKey, ChatSettingsValue],
+        sinceDT: Optional[datetime.datetime] = None,
+        maxMessages: Optional[int] = None,
+    ) -> None:
+        """Do summarisation and send as response to provided message"""
 
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
-            return
-
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool() and not await self._isAdmin(
-            ensuredMessage.user, None, True
-        ):
-            logger.info(
-                f"Unauthorized /summary or /topic_summary command from {ensuredMessage.user} "
-                f"in chat {ensuredMessage.chat}"
-            )
-            return
-
-        maxBatches: Optional[int] = None
-        maxMessages: Optional[int] = None
-        if context.args and len(context.args) > 0:
-            try:
-                maxMessages = int(context.args[0])
-                if maxMessages < 1:
-                    maxMessages = None
-
-                maxBatches = int(context.args[1])
-                if maxBatches < 1:
-                    maxBatches = None
-            except ValueError:
-                logger.error(f"Invalid arguments: '{context.args[0:2]}' are not a valid number.")
-            except IndexError:
-                pass
-
-        commandStr = ""
-        for entity in message.entities:
-            if entity.type == MessageEntityType.BOT_COMMAND:
-                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
-                break
-
-        logger.debug(f"Command string: {commandStr}")
-        isTopicSummary = commandStr.startswith("/topic_summary")
-
-        # Summary command print summary for whole chat.
-        # Topic-summary prints summary for current topic, we threat default topic as 0
-        threadId = None
-        if isTopicSummary:
-            threadId = ensuredMessage.threadId if ensuredMessage.threadId else 0
-
-        chat = ensuredMessage.chat
-        targetChatId = chat.id
-
-        userName = ensuredMessage.user.username
-        # Allow bot owners to ask for summarisation of any chat
-        if userName and userName.lower() in self.botOwners and context.args and len(context.args) >= 3:
-            try:
-                targetChatId = int(context.args[2])
-                threadId = int(context.args[3])
-            except ValueError:
-                logger.error(f"Invalid arguments: '{context.args[2:4]}' are not a valid number.")
-            except IndexError:
-                pass
-
-        logger.debug(
-            f"Getting summary for chat {targetChatId}, thread {threadId}, "
-            f"maxBatches {maxBatches}, maxMessages {maxMessages}"
-        )
-        today = datetime.datetime.now(datetime.timezone.utc)
-        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        if sinceDT is None and maxMessages is None:
+            raise ValueError("one of sinceDT or maxMessages MUST be not None")
 
         messages = self.db.getChatMessagesSince(
-            chatId=targetChatId,
-            sinceDateTime=today if maxMessages is None else None,
+            chatId=chatId,
+            sinceDateTime=sinceDT if maxMessages is None else None,
             threadId=threadId,
             limit=maxMessages,
             messageCategory=[MessageCategory.USER, MessageCategory.BOT],
         )
 
         logger.debug(f"Messages: {messages}")
-        chatSettings = self.getChatSettings(chatId=targetChatId)
 
         systemMessage = {
             "role": "system",
@@ -1936,7 +1885,6 @@ class BotHandlers:
         reqMessages = [systemMessage] + parsedMessages
 
         llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel(self.llmManager)
-        # TODO: Move to config or ask from model somehow
         maxTokens = llmModel.getInfo()["context_size"]
         tokensCount = llmModel.getEstimateTokensCount(reqMessages)
 
@@ -1945,16 +1893,16 @@ class BotHandlers:
         batchLength = len(parsedMessages) // batchesCount
 
         logger.debug(
-            f"Summarisation: estimated total tokens: {tokensCount}, max tokens: {maxTokens}, "
-            f"messages count: {len(parsedMessages)}, batches count: {batchesCount}, "
-            f"batch length: {batchLength}"
+            f"Summarization: estimated total/max tokens: {tokensCount}/{maxTokens}. "
+            f"Messages count: {len(parsedMessages)}, batches count/length: "
+            f"{batchesCount}/{batchLength}"
         )
 
         resMessages = []
         if not parsedMessages:
             resMessages.append("No messages to summarize")
         startPos: int = 0
-        batchN = 0
+
         # Summarise each chunk of messages
         while startPos < len(parsedMessages):
             currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
@@ -2001,9 +1949,6 @@ class BotHandlers:
                 resMessages.append(mlRet.resultText)
 
             startPos += currentBatchLen
-            batchN += 1
-            if maxBatches and batchN >= maxBatches:
-                break
 
         # If any message is too long, just split it into multiple messages
         tmpResMessages = []
@@ -2025,6 +1970,266 @@ class BotHandlers:
             )
             time.sleep(1)
 
+    async def _handle_summarization(self, data: Dict[str, Any], message: Message, user: User):
+        """Process summarization buttons."""
+
+        def myJSONDump(data: Any) -> str:
+            return json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":"), sort_keys=True)
+
+        exitButton = InlineKeyboardButton("Отмена", callback_data=myJSONDump({"a": "sum", "e": "cancel"}))
+        action = data.get("a", None)
+        if action not in ["sum", "tsum"]:
+            ValueError(f"Wrong action in {data}")
+        isToticSummary = action == "tsum"
+
+        if data.get("e", None) == "cancel":
+            await message.edit_text(text="Суммаризация отменена")
+
+        maxMessages = data.get("m", None)
+        if maxMessages is None:
+            maxMessages = 0
+
+        userChats = self.db.getUserChats(user.id)
+
+        chatId = data.get("c", None)
+        if not isinstance(chatId, int):
+            keyboard: List[List[InlineKeyboardButton]] = []
+            # chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+            for chat in userChats:
+                buttonTitle: str = f"#{chat['chat_id']}"
+                if chat["title"]:
+                    buttonTitle = f"{CHAT_ICON} {chat['title']} ({chat["type"]})"
+                elif chat["username"]:
+                    buttonTitle = f"{PRIVATE_ICON} {chat['username']} ({chat["type"]})"
+
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            buttonTitle,
+                            callback_data=myJSONDump({"c": chat["chat_id"], "a": action, "m": maxMessages}),
+                        )
+                    ]
+                )
+
+            if not keyboard:
+                await message.edit_text("Вы не найдены ни в одном чате.")
+                return
+
+            keyboard.append([exitButton])
+            await message.edit_text(text="Выберите чат для суммаризации:", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        chatFound = await self._isAdmin(user, None, True)
+        for chat in userChats:
+            if chat["chat_id"] == chatId:
+                chatFound = True
+                break
+
+        if not chatFound:
+            await message.edit_text("Указан неверный чат")
+            return
+
+        topicId = data.get("t", None)
+        if isToticSummary and topicId is None:
+            await message.edit_text("Список топиков пока не поддержан")
+            # TODO: Add topic list support
+            return
+
+        await message.edit_text("Суммаризирую сообщения...")
+
+        if maxMessages < 1:
+            maxMessages = None
+
+        repliedMessage = message.reply_to_message
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+
+        try:
+            if repliedMessage is not None:
+                ensuredMessage = EnsuredMessage.fromMessage(repliedMessage)
+            else:
+                ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"summarization: Error ensuring message: {type(e).__name__}{e}")
+            logger.exception(e)
+            await message.edit_text(str(e))
+            return
+
+        if ensuredMessage is None:
+            await message.edit_text("ensuredMessage is None")
+            return
+
+        today = datetime.datetime.now(datetime.timezone.utc)
+        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        await self._doSummarization(
+            ensuredMessage=ensuredMessage,
+            chatId=chatId,
+            threadId=topicId,
+            chatSettings=self.getChatSettings(ensuredMessage.chat.id),
+            sinceDT=today,
+            maxMessages=maxMessages,
+        )
+
+        if repliedMessage is not None:
+            await message.delete()
+        else:
+            await message.edit_text("Суммаризация готова:")
+
+    async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /[topic_]summary [<messages> <chunks> <chatId> <threadId>]command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+
+        commandStr = ""
+        for entity in message.entities:
+            if entity.type == MessageEntityType.BOT_COMMAND:
+                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
+                break
+
+        logger.debug(f"Command string: {commandStr}")
+        isTopicSummary = commandStr.startswith("/topic_summary")
+
+        chatType = ensuredMessage.chat.type
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+
+        today = datetime.datetime.now(datetime.timezone.utc)
+        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        maxMessages: Optional[int] = None
+        chatId: Optional[int] = None
+        threadId: Optional[int] = None
+
+        match chatType:
+            case Chat.PRIVATE:
+                isBotOwner = await self._isAdmin(ensuredMessage.user, None, True)
+                if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool() and not isBotOwner:
+                    logger.info(
+                        f"Unauthorized /{commandStr} command from {ensuredMessage.user} "
+                        f"in chat {ensuredMessage.chat}"
+                    )
+                    await self.handle_message(update=update, context=context)
+                    return
+
+                maxMessages = 0
+                intArgs: List[Optional[int]] = [None, None, None]
+                if context.args:
+                    for i in range(3):
+                        if len(context.args) > i:
+                            try:
+                                intArgs[i] = int(context.args[i])
+                            except ValueError:
+                                logger.error(f"Invalid arguments: '{context.args[i]}' is not a valid number.")
+
+                maxMessages = intArgs[0]
+                chatId = intArgs[1]
+                threadId = intArgs[2]
+                jsonAction = "tsum" if isTopicSummary else "sum"
+
+                if maxMessages is None or maxMessages < 1:
+                    maxMessages = 0
+
+                if chatId is None:
+                    msg = await self._sendMessage(
+                        ensuredMessage,
+                        messageText="Загружаю список чатов....",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    )
+
+                    if msg is not None:
+                        await self._handle_summarization(
+                            {"a": jsonAction, "m": maxMessages}, message=msg, user=ensuredMessage.user
+                        )
+                    else:
+                        logger.error("Message undefined")
+
+                    return
+
+                if threadId is None and isTopicSummary:
+                    msg = await self._sendMessage(
+                        ensuredMessage,
+                        messageText="Загружаю список топиков....",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    )
+
+                    if msg is not None:
+                        await self._handle_summarization(
+                            {"a": jsonAction, "c": chatId, "m": maxMessages}, message=msg, user=ensuredMessage.user
+                        )
+                    else:
+                        logger.error("Message undefined")
+
+                    return
+
+                userChats = self.db.getUserChats(ensuredMessage.user.id)
+                chatFound = isBotOwner
+                for uChat in userChats:
+                    if uChat["chat_id"] == chatId:
+                        chatFound = True
+                        break
+
+                if not chatFound:
+                    await self._sendMessage(
+                        ensuredMessage, "Передан неверный ID чата", messageCategory=MessageCategory.BOT_ERROR
+                    )
+                    return
+
+                if maxMessages == 0:
+                    maxMessages = None
+
+                return await self._doSummarization(
+                    ensuredMessage,
+                    chatId=chatId,
+                    threadId=threadId,
+                    chatSettings=chatSettings,  # TODO: Think: Should we get chat settings or user settings?
+                    sinceDT=today,
+                    maxMessages=maxMessages,
+                )
+
+            case Chat.GROUP | Chat.SUPERGROUP:
+                if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool():
+                    logger.info(
+                        f"Unauthorized /{commandStr} command from {ensuredMessage.user} "
+                        f"in chat {ensuredMessage.chat}"
+                    )
+                    await self.handle_message(update=update, context=context)
+                    return
+
+                if context.args and len(context.args) > 0:
+                    try:
+                        maxMessages = int(context.args[0])
+                        if maxMessages < 1:
+                            maxMessages = None
+                    except ValueError:
+                        logger.error(f"Invalid arguments: '{context.args[0]}' is not a valid number.")
+
+                # Summary command print summary for whole chat.
+                # Topic-summary prints summary for current topic, we threat default topic as 0
+                if isTopicSummary:
+                    threadId = ensuredMessage.threadId if ensuredMessage.threadId else 0
+
+                return await self._doSummarization(
+                    ensuredMessage=ensuredMessage,
+                    chatId=ensuredMessage.chat.id,
+                    threadId=threadId,
+                    chatSettings=chatSettings,
+                    maxMessages=maxMessages,
+                    sinceDT=today,
+                )
+
+            case _:
+                logger.error(f"Unsupported chat type for Summarization: {chatType}")
+
     async def models_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /models command."""
         modelsPerMessage = 4
@@ -2044,7 +2249,7 @@ class BotHandlers:
             logger.warning(f"OWNER ONLY command `/models` by not owner {ensuredMessage.user}")
             await self.handle_message(update=update, context=context)
             return
-        
+
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         replyText = "**Доступные модели:**\n\n"
@@ -2105,7 +2310,7 @@ class BotHandlers:
             logger.warning(f"OWNER ONLY command `/settings` by not owner {ensuredMessage.user}")
             await self.handle_message(update=update, context=context)
             return
-        
+
         self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
 
         # user = ensuredMessage.user
@@ -2141,7 +2346,7 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/[un]set` by not owner {ensuredMessage.user}")
             await self.handle_message(update=update, context=context)
@@ -2223,7 +2428,7 @@ class BotHandlers:
         except Exception as e:
             logger.error(f"Error while ensuring message: {e}")
             return
-        
+
         if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/test` by not owner {ensuredMessage.user}")
             await self.handle_message(update=update, context=context)
@@ -2524,7 +2729,7 @@ class BotHandlers:
         await self._sendMessage(
             ensuredMessage,
             photoData=mlRet.mediaData,
-            photoCaption=f"Сгенерировал изображение по Вашему запросу:\n```\n{prompt}\n```",
+            photoCaption=f"Сгенерировал изображение по Вашему запросу:\n```\n{prompt[:1900]}\n```",
             mediaPrompt=prompt,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
@@ -2754,7 +2959,7 @@ class BotHandlers:
 
                 if not await self._isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_button: user#{user.id} is not admin in {chatId}")
-                    await message.edit_text(text=f"Вы не являетесь администратором в выбранном чате")
+                    await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
                 chatInfo = self._getChatInfo(chatId)
@@ -2792,7 +2997,9 @@ class BotHandlers:
                 # logger.debug(resp)
                 # logger.debug(respMD)
                 try:
-                    await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+                    await message.edit_text(
+                        text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
                 except Exception as e:
                     logger.exception(e)
                     await message.edit_text(text=f"Error while editing message: {e}")
@@ -2826,7 +3033,7 @@ class BotHandlers:
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
                 if not await self._isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_button: user#{user.id} is not admin in {chatId} ({data})")
-                    await message.edit_text(text=f"Вы не являетесь администратором в выбранном чате")
+                    await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
                 userId = user.id
@@ -2853,23 +3060,40 @@ class BotHandlers:
 
                 if chatOptions[key]["type"] == "bool":
                     keyboard.append(
-                        [InlineKeyboardButton("Включить (True)", callback_data=myJSONDump({"a": "s+", "c": chatId, "k": key}))]
+                        [
+                            InlineKeyboardButton(
+                                "Включить (True)", callback_data=myJSONDump({"a": "s+", "c": chatId, "k": key})
+                            )
+                        ]
                     )
                     keyboard.append(
-                        [InlineKeyboardButton("Выключить (False)", callback_data=myJSONDump({"a": "s-", "c": chatId, "k": key}))]
+                        [
+                            InlineKeyboardButton(
+                                "Выключить (False)", callback_data=myJSONDump({"a": "s-", "c": chatId, "k": key})
+                            )
+                        ]
                     )
 
                 keyboard.append(
-                    [InlineKeyboardButton("Сбросить в значение по умолчанию", callback_data=myJSONDump({"a": "s#", "c": chatId, "k": key}))]
+                    [
+                        InlineKeyboardButton(
+                            "Сбросить в значение по умолчанию",
+                            callback_data=myJSONDump({"a": "s#", "c": chatId, "k": key}),
+                        )
+                    ]
                 )
-                keyboard.append([InlineKeyboardButton("<< Назад", callback_data=myJSONDump({"a": "chat", "c": chatId}))])
+                keyboard.append(
+                    [InlineKeyboardButton("<< Назад", callback_data=myJSONDump({"a": "chat", "c": chatId}))]
+                )
                 keyboard.append([exitButton])
 
                 respMD = markdown_to_markdownv2(resp)
                 # logger.debug(resp)
                 # logger.debug(respMD)
                 try:
-                    await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+                    await message.edit_text(
+                        text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
                 except Exception as e:
                     logger.exception(e)
                     await message.edit_text(text=f"Error while editing message: {e}")
@@ -2906,7 +3130,7 @@ class BotHandlers:
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
                 if not await self._isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_button: user#{user.id} is not admin in {chatId} ({data})")
-                    await message.edit_text(text=f"Вы не являетесь администратором в выбранном чате")
+                    await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
                 keyboard: List[List[InlineKeyboardButton]] = []
@@ -2934,21 +3158,29 @@ class BotHandlers:
                     "Введите новое значение или нажмите нужную кнопку под сообщением"
                 )
 
-                keyboard.append([InlineKeyboardButton("<< К настройкам чата", callback_data=myJSONDump({"a": "sk", "c": chatId, "key": key}))])
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            "<< К настройкам чата", callback_data=myJSONDump({"a": "sk", "c": chatId, "key": key})
+                        )
+                    ]
+                )
                 keyboard.append([exitButton])
 
                 respMD = markdown_to_markdownv2(resp)
                 # logger.debug(resp)
                 # logger.debug(respMD)
                 try:
-                    await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+                    await message.edit_text(
+                        text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
                 except Exception as e:
                     logger.exception(e)
                     await message.edit_text(text=f"Error while editing message: {e}")
                     return False
 
             case "cancel":
-                await message.edit_text(text=f"Настройка закончена, буду ждать вас снова")
+                await message.edit_text(text="Настройка закончена, буду ждать вас снова")
             case _:
                 logger.error(f"handle_button: unknown action: {data}")
                 await message.edit_text(text=f"Unknown action: {action}")
@@ -3014,7 +3246,7 @@ class BotHandlers:
             return
 
         if data is None:
-            logger.error(f"handle_button: data is None")
+            logger.error("handle_button: data is None")
             return
 
         if query.message is None:
@@ -3025,7 +3257,13 @@ class BotHandlers:
             logger.error(f"handle_button: message is not a Message in {query}")
             return
 
-        await self._handle_chat_configuration(data, query.message, user)
+        action = data.get("a", None)
+
+        match action:
+            case "sum" | "tsum":
+                await self._handle_summarization(data, query.message, user)
+            case _:
+                await self._handle_chat_configuration(data, query.message, user)
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""

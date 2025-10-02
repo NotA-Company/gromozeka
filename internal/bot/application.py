@@ -151,16 +151,19 @@ class BotApplication:
         DefaultCommands = [
             ("/draw", "Generate image by given prompt"),
             ("/analyze", "Analyze media in answered message by given prompt"),
-            ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)")
-        ]
-        ChatCommands = [
+            ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)"),
             ("/summary", "Summarisation of chat's messages for a day"),
             ("/topic_summary", "Summarisation of topic's messages for a day"),
+        ]
+        ChatCommands = [
+            ("/spam", "Not implemented yet"),
+            ("/ban", "Not implemented yet"),
+            ("/kick", "Not implemented yet"),
         ]
         PrivateCommands = [
             ("/configure", "Start bot configuration"),
             ("/help", "Print help"),
-            ("/start", "Start bot interaction")
+            ("/start", "Start bot interaction"),
         ]
 
         await self.application.bot.set_my_commands(commands=DefaultCommands, scope=telegram.BotCommandScopeDefault())

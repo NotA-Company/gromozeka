@@ -986,7 +986,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to get user#{userId} chats: {e}")
             logger.exception(e)
             return []
-        
+
     def getChatInfo(self, chatId: int) -> Dict[str, Any]:
         """Get chat info from the database."""
         try:

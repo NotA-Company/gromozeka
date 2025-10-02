@@ -313,7 +313,7 @@ class BlockParser:
         item_content = []
         inside_code_block = False
         code_fence_chars = None
-        
+
         while not self._is_at_end():
             # Track code block state
             if self._current_token_is(TokenType.CODE_FENCE):
@@ -325,7 +325,11 @@ class BlockParser:
                         # Entering code block
                         inside_code_block = True
                         code_fence_chars = fence_chars
-                    elif code_fence_chars and fence_chars[0] == code_fence_chars[0] and len(fence_chars) >= len(code_fence_chars):
+                    elif (
+                        code_fence_chars
+                        and fence_chars[0] == code_fence_chars[0]
+                        and len(fence_chars) >= len(code_fence_chars)
+                    ):
                         # Exiting code block with matching fence
                         inside_code_block = False
                         code_fence_chars = None
