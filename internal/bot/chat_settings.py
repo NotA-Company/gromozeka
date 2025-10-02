@@ -183,5 +183,6 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     },
 }
 
+
 def getChatSettingsInfo() -> Dict[ChatSettingsKey, ChatSettingsInfoValue]:
     return _chatSettingsInfo.copy()

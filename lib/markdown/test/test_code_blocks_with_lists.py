@@ -211,7 +211,6 @@ Regular text:
         self.assertNotIn("<ol>", html)
         self.assertNotIn("<li>", html)
 
-
     def test_list_item_containing_code_block_with_lists(self):
         """Test list item containing a code block with list markers inside."""
         markdown = """* Test 1:
@@ -230,7 +229,7 @@ Code
         self.assertIn("<ul>", html)
         self.assertIn("<li>", html)
         self.assertIn("<p>Test 1: Test 2:</p>", html)
-        self.assertIn('<pre><code>Code\n* Code 1.\n* Code 2.\n* Code 3.\n\nCode</code></pre>', html)
+        self.assertIn("<pre><code>Code\n* Code 1.\n* Code 2.\n* Code 3.\n\nCode</code></pre>", html)
         # Should NOT have multiple list items
         self.assertEqual(html.count("<li>"), 1)
 
