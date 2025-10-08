@@ -4,4 +4,7 @@
 - [x] Add support for direct mesages
 - [x] Add Summarisation plugin. Summarisation only possible in chats. Summarisation will be displayed on command or in some time if configured
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
+- [ ] Add support of periodic tasks (summarization for example)
+- [ ] Add cron for analyzing and remembering knowledge from messages
+- [ ] Add support for spam-handling
 - [x] Add some AI support via YandexCloud
