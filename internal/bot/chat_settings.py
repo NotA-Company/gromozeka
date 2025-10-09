@@ -113,7 +113,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     ChatSettingsKey.BOT_NICKNAMES: {
         "type": ChatSettingsType.STRING,
         "short": "Список никнеймов бота",
-        "long": "Бот будет отзываться на эти имена, если оно стоит первым в сообщении опльзователя",
+        "long": "Бот будет отзываться на эти имена, если оно стоит первым в сообщении пользователя",
     },
     ChatSettingsKey.USE_TOOLS: {
         "type": ChatSettingsType.BOOL,
@@ -138,17 +138,17 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     },
     ChatSettingsKey.ALLOW_DRAW: {
         "type": ChatSettingsType.BOOL,
-        "short": "Разрешить рисовать",
+        "short": "Разрешить рисовать (`/draw`)",
         "long": "Разрешить команду `/draw` для генерации изображений",
     },
     ChatSettingsKey.ALLOW_ANALYZE: {
         "type": ChatSettingsType.BOOL,
-        "short": "Разрешить анализировать",
+        "short": "Разрешить анализировать (`/analyze`)",
         "long": "Разрешить команду `/analyze` для анализа изображений указанным запросом",
     },
     ChatSettingsKey.ALLOW_SUMMARY: {
         "type": ChatSettingsType.BOOL,
-        "short": "Разрешить сводку",
+        "short": "Разрешить сводку (`/summary`)",
         "long": "Разрешить команду `/summary`/`/topic_summary` для суммаризации сообщений за сегодня",
     },
     ChatSettingsKey.ALLOW_MENTION: {
