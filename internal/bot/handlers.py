@@ -1767,7 +1767,7 @@ class BotHandlers:
             "**Поддерживаемые команды:**\n"
             "`/start` - Начать работу с ботом\n"
             "`/help` - Показать список доступных команд\n"
-            "`/echo` `<message>` - Просто ответить переданным "
+            "`/echo` `<message>` - Просто ответить переданным сообщением "
             "(для тестирования живости бота)\n"
             "\n"
             "`/summary` `[<messages_count>=0] [<chunks_count>=0]` - "
@@ -1810,9 +1810,7 @@ class BotHandlers:
                 "(используется для тестирования)\n"
                 "`/models` - вывести список доступных моделей и их параметров\n"
                 "`/settings` - вывести список настроек чата\n"
-                "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата, "
-                "доступно только владельцам бота и админимтраторам чата "
-                "(если это разрешено настройками)\n"
+                "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата\n"
             )
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
@@ -3159,16 +3157,15 @@ class BotHandlers:
                 chatSettings = self.getChatSettings(chatId)
 
                 resp = (
-                    f"Ключа **{chatOptions[key]['short']}** (`{key}`) в чате "
+                    f"Ключ **{chatOptions[key]['short']}** (`{key}`) в чате "
                     f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}) успешно изменён:\n\n"
                     f"Новое значение:\n```\n{chatSettings[key].toStr()}\n```\n"
-                    "Введите новое значение или нажмите нужную кнопку под сообщением"
                 )
 
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            "<< К настройкам чата", callback_data=myJSONDump({"a": "sk", "c": chatId, "key": key})
+                            "<< К настройкам чата", callback_data=myJSONDump({"a": "chat", "c": chatId})
                         )
                     ]
                 )
