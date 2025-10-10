@@ -460,7 +460,7 @@ class BotHandlers:
 
                 if tryMarkdownV2 and photoCaption is not None:
                     try:
-                        messageTextParsed = markdown_to_markdownv2(photoCaption)
+                        messageTextParsed = markdown_to_markdownv2(addMessagePrefix + photoCaption)
                         # logger.debug(f"Sending MarkdownV2: {replyText}")
                         replyMessage = await message.reply_photo(
                             caption=messageTextParsed,
@@ -472,7 +472,8 @@ class BotHandlers:
                         # Probably error in markdown formatting, fallback to raw text
 
                 if replyMessage is None:
-                    replyMessage = await message.reply_photo(caption=photoCaption, **replyKwargs)
+                    _photoCaption = photoCaption if photoCaption is not None else ""
+                    replyMessage = await message.reply_photo(caption=addMessagePrefix + _photoCaption, **replyKwargs)
 
             elif messageText is not None:
                 # Send text
