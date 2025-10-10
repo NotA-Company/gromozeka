@@ -52,10 +52,9 @@ from internal.bot import chat_settings
 
 logger = logging.getLogger(__name__)
 
-ROBOT_EMOJI = "🤖"
 DUNNO_EMOJI = "🤷‍♂️"
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-MAX_QUEUE_LENGTH = 10
+MAX_QUEUE_LENGTH = 32
 MAX_QUEUE_AGE = 30 * 60  # 30 minutes
 PROCESSING_TIMEOUT = 30 * 60  # 30 minutes
 PRIVATE_CHAT_CONTEXT_LENGTH = 50
@@ -1007,6 +1006,8 @@ class BotHandlers:
             resMessages.append("No messages to summarize")
         startPos: int = 0
 
+        fallbackPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
+
         # Summarise each chunk of messages
         while startPos < len(parsedMessages):
             currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
@@ -1049,7 +1050,7 @@ class BotHandlers:
 
                 respText = mlRet.resultText
                 if mlRet.isFallback:
-                    respText = f"{ROBOT_EMOJI} {respText}"
+                    respText = f"{fallbackPrefix} {respText}"
                 resMessages.append(mlRet.resultText)
 
             startPos += currentBatchLen
