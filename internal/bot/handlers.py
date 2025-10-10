@@ -961,7 +961,7 @@ class BotHandlers:
                             data={
                                 "a": "sv",
                                 "c": activeConfigureId["chatId"],
-                                "k": activeConfigureId["key"],
+                                "k": ChatSettingsKey(activeConfigureId["key"]).getId(),
                                 "v": update.message.text,
                             },
                             message=activeConfigureId["message"],
@@ -3083,7 +3083,7 @@ class BotHandlers:
                     if wasChanged:
                         keyTitle += " (*)"
                     keyboard.append(
-                        [InlineKeyboardButton(keyTitle, callback_data=myJSONDump({"c": chatId, "k": key, "a": "sk"}))]
+                        [InlineKeyboardButton(keyTitle, callback_data=myJSONDump({"c": chatId, "k": key.getId(), "a": "sk"}))]
                     )
 
                 keyboard.append([InlineKeyboardButton("<< Назад", callback_data=myJSONDump({"a": "init"}))])
@@ -3103,9 +3103,9 @@ class BotHandlers:
 
             case "sk":
                 chatId = data.get("c", None)
-                key = data.get("k", None)
+                _key = data.get("k", None)
 
-                if chatId is None or key is None:
+                if chatId is None or _key is None:
                     logger.error(f"handle_button: chatId or key is None in {data}")
                     return False
 
@@ -3116,9 +3116,9 @@ class BotHandlers:
                 chatOptions = chat_settings.getChatSettingsInfo()
 
                 try:
-                    key = ChatSettingsKey(key)
+                    key = ChatSettingsKey.fromId(_key)
                 except ValueError:
-                    logger.error(f"handle_button: wrong key: {key}")
+                    logger.error(f"handle_button: wrong key: {_key}")
                     return False
 
                 if key not in chatOptions:
@@ -3159,14 +3159,14 @@ class BotHandlers:
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                "Включить (True)", callback_data=myJSONDump({"a": "s+", "c": chatId, "k": key})
+                                "Включить (True)", callback_data=myJSONDump({"a": "s+", "c": chatId, "k": _key})
                             )
                         ]
                     )
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                "Выключить (False)", callback_data=myJSONDump({"a": "s-", "c": chatId, "k": key})
+                                "Выключить (False)", callback_data=myJSONDump({"a": "s-", "c": chatId, "k": _key})
                             )
                         ]
                     )
@@ -3175,7 +3175,7 @@ class BotHandlers:
                     [
                         InlineKeyboardButton(
                             "Сбросить в значение по умолчанию",
-                            callback_data=myJSONDump({"a": "s#", "c": chatId, "k": key}),
+                            callback_data=myJSONDump({"a": "s#", "c": chatId, "k": _key}),
                         )
                     ]
                 )
@@ -3198,7 +3198,7 @@ class BotHandlers:
 
             case "s+" | "s-" | "s#" | "sv":
                 chatId = data.get("c", None)
-                key = data.get("k", None)
+                _key = data.get("k", None)
 
                 userId = user.id
                 if userId not in self.cache["users"]:
@@ -3206,7 +3206,7 @@ class BotHandlers:
 
                 self.cache["users"][userId].pop("activeConfigureId", None)
 
-                if chatId is None or key is None:
+                if chatId is None or _key is None:
                     logger.error(f"handle_button: chatId or key is None in {data}")
                     return False
 
@@ -3214,9 +3214,9 @@ class BotHandlers:
                 chatOptions = chat_settings.getChatSettingsInfo()
 
                 try:
-                    key = ChatSettingsKey(key)
+                    key = ChatSettingsKey.fromId(_key)
                 except ValueError:
-                    logger.error(f"handle_button: wrong key: {key}")
+                    logger.error(f"handle_button: wrong key: {_key}")
                     return False
 
                 if key not in chatOptions:
