@@ -87,7 +87,7 @@ class AbstractModel(ABC):
             ret = await fallbackModel.generateText(messages, tools)
             ret.setFallback(True)
             return ret
-        
+
     async def generateImageWithFallBack(
         self,
         messages: Iterable[ModelMessage],
