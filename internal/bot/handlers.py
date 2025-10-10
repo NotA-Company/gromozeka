@@ -946,8 +946,136 @@ class BotHandlers:
             is not None
         )
 
+    async def _doSummarization(
+        self,
+        ensuredMessage: EnsuredMessage,
+        chatId: int,
+        threadId: Optional[int],
+        chatSettings: Dict[ChatSettingsKey, ChatSettingsValue],
+        sinceDT: Optional[datetime.datetime] = None,
+        maxMessages: Optional[int] = None,
+    ) -> None:
+        """Do summarisation and send as response to provided message"""
+
+        if sinceDT is None and maxMessages is None:
+            raise ValueError("one of sinceDT or maxMessages MUST be not None")
+
+        messages = self.db.getChatMessagesSince(
+            chatId=chatId,
+            sinceDateTime=sinceDT if maxMessages is None else None,
+            threadId=threadId,
+            limit=maxMessages,
+            messageCategory=[MessageCategory.USER, MessageCategory.BOT],
+        )
+
+        logger.debug(f"Messages: {messages}")
+
+        systemMessage = {
+            "role": "system",
+            "content": chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr(),
+        }
+        parsedMessages = []
+
+        for msg in reversed(messages):
+            parsedMessages.append(
+                {
+                    "role": "user",
+                    "content": await EnsuredMessage.fromDBChatMessage(msg).formatForLLM(
+                        self.db, LLMMessageFormat.JSON, stripAtsign=True
+                    ),
+                }
+            )
+
+        reqMessages = [systemMessage] + parsedMessages
+
+        llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel(self.llmManager)
+        maxTokens = llmModel.getInfo()["context_size"]
+        tokensCount = llmModel.getEstimateTokensCount(reqMessages)
+
+        # -256 or *0.9 to ensure everything will be ok
+        batchesCount = tokensCount // max(maxTokens - 256, maxTokens * 0.9) + 1
+        batchLength = len(parsedMessages) // batchesCount
+
+        logger.debug(
+            f"Summarization: estimated total/max tokens: {tokensCount}/{maxTokens}. "
+            f"Messages count: {len(parsedMessages)}, batches count/length: "
+            f"{batchesCount}/{batchLength}"
+        )
+
+        resMessages = []
+        if not parsedMessages:
+            resMessages.append("No messages to summarize")
+        startPos: int = 0
+
+        # Summarise each chunk of messages
+        while startPos < len(parsedMessages):
+            currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
+            batchSummarized = False
+            while not batchSummarized:
+                tryMessages = parsedMessages[startPos : startPos + currentBatchLen]
+                reqMessages = [systemMessage] + tryMessages
+                tokensCount = llmModel.getEstimateTokensCount(reqMessages)
+                if tokensCount > maxTokens:
+                    if currentBatchLen == 1:
+                        resMessages.append(
+                            f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: "
+                            f"Batch has too many tokens ({tokensCount})"
+                        )
+                        break
+                    currentBatchLen = int(currentBatchLen // (tokensCount / maxTokens))
+                    currentBatchLen -= 2
+                    if currentBatchLen < 1:
+                        currentBatchLen = 1
+                    continue
+                batchSummarized = True
+
+                mlRet: Optional[ModelRunResult] = None
+                try:
+                    logger.debug(f"LLM Request messages: {reqMessages}")
+                    mlRet = await llmModel.generateTextWithFallBack(
+                        ModelMessage.fromDictList(reqMessages),
+                        chatSettings[ChatSettingsKey.SUMMARY_FALLBACK_MODEL].toModel(self.llmManager),
+                    )
+                    logger.debug(f"LLM Response: {mlRet}")
+                except Exception as e:
+                    logger.error(  # type: ignore
+                        f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: "
+                        f"{type(e).__name__}#{e}"
+                    )
+                    resMessages.append(
+                        f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: {type(e).__name__}"
+                    )
+                    break
+
+                respText = mlRet.resultText
+                if mlRet.isFallback:
+                    respText = f"{ROBOT_EMOJI} {respText}"
+                resMessages.append(mlRet.resultText)
+
+            startPos += currentBatchLen
+
+        # If any message is too long, just split it into multiple messages
+        tmpResMessages = []
+        for msg in resMessages:
+            while len(msg) > TELEGRAM_MAX_MESSAGE_LENGTH:
+                head = msg[:TELEGRAM_MAX_MESSAGE_LENGTH]
+                msg = msg[TELEGRAM_MAX_MESSAGE_LENGTH:]
+                tmpResMessages.append(head)
+            if msg:
+                tmpResMessages.append(msg)
+
+        resMessages = tmpResMessages
+
+        for msg in resMessages:
+            await self._sendMessage(
+                ensuredMessage,
+                messageText=msg,
+                messageCategory=MessageCategory.BOT_SUMMARY,
+            )
+            time.sleep(1)
+
     ###
-    # Handling messages
+    # SPAM Handling
     ###
 
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
@@ -999,6 +1127,55 @@ class BotHandlers:
             # return True
 
         return False
+
+    async def _handleSpam(self, message: Message, reason: SpamReason, score: Optional[float] = None):
+        """Delete spam message, ban user and save message to spamDB"""
+        chatSettings = self.getChatSettings(message.chat_id)
+        bot = message.get_bot()
+
+        logger.debug(f"handling spam message: {message}. Reason: {reason}")
+
+        chatId = message.chat_id
+        userId = message.from_user.id if message.from_user is not None else 0
+
+        self.db.addSpamMessage(
+            chatId=chatId,
+            userId=userId,
+            messageId=message.message_id,
+            messageText=str(message.text),
+            spamReason=reason,
+            score=score if score is not None else 0,
+        )
+
+        await bot.delete_message(chat_id=chatId, message_id=message.message_id)
+        logger.debug("Deleted spam message")
+        if message.from_user is not None:
+            await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
+            logger.debug(f"Banned user {message.from_user} in chat {message.chat}")
+            if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
+                userMessages = self.db.getChatMessagesByUser(
+                    chatId=chatId,
+                    userId=userId,
+                    limit=10,  # Do not delete more that 10 messages
+                )
+                logger.debug(f"Trying to delete more user messages: {userMessages}")
+                messageIds: List[int] = []
+                for msg in userMessages:
+                    if msg["message_id"] != message.message_id:
+                        messageIds.append(msg["message_id"])
+
+                try:
+                    if messageIds:
+                        await bot.delete_messages(chat_id=chatId, message_ids=messageIds)
+                except Exception as e:
+                    logger.error("Failed during deleteing spam message:")
+                    logger.exception(e)
+        else:
+            logger.debug("message.from_user is None")
+
+    ###
+    # Handling messages
+    ###
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
@@ -1916,134 +2093,6 @@ class BotHandlers:
                 messageText="Please provide a message to echo!\nUsage: /echo <your message>",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
-
-    async def _doSummarization(
-        self,
-        ensuredMessage: EnsuredMessage,
-        chatId: int,
-        threadId: Optional[int],
-        chatSettings: Dict[ChatSettingsKey, ChatSettingsValue],
-        sinceDT: Optional[datetime.datetime] = None,
-        maxMessages: Optional[int] = None,
-    ) -> None:
-        """Do summarisation and send as response to provided message"""
-
-        if sinceDT is None and maxMessages is None:
-            raise ValueError("one of sinceDT or maxMessages MUST be not None")
-
-        messages = self.db.getChatMessagesSince(
-            chatId=chatId,
-            sinceDateTime=sinceDT if maxMessages is None else None,
-            threadId=threadId,
-            limit=maxMessages,
-            messageCategory=[MessageCategory.USER, MessageCategory.BOT],
-        )
-
-        logger.debug(f"Messages: {messages}")
-
-        systemMessage = {
-            "role": "system",
-            "content": chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr(),
-        }
-        parsedMessages = []
-
-        for msg in reversed(messages):
-            parsedMessages.append(
-                {
-                    "role": "user",
-                    "content": await EnsuredMessage.fromDBChatMessage(msg).formatForLLM(
-                        self.db, LLMMessageFormat.JSON, stripAtsign=True
-                    ),
-                }
-            )
-
-        reqMessages = [systemMessage] + parsedMessages
-
-        llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel(self.llmManager)
-        maxTokens = llmModel.getInfo()["context_size"]
-        tokensCount = llmModel.getEstimateTokensCount(reqMessages)
-
-        # -256 or *0.9 to ensure everything will be ok
-        batchesCount = tokensCount // max(maxTokens - 256, maxTokens * 0.9) + 1
-        batchLength = len(parsedMessages) // batchesCount
-
-        logger.debug(
-            f"Summarization: estimated total/max tokens: {tokensCount}/{maxTokens}. "
-            f"Messages count: {len(parsedMessages)}, batches count/length: "
-            f"{batchesCount}/{batchLength}"
-        )
-
-        resMessages = []
-        if not parsedMessages:
-            resMessages.append("No messages to summarize")
-        startPos: int = 0
-
-        # Summarise each chunk of messages
-        while startPos < len(parsedMessages):
-            currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
-            batchSummarized = False
-            while not batchSummarized:
-                tryMessages = parsedMessages[startPos : startPos + currentBatchLen]
-                reqMessages = [systemMessage] + tryMessages
-                tokensCount = llmModel.getEstimateTokensCount(reqMessages)
-                if tokensCount > maxTokens:
-                    if currentBatchLen == 1:
-                        resMessages.append(
-                            f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: "
-                            f"Batch has too many tokens ({tokensCount})"
-                        )
-                        break
-                    currentBatchLen = int(currentBatchLen // (tokensCount / maxTokens))
-                    currentBatchLen -= 2
-                    if currentBatchLen < 1:
-                        currentBatchLen = 1
-                    continue
-                batchSummarized = True
-
-                mlRet: Optional[ModelRunResult] = None
-                try:
-                    logger.debug(f"LLM Request messages: {reqMessages}")
-                    mlRet = await llmModel.generateTextWithFallBack(
-                        ModelMessage.fromDictList(reqMessages),
-                        chatSettings[ChatSettingsKey.SUMMARY_FALLBACK_MODEL].toModel(self.llmManager),
-                    )
-                    logger.debug(f"LLM Response: {mlRet}")
-                except Exception as e:
-                    logger.error(  # type: ignore
-                        f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: "
-                        f"{type(e).__name__}#{e}"
-                    )
-                    resMessages.append(
-                        f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: {type(e).__name__}"
-                    )
-                    break
-
-                respText = mlRet.resultText
-                if mlRet.isFallback:
-                    respText = f"{ROBOT_EMOJI} {respText}"
-                resMessages.append(mlRet.resultText)
-
-            startPos += currentBatchLen
-
-        # If any message is too long, just split it into multiple messages
-        tmpResMessages = []
-        for msg in resMessages:
-            while len(msg) > TELEGRAM_MAX_MESSAGE_LENGTH:
-                head = msg[:TELEGRAM_MAX_MESSAGE_LENGTH]
-                msg = msg[TELEGRAM_MAX_MESSAGE_LENGTH:]
-                tmpResMessages.append(head)
-            if msg:
-                tmpResMessages.append(msg)
-
-        resMessages = tmpResMessages
-
-        for msg in resMessages:
-            await self._sendMessage(
-                ensuredMessage,
-                messageText=msg,
-                messageCategory=MessageCategory.BOT_SUMMARY,
-            )
-            time.sleep(1)
 
     async def _handle_summarization(self, data: Dict[str, Any], message: Message, user: User):
         """Process summarization buttons."""
@@ -2984,51 +3033,6 @@ class BotHandlers:
             messageText="Готово, память о Вас очищена.",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
-
-    async def _handleSpam(self, message: Message, reason: SpamReason, score: Optional[float] = None):
-        """Delete spam message, ban user and save message to spamDB"""
-        chatSettings = self.getChatSettings(message.chat_id)
-        bot = message.get_bot()
-
-        logger.debug(f"handling spam message: {message}. Reason: {reason}")
-
-        chatId = message.chat_id
-        userId = message.from_user.id if message.from_user is not None else 0
-
-        self.db.addSpamMessage(
-            chatId=chatId,
-            userId=userId,
-            messageId=message.message_id,
-            messageText=str(message.text),
-            spamReason=reason,
-            score=score if score is not None else 0,
-        )
-
-        await bot.delete_message(chat_id=chatId, message_id=message.message_id)
-        logger.debug("Deleted spam message")
-        if message.from_user is not None:
-            await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
-            logger.debug(f"Banned user {message.from_user} in chat {message.chat}")
-            if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
-                userMessages = self.db.getChatMessagesByUser(
-                    chatId=chatId,
-                    userId=userId,
-                    limit=10,  # Do not delete more that 10 messages
-                )
-                logger.debug(f"Trying to delete more user messages: {userMessages}")
-                messageIds: List[int] = []
-                for msg in userMessages:
-                    if msg["message_id"] != message.message_id:
-                        messageIds.append(msg["message_id"])
-
-                try:
-                    if messageIds:
-                        await bot.delete_messages(chat_id=chatId, message_ids=messageIds)
-                except Exception as e:
-                    logger.error("Failed during deleteing spam message:")
-                    logger.exception(e)
-        else:
-            logger.debug("message.from_user is None")
 
     async def spam_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /spam command."""
