@@ -605,7 +605,6 @@ class BotHandlers:
                         f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\n"
                         f"Prompt:\n```\n{image_prompt}\n```"
                     ),
-                    
                 )
                 return json.dumps({"done": False, "errorMessage": mlRet.resultText}, ensure_ascii=False, default=str)
 
@@ -912,7 +911,9 @@ class BotHandlers:
             imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
             fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
 
-            imgMLRet = await imageGenerationModel.generateImageWithFallBack([ModelMessage(content=imagePrompt)], fallbackImageLLM)
+            imgMLRet = await imageGenerationModel.generateImageWithFallBack(
+                [ModelMessage(content=imagePrompt)], fallbackImageLLM
+            )
             logger.debug(
                 f"Generated image Data: {imgMLRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
@@ -2800,7 +2801,7 @@ class BotHandlers:
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
-        
+
         logger.debug(f"Media data len: {len(mlRet.mediaData)}")
 
         imgAddPrefix = ""
