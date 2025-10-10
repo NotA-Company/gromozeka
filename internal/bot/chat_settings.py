@@ -54,6 +54,11 @@ class ChatSettingsKey(StrEnum):
     RANDOM_ANSWER_PROBABILITY = "random-answer-probability"
     RANDOM_ANSWER_TO_ADMIN = "random-answer-to-admin"
 
+    ALLOW_USER_SPAM_COMMAND = "allow-user-spam-command"
+    DETECT_SPAM = "detect-spam"
+    AUTO_SPAM_MAX_MESSAGES = "auto-spam-max-messages"
+    SPAM_DELETE_ALL_USER_MESSAGES = "spam-delete-all-user-messages"
+
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
 
@@ -180,6 +185,35 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.STRING,
         "short": "Префикс для ошибок",
         "long": "Префикс у сообщения если по каким либо причинам была использована запасная модель генерации текста",
+    },
+    ChatSettingsKey.ALLOW_USER_SPAM_COMMAND: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Разрешить не админам использовать команду /spam",
+        "long": (
+            "Разрешить не админам использовать команду /spam "
+            "для удаления всех сообщений пользователя и его блокировки"
+        ),
+    },
+    ChatSettingsKey.DETECT_SPAM: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Автоматически проверять на спам",
+        "long": "Автоматически проверять сообщения новых пользователей на спам",
+    },
+    ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES: {
+        "type": ChatSettingsType.INT,
+        "short": "Максимальное количество сообщений для спам-проверки",
+        "long": (
+            "Пользователи, у которых в чате больше указанного количества "
+            "сообщений не будут проверяться на спам (0 - всегда проверять)"
+        ),
+    },
+    ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Удалять все сообщения пользователя при помечании спаммером",
+        "long": (
+            "Удалять все сообщения пользователя, когда пользователь признан "
+            "спаммером (автоматически или при помощи команды `/spam`)"
+        ),
     },
 }
 

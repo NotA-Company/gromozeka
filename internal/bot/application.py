@@ -150,10 +150,8 @@ class BotApplication:
         asyncio.create_task(self.handlers.initDelayedScheduler(self.application.bot))
 
         # Configure Commands
-        DefaultCommands = [
-        ]
-        ChatCommands = [
-        ]
+        DefaultCommands = []
+        ChatCommands = []
         ChatAdminCommands = [
             ("/spam", "Mark message as spam"),
         ]
@@ -161,7 +159,6 @@ class BotApplication:
             ("/configure", "Start bot configuration"),
             ("/help", "Print help"),
             ("/start", "Start bot interaction"),
-
             ("/draw", "Generate image by given prompt"),
             ("/analyze", "Analyze media in answered message by given prompt"),
             ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)"),
