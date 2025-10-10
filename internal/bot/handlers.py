@@ -938,6 +938,52 @@ class BotHandlers:
 
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
         """Check if message is spam."""
+
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+
+        userInfo = self.db.getChatUser(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id)
+        if not userInfo:
+            logger.debug(f"userInfo for {ensuredMessage} is null, assume it's first user message")
+            userInfo = {
+                "messages_count": 1,
+            }
+
+        userMessages = userInfo["messages_count"]
+        maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
+        if maxCheckMessages != 0 and userMessages > maxCheckMessages:
+            # User has more message than limit, assume it isn't spammer
+            return False
+
+        isSpammer = False
+        spamScore = 0.0
+        # Check if for last 10 messages there are more same messages than different:
+        userMessages = self.db.getChatMessagesByUser(
+            chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, limit=10
+        )
+        spamMessagesCount = 0
+        nonSpamMessagesCount = 0
+        for msg in userMessages:
+            if msg["text"] == ensuredMessage.messageText and msg["message_id"] != ensuredMessage.messageId:
+                spamMessagesCount = spamMessagesCount + 1
+            else:
+                nonSpamMessagesCount = nonSpamMessagesCount + 1
+
+        if spamMessagesCount > 0 and spamMessagesCount > nonSpamMessagesCount:
+            logger.info(
+                f"SPAM: Last user messages: {userMessages}\n"
+                f"Spam: {spamMessagesCount}, non-Spam: {nonSpamMessagesCount}"
+            )
+            isSpammer = True
+            spamScore = spamMessagesCount + 1 / (spamMessagesCount + 1 + nonSpamMessagesCount)
+
+        if isSpammer:
+            await ensuredMessage.getBaseMessage().reply_text(
+                f"Спаммер! (Вероятность: {spamScore})", reply_to_message_id=ensuredMessage.messageId
+            )
+            # TODO: Temporary just answer
+            # await self._handleSpam(message=ensuredMessage.getBaseMessage(), reason=SpamReason.AUTO, score=spamScore)
+            # return True
+
         return False
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3099,7 +3145,11 @@ class BotHandlers:
                     if wasChanged:
                         keyTitle += " (*)"
                     keyboard.append(
-                        [InlineKeyboardButton(keyTitle, callback_data=myJSONDump({"c": chatId, "k": key.getId(), "a": "sk"}))]
+                        [
+                            InlineKeyboardButton(
+                                keyTitle, callback_data=myJSONDump({"c": chatId, "k": key.getId(), "a": "sk"})
+                            )
+                        ]
                     )
 
                 keyboard.append([InlineKeyboardButton("<< Назад", callback_data=myJSONDump({"a": "init"}))])
