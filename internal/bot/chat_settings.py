@@ -188,9 +188,9 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     },
     ChatSettingsKey.ALLOW_USER_SPAM_COMMAND: {
         "type": ChatSettingsType.BOOL,
-        "short": "Разрешить не админам использовать команду /spam",
+        "short": "Разрешить не админам использовать команду spam",
         "long": (
-            "Разрешить не админам использовать команду /spam "
+            "Разрешить не админам использовать команду `/spam` "
             "для удаления всех сообщений пользователя и его блокировки"
         ),
     },
