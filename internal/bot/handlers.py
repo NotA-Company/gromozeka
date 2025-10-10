@@ -590,19 +590,24 @@ class BotHandlers:
                 f"Generating image: {image_prompt}. Image description: {image_description}, "
                 f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
-            model = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
+            imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
+            fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
 
-            mlRet = await model.generateImage([ModelMessage(content=image_prompt)])
+            mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=image_prompt)], fallbackImageLLM)
             logger.debug(
                 f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
             if mlRet.status != ModelResultStatus.FINAL:
+                imgAddPrefix = ""
+                if mlRet.isFallback:
+                    imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
                 ret = await self._sendMessage(
                     ensuredMessage,
                     messageText=(
                         f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\n"
                         f"Prompt:\n```\n{image_prompt}\n```"
                     ),
+                    addMessagePrefix=imgAddPrefix,
                 )
                 return json.dumps({"done": False, "errorMessage": mlRet.resultText}, ensure_ascii=False, default=str)
 
@@ -903,18 +908,24 @@ class BotHandlers:
         # TODO: Add separate method for generating+sending photo
         if imagePrompt is not None:
             imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
+            fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
 
-            imgMLRet = await imageGenerationModel.generateImage([ModelMessage(content=imagePrompt)])
+            imgMLRet = await imageGenerationModel.generateImageWithFallBack([ModelMessage(content=imagePrompt)], fallbackImageLLM)
             logger.debug(
                 f"Generated image Data: {imgMLRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
+
             if imgMLRet.status == ModelResultStatus.FINAL and imgMLRet.mediaData is not None:
+                imgAddPrefix = ""
+                if imgMLRet.isFallback:
+                    imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
                 return (
                     await self._sendMessage(
                         ensuredMessage,
                         photoData=imgMLRet.mediaData,
                         photoCaption=lmRetText,
                         mediaPrompt=imagePrompt,
+                        addMessagePrefix=imgAddPrefix,
                     )
                     is not None
                 )
@@ -2764,10 +2775,14 @@ class BotHandlers:
             return
 
         imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
+        fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
 
-        mlRet = await imageLLM.generateImage([ModelMessage(content=prompt)])
+        mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
         logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
         if mlRet.status != ModelResultStatus.FINAL:
+            imgAddPrefix = ""
+            if mlRet.isFallback:
+                imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
             await self._sendMessage(
                 ensuredMessage,
                 messageText=(
@@ -2775,6 +2790,7 @@ class BotHandlers:
                     f"{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
+                addMessagePrefix=imgAddPrefix,
             )
             return
 
@@ -2786,6 +2802,8 @@ class BotHandlers:
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
+        
+        logger.debug(f"Media data len: {len(mlRet.mediaData)}")
 
         await self._sendMessage(
             ensuredMessage,
