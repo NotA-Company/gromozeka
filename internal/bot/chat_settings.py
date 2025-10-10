@@ -62,6 +62,22 @@ class ChatSettingsKey(StrEnum):
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
 
+    def getId(self) -> int:
+        """Return some unique id
+        WARNING: Do not store it anywhere, it can be changed on app reload
+        """
+        # Используем hash или порядковый номер
+        return list(self.__class__).index(self) + 1
+    
+    @classmethod
+    def fromId(cls, value: int) -> 'ChatSettingsKey':
+        """Get value by it's int id"""
+        try:
+            return list(cls)[value - 1]
+        except IndexError:
+            raise ValueError(f"No {cls.__name__} with numeric value {value}")
+
+
 
 class ChatSettingsValue:
     """Value of chat settings."""
