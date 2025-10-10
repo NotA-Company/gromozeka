@@ -2923,6 +2923,8 @@ class BotHandlers:
         chatSettings = self.getChatSettings(message.chat_id)
         bot = message.get_bot()
 
+        logger.debug(f"handling spam message: {message}. Reason: {reason}")
+
         chatId = message.chat_id
         userId = message.from_user.id if message.from_user is not None else 0
 
@@ -2936,14 +2938,17 @@ class BotHandlers:
         )
 
         await bot.delete_message(chat_id=chatId, message_id=message.message_id)
+        logger.debug("Deleted spam message")
         if message.from_user is not None:
             await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
+            logger.debug(f"Banned user {message.from_user} in chat {message.chat}")
             if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
                 userMessages = self.db.getChatMessagesByUser(
                     chatId=chatId,
                     userId=userId,
                     limit=10,  # Do not delete more that 10 messages
                 )
+                logger.debug(f"Trying to delete more user messages: {userMessages}")
                 messageIds: List[int] = []
                 for msg in userMessages:
                     if msg["message_id"] != message.message_id:
@@ -2955,6 +2960,8 @@ class BotHandlers:
                 except Exception as e:
                     logger.error("Failed during deleteing spam message:")
                     logger.exception(e)
+        else:
+            logger.debug("message.from_user is None")
 
     async def spam_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /spam command."""
@@ -2981,6 +2988,14 @@ class BotHandlers:
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         allowUserSpamCommand = chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
         isAdmin = await self._isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat)
+
+        logger.debug(
+            "Got /spam command \n"
+            f"from User({ensuredMessage.user}) "
+            f"in Chat({ensuredMessage.chat}) \n"
+            f"to Message({message.reply_to_message}) \n"
+            f"isAdmin: {isAdmin}, allowUserSpamCommand: {allowUserSpamCommand}"
+        )
 
         if message.reply_to_message is not None and (allowUserSpamCommand or isAdmin):
             replyMessage = message.reply_to_message
