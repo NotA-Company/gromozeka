@@ -161,8 +161,8 @@ class BotHandlers:
         for key, value in settings.items():
             _value = str(value)
             if isinstance(value, list):
-                _value = ','.join(value)
-            
+                _value = ",".join(value)
+
             self.db.setChatSetting(chatId, key, _value)
 
         if "settings" in self.cache["chats"][chatId]:
@@ -2908,6 +2908,43 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
+    async def spam_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /spam command."""
+
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self._updateEMessageUserData(ensuredMessage)
+
+        # chatId = ensuredMessage.chat.id
+        # userId = ensuredMessage.user.id
+
+        # context.bot.delete_message()
+        isAdmin = await self._isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat)
+
+        if isAdmin and message.reply_to_message is not None:
+            bot = context.bot
+            replyMessage = message.reply_to_message
+            # eReplyMessage = EnsuredMessage.fromMessage(replyMessage)
+            # TODO: save to spam base
+            await bot.delete_message(chat_id=replyMessage.chat_id, message_id=replyMessage.message_id)
+            if replyMessage.from_user is not None:
+                await bot.ban_chat_member(
+                    chat_id=replyMessage.chat_id, user_id=replyMessage.from_user.id, revoke_messages=True
+                )
+
+        await message.delete()
+
     async def _handle_chat_configuration(self, data: Dict[str, Any], message: Message, user: User) -> bool:
         """Parses the CallbackQuery and updates the message text."""
 
@@ -3167,11 +3204,7 @@ class BotHandlers:
                 )
 
                 keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            "<< К настройкам чата", callback_data=myJSONDump({"a": "chat", "c": chatId})
-                        )
-                    ]
+                    [InlineKeyboardButton("<< К настройкам чата", callback_data=myJSONDump({"a": "chat", "c": chatId}))]
                 )
                 keyboard.append([exitButton])
 
