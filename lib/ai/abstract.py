@@ -70,13 +70,14 @@ class AbstractModel(ABC):
         fallbackModel: "AbstractModel",
         tools: Iterable[LLMAbstractTool] = [],
     ) -> ModelRunResult:
-        """Run the model with given messages, dood!"""
+        """Run the model with given messages and fallback, dood!"""
         try:
             ret = await self.generateText(messages, tools)
             if ret.status in [
                 ModelResultStatus.UNSPECIFIED,
                 ModelResultStatus.CONTENT_FILTER,
                 ModelResultStatus.UNKNOWN,
+                ModelResultStatus.ERROR,
             ]:
                 logger.debug(f"Model {self.modelId} returned status {ret}")
                 raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
@@ -84,6 +85,29 @@ class AbstractModel(ABC):
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")
             ret = await fallbackModel.generateText(messages, tools)
+            ret.setFallback(True)
+            return ret
+        
+    async def generateImageWithFallBack(
+        self,
+        messages: Iterable[ModelMessage],
+        fallbackModel: "AbstractModel",
+    ) -> ModelRunResult:
+        """Generate image with given messages and fallback, dood!"""
+        try:
+            ret = await self.generateImage(messages)
+            if ret.status in [
+                ModelResultStatus.UNSPECIFIED,
+                ModelResultStatus.CONTENT_FILTER,
+                ModelResultStatus.UNKNOWN,
+                ModelResultStatus.ERROR,
+            ]:
+                logger.debug(f"Model {self.modelId} returned status {ret}")
+                raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
+            return ret
+        except Exception as e:
+            logger.error(f"Error running model {self.modelId}: {e}")
+            ret = await fallbackModel.generateImage(messages)
             ret.setFallback(True)
             return ret
 

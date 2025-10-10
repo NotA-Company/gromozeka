@@ -29,3 +29,13 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+
+[models.models."openrouter/gemini-2.5-flash-image"]
+provider = "openrouter"
+model_id = "google/gemini-2.5-flash-image"
+model_version = "latest"
+temparature = 0.3
+context = 32768
+support_tools = true
+support_text = true
+support_images = true

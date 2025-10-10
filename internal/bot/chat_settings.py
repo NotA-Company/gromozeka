@@ -30,6 +30,7 @@ class ChatSettingsKey(StrEnum):
     SUMMARY_FALLBACK_MODEL = "summary-fallback-model"
     IMAGE_PARSING_MODEL = "image-parsing-model"
     IMAGE_GENERATION_MODEL = "image-generation-model"
+    IMAGE_GENERATION_FALLBACK_MODEL = "image-generation-fallback-model"
 
     SUMMARY_PROMPT = "summary-prompt"
     PARSE_IMAGE_PROMPT = "parse-image-prompt"

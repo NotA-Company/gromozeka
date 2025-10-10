@@ -2,6 +2,7 @@
 Basic OpenAI provider and model base classes for shared functionality, dood!
 """
 
+import base64
 import json
 import logging
 from typing import Dict, Iterable, List, Any, Optional
@@ -139,7 +140,77 @@ class BasicOpenAIModel(AbstractModel):
         if not self._config.get("support_images", False):
             raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
 
-        raise NotImplementedError("Image generation isn't supported by OpenAI-compatible models yet, dood")
+        kwargs: Dict[str, Any] = {}
+        try:
+            # Prepare base parameters
+            params = {
+                "model": self._getModelId(),
+                "messages": [message.toDict("content") for message in messages],  # type: ignore
+                "temperature": self.temperature,
+                "modalities": ["image", "text"],
+                **kwargs,
+            }
+
+            # Add any extra parameters from subclasses
+            params.update(self._getExtraParams())
+
+            # Use OpenAI-compatible API
+            response: ChatCompletion = await self._client.chat.completions.create(**params)
+
+            if not isinstance(response, ChatCompletion):
+                raise ValueError(f"Invalid response from OpenAI-compatible model: {response}")
+
+            # for chunk in response:
+            #   if chunk.choices[0].delta.content is not None:
+            #       print(chunk.choices[0].delta.content, end="")
+
+            status = ModelResultStatus.UNSPECIFIED
+            match response.choices[0].finish_reason:
+                case "stop":
+                    status = ModelResultStatus.FINAL
+                case "length":
+                    status = ModelResultStatus.TRUNCATED_FINAL
+                case "tool_calls":
+                    status = ModelResultStatus.TOOL_CALLS
+                case "content_filter":
+                    status = ModelResultStatus.CONTENT_FILTER
+                case _:
+                    status = ModelResultStatus.UNKNOWN
+
+            # The generated image will be in the assistant message
+            retMessage = response.choices[0].message
+
+            if hasattr(retMessage, "images"):
+                images = getattr(retMessage, "images")
+                for i, image in enumerate(images):
+                    imageDataURL = image["image_url"]["url"]  # Base64 data URL 'data:image/png;base64,...'
+                    # Format is usually: data:[<mediatype>][;base64],<data>
+                    header, encoded = imageDataURL.split(",", 1)
+                    mimeType = header.split(";")[0].split(":")[1]
+
+                    # Decode the base64 string to binary data
+                    imageBytes = base64.b64decode(encoded)
+
+                    # To not spam logs
+                    images[i]["image_url"]["url"] = f"{header},...({len(encoded)})"
+
+                    return ModelRunResult(
+                        response,
+                        status,
+                        mediaMimeType=mimeType,
+                        mediaData=imageBytes,
+                    )
+            else:
+                logger.error("No images field in model response")
+                status = ModelResultStatus.ERROR
+
+            return ModelRunResult(
+                response, status, resultText=retMessage.content if retMessage.content is not None else ""
+            )
+
+        except Exception as e:
+            logger.error(f"Error running OpenAI-compatible model {self.modelId}: {e}")
+            raise
 
 
 class BasicOpenAIProvider(AbstractLLMProvider):
