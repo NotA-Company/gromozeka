@@ -151,19 +151,22 @@ class BotApplication:
 
         # Configure Commands
         DefaultCommands = [
-            ("/draw", "Generate image by given prompt"),
-            ("/analyze", "Analyze media in answered message by given prompt"),
-            ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)"),
-            ("/summary", "Summarisation of chat's messages for a day"),
-            ("/topic_summary", "Summarisation of topic's messages for a day"),
         ]
         ChatCommands = [
+        ]
+        ChatAdminCommands = [
             ("/spam", "Mark message as spam"),
         ]
         PrivateCommands = [
             ("/configure", "Start bot configuration"),
             ("/help", "Print help"),
             ("/start", "Start bot interaction"),
+
+            ("/draw", "Generate image by given prompt"),
+            ("/analyze", "Analyze media in answered message by given prompt"),
+            ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)"),
+            ("/summary", "Summarisation of chat's messages for a day"),
+            ("/topic_summary", "Summarisation of topic's messages for a day"),
         ]
 
         await self.application.bot.set_my_commands(commands=DefaultCommands, scope=telegram.BotCommandScopeDefault())
@@ -172,6 +175,10 @@ class BotApplication:
         )
         await self.application.bot.set_my_commands(
             commands=DefaultCommands + ChatCommands, scope=telegram.BotCommandScopeAllGroupChats()
+        )
+        await self.application.bot.set_my_commands(
+            commands=DefaultCommands + ChatCommands + ChatAdminCommands,
+            scope=telegram.BotCommandScopeAllChatAdministrators(),
         )
         # * :class:`telegram.BotCommandScopeAllChatAdministrators`
 
