@@ -599,16 +599,13 @@ class BotHandlers:
                 f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
             if mlRet.status != ModelResultStatus.FINAL:
-                imgAddPrefix = ""
-                if mlRet.isFallback:
-                    imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
                 ret = await self._sendMessage(
                     ensuredMessage,
                     messageText=(
                         f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\n"
                         f"Prompt:\n```\n{image_prompt}\n```"
                     ),
-                    addMessagePrefix=imgAddPrefix,
+                    
                 )
                 return json.dumps({"done": False, "errorMessage": mlRet.resultText}, ensure_ascii=False, default=str)
 
@@ -616,11 +613,15 @@ class BotHandlers:
                 logger.error(f"No image generated for {image_prompt}")
                 return '{"done": false}'
 
+            imgAddPrefix = ""
+            if mlRet.isFallback:
+                imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
             ret = await self._sendMessage(
                 ensuredMessage,
                 photoData=mlRet.mediaData,
                 photoCaption=image_description,
                 mediaPrompt=image_prompt,
+                addMessagePrefix=imgAddPrefix,
             )
 
             return json.dumps({"done": ret is not None})
@@ -2781,9 +2782,6 @@ class BotHandlers:
         mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
         logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
         if mlRet.status != ModelResultStatus.FINAL:
-            imgAddPrefix = ""
-            if mlRet.isFallback:
-                imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
             await self._sendMessage(
                 ensuredMessage,
                 messageText=(
@@ -2791,7 +2789,6 @@ class BotHandlers:
                     f"{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
-                addMessagePrefix=imgAddPrefix,
             )
             return
 
@@ -2806,6 +2803,9 @@ class BotHandlers:
         
         logger.debug(f"Media data len: {len(mlRet.mediaData)}")
 
+        imgAddPrefix = ""
+        if mlRet.isFallback:
+            imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
         await self._sendMessage(
             ensuredMessage,
             photoData=mlRet.mediaData,
@@ -2816,6 +2816,7 @@ class BotHandlers:
             ),
             mediaPrompt=prompt,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            addMessagePrefix=imgAddPrefix,
         )
 
     async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
