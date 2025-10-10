@@ -102,6 +102,8 @@ class BotApplication:
         self.application.add_handler(CommandHandler("delete_my_data", self.handlers.delete_my_data_command))
         self.application.add_handler(CommandHandler("clear_my_data", self.handlers.clear_my_data_command))
 
+        self.application.add_handler(CommandHandler("spam", self.handlers.spam_command))
+
         self.application.add_handler(CommandHandler("models", self.handlers.models_command))
         self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
         self.application.add_handler(CommandHandler(["set", "unset"], self.handlers.set_or_unset_chat_setting_command))
@@ -156,9 +158,7 @@ class BotApplication:
             ("/topic_summary", "Summarisation of topic's messages for a day"),
         ]
         ChatCommands = [
-            ("/spam", "Not implemented yet"),
-            ("/ban", "Not implemented yet"),
-            ("/kick", "Not implemented yet"),
+            ("/spam", "Mark message as spam"),
         ]
         PrivateCommands = [
             ("/configure", "Start bot configuration"),
