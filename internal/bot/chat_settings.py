@@ -68,15 +68,14 @@ class ChatSettingsKey(StrEnum):
         """
         # Используем hash или порядковый номер
         return list(self.__class__).index(self) + 1
-    
+
     @classmethod
-    def fromId(cls, value: int) -> 'ChatSettingsKey':
+    def fromId(cls, value: int) -> "ChatSettingsKey":
         """Get value by it's int id"""
         try:
             return list(cls)[value - 1]
         except IndexError:
             raise ValueError(f"No {cls.__name__} with numeric value {value}")
-
 
 
 class ChatSettingsValue:
@@ -106,7 +105,7 @@ class ChatSettingsValue:
             return 0.0
 
     def toBool(self) -> bool:
-        return self.value.lower() == "true"
+        return self.value.lower().strip() == "true"
 
     def toList(self, separator: str = ",", dropEmpty: bool = True) -> List[str]:
         return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]
