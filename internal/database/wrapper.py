@@ -12,7 +12,7 @@ import threading
 from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 
-from .models import MediaStatus, MessageCategory
+from .models import MediaStatus, MessageCategory, SpamReason
 from ..bot.models import MessageType
 
 logger = logging.getLogger(__name__)
@@ -271,6 +271,25 @@ class DatabaseWrapper:
             """
             )
 
+            # Spam messages for learning
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS spam_messages (
+                    chat_id INTEGER NOT NULL,    -- Chat ID
+                    user_id INTEGER NOT NULL,    -- User ID
+                    message_id INTEGER NOT NULL, -- Message ID
+
+                    text TEXT NOT NULL,         -- Message text
+                    reason TEXT NOT NULL,       -- Reason for spam (see SpamReason)
+                    score FLOAT NOT NULL,       -- Spam score
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (chat_id, user_id, message_id)
+                )
+            """
+            )
+
     def setSetting(self, key: str, value: str) -> bool:
         """Set a configuration setting."""
         try:
@@ -506,6 +525,33 @@ class DatabaseWrapper:
                 f"Failed to get chat messages for chat {chatId}, thread {threadId}, "
                 f"root_message_id {rootMessageId}: {e}"
             )
+            return []
+
+    def getChatMessagesByUser(self, chatId: int, userId: int, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get all chat messages by user ID."""
+        logger.debug(f"Getting chat messages for chat {chatId}, user {userId}")
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
+                    JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
+                    LEFT JOIN media_attachments ma ON c.media_id IS NOT NULL AND c.media_id = ma.file_unique_id
+                    WHERE
+                        c.chat_id = :chatId
+                        AND c.user_id = :userId
+                    ORDER BY c.date DESC
+                    LIMIT :limit
+                """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                        "limit": limit,
+                    },
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get chat messages for chat {chatId}, user {userId}: {e}")
             return []
 
     def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> bool:
@@ -1005,3 +1051,49 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get chat info: {e}")
             return {}
+
+    def addSpamMessage(
+        self, chatId: int, userId: int, messageId: int, messageText: str, spamReason: SpamReason, score: float
+    ) -> bool:
+        """Add spam message to the database."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO spam_messages
+                        (chat_id, user_id, message_id, text, reason, score)
+                    VALUES
+                        (:chatId, :userId, :messageId, :messageText, :spamReason, :score)
+                """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                        "messageId": messageId,
+                        "messageText": messageText,
+                        "spamReason": spamReason.value,
+                        "score": score,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add spam message: {e}")
+            return False
+
+    def getSpamMessagesByText(self, text: str) -> List[Dict[str, Any]]:
+        """Get spam messages by text."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM spam_messages
+                    WHERE
+                        text LIKE :text
+                """,
+                    {
+                        "text": f"%{text}%",
+                    },
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get spam messages: {e}")
+            return []

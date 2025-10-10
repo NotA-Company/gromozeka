@@ -31,3 +31,13 @@ class MessageCategory(StrEnum):
     BOT_COMMAND_REPLY = "bot-command-reply"
     BOT_ERROR = "bot-error"
     BOT_SUMMARY = "bot-summary"
+
+
+class SpamReason(StrEnum):
+    """
+    Enum for spam reason.
+    """
+
+    AUTO = "auto"
+    USER = "user"
+    ADMIN = "admin"
