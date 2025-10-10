@@ -2950,7 +2950,8 @@ class BotHandlers:
                         messageIds.append(msg["message_id"])
 
                 try:
-                    await bot.delete_messages(chat_id=chatId, message_ids=messageIds)
+                    if messageIds:
+                        await bot.delete_messages(chat_id=chatId, message_ids=messageIds)
                 except Exception as e:
                     logger.error("Failed during deleteing spam message:")
                     logger.exception(e)
