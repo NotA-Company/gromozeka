@@ -35,7 +35,7 @@ from lib.ai.models import (
 from lib.ai.manager import LLMManager
 
 from internal.database.wrapper import DatabaseWrapper
-from internal.database.models import MediaStatus, MessageCategory
+from internal.database.models import MediaStatus, MessageCategory, SpamReason
 
 from lib.markdown import markdown_to_markdownv2
 import lib.utils as utils
@@ -936,6 +936,10 @@ class BotHandlers:
     # Handling messages
     ###
 
+    async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
+        """Check if message is spam."""
+        return False
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
         # logger.debug(f"Handling SOME message: {update}")
@@ -996,6 +1000,12 @@ class BotHandlers:
             return
 
         self._updateEMessageUserData(ensuredMessage)
+
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+
+        if chatSettings[ChatSettingsKey.DETECT_SPAM].toBool():
+            if await self.checkSpam(ensuredMessage):
+                return
 
         user = ensuredMessage.user
 
@@ -2908,6 +2918,43 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
+    async def _handleSpam(self, message: Message, reason: SpamReason, score: Optional[float] = None):
+        """Delete spam message, ban user and save message to spamDB"""
+        chatSettings = self.getChatSettings(message.chat_id)
+        bot = message.get_bot()
+
+        chatId = message.chat_id
+        userId = message.from_user.id if message.from_user is not None else 0
+
+        self.db.addSpamMessage(
+            chatId=chatId,
+            userId=userId,
+            messageId=message.message_id,
+            messageText=str(message.text),
+            spamReason=reason,
+            score=score if score is not None else 0,
+        )
+
+        await bot.delete_message(chat_id=chatId, message_id=message.message_id)
+        if message.from_user is not None:
+            await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
+            if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
+                userMessages = self.db.getChatMessagesByUser(
+                    chatId=chatId,
+                    userId=userId,
+                    limit=10,  # Do not delete more that 10 messages
+                )
+                messageIds: List[int] = []
+                for msg in userMessages:
+                    if msg["message_id"] != message.message_id:
+                        messageIds.append(msg["message_id"])
+
+                try:
+                    await bot.delete_messages(chat_id=chatId, message_ids=messageIds)
+                except Exception as e:
+                    logger.error("Failed during deleteing spam message:")
+                    logger.exception(e)
+
     async def spam_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /spam command."""
 
@@ -2930,19 +2977,19 @@ class BotHandlers:
         # userId = ensuredMessage.user.id
 
         # context.bot.delete_message()
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        allowUserSpamCommand = chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
         isAdmin = await self._isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat)
 
-        if isAdmin and message.reply_to_message is not None:
-            bot = context.bot
+        if message.reply_to_message is not None and (allowUserSpamCommand or isAdmin):
             replyMessage = message.reply_to_message
-            # eReplyMessage = EnsuredMessage.fromMessage(replyMessage)
-            # TODO: save to spam base
-            await bot.delete_message(chat_id=replyMessage.chat_id, message_id=replyMessage.message_id)
-            if replyMessage.from_user is not None:
-                await bot.ban_chat_member(
-                    chat_id=replyMessage.chat_id, user_id=replyMessage.from_user.id, revoke_messages=True
-                )
+            await self._handleSpam(
+                replyMessage,
+                reason=SpamReason.ADMIN if isAdmin else SpamReason.USER,
+                score=100 if isAdmin else 50,  # TODO: Think about score for user
+            )
 
+        # Delete command message to reduce flood
         await message.delete()
 
     async def _handle_chat_configuration(self, data: Dict[str, Any], message: Message, user: User) -> bool:
@@ -2969,6 +3016,8 @@ class BotHandlers:
                         username=chat["username"],
                         is_forum=chat["is_forum"],
                     )
+                    chatObj.set_bot(message.get_bot())
+
                     if await self._isAdmin(user=user, chat=chatObj, allowBotOwners=True):
                         buttonTitle: str = f"#{chat['chat_id']}"
                         if chat["title"]:
@@ -3002,6 +3051,7 @@ class BotHandlers:
                     return False
 
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
+                chatObj.set_bot(message.get_bot())
 
                 if not await self._isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_button: user#{user.id} is not admin in {chatId}")
@@ -3077,6 +3127,7 @@ class BotHandlers:
                     return False
 
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
+                chatObj.set_bot(message.get_bot())
                 if not await self._isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_button: user#{user.id} is not admin in {chatId} ({data})")
                     await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
@@ -3174,6 +3225,7 @@ class BotHandlers:
                     return False
 
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
+                chatObj.set_bot(message.get_bot())
                 if not await self._isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_button: user#{user.id} is not admin in {chatId} ({data})")
                     await message.edit_text(text="Вы не являетесь администратором в выбранном чате")

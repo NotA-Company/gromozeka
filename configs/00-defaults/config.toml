@@ -29,6 +29,15 @@ allow-analyze = true
 # Allow /summary and /topic_summary commands
 allow-summary = true
 
+# Allow non-admins to send /spam command
+allow-user-spam-command = false
+# Automatically detect and delete spam messages
+detect-spam = false
+# If user has more than this amount of messages in chat, do not check it for spam (0 - alwayx check)
+auto-spam-max-messages = 10
+# In case of spam - delete all known user messages
+spam-delete-all-user-messages = true
+
 # Allow reaction in bot mention (by username and by name)
 allow-mention = true
 # Allow reaction on reply of bot message
