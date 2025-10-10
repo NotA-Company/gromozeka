@@ -3149,7 +3149,7 @@ class BotHandlers:
                 if action == "s+":
                     self.setChatSettings(chatId, {key: True})
                 elif action == "s-":
-                    self.setChatSettings(chatId, {key: True})
+                    self.setChatSettings(chatId, {key: False})
                 elif action == "s#":
                     self.unsetChatSetting(chatId, key)
                 elif action == "sv":
