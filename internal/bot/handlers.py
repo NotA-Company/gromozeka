@@ -159,7 +159,11 @@ class BotHandlers:
             self.cache["chats"][chatId] = {}
 
         for key, value in settings.items():
-            self.db.setChatSetting(chatId, key, value)
+            _value = str(value)
+            if isinstance(value, list):
+                _value = ','.join(value)
+            
+            self.db.setChatSetting(chatId, key, _value)
 
         if "settings" in self.cache["chats"][chatId]:
             self.cache["chats"][chatId].pop("settings", None)
