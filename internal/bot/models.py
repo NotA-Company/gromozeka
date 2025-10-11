@@ -43,6 +43,7 @@ class MediaProcessingInfo:
 
 class DelayedTaskFunction(StrEnum):
     SEND_MESSAGE = "sendMessage"
+    DELETE_MESSAGE = "deleteMessage"
 
 
 class DelayedTask:

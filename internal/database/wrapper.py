@@ -289,7 +289,7 @@ class DatabaseWrapper:
                 )
             """
             )
-        
+
             # Chat Topics
             cursor.execute(
                 """
@@ -1115,8 +1115,15 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get spam messages: {e}")
             return []
-        
-    def updateChatTopic(self, chatId: int, topicId: int, iconColor: Optional[int] = None, customEmojiId: Optional[str] = None, topicName: str = "Default") -> bool:
+
+    def updateChatTopic(
+        self,
+        chatId: int,
+        topicId: int,
+        iconColor: Optional[int] = None,
+        customEmojiId: Optional[str] = None,
+        topicName: str = "Default",
+    ) -> bool:
         """Store user as chat member + update username and updated_at."""
         try:
             with self.getCursor() as cursor:
