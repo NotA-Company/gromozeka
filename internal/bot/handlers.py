@@ -1108,7 +1108,7 @@ class BotHandlers:
         spamMessagesCount = 0
         nonSpamMessagesCount = 0
         for msg in userMessages:
-            if msg["text"] == ensuredMessage.messageText and msg["message_id"] != ensuredMessage.messageId:
+            if msg["message_text"] == ensuredMessage.messageText and msg["message_id"] != ensuredMessage.messageId:
                 spamMessagesCount = spamMessagesCount + 1
             else:
                 nonSpamMessagesCount = nonSpamMessagesCount + 1
