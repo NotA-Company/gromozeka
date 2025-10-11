@@ -32,6 +32,9 @@ class MessageCategory(StrEnum):
     BOT_ERROR = "bot-error"
     BOT_SUMMARY = "bot-summary"
 
+    BOT_SPAM_NOTIFICATION = "bot-spam-notification"
+    USER_SPAM = "user-spam"
+
 
 class SpamReason(StrEnum):
     """

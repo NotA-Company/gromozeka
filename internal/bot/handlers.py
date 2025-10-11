@@ -364,8 +364,17 @@ class BotHandlers:
                             messageCategory=kwargs["messageCategory"],
                         )
                         pass
+                    case DelayedTaskFunction.DELETE_MESSAGE:
+                        kwargs = delayedTask.kwargs
+                        if self._bot is not None:
+                            await self._bot.delete_message(chat_id=kwargs["chatId"], message_id=kwargs["messageId"])
+                        else:
+                            logger.error(
+                                "Bot is not initialized, can't delete message "
+                                f"{kwargs['messageId']} in chat {kwargs['chatId']}"
+                            )
                     case _:
-                        logger.error(f"Unknown function type: {delayedTask.function} in delayed task {delayedTask}")
+                        logger.error(f"Unsupported function type: {delayedTask.function} in delayed task {delayedTask}")
 
                 self.db.updateDelayedTask(delayedTask.taskId, True)
                 self.delayedActionsQueue.task_done()
@@ -1096,12 +1105,12 @@ class BotHandlers:
         if maxCheckMessages != 0 and userMessages > maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
             return False
-        
+
         logger.debug(f"SPAM CHECK: {userMessages} < {maxCheckMessages}, checking message for spam ({ensuredMessage})")
 
-        isSpammer = False
         spamScore = 0.0
-        # Check if for last 10 messages there are more same messages than different:
+
+        # Check if for last 10 messages there are more same messages than different ones:
         userMessages = self.db.getChatMessagesByUser(
             chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, limit=10
         )
@@ -1118,16 +1127,44 @@ class BotHandlers:
                 f"SPAM: Last user messages: {userMessages}\n"
                 f"Spam: {spamMessagesCount}, non-Spam: {nonSpamMessagesCount}"
             )
-            isSpammer = True
-            spamScore = ((spamMessagesCount + 1) / (spamMessagesCount + 1 + nonSpamMessagesCount)) * 100
+            _spamScore = ((spamMessagesCount + 1) / (spamMessagesCount + 1 + nonSpamMessagesCount)) * 100
+            spamScore = max(spamScore, _spamScore)
 
-        if isSpammer:
-            logger.info(f"SPAM: {ensuredMessage.getBaseMessage()}")
-            #await ensuredMessage.getBaseMessage().reply_text(
-            #    f"Спаммер! (Вероятность: {spamScore})\n""(Данное сообщение будет удалено в течении минуты)", reply_to_message_id=ensuredMessage.messageId
-            #)
+        # TODO: Add some Bayes filter
+
+        banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
+        warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
+
+        if spamScore > banTreshold:
+            logger.info(f"SPAM: spamScore: {spamScore} > {banTreshold} {ensuredMessage.getBaseMessage()}")
+            banMessage = await self._sendMessage(
+                ensuredMessage,
+                messageText=f"Спаммер! (Вероятность: {spamScore}, порог: {banTreshold})\n"
+                "(Данное сообщение будет удалено в течении минуты)",
+                messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
+            )
+            if banMessage is not None:
+                await self._addDelayedTask(
+                    time.time() + 60,
+                    DelayedTaskFunction.DELETE_MESSAGE,
+                    kwargs={"messageId": banMessage.message_id, "chatId": banMessage.chat_id},
+                    taskId=f"del-{banMessage.chat_id}-{banMessage.message_id}",
+                )
+            else:
+                logger.error("Wasn't been able to send SPAM notification")
             await self._handleSpam(message=ensuredMessage.getBaseMessage(), reason=SpamReason.AUTO, score=spamScore)
             return True
+        elif spamScore > warnTreshold:
+            logger.info(f"Possible SPAM: spamScore: {spamScore} > {warnTreshold} {ensuredMessage.getBaseMessage()}")
+            await self._sendMessage(
+                ensuredMessage,
+                messageText=f"Возможно спам (Вероятность: {spamScore}, порог: {warnTreshold})\n"
+                "(Когда-нибудь тут будут кнопки спам\\не спам)",
+                messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
+            )
+            # TODO: Add SPAM/Not-SPAM buttons, for non-spam also need to add ham-table for studying
+        else:
+            logger.debug(f"Not SPAM: spamScore: {spamScore} < {warnTreshold} {ensuredMessage}")
 
         return False
 
