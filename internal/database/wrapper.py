@@ -444,6 +444,7 @@ class DatabaseWrapper:
         self,
         chatId: int,
         sinceDateTime: Optional[datetime.datetime] = None,
+        tillDateTime: Optional[datetime.datetime] = None,
         threadId: Optional[int] = None,
         limit: Optional[int] = None,
         messageCategory: Optional[List[MessageCategory]] = None,
@@ -454,6 +455,7 @@ class DatabaseWrapper:
             params = {
                 "chatId": chatId,
                 "sinceDateTime": sinceDateTime,
+                "tillDateTime": tillDateTime,
                 "threadId": threadId,
                 "messageCategory": None if messageCategory is None else True,
             }
@@ -471,9 +473,10 @@ class DatabaseWrapper:
                     LEFT JOIN media_attachments ma ON c.media_id IS NOT NULL AND c.media_id = ma.file_unique_id
                     WHERE
                         c.chat_id = :chatId
-                        AND (:sinceDateTime IS NULL OR c.date > :sinceDateTime)
-                        AND ((:threadId IS NULL) OR (c.thread_id = :threadId))
-                        AND ((:messageCategory IS NULL) OR (message_category IN ({", ".join(placeholders)})))
+                        AND (:sinceDateTime   IS NULL OR c.date > :sinceDateTime)
+                        AND (:tillDateTime    IS NULL OR c.date < :tillDateTime)
+                        AND (:threadId        IS NULL OR c.thread_id = :threadId)
+                        AND (:messageCategory IS NULL OR message_category IN ({", ".join(placeholders)}))
                     ORDER BY c.date DESC
                 """
                 if limit is not None:
@@ -1116,15 +1119,17 @@ class DatabaseWrapper:
             logger.error(f"Failed to get spam messages: {e}")
             return []
 
-    def updateChatTopic(
+    def updateChatTopicInfo(
         self,
         chatId: int,
         topicId: int,
         iconColor: Optional[int] = None,
         customEmojiId: Optional[str] = None,
-        topicName: str = "Default",
+        topicName: Optional[str] = None,
     ) -> bool:
         """Store user as chat member + update username and updated_at."""
+        if topicName is None:
+            topicName = "Default"
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
