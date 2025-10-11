@@ -1266,6 +1266,30 @@ class BotHandlers:
         chatId = message.chat_id
         userId = message.from_user.id if message.from_user is not None else 0
 
+        if message.from_user is not None:
+            if await self._isAdmin(user=message.from_user, chat=message.chat):
+                # It is admin, do nothing
+                logger.warning(f"Tried to mark Admin {message.from_user} as SPAM")
+                await self._sendMessage(
+                    EnsuredMessage.fromMessage(message),
+                    messageText="Алярм! Попытка представить администратора спаммером",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+                return
+
+            if reason != SpamReason.ADMIN:
+                # Check if we are trying to ban old chat member and it is not from Admin
+                userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
+                maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
+                if maxSpamMessages != 0 and userInfo and userInfo["messages_count"] > maxSpamMessages:
+                    logger.warning(f"Tried to mark old user {message.from_user} as SPAM")
+                    await self._sendMessage(
+                        EnsuredMessage.fromMessage(message),
+                        messageText="Алярм! Попытка представить честного пользователя спаммером",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    )
+                    return
+
         self.db.addSpamMessage(
             chatId=chatId,
             userId=userId,
