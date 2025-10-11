@@ -102,6 +102,13 @@ class BotHandlers:
         #         "<chatId>": Dict[str, Any] = {
         #             "settings": Dict[ChatSettingsKey, ChatSettingsValue] = {...},
         #             "info": Dict[str, any] = {...},
+        #             "topics": Dict[int, Any] = {
+        #                 "<topicId>": Dict[str, Any] = {
+        #                     "iconColor": Optional[int],
+        #                     "customEmojiId": Optional[int],
+        #                     "name": Optional[str],
+        #                 },
+        #             },
         #         },
         #     },
         #     "chatUsers": Dict[str, Any] = {
@@ -111,7 +118,8 @@ class BotHandlers:
         #     },
         #     "users": Dict[int, Any] = {
         #         <userId>: Dict[str, Any] = {
-        #             "activeConfigureId": messageId: Optional[int],
+        #             "activeConfigureId": Dict[str, Any] = {...},
+        #             "activeSummarizationId": Dict[str, Any] = {...},
         #         },
         #     },
         #  }
@@ -808,6 +816,49 @@ class BotHandlers:
             self.cache["chats"][chatId]["info"] = cachedInfo
             self.db.addChatInfo(chatId, type=chat.type, title=chat.title, username=chat.username, isForum=chat.is_forum)
 
+    def _updateTopicInfo(
+        self,
+        chatId: int,
+        topicId: Optional[int],
+        iconColor: Optional[int] = None,
+        customEmojiId: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        """Update Chat info. Do not save it to DB if it is in cache and wasn't changed"""
+
+        if topicId is None:
+            topicId = 0
+
+        if chatId not in self.cache["chats"]:
+            self.cache["chats"][chatId] = {}
+        if "topics" not in self.cache["chats"][chatId]:
+            self.cache["chats"][chatId]["topics"] = {}
+        if topicId not in self.cache["chats"][chatId]["topics"]:
+            self.cache["chats"][chatId]["topics"][topicId] = {}
+
+        cachedInfo = self.cache["chats"][chatId]["topics"][topicId]
+
+        if any(
+            [
+                iconColor != cachedInfo.get("iconColor", None),
+                customEmojiId != cachedInfo.get("customEmojiId", None),
+                name != cachedInfo.get("name", None),
+            ]
+        ):
+            cachedInfo = {
+                "iconColor": iconColor,
+                "customEmojiId": customEmojiId,
+                "name": name,
+            }
+            self.cache["chats"][chatId]["topics"][topicId] = cachedInfo
+            self.db.updateChatTopicInfo(
+                chatId=chatId,
+                topicId=topicId,
+                iconColor=iconColor,
+                customEmojiId=customEmojiId,
+                topicName=name,
+            )
+
     def _saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
         """Save a chat message to the database."""
         user = message.user
@@ -830,6 +881,31 @@ class BotHandlers:
                 rootMessageId = parentMsg["root_message_id"]
 
         self._updateChatInfo(chat)
+
+        # TODO: Actually topic name and emoji could be changed after that
+        # but currently we have no way to know it (except of see
+        # https://docs.python-telegram-bot.org/en/stable/telegram.forumtopicedited.html )
+        # Think about it later
+        if message.isTopicMessage:
+            iconColor: Optional[int] = None
+            customEmojiId: Optional[str] = None
+            topicName: Optional[str] = None
+
+            repliedMessage = message.getBaseMessage().reply_to_message
+            if repliedMessage and repliedMessage.forum_topic_created:
+                iconColor = repliedMessage.forum_topic_created.icon_color
+                customEmojiId = repliedMessage.forum_topic_created.icon_custom_emoji_id
+                topicName = repliedMessage.forum_topic_created.name
+
+            self._updateTopicInfo(
+                chatId=message.chat.id,
+                topicId=message.threadId,
+                iconColor=iconColor,
+                customEmojiId=customEmojiId,
+                name=topicName,
+            )
+        else:
+            self._updateTopicInfo(chatId=message.chat.id, topicId=message.threadId)
 
         self.db.updateChatUser(
             chatId=chat.id,
@@ -961,7 +1037,9 @@ class BotHandlers:
         threadId: Optional[int],
         chatSettings: Dict[ChatSettingsKey, ChatSettingsValue],
         sinceDT: Optional[datetime.datetime] = None,
+        tillDT: Optional[datetime.datetime] = None,
         maxMessages: Optional[int] = None,
+        summarizationPrompt: Optional[str] = None,
     ) -> None:
         """Do summarisation and send as response to provided message"""
 
@@ -971,6 +1049,7 @@ class BotHandlers:
         messages = self.db.getChatMessagesSince(
             chatId=chatId,
             sinceDateTime=sinceDT if maxMessages is None else None,
+            tillDateTime=tillDT if maxMessages is None else None,
             threadId=threadId,
             limit=maxMessages,
             messageCategory=[MessageCategory.USER, MessageCategory.BOT],
@@ -978,9 +1057,12 @@ class BotHandlers:
 
         logger.debug(f"Messages: {messages}")
 
+        if summarizationPrompt is None:
+            summarizationPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
+
         systemMessage = {
             "role": "system",
-            "content": chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr(),
+            "content": summarizationPrompt,
         }
         parsedMessages = []
 
@@ -1235,6 +1317,7 @@ class BotHandlers:
                 if update.effective_user is not None and update.message is not None and update.message.text is not None:
                     user = update.effective_user
                     userId = user.id
+                    messageText = update.message.text
                     activeConfigureId = self.cache["users"].get(userId, {}).get("activeConfigureId", None)
                     if activeConfigureId is not None:
                         await self._handle_chat_configuration(
@@ -1242,9 +1325,32 @@ class BotHandlers:
                                 "a": "sv",
                                 "c": activeConfigureId["chatId"],
                                 "k": ChatSettingsKey(activeConfigureId["key"]).getId(),
-                                "v": update.message.text,
+                                "v": messageText,
                             },
                             message=activeConfigureId["message"],
+                            user=user,
+                        )
+                        return
+
+                    activeSummarizationId = self.cache["users"].get(userId, {}).get("activeSummarizationId", None)
+                    if activeSummarizationId is not None:
+                        data = activeSummarizationId.copy()
+                        data.pop("message", None)
+                        k = data.pop("k", None)
+                        match k:
+                            case 1:
+                                try:
+                                    data["m"] = int(messageText.strip())
+                                except Exception as e:
+                                    logger.error(f"Not int: {messageText}")
+                                    logger.exception(e)
+                            case 2:
+                                data["p"] = messageText
+                            case _:
+                                logger.error(f"Wrong K in data {activeSummarizationId}")
+                        await self._handle_summarization(
+                            data=data,
+                            message=activeSummarizationId["message"],
                             user=user,
                         )
                         return
@@ -2140,17 +2246,32 @@ class BotHandlers:
     async def _handle_summarization(self, data: Dict[str, Any], message: Message, user: User):
         """Process summarization buttons."""
 
+        # Used keys:
+        # s: Action
+        # c: ChatId
+        # t: topicId
+        # m: MaxMessages/time
+        # k: user action (1 - set max messages, 2 - set prompt)
+
         def myJSONDump(data: Any) -> str:
             return json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":"), sort_keys=True)
 
-        exitButton = InlineKeyboardButton("Отмена", callback_data=myJSONDump({"a": "sum", "e": "cancel"}))
-        action = data.get("a", None)
-        if action not in ["sum", "tsum"]:
+        chatSettings = self.getChatSettings(message.chat_id)
+        userId = user.id
+        if userId not in self.cache["users"]:
+            self.cache["users"][userId] = {}
+        self.cache["users"][userId].pop("activeSummarizationId", None)
+
+        exitButton = InlineKeyboardButton("Отмена", callback_data=myJSONDump({"s": "s", "e": "cancel"}))
+        action: Optional[str] = data.get("s", None)
+        if action is None or action not in ["s", "t", "s+", "t+"]:
             ValueError(f"Wrong action in {data}")
-        isToticSummary = action == "tsum"
+            return  # Useless, used for fixing typechecking issues
+        isToticSummary = action.startswith("t")
 
         if data.get("e", None) == "cancel":
             await message.edit_text(text="Суммаризация отменена")
+            return
 
         maxMessages = data.get("m", None)
         if maxMessages is None:
@@ -2159,21 +2280,22 @@ class BotHandlers:
         userChats = self.db.getUserChats(user.id)
 
         chatId = data.get("c", None)
+        # Choose chatID
         if not isinstance(chatId, int):
             keyboard: List[List[InlineKeyboardButton]] = []
             # chatSettings = self.getChatSettings(ensuredMessage.chat.id)
             for chat in userChats:
-                buttonTitle: str = f"#{chat['chat_id']}"
+                chatTitle: str = f"#{chat['chat_id']}"
                 if chat["title"]:
-                    buttonTitle = f"{CHAT_ICON} {chat['title']} ({chat["type"]})"
+                    chatTitle = f"{CHAT_ICON} {chat['title']} ({chat["type"]})"
                 elif chat["username"]:
-                    buttonTitle = f"{PRIVATE_ICON} {chat['username']} ({chat["type"]})"
+                    chatTitle = f"{PRIVATE_ICON} {chat['username']} ({chat["type"]})"
 
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            buttonTitle,
-                            callback_data=myJSONDump({"c": chat["chat_id"], "a": action, "m": maxMessages}),
+                            chatTitle,
+                            callback_data=myJSONDump({"c": chat["chat_id"], "s": action, "m": maxMessages}),
                         )
                     ]
                 )
@@ -2187,24 +2309,207 @@ class BotHandlers:
             return
 
         chatFound = await self._isAdmin(user, None, True)
+        chatInfo: Dict[str, Any] = {}
         for chat in userChats:
             if chat["chat_id"] == chatId:
                 chatFound = True
+                chatInfo = chat
                 break
 
         if not chatFound:
             await message.edit_text("Указан неверный чат")
             return
 
+        # ChatID Choosen
+        chatTitle: str = f"#{chatInfo['chat_id']}"
+        if chatInfo["title"]:
+            chatTitle = f"{CHAT_ICON} {chatInfo['title']} ({chatInfo["type"]})"
+        elif chatInfo["username"]:
+            chatTitle = f"{PRIVATE_ICON} {chatInfo['username']} ({chatInfo["type"]})"
+
         topicId = data.get("t", None)
+        # Choose TopicID if needed
         if isToticSummary and topicId is None:
-            await message.edit_text("Список топиков пока не поддержан")
-            # TODO: Add topic list support
+            # await message.edit_text("Список топиков пока не поддержан")
+            topics = self.db.getChatTopics(chatId=chatId)
+            if not topics:
+                topics.append(
+                    {
+                        "topic_id": 0,
+                        "name": "Default",
+                    }
+                )
+
+            keyboard: List[List[InlineKeyboardButton]] = []
+
+            for topic in topics:
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            topic["name"],
+                            callback_data=myJSONDump(
+                                {"c": chatId, "s": action, "m": maxMessages, "t": topic["topic_id"]}
+                            ),
+                        )
+                    ]
+                )
+
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        "<< Назад к списку чатов",
+                        callback_data=myJSONDump({"s": action, "m": maxMessages}),
+                    )
+                ]
+            )
+
+            keyboard.append([exitButton])
+
+            await message.edit_text(
+                text=f"Выбран чат {chatTitle}, выберите нужный топик:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            return
+
+        # TopicID Choosen
+        topicTitle = ""
+        if topicId is not None and isToticSummary:
+            topics = self.db.getChatTopics(chatId=chatId)
+            for topic in topics:
+                if topic["topic_id"] == topicId:
+                    topicTitle = f", топик **{topic["name"]}**"
+                    break
+
+        dataTemplate: Dict[str, Any] = {
+            "s": action,
+            "c": chatId,
+            "m": maxMessages,
+        }
+        if topicId is not None:
+            dataTemplate["t"] = topicId
+
+        # Check If User need to Enter Messages/Prompt:
+        userActionK = data.get("k", None)
+        if userActionK is not None:
+            self.cache["users"][userId]["activeSummarizationId"] = {
+                **dataTemplate,
+                "k": userActionK,
+                "message": message,
+            }
+
+            keyboard: List[List[InlineKeyboardButton]] = [
+                [
+                    InlineKeyboardButton(
+                        "Начать суммаризацию с текущими настройками",
+                        callback_data=myJSONDump({**dataTemplate, "s": action + "+"}),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "<< Назад",
+                        callback_data=myJSONDump(dataTemplate),
+                    )
+                ],
+                [exitButton],
+            ]
+
+            match userActionK:
+                case 1:
+                    await message.edit_text(
+                        text=markdown_to_markdownv2(
+                            f"Выбран чат {chatTitle}{topicTitle}\n"
+                            f"Укажите количество сообщений для суммаризации или нажмите нужную кнопку:"
+                        ),
+                        parse_mode="MarkdownV2",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
+                case 2:
+                    currentPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
+                    self.cache["users"][userId]["activeSummarizationId"]["s"] = action + "+"
+
+                    await message.edit_text(
+                        text=markdown_to_markdownv2(
+                            f"Выбран чат {chatTitle}{topicTitle}\n"
+                            f"Текущий промпт для суммаризации:\n```\n{currentPrompt}\n```\n"
+                            f"Укажите новый промпт или нажмите нужную кнопку:"
+                        ),
+                        parse_mode="MarkdownV2",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
+                case _:
+                    logger.error(f"Wrong summarisation user action {userActionK} in data {data}")
+                    self.cache["users"][userId].pop("activeSummarizationId", None)
+                    await message.edit_text("Что-то пошло не так")
+            return
+
+        # Choose MaxMessages/Duration/Prompt
+        if not action.endswith("+"):
+            durationDescription = ""
+            match maxMessages:
+                case 0:
+                    durationDescription = "За сегодня"
+                case -1:
+                    durationDescription = "За вчера"
+                case _:
+                    durationDescription = f"Последние {maxMessages} сообщений"
+
+            keyboard: List[List[InlineKeyboardButton]] = [
+                [
+                    InlineKeyboardButton(
+                        "Начать суммаризацию",
+                        callback_data=myJSONDump({**dataTemplate, "s": action + "+"}),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "Суммаризация за сегодня",
+                        callback_data=myJSONDump({**dataTemplate, "m": 0}),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "Суммаризация за вчера",
+                        callback_data=myJSONDump({**dataTemplate, "m": -1}),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "Установить количество сообщений для суммаризации",
+                        callback_data=myJSONDump({**dataTemplate, "k": 1}),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "Установить промпт",
+                        callback_data=myJSONDump({**dataTemplate, "k": 2}),
+                    )
+                ],
+                [exitButton],
+            ]
+
+            await message.edit_text(
+                text=markdown_to_markdownv2(
+                    f"Выбран чат {chatTitle}{topicTitle}\n"
+                    f"Границы суммаризации: {durationDescription}\n"
+                    "Вы можете поменять границы суммаризации или поменять промпт:"
+                ),
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
             return
 
         await message.edit_text("Суммаризирую сообщения...")
 
+        today = datetime.datetime.now(datetime.timezone.utc)
+        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        sinceDT = today
+        tillDT: Optional[datetime.datetime] = None
         if maxMessages < 1:
+            # if maxMessages == 0: # Summarisation for today, no special actions needed
+            if maxMessages == -1:
+                # Summarization for yesterday
+                tillDT = today
+                sinceDT = today - datetime.timedelta(days=1)
             maxMessages = None
 
         repliedMessage = message.reply_to_message
@@ -2226,15 +2531,14 @@ class BotHandlers:
             await message.edit_text("ensuredMessage is None")
             return
 
-        today = datetime.datetime.now(datetime.timezone.utc)
-        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
-
         await self._doSummarization(
             ensuredMessage=ensuredMessage,
             chatId=chatId,
             threadId=topicId,
-            chatSettings=self.getChatSettings(ensuredMessage.chat.id),
-            sinceDT=today,
+            chatSettings=chatSettings,
+            sinceDT=sinceDT,
+            tillDT=tillDT,
+            summarizationPrompt=data.get("p", None),
             maxMessages=maxMessages,
         )
 
@@ -2301,7 +2605,7 @@ class BotHandlers:
                 maxMessages = intArgs[0]
                 chatId = intArgs[1]
                 threadId = intArgs[2]
-                jsonAction = "tsum" if isTopicSummary else "sum"
+                jsonAction = "t" if isTopicSummary else "s"
 
                 if maxMessages is None or maxMessages < 1:
                     maxMessages = 0
@@ -2315,7 +2619,7 @@ class BotHandlers:
 
                     if msg is not None:
                         await self._handle_summarization(
-                            {"a": jsonAction, "m": maxMessages}, message=msg, user=ensuredMessage.user
+                            {"s": jsonAction, "m": maxMessages}, message=msg, user=ensuredMessage.user
                         )
                     else:
                         logger.error("Message undefined")
@@ -2331,7 +2635,7 @@ class BotHandlers:
 
                     if msg is not None:
                         await self._handle_summarization(
-                            {"a": jsonAction, "c": chatId, "m": maxMessages}, message=msg, user=ensuredMessage.user
+                            {"s": jsonAction, "c": chatId, "m": maxMessages}, message=msg, user=ensuredMessage.user
                         )
                     else:
                         logger.error("Message undefined")
@@ -3125,6 +3429,12 @@ class BotHandlers:
     async def _handle_chat_configuration(self, data: Dict[str, Any], message: Message, user: User) -> bool:
         """Parses the CallbackQuery and updates the message text."""
 
+        # Used keys:
+        # a: Action
+        # c: ChatId
+        # k: Key
+        # v: Value
+
         def myJSONDump(data: Any) -> str:
             return json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":"), sort_keys=True)
 
@@ -3484,13 +3794,28 @@ class BotHandlers:
             logger.error(f"handle_button: message is not a Message in {query}")
             return
 
-        action = data.get("a", None)
+        configureAction = data.get("a", None)
+        # Used keys:
+        # a: Action
+        # c: ChatId
+        # k: Key
+        # v: Value
+        if configureAction is not None:
+            await self._handle_chat_configuration(data, query.message, user)
+            return
 
-        match action:
-            case "sum" | "tsum":
-                await self._handle_summarization(data, query.message, user)
-            case _:
-                await self._handle_chat_configuration(data, query.message, user)
+        summaryAction = data.get("s", None)
+        # Used keys:
+        # s: Action
+        # c: ChatId
+        # t: topicId
+        # m: MaxMessages/time
+        if summaryAction is not None:
+            await self._handle_summarization(data, query.message, user)
+            return
+
+        logger.error(f"handle_button: No known action in {data} found")
+        raise ValueError("No known action found")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
