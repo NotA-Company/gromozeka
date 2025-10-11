@@ -825,6 +825,11 @@ class BotHandlers:
         name: Optional[str] = None,
     ) -> None:
         """Update Chat info. Do not save it to DB if it is in cache and wasn't changed"""
+        # logger.debug(
+        #    f"Updating topic info for chatId: {chatId}, "
+        #    f"topicId: {topicId}, iconColor: {iconColor}, "
+        #    f"customEmojiId: {customEmojiId}, name: {name}"
+        # )
 
         if topicId is None:
             topicId = 0
@@ -836,10 +841,11 @@ class BotHandlers:
         if topicId not in self.cache["chats"][chatId]["topics"]:
             self.cache["chats"][chatId]["topics"][topicId] = {}
 
-        cachedInfo = self.cache["chats"][chatId]["topics"][topicId]
+        cachedInfo: Dict[str, Any] = self.cache["chats"][chatId]["topics"][topicId]
 
         if any(
             [
+                not cachedInfo,
                 iconColor != cachedInfo.get("iconColor", None),
                 customEmojiId != cachedInfo.get("customEmojiId", None),
                 name != cachedInfo.get("name", None),
@@ -851,6 +857,11 @@ class BotHandlers:
                 "name": name,
             }
             self.cache["chats"][chatId]["topics"][topicId] = cachedInfo
+            logger.debug(
+                f"Saving topic info to DB for chatId: {chatId}, "
+                f"topicId: {topicId}, iconColor: {iconColor}, "
+                f"customEmojiId: {customEmojiId}, name: {name}"
+            )
             self.db.updateChatTopicInfo(
                 chatId=chatId,
                 topicId=topicId,
@@ -887,23 +898,15 @@ class BotHandlers:
         # https://docs.python-telegram-bot.org/en/stable/telegram.forumtopicedited.html )
         # Think about it later
         if message.isTopicMessage:
-            iconColor: Optional[int] = None
-            customEmojiId: Optional[str] = None
-            topicName: Optional[str] = None
-
             repliedMessage = message.getBaseMessage().reply_to_message
             if repliedMessage and repliedMessage.forum_topic_created:
-                iconColor = repliedMessage.forum_topic_created.icon_color
-                customEmojiId = repliedMessage.forum_topic_created.icon_custom_emoji_id
-                topicName = repliedMessage.forum_topic_created.name
-
-            self._updateTopicInfo(
-                chatId=message.chat.id,
-                topicId=message.threadId,
-                iconColor=iconColor,
-                customEmojiId=customEmojiId,
-                name=topicName,
-            )
+                self._updateTopicInfo(
+                    chatId=message.chat.id,
+                    topicId=message.threadId,
+                    iconColor=repliedMessage.forum_topic_created.icon_color,
+                    customEmojiId=repliedMessage.forum_topic_created.icon_custom_emoji_id,
+                    name=repliedMessage.forum_topic_created.name,
+                )
         else:
             self._updateTopicInfo(chatId=message.chat.id, topicId=message.threadId)
 
