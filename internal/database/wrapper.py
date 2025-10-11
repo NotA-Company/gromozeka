@@ -281,11 +281,29 @@ class DatabaseWrapper:
 
                     text TEXT NOT NULL,         -- Message text
                     reason TEXT NOT NULL,       -- Reason for spam (see SpamReason)
-                    score FLOAT NOT NULL,       -- Spam score
+                    score FLOAT NOT NULL,       -- Spam score (0 - 100)
 
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (chat_id, user_id, message_id)
+                )
+            """
+            )
+        
+            # Chat Topics
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_topics (
+                    chat_id INTEGER NOT NULL,   -- Chat ID
+                    topic_id INTEGER NOT NULL,  -- Topic ID
+
+                    icon_color INTEGER,
+                    icon_custom_emoji_id TEXT,
+                    name TEXT,
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (chat_id, topic_id)
                 )
             """
             )
@@ -1096,4 +1114,52 @@ class DatabaseWrapper:
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get spam messages: {e}")
+            return []
+        
+    def updateChatTopic(self, chatId: int, topicId: int, iconColor: Optional[int] = None, customEmojiId: Optional[str] = None, topicName: str = "Default") -> bool:
+        """Store user as chat member + update username and updated_at."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO chat_topics
+                        (chat_id, topic_id, icon_color, icon_custom_emoji_id, name, updated_at)
+                    VALUES
+                        (:chatId, :topicId, :iconColor, :customEmojiId, :name, CURRENT_TIMESTAMP)
+                    ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                        icon_color = excluded.icon_color,
+                        icon_custom_emoji_id = excluded.icon_custom_emoji_id,
+                        name = excluded.name,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    {
+                        "chatId": chatId,
+                        "topicId": topicId,
+                        "iconColor": iconColor,
+                        "customEmojiId": customEmojiId,
+                        "name": topicName,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update chat topic {topicId} in chat {chatId}: {e}")
+            return False
+
+    def getChatTopics(self, chatId: int) -> List[Dict[str, Any]]:
+        """Get chat topics."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM chat_topics
+                    WHERE
+                        chat_id = :chatId
+                """,
+                    {
+                        "chatId": chatId,
+                    },
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get chat topics: {e}")
             return []
