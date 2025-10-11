@@ -58,7 +58,13 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
 
         async with topicSemaphore:
             # logger.debug(f"awaiting corutine for chatId: {chatId}, topicId: {topicId}")
-            await coroutine
+            try:
+                # Each request should be processed for at most 30 minutes
+                # Just to workaround diffetent stucks in externat services\libs
+                await asyncio.wait_for(coroutine, 60 * 30)
+            except Exception as e:
+                logger.error(f"Error during awaiting coroutine for {update}")
+                logger.exception(e)
 
 
 class BotApplication:
