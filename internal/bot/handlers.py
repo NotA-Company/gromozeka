@@ -1119,16 +1119,15 @@ class BotHandlers:
                 f"Spam: {spamMessagesCount}, non-Spam: {nonSpamMessagesCount}"
             )
             isSpammer = True
-            spamScore = (spamMessagesCount + 1 / (spamMessagesCount + 1 + nonSpamMessagesCount)) * 100
+            spamScore = ((spamMessagesCount + 1) / (spamMessagesCount + 1 + nonSpamMessagesCount)) * 100
 
         if isSpammer:
             logger.info(f"SPAM: {ensuredMessage.getBaseMessage()}")
-            await ensuredMessage.getBaseMessage().reply_text(
-                f"Спаммер! (Вероятность: {spamScore})", reply_to_message_id=ensuredMessage.messageId
-            )
-            # TODO: Temporary just answer
-            # await self._handleSpam(message=ensuredMessage.getBaseMessage(), reason=SpamReason.AUTO, score=spamScore)
-            # return True
+            #await ensuredMessage.getBaseMessage().reply_text(
+            #    f"Спаммер! (Вероятность: {spamScore})\n""(Данное сообщение будет удалено в течении минуты)", reply_to_message_id=ensuredMessage.messageId
+            #)
+            await self._handleSpam(message=ensuredMessage.getBaseMessage(), reason=SpamReason.AUTO, score=spamScore)
+            return True
 
         return False
 
