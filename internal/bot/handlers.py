@@ -1096,6 +1096,8 @@ class BotHandlers:
         if maxCheckMessages != 0 and userMessages > maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
             return False
+        
+        logger.debug(f"SPAM CHECK: {userMessages} < {maxCheckMessages}, checking message for spam ({ensuredMessage})")
 
         isSpammer = False
         spamScore = 0.0
@@ -1120,6 +1122,7 @@ class BotHandlers:
             spamScore = spamMessagesCount + 1 / (spamMessagesCount + 1 + nonSpamMessagesCount)
 
         if isSpammer:
+            logger.info(f"SPAM: {ensuredMessage.getBaseMessage()}")
             await ensuredMessage.getBaseMessage().reply_text(
                 f"Спаммер! (Вероятность: {spamScore})", reply_to_message_id=ensuredMessage.messageId
             )
