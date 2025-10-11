@@ -1119,7 +1119,7 @@ class BotHandlers:
                 f"Spam: {spamMessagesCount}, non-Spam: {nonSpamMessagesCount}"
             )
             isSpammer = True
-            spamScore = spamMessagesCount + 1 / (spamMessagesCount + 1 + nonSpamMessagesCount)
+            spamScore = (spamMessagesCount + 1 / (spamMessagesCount + 1 + nonSpamMessagesCount)) * 100
 
         if isSpammer:
             logger.info(f"SPAM: {ensuredMessage.getBaseMessage()}")
