@@ -56,9 +56,11 @@ class ChatSettingsKey(StrEnum):
     RANDOM_ANSWER_TO_ADMIN = "random-answer-to-admin"
 
     ALLOW_USER_SPAM_COMMAND = "allow-user-spam-command"
+    SPAM_DELETE_ALL_USER_MESSAGES = "spam-delete-all-user-messages"
     DETECT_SPAM = "detect-spam"
     AUTO_SPAM_MAX_MESSAGES = "auto-spam-max-messages"
-    SPAM_DELETE_ALL_USER_MESSAGES = "spam-delete-all-user-messages"
+    SPAM_BAN_TRESHOLD = "spam-ban-treshold"
+    SPAM_WARN_TRESHOLD = "spam-warn-treshold"
 
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
@@ -230,6 +232,16 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Удалять все сообщения пользователя, когда пользователь признан "
             "спаммером (автоматически или при помощи команды `/spam`)"
         ),
+    },
+    ChatSettingsKey.SPAM_BAN_TRESHOLD: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "SPAM-Порог для блокировки пользователя",
+        "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),
+    },
+    ChatSettingsKey.SPAM_WARN_TRESHOLD: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "SPAM-Порог для предупреждения пользователя",
+        "long": ("Порог для предупреждения пользователя при автоматической проверке на спам" "(0-100)"),
     },
 }
 

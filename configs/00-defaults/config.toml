@@ -37,6 +37,10 @@ detect-spam = false
 auto-spam-max-messages = 10
 # In case of spam - delete all known user messages
 spam-delete-all-user-messages = true
+# Minimal SPAM Score to block user and delete it's messages
+spam-ban-treshold = 90
+# Minimal SPAM Score to add warn message
+spam-warn-treshold = 60
 
 # Allow reaction in bot mention (by username and by name)
 allow-mention = true
