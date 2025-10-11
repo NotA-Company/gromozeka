@@ -1137,8 +1137,8 @@ class DatabaseWrapper:
                     INSERT INTO chat_topics
                         (chat_id, topic_id, icon_color, icon_custom_emoji_id, name, updated_at)
                     VALUES
-                        (:chatId, :topicId, :iconColor, :customEmojiId, :name, CURRENT_TIMESTAMP)
-                    ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                        (:chatId, :topicId, :iconColor, :customEmojiId, :topicName, CURRENT_TIMESTAMP)
+                    ON CONFLICT(chat_id, topic_id) DO UPDATE SET
                         icon_color = excluded.icon_color,
                         icon_custom_emoji_id = excluded.icon_custom_emoji_id,
                         name = excluded.name,
@@ -1149,7 +1149,7 @@ class DatabaseWrapper:
                         "topicId": topicId,
                         "iconColor": iconColor,
                         "customEmojiId": customEmojiId,
-                        "name": topicName,
+                        "topicName": topicName,
                     },
                 )
                 return True
