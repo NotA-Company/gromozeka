@@ -1140,7 +1140,7 @@ class BotHandlers:
             banMessage = await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Спаммер! (Вероятность: {spamScore}, порог: {banTreshold})\n"
-                "(Данное сообщение будет удалено в течении минуты)",
+                "(Данное сообщение будет удалено в течение минуты)",
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
             if banMessage is not None:
