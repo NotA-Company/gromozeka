@@ -1137,9 +1137,12 @@ class BotHandlers:
 
         if spamScore > banTreshold:
             logger.info(f"SPAM: spamScore: {spamScore} > {banTreshold} {ensuredMessage.getBaseMessage()}")
+            userName = ensuredMessage.user.full_name or ensuredMessage.user.username
             banMessage = await self._sendMessage(
                 ensuredMessage,
-                messageText=f"Спаммер! (Вероятность: {spamScore}, порог: {banTreshold})\n"
+                messageText=f"Пользователь [{userName}](tg://user?id={ensuredMessage.user.id})"
+                " заблокирован за спам.\n"
+                f"(Вероятность: {spamScore}, порог: {banTreshold})\n"
                 "(Данное сообщение будет удалено в течение минуты)",
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
