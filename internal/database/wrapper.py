@@ -12,7 +12,7 @@ import threading
 from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 
-from .models import MediaStatus, MessageCategory, SpamReason
+from .models import ChatMessageDict, MediaStatus, MessageCategory, SpamReason
 from ..bot.models import MessageType
 
 logger = logging.getLogger(__name__)
@@ -440,6 +440,63 @@ class DatabaseWrapper:
             logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
             return False
 
+    def _validateDictIsChatMessageDict(self, row_dict: Dict[str, Any]) -> ChatMessageDict:
+        """
+        Validate and convert a database row dictionary to ChatMessageDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Convert enum string values to proper enum types if needed
+            if "message_category" in row_dict and isinstance(row_dict["message_category"], str):
+                try:
+                    row_dict["message_category"] = MessageCategory(row_dict["message_category"])
+                except ValueError:
+                    logger.warning(f"Unknown message_category: {row_dict['message_category']}")
+                    # Keep as string if not a valid enum value
+
+            if (
+                "media_status" in row_dict
+                and row_dict["media_status"] is not None
+                and isinstance(row_dict["media_status"], str)
+            ):
+                try:
+                    row_dict["media_status"] = MediaStatus(row_dict["media_status"])
+                except ValueError:
+                    logger.warning(f"Unknown media_status: {row_dict['media_status']}")
+                    # Keep as string if not a valid enum value
+
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "chat_id": int,
+                "message_id": int,
+                "date": datetime.datetime,
+                "user_id": int,
+                "thread_id": int,
+                "message_text": str,
+                "message_type": str,
+                "created_at": datetime.datetime,
+                "username": str,
+                "full_name": str,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in row_dict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
+                    logger.warning(
+                        f"Field '{field}' has unexpected type: {type(row_dict[field])}, " f"expected {expected_type}"
+                    )
+
+            # Return the validated dictionary cast as ChatMessageDict
+            return row_dict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate ChatMessageDict: {e}")
+            logger.error(f"Row data: {row_dict}")
+            raise
+
     def getChatMessagesSince(
         self,
         chatId: int,
@@ -448,7 +505,7 @@ class DatabaseWrapper:
         threadId: Optional[int] = None,
         limit: Optional[int] = None,
         messageCategory: Optional[List[MessageCategory]] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[ChatMessageDict]:
         """Get chat messages from a specific chat newer than the given date."""
         logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
         try:
@@ -486,14 +543,15 @@ class DatabaseWrapper:
                     query,
                     params,
                 )
-                return [dict(row) for row in cursor.fetchall()]
+                rows = cursor.fetchall()
+                return [self._validateDictIsChatMessageDict(dict(row)) for row in rows]
         except Exception as e:
             logger.error(
                 f"Failed to get chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId}): {e}"
             )
             return []
 
-    def getChatMessageByMessageId(self, chatId: int, messageId: int) -> Optional[Dict[str, Any]]:
+    def getChatMessageByMessageId(self, chatId: int, messageId: int) -> Optional[ChatMessageDict]:
         """Get a specific chat message by message_id, chat_id, and optional thread_id."""
         logger.debug(f"Getting chat message for chat {chatId}, message_id {messageId}")
         try:
@@ -511,14 +569,14 @@ class DatabaseWrapper:
                     {"chatId": chatId, "messageId": messageId},
                 )
                 row = cursor.fetchone()
-                return dict(row) if row else None
+                return self._validateDictIsChatMessageDict(dict(row)) if row else None
         except Exception as e:
             logger.error(f"Failed to get chat message for chat {chatId}, message_id {messageId}: {e}")
             return None
 
     def getChatMessagesByRootId(
         self, chatId: int, rootMessageId: int, threadId: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> List[ChatMessageDict]:
         """Get all chat messages in a conversation thread by root message ID."""
         logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
         try:
@@ -540,7 +598,8 @@ class DatabaseWrapper:
                         "threadId": threadId,
                     },
                 )
-                return [dict(row) for row in cursor.fetchall()]
+                rows = cursor.fetchall()
+                return [self._validateDictIsChatMessageDict(dict(row)) for row in rows]
         except Exception as e:
             logger.error(
                 f"Failed to get chat messages for chat {chatId}, thread {threadId}, "
