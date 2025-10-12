@@ -35,7 +35,7 @@ from lib.ai.models import (
 from lib.ai.manager import LLMManager
 
 from internal.database.wrapper import DatabaseWrapper
-from internal.database.models import MediaStatus, MessageCategory, SpamReason
+from internal.database.models import ChatMessageDict, MediaStatus, MessageCategory, SpamReason
 
 from lib.markdown import markdown_to_markdownv2
 import lib.utils as utils
@@ -1512,8 +1512,12 @@ class BotHandlers:
             if storedMsg["user_id"] != context.bot.id:
                 logger.error(f"Parent message is not from us: {storedMsg}")
                 return False
+            
+            if storedMsg["root_message_id"] is None:
+                logger.error(f"root_message_id in {storedMsg}")
+                return False
 
-            _storedMessages: List[Dict[str, Any]] = self.db.getChatMessagesByRootId(
+            _storedMessages = self.db.getChatMessagesByRootId(
                 chatId=chat.id,
                 rootMessageId=storedMsg["root_message_id"],
                 threadId=ensuredMessage.threadId,
@@ -1832,7 +1836,7 @@ class BotHandlers:
         chat = ensuredMessage.chat
 
         storedMessages: List[ModelMessage] = []
-        _storedMessages: List[Dict[str, Any]] = []
+        _storedMessages: List[ChatMessageDict] = []
 
         # TODO: Add method for getting whole discussion
         if parentId is not None:
@@ -1840,11 +1844,11 @@ class BotHandlers:
                 chatId=chat.id,
                 messageId=parentId,
             )
-            if storedMsg is None:
+            if storedMsg is None or storedMsg["root_message_id"] is None:
                 logger.error(f"Failed to get parent message by id#{parentId}")
                 return False
 
-            _storedMessages: List[Dict[str, Any]] = self.db.getChatMessagesByRootId(
+            _storedMessages = self.db.getChatMessagesByRootId(
                 chatId=chat.id,
                 rootMessageId=storedMsg["root_message_id"],
                 threadId=ensuredMessage.threadId,

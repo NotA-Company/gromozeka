@@ -17,7 +17,7 @@ from lib.ai.models import ModelMessage
 import lib.utils as utils
 
 from .models import LLMMessageFormat, MediaProcessingInfo, MessageType
-from internal.database.models import MediaStatus
+from internal.database.models import ChatMessageDict, MediaStatus
 from internal.database.wrapper import DatabaseWrapper
 
 
@@ -157,7 +157,7 @@ class EnsuredMessage:
         return ensuredMessage
 
     @classmethod
-    def fromDBChatMessage(cls, data: Dict[str, Any]) -> "EnsuredMessage":
+    def fromDBChatMessage(cls, data: ChatMessageDict) -> "EnsuredMessage":
         """Create EnsuredMessage from DB chat message"""
         ensuredMessage = EnsuredMessage(
             user=User(
