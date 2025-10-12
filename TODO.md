@@ -6,5 +6,7 @@
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
-- [ ] Add support for spam-handling
+- [x] Add support for spam-handling
+- [ ] Add Bayes filtering into spam-detection
 - [x] Add some AI support via YandexCloud
+- [ ] Add Summarization caching support (chatId+prompt+dates)
