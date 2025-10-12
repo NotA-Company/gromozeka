@@ -323,7 +323,7 @@ class BotHandlers:
         for task in tasks:
             await self._addDelayedTask(
                 delayedUntil=float(task["delayed_ts"]),
-                function=task["function"],
+                function=DelayedTaskFunction(task["function"]),
                 kwargs=json.loads(task["kwargs"]),
                 taskId=task["id"],
                 skipDB=True,
