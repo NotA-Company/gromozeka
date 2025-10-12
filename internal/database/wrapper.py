@@ -544,9 +544,7 @@ class DatabaseWrapper:
                     raise ValueError(f"Missing required field: {field}")
 
                 if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
-                    logger.warning(
-                        f"Field '{field}' has type {type(row_dict[field])}, expected {expected_type}"
-                    )
+                    logger.warning(f"Field '{field}' has type {type(row_dict[field])}, expected {expected_type}")
 
             # Return the validated dictionary cast as DelayedTaskDict
             return row_dict  # type: ignore
@@ -587,9 +585,7 @@ class DatabaseWrapper:
                     raise ValueError(f"Missing required field: {field}")
 
                 if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
-                    logger.warning(
-                        f"Field '{field}' has type {type(row_dict[field])}, expected {expected_type}"
-                    )
+                    logger.warning(f"Field '{field}' has type {type(row_dict[field])}, expected {expected_type}")
 
             # Return the validated dictionary cast as SpamMessageDict
             return row_dict  # type: ignore
