@@ -386,7 +386,7 @@ class BotHandlers:
                                 f"{kwargs['messageId']} in chat {kwargs['chatId']}"
                             )
                     case DelayedTaskFunction.DO_EXIT:
-                        logger.info("got doExit function, processing cackgroundTask if any...")
+                        logger.info("got doExit function, processing backgroundTask if any...")
                         await self._processBackgroundTasks(True)
                     
                     case DelayedTaskFunction.PROCESS_BACKGROUND_TASKS:
