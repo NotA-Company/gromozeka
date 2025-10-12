@@ -81,3 +81,15 @@ class ChatMessageDict(TypedDict):
     media_description: Optional[str]
     media_created_at: Optional[datetime.datetime]
     media_updated_at: Optional[datetime.datetime]
+
+
+class ChatUserDict(TypedDict):
+    # From chat_user table
+    chat_id: int
+    user_id: int
+    username: str
+    full_name: str
+    timezone: Optional[str]
+    messages_count: int
+    created_at: datetime.datetime
+    updated_at: datetime.datetime

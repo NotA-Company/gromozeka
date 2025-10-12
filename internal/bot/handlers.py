@@ -331,7 +331,9 @@ class BotHandlers:
             logger.info(f"Restored delayed task: {task}")
 
         # Add background tasks processing
-        await self._addDelayedTask(time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True)
+        await self._addDelayedTask(
+            time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True
+        )
 
         await self._processDelayedQueue()
 
@@ -388,10 +390,12 @@ class BotHandlers:
                     case DelayedTaskFunction.DO_EXIT:
                         logger.info("got doExit function, processing backgroundTask if any...")
                         await self._processBackgroundTasks(True)
-                    
+
                     case DelayedTaskFunction.PROCESS_BACKGROUND_TASKS:
                         await self._processBackgroundTasks()
-                        await self._addDelayedTask(time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True)
+                        await self._addDelayedTask(
+                            time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True
+                        )
 
                     case _:
                         logger.error(f"Unsupported function type: {delayedTask.function} in delayed task {delayedTask}")
