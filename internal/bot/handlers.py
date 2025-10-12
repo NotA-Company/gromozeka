@@ -76,6 +76,8 @@ class BotHandlers:
         self.db = database
         self.llmManager = llmManager
 
+        self._isExiting = False
+
         # Init different defaults
         self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
 
@@ -129,6 +131,10 @@ class BotHandlers:
 
         self.delayedActionsQueue = asyncio.PriorityQueue()
         self._bot: Optional[ExtBot] = None
+
+    async def initExit(self) -> None:
+        self._isExiting = True
+        await self._addDelayedTask(time.time(), DelayedTaskFunction.DO_EXIT, kwargs={}, skipDB=True)
 
     ###
     # Helpers for getting needed Models or Prompts
@@ -271,13 +277,13 @@ class BotHandlers:
         await self.asyncTasksQueue.put(task)
         self.queueLastUpdated = time.time()
 
-    async def _processBackgroundTasks(self) -> None:
+    async def _processBackgroundTasks(self, forceProcessAll: bool = False) -> None:
         """Process background tasks."""
 
         if self.asyncTasksQueue.empty():
             return
 
-        if self.queueLastUpdated + MAX_QUEUE_AGE > time.time():
+        if (not forceProcessAll) and (self.queueLastUpdated + MAX_QUEUE_AGE > time.time()):
             return
 
         logger.info(f"Processing queue due to age ({MAX_QUEUE_AGE})")
@@ -381,11 +387,18 @@ class BotHandlers:
                                 "Bot is not initialized, can't delete message "
                                 f"{kwargs['messageId']} in chat {kwargs['chatId']}"
                             )
+                    case DelayedTaskFunction.DO_EXIT:
+                        logger.info("got doExit function, processing cackgroundTask if any...")
+                        await self._processBackgroundTasks(True)
+
                     case _:
                         logger.error(f"Unsupported function type: {delayedTask.function} in delayed task {delayedTask}")
 
                 self.db.updateDelayedTask(delayedTask.taskId, True)
                 self.delayedActionsQueue.task_done()
+                if delayedTask.function == DelayedTaskFunction.DO_EXIT or self._isExiting:
+                    logger.debug("doExit(), exiting...")
+                    return
 
             except RuntimeError as e:
                 logger.error(f"Error in delayed task processor: {e}")
@@ -419,7 +432,7 @@ class BotHandlers:
                 delayedTS=int(delayedUntil),
             )
 
-        logger.debug(f"Added delayed task: {task}")
+        logger.debug(f"Added delayed task: {task}, skipDB={skipDB}")
 
     async def _sendMessage(
         self,
@@ -1513,7 +1526,7 @@ class BotHandlers:
             if storedMsg["user_id"] != context.bot.id:
                 logger.error(f"Parent message is not from us: {storedMsg}")
                 return False
-            
+
             if storedMsg["root_message_id"] is None:
                 logger.error(f"root_message_id in {storedMsg}")
                 return False
