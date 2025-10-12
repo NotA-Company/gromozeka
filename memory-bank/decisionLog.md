@@ -809,3 +809,33 @@ This file records architectural and implementation decisions using a list format
 * Updated [`getChatUsers()`](internal/database/wrapper.py:744) method to use validation for all returned rows
 * Fixed all linting issues and type safety warnings
 * All methods now return properly validated [`ChatUserDict`](internal/database/models.py:86) objects instead of raw dictionaries
+
+[2025-10-12 12:34:00] - Implemented ChatInfoDict Validation in Database Wrapper
+
+## Decision
+
+* Resolved TODO comment in [`getChatInfo()`](internal/database/wrapper.py:1028) method by implementing proper [`ChatInfoDict`](internal/database/models.py:98) validation
+* Added [`_validateDictIsChatInfoDict()`](internal/database/wrapper.py:407) method to ensure database rows match expected TypedDict structure
+* Applied validation to both [`getChatInfo()`](internal/database/wrapper.py:1028) and [`getUserChats()`](internal/database/wrapper.py:797) methods
+* Fixed type annotations and imports in [`internal/bot/handlers.py`](internal/bot/handlers.py:38) for proper ChatInfoDict usage
+
+## Rationale 
+
+* The original TODO questioned whether raw database rows should be validated against the [`ChatInfoDict`](internal/database/models.py:98) TypedDict structure
+* Runtime validation ensures data integrity and catches schema mismatches early
+* Consistent with existing [`_validateDictIsChatMessageDict()`](internal/database/wrapper.py:315) and [`_validateDictIsChatUserDict()`](internal/database/wrapper.py:372) patterns for type safety
+* Validation helps prevent runtime errors when consuming the returned data in bot handlers
+* Logging warnings for type mismatches aids in debugging database schema issues
+
+## Implementation Details
+
+* Created [`_validateDictIsChatInfoDict()`](internal/database/wrapper.py:407) method with comprehensive validation:
+  - Validates presence and types of required fields (chat_id, type, is_forum, created_at, updated_at)
+  - Provides detailed error logging for missing fields and type mismatches
+  - Returns validated dictionary cast as [`ChatInfoDict`](internal/database/models.py:98) with type ignore for runtime flexibility
+* Updated [`getChatInfo()`](internal/database/wrapper.py:1028) method to use validation and return `Optional[ChatInfoDict]` instead of raw dict
+* Updated [`getUserChats()`](internal/database/wrapper.py:797) method to return `List[ChatInfoDict]` with validation for all returned rows
+* Fixed type annotations in [`internal/bot/handlers.py`](internal/bot/handlers.py:2363) to use `Optional[ChatInfoDict]` and added proper null checking
+* Added [`ChatInfoDict`](internal/database/models.py:98) import to bot handlers for proper type support
+* Fixed all linting issues and type safety warnings
+* All methods now return properly validated [`ChatInfoDict`](internal/database/models.py:98) objects instead of raw dictionaries

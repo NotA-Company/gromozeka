@@ -93,3 +93,13 @@ class ChatUserDict(TypedDict):
     messages_count: int
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class ChatInfoDict(TypedDict):
+    chat_id: int
+    title: Optional[str]
+    username: Optional[str]
+    type: str
+    is_forum: bool
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
