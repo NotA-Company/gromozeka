@@ -12,7 +12,7 @@ import threading
 from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 
-from .models import ChatMessageDict, MediaStatus, MessageCategory, SpamReason
+from .models import ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
 from ..bot.models import MessageType
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ class DatabaseWrapper:
             # Settings table for storing key-value pairs
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS settings (
+                CREATE TABLE IF NOT EXISTS settings (   -- No TypedDict needed
                     key TEXT PRIMARY KEY,
                     value TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -122,7 +122,7 @@ class DatabaseWrapper:
             # Chat messages table for storing detailed chat message information
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS chat_messages (
+                CREATE TABLE IF NOT EXISTS chat_messages (          -- See ChatMessageDict
                     chat_id INTEGER NOT NULL,                       -- Chat ID
                     message_id INTEGER NOT NULL,                    -- Message ID (unique for ChatID)
                     date TIMESTAMP NOT NULL,                        -- Date of message
@@ -145,7 +145,7 @@ class DatabaseWrapper:
             # Chat-specific settings
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS chat_settings (
+                CREATE TABLE IF NOT EXISTS chat_settings (  -- No TypedDict needed (see chat_srttings.py)
                     chat_id INTEGER NOT NULL,
                     key TEXT NOT NULL,
                     value TEXT,
@@ -159,7 +159,7 @@ class DatabaseWrapper:
             # Per-chat known users + some stats (messages count + last seen)
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS chat_users (
+                CREATE TABLE IF NOT EXISTS chat_users ( -- See ChatUserDict
                     chat_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
                     username TEXT NOT NULL,
@@ -497,6 +497,41 @@ class DatabaseWrapper:
             logger.error(f"Row data: {row_dict}")
             raise
 
+    def _validateDictIsChatUserDict(self, row_dict: Dict[str, Any]) -> ChatUserDict:
+        """
+        Validate and convert a database row dictionary to ChatUserDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "chat_id": int,
+                "user_id": int,
+                "username": str,
+                "full_name": str,
+                "messages_count": int,
+                "created_at": datetime.datetime,
+                "updated_at": datetime.datetime,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in row_dict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
+                    logger.warning(
+                        f"Field '{field}' has unexpected type: {type(row_dict[field])}, " f"expected {expected_type}"
+                    )
+
+            # Return the validated dictionary cast as ChatUserDict
+            return row_dict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate ChatUserDict: {e}")
+            logger.error(f"Row data: {row_dict}")
+            raise
+
     def getChatMessagesSince(
         self,
         chatId: int,
@@ -607,7 +642,7 @@ class DatabaseWrapper:
             )
             return []
 
-    def getChatMessagesByUser(self, chatId: int, userId: int, limit: int = 100) -> List[Dict[str, Any]]:
+    def getChatMessagesByUser(self, chatId: int, userId: int, limit: int = 100) -> List[ChatMessageDict]:
         """Get all chat messages by user ID."""
         logger.debug(f"Getting chat messages for chat {chatId}, user {userId}")
         try:
@@ -629,7 +664,7 @@ class DatabaseWrapper:
                         "limit": limit,
                     },
                 )
-                return [dict(row) for row in cursor.fetchall()]
+                return [self._validateDictIsChatMessageDict(dict(row)) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get chat messages for chat {chatId}, user {userId}: {e}")
             return []
@@ -661,7 +696,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to update username for user {userId} in chat {chatId}: {e}")
             return False
 
-    def getChatUser(self, chatId: int, userId: int) -> Optional[Dict[str, Any]]:
+    def getChatUser(self, chatId: int, userId: int) -> Optional[ChatUserDict]:
         """Get the username of a user in a chat."""
         try:
             with self.getCursor() as cursor:
@@ -676,7 +711,7 @@ class DatabaseWrapper:
                     (chatId, userId),
                 )
                 row = cursor.fetchone()
-                return dict(row) if row else None
+                return self._validateDictIsChatUserDict(dict(row)) if row else None
         except Exception as e:
             logger.error(f"Failed to get username for user {userId} in chat {chatId}: {e}")
             return None
@@ -686,7 +721,7 @@ class DatabaseWrapper:
         chatId: int,
         limit: int = 10,
         seenSince: Optional[datetime.datetime] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[ChatUserDict]:
         """Get the usernames of all users in a chat."""
         try:
             with self.getCursor() as cursor:
@@ -706,7 +741,7 @@ class DatabaseWrapper:
                     },
                 )
 
-                return [dict(row) for row in cursor.fetchall()]
+                return [self._validateDictIsChatUserDict(dict(row)) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get users for chat {chatId}: {e}")
             return []
