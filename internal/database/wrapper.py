@@ -12,7 +12,7 @@ import threading
 from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 
-from .models import ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
+from .models import ChatInfoDict, ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
 from ..bot.models import MessageType
 
 logger = logging.getLogger(__name__)
@@ -175,7 +175,7 @@ class DatabaseWrapper:
 
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS chat_info (
+                CREATE TABLE IF NOT EXISTS chat_info ( -- See ChatInfoDict
                     chat_id INTEGER PRIMARY KEY,
                     title TEXT,
                     username TEXT,
@@ -401,6 +401,39 @@ class DatabaseWrapper:
 
         except Exception as e:
             logger.error(f"Failed to validate ChatUserDict: {e}")
+            logger.error(f"Row data: {row_dict}")
+            raise
+
+    def _validateDictIsChatInfoDict(self, row_dict: Dict[str, Any]) -> ChatInfoDict:
+        """
+        Validate and convert a database row dictionary to ChatInfoDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "chat_id": int,
+                "type": str,
+                "is_forum": bool,
+                "created_at": datetime.datetime,
+                "updated_at": datetime.datetime,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in row_dict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
+                    logger.warning(
+                        f"Field '{field}' has unexpected type: {type(row_dict[field])}, " f"expected {expected_type}"
+                    )
+
+            # Return the validated dictionary cast as ChatInfoDict
+            return row_dict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate ChatInfoDict: {e}")
             logger.error(f"Row data: {row_dict}")
             raise
 
@@ -761,7 +794,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to get users for chat {chatId}: {e}")
             return []
 
-    def getUserChats(self, userId: int) -> List[Dict[str, Any]]:
+    def getUserChats(self, userId: int) -> List[ChatInfoDict]:
         """Get chats, user was seen in"""
         try:
             with self.getCursor() as cursor:
@@ -776,7 +809,7 @@ class DatabaseWrapper:
                         "userId": userId,
                     },
                 )
-                return [dict(row) for row in cursor.fetchall()]
+                return [self._validateDictIsChatInfoDict(dict(row)) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get user#{userId} chats: {e}")
             logger.exception(e)
@@ -992,7 +1025,7 @@ class DatabaseWrapper:
             logger.exception(e)
             return False
 
-    def getChatInfo(self, chatId: int) -> Dict[str, Any]:
+    def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """Get chat info from the database."""
         try:
             with self.getCursor() as cursor:
@@ -1006,10 +1039,13 @@ class DatabaseWrapper:
                         "chatId": chatId,
                     },
                 )
-                return dict(cursor.fetchone())
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                return self._validateDictIsChatInfoDict(dict(row))
         except Exception as e:
             logger.error(f"Failed to get chat info: {e}")
-            return {}
+            return None
 
     def updateChatTopicInfo(
         self,
