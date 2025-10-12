@@ -17,7 +17,7 @@ from lib.ai.models import ModelMessage
 import lib.utils as utils
 
 from .models import LLMMessageFormat, MediaProcessingInfo, MessageType
-from internal.database.models import ChatMessageDict, MediaStatus
+from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.database.wrapper import DatabaseWrapper
 
 
@@ -226,21 +226,21 @@ class EnsuredMessage:
             return
 
         mediaAttachment = await self.__class__._awaitMedia(db, self.mediaId)
-        if mediaAttachment.get("description", None) is not None:
+        if mediaAttachment and mediaAttachment.get("description", None) is not None:
             self.mediaContent = mediaAttachment["description"]
 
     @classmethod
-    async def _awaitMedia(cls, db: DatabaseWrapper, mediaId: str) -> Dict[str, Any]:
+    async def _awaitMedia(cls, db: DatabaseWrapper, mediaId: str) -> Optional[MediaAttachmentDict]:
         """
         Await the media content of the message from DB.
         """
         startTime = time.time()
-        mediaAttachment: Optional[Dict[str, Any]] = {}
+        mediaAttachment: Optional[MediaAttachmentDict] = None
         while time.time() - startTime < MAX_MEDIA_AWAIT_SECS:
             mediaAttachment = db.getMediaAttachment(mediaId)
             if mediaAttachment is None:
                 logger.error(f"Media#{mediaId} not found")
-                return {}
+                return None
 
             logger.debug(
                 f"Media#{mediaId} awaiting for proper status (current: "

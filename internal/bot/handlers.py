@@ -232,9 +232,7 @@ class BotHandlers:
             userData[key] = value
 
         self.cache["chatUsers"][userKey]["data"][key] = userData[key]
-        self.db.addUserData(
-            userId=userId, chatId=chatId, key=key, data=json.dumps(userData[key], ensure_ascii=False, default=str)
-        )
+        self.db.addUserData(userId=userId, chatId=chatId, key=key, data=utils.jsonCompactDump(userData[key]))
         return userData[key]
 
     def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
@@ -434,7 +432,7 @@ class BotHandlers:
             self.db.addDelayedTask(
                 taskId=taskId,
                 function=function,
-                kwargs=json.dumps(kwargs, ensure_ascii=False, default=str),
+                kwargs=utils.jsonCompactDump(kwargs, ensure_ascii=False, default=str),
                 delayedTS=int(delayedUntil),
             )
 
@@ -641,7 +639,7 @@ class BotHandlers:
                         f"Prompt:\n```\n{image_prompt}\n```"
                     ),
                 )
-                return json.dumps({"done": False, "errorMessage": mlRet.resultText}, ensure_ascii=False, default=str)
+                return utils.jsonCompactDump({"done": False, "errorMessage": mlRet.resultText})
 
             if mlRet.mediaData is None:
                 logger.error(f"No image generated for {image_prompt}")
@@ -658,7 +656,7 @@ class BotHandlers:
                 addMessagePrefix=imgAddPrefix,
             )
 
-            return json.dumps({"done": ret is not None})
+            return utils.jsonCompactDump({"done": ret is not None})
 
         async def getUrlContent(url: str, **kwargs) -> str:
             # TODO: Check if content is text content
@@ -668,7 +666,7 @@ class BotHandlers:
             newData = self.setUserData(
                 chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, key=key, value=data, append=append
             )
-            return json.dumps({"done": True, "key": key, "data": newData}, ensure_ascii=False, default=str)
+            return utils.jsonCompactDump({"done": True, "key": key, "data": newData})
 
         tools: Dict[str, LLMAbstractTool] = {}
         functions: Dict[str, Callable] = {
@@ -777,10 +775,8 @@ class BotHandlers:
                     newMessages.append(
                         ModelMessage(
                             role="tool",
-                            content=json.dumps(
+                            content=utils.jsonCompactDump(
                                 await functions[toolCall.name](**toolCall.parameters),
-                                ensure_ascii=False,
-                                default=str,
                             ),
                             toolCallId=toolCall.id,
                         )
@@ -1062,6 +1058,7 @@ class BotHandlers:
         tillDT: Optional[datetime.datetime] = None,
         maxMessages: Optional[int] = None,
         summarizationPrompt: Optional[str] = None,
+        useCache: bool = True,
     ) -> None:
         """Do summarisation and send as response to provided message"""
 
@@ -1081,6 +1078,25 @@ class BotHandlers:
 
         if summarizationPrompt is None:
             summarizationPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
+
+        if useCache and len(messages) > 1:
+            cache = self.db.getChatSummarization(
+                chatId=chatId,
+                topicId=None,
+                firstMessageId=messages[-1]["message_id"],
+                lastMessageId=messages[0]["message_id"],
+                prompt=summarizationPrompt,
+            )
+            if cache is not None:
+                resMessages = json.loads(cache["summary"])
+                for msg in resMessages:
+                    await self._sendMessage(
+                        ensuredMessage,
+                        messageText=msg,
+                        messageCategory=MessageCategory.BOT_SUMMARY,
+                    )
+                    time.sleep(1)
+                return
 
         systemMessage = {
             "role": "system",
@@ -1179,6 +1195,16 @@ class BotHandlers:
                 tmpResMessages.append(msg)
 
         resMessages = tmpResMessages
+
+        if useCache and len(messages) > 1:
+            self.db.addChatSummarization(
+                chatId=chatId,
+                topicId=threadId,
+                firstMessageId=messages[-1]["message_id"],
+                lastMessageId=messages[0]["message_id"],
+                prompt=summarizationPrompt,
+                summary=utils.jsonCompactDump(resMessages),
+            )
 
         for msg in resMessages:
             await self._sendMessage(
@@ -2056,7 +2082,7 @@ class BotHandlers:
             self.db.updateMediaAttachment(
                 fileUniqueId=ret.id,
                 status=mediaStatus,
-                metadata=json.dumps(metadata, ensure_ascii=False, default=str),
+                metadata=utils.jsonCompactDump(metadata),
                 mimeType=mimeType,
                 localUrl=localUrl,
                 prompt=prompt,
@@ -2068,7 +2094,7 @@ class BotHandlers:
                 fileSize=media.file_size,
                 mediaType=mediaType,
                 mimeType=mimeType,
-                metadata=json.dumps(metadata, ensure_ascii=False, default=str),
+                metadata=utils.jsonCompactDump(metadata),
                 status=mediaStatus,
                 localUrl=localUrl,
                 prompt=prompt,
@@ -2304,16 +2330,13 @@ class BotHandlers:
         # m: MaxMessages/time
         # k: user action (1 - set max messages, 2 - set prompt)
 
-        def myJSONDump(data: Any) -> str:
-            return json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":"), sort_keys=True)
-
         chatSettings = self.getChatSettings(message.chat_id)
         userId = user.id
         if userId not in self.cache["users"]:
             self.cache["users"][userId] = {}
         self.cache["users"][userId].pop("activeSummarizationId", None)
 
-        exitButton = InlineKeyboardButton("Отмена", callback_data=myJSONDump({"s": "s", "e": "cancel"}))
+        exitButton = InlineKeyboardButton("Отмена", callback_data=utils.jsonCompactDump({"s": "s", "e": "cancel"}))
         action: Optional[str] = data.get("s", None)
         if action is None or action not in ["s", "t", "s+", "t+"]:
             ValueError(f"Wrong action in {data}")
@@ -2346,7 +2369,7 @@ class BotHandlers:
                     [
                         InlineKeyboardButton(
                             chatTitle,
-                            callback_data=myJSONDump({"c": chat["chat_id"], "s": action, "m": maxMessages}),
+                            callback_data=utils.jsonCompactDump({"c": chat["chat_id"], "s": action, "m": maxMessages}),
                         )
                     ]
                 )
@@ -2403,7 +2426,7 @@ class BotHandlers:
                     [
                         InlineKeyboardButton(
                             str(topic["name"]),
-                            callback_data=myJSONDump(
+                            callback_data=utils.jsonCompactDump(
                                 {"c": chatId, "s": action, "m": maxMessages, "t": topic["topic_id"]}
                             ),
                         )
@@ -2414,7 +2437,7 @@ class BotHandlers:
                 [
                     InlineKeyboardButton(
                         "<< Назад к списку чатов",
-                        callback_data=myJSONDump({"s": action, "m": maxMessages}),
+                        callback_data=utils.jsonCompactDump({"s": action, "m": maxMessages}),
                     )
                 ]
             )
@@ -2457,13 +2480,13 @@ class BotHandlers:
                 [
                     InlineKeyboardButton(
                         "Начать суммаризацию с текущими настройками",
-                        callback_data=myJSONDump({**dataTemplate, "s": action + "+"}),
+                        callback_data=utils.jsonCompactDump({**dataTemplate, "s": action + "+"}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "<< Назад",
-                        callback_data=myJSONDump(dataTemplate),
+                        callback_data=utils.jsonCompactDump(dataTemplate),
                     )
                 ],
                 [exitButton],
@@ -2513,31 +2536,31 @@ class BotHandlers:
                 [
                     InlineKeyboardButton(
                         "Начать суммаризацию",
-                        callback_data=myJSONDump({**dataTemplate, "s": action + "+"}),
+                        callback_data=utils.jsonCompactDump({**dataTemplate, "s": action + "+"}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "Суммаризация за сегодня",
-                        callback_data=myJSONDump({**dataTemplate, "m": 0}),
+                        callback_data=utils.jsonCompactDump({**dataTemplate, "m": 0}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "Суммаризация за вчера",
-                        callback_data=myJSONDump({**dataTemplate, "m": -1}),
+                        callback_data=utils.jsonCompactDump({**dataTemplate, "m": -1}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "Установить количество сообщений для суммаризации",
-                        callback_data=myJSONDump({**dataTemplate, "k": 1}),
+                        callback_data=utils.jsonCompactDump({**dataTemplate, "k": 1}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "Установить промпт",
-                        callback_data=myJSONDump({**dataTemplate, "k": 2}),
+                        callback_data=utils.jsonCompactDump({**dataTemplate, "k": 2}),
                     )
                 ],
                 [exitButton],
@@ -3491,10 +3514,7 @@ class BotHandlers:
         # k: Key
         # v: Value
 
-        def myJSONDump(data: Any) -> str:
-            return json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":"), sort_keys=True)
-
-        exitButton = InlineKeyboardButton("Закончить настройку", callback_data=myJSONDump({"a": "cancel"}))
+        exitButton = InlineKeyboardButton("Закончить настройку", callback_data=utils.jsonCompactDump({"a": "cancel"}))
         action = data.get("a", None)
         # if "k" in data:
         #    action = "set_key"
@@ -3525,7 +3545,7 @@ class BotHandlers:
                             [
                                 InlineKeyboardButton(
                                     buttonTitle,
-                                    callback_data=myJSONDump({"c": chat["chat_id"], "a": "chat"}),
+                                    callback_data=utils.jsonCompactDump({"c": chat["chat_id"], "a": "chat"}),
                                 )
                             ]
                         )
@@ -3584,12 +3604,13 @@ class BotHandlers:
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                keyTitle, callback_data=myJSONDump({"c": chatId, "k": key.getId(), "a": "sk"})
+                                keyTitle,
+                                callback_data=utils.jsonCompactDump({"c": chatId, "k": key.getId(), "a": "sk"}),
                             )
                         ]
                     )
 
-                keyboard.append([InlineKeyboardButton("<< Назад", callback_data=myJSONDump({"a": "init"}))])
+                keyboard.append([InlineKeyboardButton("<< Назад", callback_data=utils.jsonCompactDump({"a": "init"}))])
                 keyboard.append([exitButton])
 
                 respMD = markdown_to_markdownv2(resp)
@@ -3666,14 +3687,16 @@ class BotHandlers:
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                "Включить (True)", callback_data=myJSONDump({"a": "s+", "c": chatId, "k": _key})
+                                "Включить (True)",
+                                callback_data=utils.jsonCompactDump({"a": "s+", "c": chatId, "k": _key}),
                             )
                         ]
                     )
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                "Выключить (False)", callback_data=myJSONDump({"a": "s-", "c": chatId, "k": _key})
+                                "Выключить (False)",
+                                callback_data=utils.jsonCompactDump({"a": "s-", "c": chatId, "k": _key}),
                             )
                         ]
                     )
@@ -3682,12 +3705,12 @@ class BotHandlers:
                     [
                         InlineKeyboardButton(
                             "Сбросить в значение по умолчанию",
-                            callback_data=myJSONDump({"a": "s#", "c": chatId, "k": _key}),
+                            callback_data=utils.jsonCompactDump({"a": "s#", "c": chatId, "k": _key}),
                         )
                     ]
                 )
                 keyboard.append(
-                    [InlineKeyboardButton("<< Назад", callback_data=myJSONDump({"a": "chat", "c": chatId}))]
+                    [InlineKeyboardButton("<< Назад", callback_data=utils.jsonCompactDump({"a": "chat", "c": chatId}))]
                 )
                 keyboard.append([exitButton])
 
@@ -3766,7 +3789,11 @@ class BotHandlers:
                 )
 
                 keyboard.append(
-                    [InlineKeyboardButton("<< К настройкам чата", callback_data=myJSONDump({"a": "chat", "c": chatId}))]
+                    [
+                        InlineKeyboardButton(
+                            "<< К настройкам чата", callback_data=utils.jsonCompactDump({"a": "chat", "c": chatId})
+                        )
+                    ]
                 )
                 keyboard.append([exitButton])
 
