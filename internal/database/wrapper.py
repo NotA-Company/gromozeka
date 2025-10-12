@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from .models import (
     ChatInfoDict,
     ChatMessageDict,
+    ChatSummarizationCacheDict,
     ChatTopicDict,
     ChatUserDict,
     DelayedTaskDict,
@@ -319,6 +320,32 @@ class DatabaseWrapper:
             """
             )
 
+            # Chat Summarization Cache
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_summarization_cache ( -- See ChatSummarizationCacheDict
+                    csid TEXT PRIMARY KEY,
+                    chat_id INTEGER NOT NULL,           -- Chat ID
+                    topic_id INTEGER,                   -- Topic ID
+                    first_message_id INTEGER NOT NULL,  -- First message ID
+                    last_message_id INTEGER NOT NULL,   -- Last message ID
+
+                    prompt TEXT NOT NULL,               -- Prompt
+                    summary TEXT NOT NULL,              -- Summary (JSON-serialized List[str])
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS chat_summarization_cache_ctfl_index
+                ON chat_summarization_cache
+                    (chat_id, topic_id, first_message_id, last_message_id, prompt)
+            """
+            )
+
     ###
     # TypedDict validation and conversion helpers
     ###
@@ -595,6 +622,40 @@ class DatabaseWrapper:
             logger.error(f"Row data: {row_dict}")
             raise
 
+    def _validateDictIsChatSummarizationCacheDict(self, row_dict: Dict[str, Any]) -> ChatSummarizationCacheDict:
+        """
+        Validate and convert a database row dictionary to ChatSummarizationCacheDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "csid": str,
+                "chat_id": int,
+                "first_message_id": int,
+                "last_message_id": int,
+                "prompt": str,
+                "summary": str,
+                "created_at": datetime.datetime,
+                "updated_at": datetime.datetime,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in row_dict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
+                    logger.warning(f"Field '{field}' has type {type(row_dict[field])}, expected {expected_type}")
+
+            # Return the validated dictionary cast as ChatSummarizationCacheDict
+            return row_dict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate ChatSummarizationCacheDict: {e}")
+            logger.error(f"Row data: {row_dict}")
+            raise
+
     ###
     # Global Settings manipulation functions (Are they used an all?)
     ###
@@ -744,7 +805,7 @@ class DatabaseWrapper:
         messageCategory: Optional[List[MessageCategory]] = None,
     ) -> List[ChatMessageDict]:
         """Get chat messages from a specific chat newer than the given date."""
-        logger.debug(f"Getting chat messages for chat {chatId} since {sinceDateTime} (threadId={threadId})")
+        logger.debug(f"Getting chat messages for chat {chatId}:{threadId} date: [{sinceDateTime},{tillDateTime}], limit: {limit}, messageCategory: {messageCategory}")
         try:
             params = {
                 "chatId": chatId,
@@ -1261,6 +1322,85 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get chat topics: {e}")
             return []
+
+    ###
+    # Chat Summarization
+    ###
+    def _makeChatSummarizationCSID(
+        self,
+        chatId: int,
+        topicId: Optional[int],
+        firstMessageId: int,
+        lastMessageId: int,
+        prompt: str,
+    ) -> str:
+        """Make CSID for chat summarization cache"""
+        # TODO: Should we use some SHA512?
+        return f"{chatId}:{topicId}_{firstMessageId}:{lastMessageId}-{prompt}"
+
+    def addChatSummarization(
+        self, chatId: int, topicId: Optional[int], firstMessageId: int, lastMessageId: int, prompt: str, summary: str
+    ) -> bool:
+        """Store chat summarization into cache"""
+        csid = self._makeChatSummarizationCSID(chatId, topicId, firstMessageId, lastMessageId, prompt)
+
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO chat_summarization_cache
+                        (csid, chat_id, topic_id, first_message_id, last_message_id,
+                         prompt, summary, created_at, updated_at)
+                    VALUES (:csid, :chatId, :topicId, :firstMessageId, :lastMessageId,
+                            :prompt, :summary, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(csid) DO UPDATE SET
+                        summary = excluded.summary,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    {
+                        "csid": csid,
+                        "chatId": chatId,
+                        "topicId": topicId,
+                        "firstMessageId": firstMessageId,
+                        "lastMessageId": lastMessageId,
+                        "prompt": prompt,
+                        "summary": summary,
+                    },
+                )
+                logger.debug(f"Added/updated chat summarization cache: csid={csid}")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add chat summarization cache: {e}")
+            return False
+
+    def getChatSummarization(
+        self,
+        chatId: int,
+        topicId: Optional[int],
+        firstMessageId: int,
+        lastMessageId: int,
+        prompt: str,
+    ) -> Optional[ChatSummarizationCacheDict]:
+        """Fetch chat summarization from cache by chatId, topicId, firstMessageId, lastMessageId and prompt"""
+        try:
+            csid = self._makeChatSummarizationCSID(chatId, topicId, firstMessageId, lastMessageId, prompt)
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM chat_summarization_cache
+                    WHERE
+                        csid = :csid
+                    """,
+                    {"csid": csid},
+                )
+                row = cursor.fetchone()
+                if row:
+                    row_dict = dict(row)
+                    return self._validateDictIsChatSummarizationCacheDict(row_dict)
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get chat summarization cache: {e}")
+            return None
 
     ###
     # Media Attachments manipulation functions

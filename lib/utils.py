@@ -3,7 +3,9 @@ Common utilities for Gromozeka bot.
 """
 
 import datetime
+import json
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +95,14 @@ def parseDelay(delayStr: str) -> int:
             pass  # Will raise ValueError at end
 
     raise ValueError(f"Invalid delay format: {delayStr}. Expected formats: '[DDd][HHh][MMm][SSs]' or 'HH:MM[:SS]'")
+
+
+def jsonCompactDump(data: Any, **kwargs) -> str:
+    dumpKwargs = {
+        "ensure_ascii": False,
+        "default": str,
+        "separators": (",", ":"),
+        "sort_keys": True,
+        **kwargs,
+    }
+    return json.dumps(data, **dumpKwargs)

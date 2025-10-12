@@ -971,3 +971,42 @@ This file records architectural and implementation decisions using a list format
   - Maintains all existing functionality while improving type safety
 * Updated imports in [`internal/database/wrapper.py`](internal/database/wrapper.py:22) to include [`SpamMessageDict`](internal/database/models.py:144)
 * All changes follow existing code patterns and maintain backward compatibility
+
+[2025-10-12 18:28:00] - Implemented Chat Summarization Cache Functions in Database Wrapper
+
+## Decision
+
+* Successfully implemented missing chat summarization cache functionality in [`DatabaseWrapper`](internal/database/wrapper.py:1330) class
+* Added [`_validateDictIsChatSummarizationCacheDict()`](internal/database/wrapper.py:625) validation method following existing patterns
+* Completed [`addChatSummarization()`](internal/database/wrapper.py:1330) method implementation with INSERT OR REPLACE logic
+* Added [`getChatSummarization()`](internal/database/wrapper.py:1354) method to fetch cache entries by chatId, topicId, firstMessageId, lastMessageId
+* Updated imports to include [`ChatSummarizationCacheDict`](internal/database/models.py:155)
+
+## Rationale 
+
+* The original TODO comments in [`addChatSummarization()`](internal/database/wrapper.py:1298) indicated missing implementation for cache storage and retrieval
+* Runtime validation ensures data integrity and catches schema mismatches early for chat summarization cache
+* Consistent with existing validation patterns for [`ChatMessageDict`](internal/database/models.py:51), [`ChatUserDict`](internal/database/models.py:86), [`ChatInfoDict`](internal/database/models.py:98), [`ChatTopicDict`](internal/database/models.py:108), [`MediaAttachmentDict`](internal/database/models.py:120), [`DelayedTaskDict`](internal/database/models.py:135), and [`SpamMessageDict`](internal/database/models.py:144)
+* INSERT OR REPLACE logic allows updating existing cache entries with new summaries
+* Proper NULL handling for optional topic_id field ensures compatibility with both regular chats and forum topics
+
+## Implementation Details
+
+* Created [`_validateDictIsChatSummarizationCacheDict()`](internal/database/wrapper.py:625) method with comprehensive validation:
+  - Validates presence and types of required fields (csid, chat_id, first_message_id, last_message_id, prompt, summary, created_at, updated_at)
+  - Provides detailed error logging for missing fields and type mismatches
+  - Returns validated dictionary cast as [`ChatSummarizationCacheDict`](internal/database/models.py:155)
+* Completed [`addChatSummarization()`](internal/database/wrapper.py:1330) method implementation:
+  - Generates composite cache ID (csid) using format: `{chatId}:{topicId}_{firstMessageId}:{lastMessageId}`
+  - Uses INSERT OR REPLACE SQL to add or update cache entries
+  - Includes proper error handling and logging with boolean return value
+  - Sets created_at and updated_at timestamps automatically
+* Added [`getChatSummarization()`](internal/database/wrapper.py:1354) method:
+  - Retrieves cache entries by chatId, topicId, firstMessageId, lastMessageId parameters
+  - Handles NULL topic_id properly with `((? IS NULL AND topic_id IS NULL) OR topic_id = ?)` pattern
+  - Returns validated [`ChatSummarizationCacheDict`](internal/database/models.py:155) or None if not found
+  - Includes comprehensive error handling and logging
+* Updated imports in [`internal/database/wrapper.py`](internal/database/wrapper.py:17) to include [`ChatSummarizationCacheDict`](internal/database/models.py:155)
+* Fixed all linting issues including trailing whitespace, line length, and indentation problems
+* All changes follow existing code patterns and maintain backward compatibility
+* Comprehensive testing confirmed syntax validation, linting compliance, and proper functionality
