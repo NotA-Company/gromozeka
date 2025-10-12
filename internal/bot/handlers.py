@@ -887,7 +887,6 @@ class BotHandlers:
 
     def _saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
         """Save a chat message to the database."""
-        user = message.user
         chat = message.chat
         sender = message.sender
 
@@ -3394,9 +3393,7 @@ class BotHandlers:
 
         await self._sendMessage(
             ensuredMessage,
-            messageText=(
-                f"```json\n{utils.jsonDumps(ensuredMessage.userData, indent=2)}\n```"
-            ),
+            messageText=(f"```json\n{utils.jsonDumps(ensuredMessage.userData, indent=2)}\n```"),
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
