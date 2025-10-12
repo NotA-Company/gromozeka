@@ -1951,7 +1951,7 @@ class BotHandlers:
         ensuredMessage: EnsuredMessage,
         fileUniqueId: str,
         messages: List[ModelMessage],
-    ) -> Any:
+    ) -> bool:
         """
         Parse image content using LLM
         """
