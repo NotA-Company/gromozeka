@@ -336,7 +336,7 @@ class EnsuredMessage:
                     ret["userData"] = self.userData
 
                 # logger.debug(f"EM.formatForLLM():{self} -> {ret}")
-                return json.dumps(ret, ensure_ascii=False, default=str)
+                return utils.jsonDumps(ret, compact=False)
 
             case LLMMessageFormat.TEXT:
                 ret = messageText
@@ -374,7 +374,7 @@ class EnsuredMessage:
         )
 
     def __str__(self) -> str:
-        return json.dumps(
+        return utils.jsonDumps(
             {
                 "user.id": self.user.id,
                 "chat.id": self.chat.id,
@@ -393,8 +393,7 @@ class EnsuredMessage:
                 "mediaContent": self.mediaContent,
                 "userData": "{...}" if self.userData else None,
             },
-            ensure_ascii=False,
-            default=str,
+            compact=False,
         )
 
     def setSender(self, sender: Union[User, Chat, MessageSender]):
