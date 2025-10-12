@@ -8,7 +8,7 @@ import json
 import logging
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from telegram import Chat, Message, User
 import telegram.constants
@@ -25,6 +25,28 @@ logger = logging.getLogger(__name__)
 
 MAX_MEDIA_AWAIT_SECS = 300  # 5 minutes
 MEDIA_AWAIT_DELAY = 2.5
+
+
+class MessageSender:
+    def __init__(self, id: int, name: str, username: str):
+        self.id = id
+        self.name = name
+        self.username = username
+
+    def __str__(self) -> str:
+        return f"#{self.id} {self.name} ({self.username})"
+
+    def copy(self) -> "MessageSender":
+        return MessageSender(self.id, self.name, self.username)
+
+    @classmethod
+    def fromUser(cls, user: User) -> "MessageSender":
+        return cls(user.id, user.full_name, user.name)
+
+    @classmethod
+    def fromChat(cls, chat: Chat) -> "MessageSender":
+        return cls(chat.id, chat.effective_name or "", f"@{chat.username}" if chat.username else "")
+
 
 """
 A class to encapsulate and ensure the presence of essential message attributes from a Telegram message.
@@ -95,6 +117,8 @@ class EnsuredMessage:
 
         self.userData: Optional[Dict[str, Any]] = None
 
+        self.sender: MessageSender = MessageSender.fromUser(user)
+
     @classmethod
     def fromMessage(cls, message: Message) -> "EnsuredMessage":
         """Create EnsuredMessage from Telegram message"""
@@ -152,6 +176,11 @@ class EnsuredMessage:
         if isTopicMessage:
             ensuredMessage.isTopicMessage = True
             ensuredMessage.threadId = message.message_thread_id
+
+        if message.sender_chat:
+            ensuredMessage.setSender(message.sender_chat)
+        else:
+            ensuredMessage.setSender(message.from_user)
 
         logger.debug(f"Ensured Message from Telegram: {ensuredMessage}")
         return ensuredMessage
@@ -367,3 +396,13 @@ class EnsuredMessage:
             ensure_ascii=False,
             default=str,
         )
+
+    def setSender(self, sender: Union[User, Chat, MessageSender]):
+        if isinstance(sender, User):
+            self.sender = MessageSender.fromUser(sender)
+        elif isinstance(sender, Chat):
+            self.sender = MessageSender.fromChat(sender)
+        elif isinstance(sender, MessageSender):
+            self.sender = sender.copy()
+        else:
+            raise ValueError(f"Invalid sender type: {type(sender)}")

@@ -889,6 +889,7 @@ class BotHandlers:
         """Save a chat message to the database."""
         user = message.user
         chat = message.chat
+        sender = message.sender
 
         if message.messageType == MessageType.UNKNOWN:
             logger.error(f"Unsupported message type: {message.messageType}")
@@ -927,15 +928,15 @@ class BotHandlers:
 
         self.db.updateChatUser(
             chatId=chat.id,
-            userId=user.id,
-            username=user.name,
-            fullName=user.full_name,
+            userId=sender.id,
+            username=sender.username,
+            fullName=user.name,
         )
 
         self.db.saveChatMessage(
             date=message.date,
             chatId=chat.id,
-            userId=user.id,
+            userId=sender.id,
             messageId=message.messageId,
             replyId=replyId,
             threadId=message.threadId,
@@ -1221,6 +1222,11 @@ class BotHandlers:
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
         """Check if message is spam."""
 
+        if ensuredMessage.getBaseMessage().is_automatic_forward:
+            # https://docs.python-telegram-bot.org/en/stable/telegram.message.html#telegram.Message.is_automatic_forward
+            # It's a automatic forward from linked Channel. Its not spam.
+            return False
+
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
         userInfo = self.db.getChatUser(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id)
@@ -1486,11 +1492,17 @@ class BotHandlers:
         if not self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
             logger.error("Failed to save chat message")
 
+        if message.is_automatic_forward:
+            # Automatic forward from licked Channel
+            # TODO: Somehow process automatic forwards
+            # TODO: Think about handleRandomMessage here
+            return
+
         # Check if message is a reply to our message
         if await self.handleReply(update, context, ensuredMessage):
             return
 
-        # Check if we was mentioned
+        # Check if bot was mentioned
         if await self.handleMention(update, context, ensuredMessage):
             return
 

@@ -805,7 +805,11 @@ class DatabaseWrapper:
         messageCategory: Optional[List[MessageCategory]] = None,
     ) -> List[ChatMessageDict]:
         """Get chat messages from a specific chat newer than the given date."""
-        logger.debug(f"Getting chat messages for chat {chatId}:{threadId} date: [{sinceDateTime},{tillDateTime}], limit: {limit}, messageCategory: {messageCategory}")
+        logger.debug(
+            f"Getting chat messages for chat {chatId}:{threadId} "
+            f"date: [{sinceDateTime},{tillDateTime}], limit: {limit}, "
+            f"messageCategory: {messageCategory}"
+        )
         try:
             params = {
                 "chatId": chatId,
