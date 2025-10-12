@@ -2386,8 +2386,13 @@ class BotHandlers:
             if not topics:
                 topics.append(
                     {
+                        "chat_id": chatId,
                         "topic_id": 0,
                         "name": "Default",
+                        "icon_color": None,
+                        "icon_custom_emoji_id": None,
+                        "created_at": datetime.datetime.now(),
+                        "updated_at": datetime.datetime.now()
                     }
                 )
 
@@ -2397,7 +2402,7 @@ class BotHandlers:
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            topic["name"],
+                            str(topic["name"]),
                             callback_data=myJSONDump(
                                 {"c": chatId, "s": action, "m": maxMessages, "t": topic["topic_id"]}
                             ),
@@ -3611,7 +3616,7 @@ class BotHandlers:
                 if chatInfo is None:
                     logger.error(f"handle_chat_configuration: chatInfo is None in {chatId}")
                     return False
-                
+
                 chatSettings = self.getChatSettings(chatId)
                 defaultChatSettings = self.getChatSettings(None)
 
