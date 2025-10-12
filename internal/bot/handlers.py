@@ -2392,7 +2392,7 @@ class BotHandlers:
                         "icon_color": None,
                         "icon_custom_emoji_id": None,
                         "created_at": datetime.datetime.now(),
-                        "updated_at": datetime.datetime.now()
+                        "updated_at": datetime.datetime.now(),
                     }
                 )
 

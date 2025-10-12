@@ -115,3 +115,18 @@ class ChatTopicDict(TypedDict):
 
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class MediaAttachmentDict(TypedDict):
+    file_unique_id: str
+    file_id: Optional[str]
+    file_size: Optional[int]
+    media_type: str
+    metadata: str
+    status: Union[str, MediaStatus]
+    mime_type: Optional[str]
+    local_url: Optional[str]
+    prompt: Optional[str]
+    description: Optional[str]
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
