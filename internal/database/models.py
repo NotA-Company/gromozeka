@@ -151,3 +151,17 @@ class SpamMessageDict(TypedDict):
     score: float
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class ChatSummarizationCacheDict(TypedDict):
+    csid: str
+    chat_id: int
+    topic_id: Optional[int]
+    first_message_id: int
+    last_message_id: int
+
+    prompt: str
+    summary: str
+
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
