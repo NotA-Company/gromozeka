@@ -1240,7 +1240,7 @@ class BotHandlers:
                 )
             else:
                 logger.error("Wasn't been able to send SPAM notification")
-            await self._handleSpam(message=ensuredMessage.getBaseMessage(), reason=SpamReason.AUTO, score=spamScore)
+            await self.markAsSpam(message=ensuredMessage.getBaseMessage(), reason=SpamReason.AUTO, score=spamScore)
             return True
         elif spamScore > warnTreshold:
             logger.info(f"Possible SPAM: spamScore: {spamScore} > {warnTreshold} {ensuredMessage.getBaseMessage()}")
@@ -1256,7 +1256,7 @@ class BotHandlers:
 
         return False
 
-    async def _handleSpam(self, message: Message, reason: SpamReason, score: Optional[float] = None):
+    async def markAsSpam(self, message: Message, reason: SpamReason, score: Optional[float] = None):
         """Delete spam message, ban user and save message to spamDB"""
         chatSettings = self.getChatSettings(message.chat_id)
         bot = message.get_bot()
@@ -1277,7 +1277,8 @@ class BotHandlers:
                 )
                 return
 
-            if reason != SpamReason.ADMIN:
+            canMarkOldUsers = chatSettings[ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS].toBool()
+            if reason != SpamReason.ADMIN or not canMarkOldUsers:
                 # Check if we are trying to ban old chat member and it is not from Admin
                 userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
                 maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
@@ -3448,7 +3449,7 @@ class BotHandlers:
 
         if message.reply_to_message is not None and (allowUserSpamCommand or isAdmin):
             replyMessage = message.reply_to_message
-            await self._handleSpam(
+            await self.markAsSpam(
                 replyMessage,
                 reason=SpamReason.ADMIN if isAdmin else SpamReason.USER,
                 score=100 if isAdmin else 50,  # TODO: Think about score for user

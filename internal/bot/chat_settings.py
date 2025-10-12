@@ -45,6 +45,9 @@ class ChatSettingsKey(StrEnum):
     PARSE_IMAGES = "parse-images"
     OPTIMAL_IMAGE_SIZE = "optimal-image-size"
 
+    TOOLS_USED_PREFIX = "tools-used-prefix"
+    FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
+
     ALLOW_DRAW = "allow-draw"
     ALLOW_ANALYZE = "allow-analyze"
     ALLOW_SUMMARY = "allow-summary"
@@ -61,9 +64,7 @@ class ChatSettingsKey(StrEnum):
     AUTO_SPAM_MAX_MESSAGES = "auto-spam-max-messages"
     SPAM_BAN_TRESHOLD = "spam-ban-treshold"
     SPAM_WARN_TRESHOLD = "spam-warn-treshold"
-
-    TOOLS_USED_PREFIX = "tools-used-prefix"
-    FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
+    ALLOW_MARK_SPAM_OLD_USERS = "allow-mark-spam-old-users"
 
     def getId(self) -> int:
         """Return some unique id
@@ -242,6 +243,15 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.FLOAT,
         "short": "SPAM-Порог для предупреждения пользователя",
         "long": ("Порог для предупреждения пользователя при автоматической проверке на спам" "(0-100)"),
+    },
+    ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Разрешить помечать старых пользователей спаммером",
+        "long": (
+            "Разрешить помечать пользователей, (у которых больше устеновленного количества "
+            "сообщений в чате), как спаммеров при помощи команды `/spam` \n" 
+            "(Используется для того, что бы исклюить ошибки и очепятки)"
+        ),
     },
 }
 
