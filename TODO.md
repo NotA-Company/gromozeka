@@ -1,5 +1,5 @@
 # Our TODO list
-- [x] Add support of reading and saving all messags from chat
+- [x] Add support of reading and saving all messages from chat
 - [ ] Add plugins support
 - [x] Add support for direct mesages
 - [x] Add Summarisation plugin. Summarisation only possible in chats. Summarisation will be displayed on command or in some time if configured
@@ -10,3 +10,4 @@
 - [ ] Add Bayes filtering into spam-detection
 - [x] Add some AI support via YandexCloud
 - [ ] Add Summarization caching support (chatId+prompt+dates)
+- [ ] On /spam change message_category in DB as well (probably for all messages?)
