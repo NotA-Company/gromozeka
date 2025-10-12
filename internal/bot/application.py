@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 import sys
-from typing import Any, Awaitable, Dict
+from typing import Any, Awaitable, Dict, Optional
 from telegram import Update
 import telegram
 from telegram.ext import (
@@ -84,6 +84,7 @@ class BotApplication:
         self.llmManager = llmManager
         self.application = None
         self.handlers = BotHandlers(config, database, llmManager)
+        self._schedulerTask: Optional[asyncio.Task] = None
 
     def setupHandlers(self):
         """Set up bot command and message handlers."""
@@ -153,7 +154,7 @@ class BotApplication:
         if self.application is None:
             raise RuntimeError("Application not initialized")
 
-        asyncio.create_task(self.handlers.initDelayedScheduler(self.application.bot))
+        self._schedulerTask = asyncio.create_task(self.handlers.initDelayedScheduler(self.application.bot))
 
         # Configure Commands
         DefaultCommands = []
@@ -185,6 +186,19 @@ class BotApplication:
         )
         # * :class:`telegram.BotCommandScopeAllChatAdministrators`
 
+    async def postStop(self, application: Application) -> None:
+        """
+        See https://docs.python-telegram-bot.org/en/stable/telegram.ext.applicationbuilder.html#telegram.ext.ApplicationBuilder.post_stop
+        for details
+        """  # noqa: E501
+
+        logger.info("Application stopping, stopping Delayed Tasks Scheduler...")
+        await self.handlers.initExit()
+        logger.info("Step 1 of shutdown is done...")
+        if self._schedulerTask is not None:
+            await self._schedulerTask
+        logger.info("Step 2 of shutdown is done...")
+
     def run(self):
         """Start the bot."""
         if self.botToken in ["", "YOUR_BOT_TOKEN_HERE"]:
@@ -199,6 +213,7 @@ class BotApplication:
             .token(self.botToken)
             .concurrent_updates(PerTopicUpdateProcessor(128))
             .post_init(self.postInit)
+            .post_stop(self.postStop)
             .build()
         )
 
