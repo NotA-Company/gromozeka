@@ -140,3 +140,14 @@ class DelayedTaskDict(TypedDict):
     is_done: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class SpamMessageDict(TypedDict):
+    chat_id: int
+    user_id: int
+    message_id: int
+    text: str
+    reason: Union[str, SpamReason]
+    score: float
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
