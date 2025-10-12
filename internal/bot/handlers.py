@@ -286,7 +286,11 @@ class BotHandlers:
         if (not forceProcessAll) and (self.queueLastUpdated + MAX_QUEUE_AGE > time.time()):
             return
 
-        logger.info(f"Processing queue due to age ({MAX_QUEUE_AGE})")
+        if forceProcessAll:
+            logger.info("Processing background tasks queue due to forceProcessAll=True")
+        else:
+            logger.info(f"Processing queue due to age ({MAX_QUEUE_AGE})")
+
         # TODO: Do it properly
         # Little hack to avoid concurency in processing queue
         self.queueLastUpdated = time.time()
@@ -299,6 +303,7 @@ class BotHandlers:
                     logger.error(f"Task {task} is not a task, but a {type(task)}")
                 else:
                     try:
+                        logger.debug(f"Awaiting task {task}...")
                         await task
                     except Exception as e:
                         logger.error(f"Error in background task: {e}")
@@ -306,9 +311,9 @@ class BotHandlers:
 
                 self.asyncTasksQueue.task_done()
         except asyncio.QueueEmpty:
-            pass
+            logger.info("All background tasks were processed")
         except Exception as e:
-            logger.error(f"Error in background task: {e}")
+            logger.error(f"Error in background task processing: {e}")
             logger.exception(e)
 
     async def initDelayedScheduler(self, bot: ExtBot) -> None:
@@ -325,22 +330,15 @@ class BotHandlers:
             )
             logger.info(f"Restored delayed task: {task}")
 
+        # Add background tasks processing
+        await self._addDelayedTask(time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True)
+
         await self._processDelayedQueue()
 
     async def _processDelayedQueue(self) -> None:
         while True:
             try:
                 # logger.debug("_pDQ(): Iteration...")
-                # First - process background tasks if any
-                # TODO: Convert to delayed task with 1 minute delay
-                await self._processBackgroundTasks()
-                # logger.debug("_pDQ(): Processed background tasks...")
-
-                # while self.delayedActionsQueue.empty():
-                #    logger.debug(f"_pDQ(): Queue is empty...")
-                #    await asyncio.sleep(1)
-
-                # logger.debug(f"_pDQ(): {self.delayedActionsQueue}")
                 delayedTask = await self.delayedActionsQueue.get()
 
                 if not isinstance(delayedTask, DelayedTask):
@@ -390,6 +388,10 @@ class BotHandlers:
                     case DelayedTaskFunction.DO_EXIT:
                         logger.info("got doExit function, processing cackgroundTask if any...")
                         await self._processBackgroundTasks(True)
+                    
+                    case DelayedTaskFunction.PROCESS_BACKGROUND_TASKS:
+                        await self._processBackgroundTasks()
+                        await self._addDelayedTask(time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True)
 
                     case _:
                         logger.error(f"Unsupported function type: {delayedTask.function} in delayed task {delayedTask}")
