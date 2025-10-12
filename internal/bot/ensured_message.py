@@ -4,7 +4,6 @@ EnsuredMessage: wrapper around telegram.Message
 
 import asyncio
 import datetime
-import json
 import logging
 
 import time
