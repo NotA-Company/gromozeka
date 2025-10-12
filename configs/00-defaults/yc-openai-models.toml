@@ -2,7 +2,7 @@
 [models.models.yandexgpt]
 provider = "yc-openai"
 model_id = "yandexgpt"
-model_version = "latest"
+model_version = "rc"
 temperature = 0.5
 context = 32768
 support_tools = true
