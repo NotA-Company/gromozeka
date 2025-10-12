@@ -930,7 +930,7 @@ class BotHandlers:
             chatId=chat.id,
             userId=sender.id,
             username=sender.username,
-            fullName=user.name,
+            fullName=sender.name,
         )
 
         self.db.saveChatMessage(
