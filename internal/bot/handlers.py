@@ -35,7 +35,7 @@ from lib.ai.models import (
 from lib.ai.manager import LLMManager
 
 from internal.database.wrapper import DatabaseWrapper
-from internal.database.models import ChatMessageDict, MediaStatus, MessageCategory, SpamReason
+from internal.database.models import ChatInfoDict, ChatMessageDict, MediaStatus, MessageCategory, SpamReason
 
 from lib.markdown import markdown_to_markdownv2
 import lib.utils as utils
@@ -795,7 +795,7 @@ class BotHandlers:
 
         return ret
 
-    def _getChatInfo(self, chatId: int) -> Dict[str, Any]:
+    def _getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """Get Chat info from cache or DB"""
 
         if chatId not in self.cache["chats"]:
@@ -2360,23 +2360,23 @@ class BotHandlers:
             return
 
         chatFound = await self._isAdmin(user, None, True)
-        chatInfo: Dict[str, Any] = {}
+        chatInfo: Optional[ChatInfoDict] = None
         for chat in userChats:
             if chat["chat_id"] == chatId:
                 chatFound = True
                 chatInfo = chat
                 break
 
-        if not chatFound:
+        if not chatFound or chatInfo is None:
             await message.edit_text("Указан неверный чат")
             return
 
         # ChatID Choosen
         chatTitle: str = f"#{chatInfo['chat_id']}"
         if chatInfo["title"]:
-            chatTitle = f"{CHAT_ICON} {chatInfo['title']} ({chatInfo["type"]})"
+            chatTitle = f"{CHAT_ICON} {chatInfo['title']} ({chatInfo['type']})"
         elif chatInfo["username"]:
-            chatTitle = f"{PRIVATE_ICON} {chatInfo['username']} ({chatInfo["type"]})"
+            chatTitle = f"{PRIVATE_ICON} {chatInfo['username']} ({chatInfo['type']})"
 
         topicId = data.get("t", None)
         # Choose TopicID if needed
@@ -3534,24 +3534,27 @@ class BotHandlers:
             case "chat":
                 chatId = data.get("c", None)
                 if chatId is None:
-                    logger.error(f"handle_button: chatId is None in {data}")
+                    logger.error(f"handle_chat_configuration: chatId is None in {data}")
                     return False
 
                 if not isinstance(chatId, int):
-                    logger.error(f"handle_button: wrong chatId: {type(chatId).__name__}#{chatId}")
+                    logger.error(f"handle_chat_configuration: wrong chatId: {type(chatId).__name__}#{chatId}")
                     return False
 
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
                 chatObj.set_bot(message.get_bot())
 
                 if not await self._isAdmin(user=user, chat=chatObj):
-                    logger.error(f"handle_button: user#{user.id} is not admin in {chatId}")
+                    logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId}")
                     await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
                 chatInfo = self._getChatInfo(chatId)
+                if chatInfo is None:
+                    logger.error(f"handle_chat_configuration: chatInfo is None in {chatId}")
+                    return False
 
-                logger.debug(f"handle_button: chatInfo: {chatInfo}")
+                logger.debug(f"handle_chat_configuration: chatInfo: {chatInfo}")
                 resp = f"Настраиваем чат **{chatInfo['title'] or chatInfo['username']}#{chatId}**:\n"
                 chatSettings = self.getChatSettings(chatId)
                 defaultChatSettings = self.getChatSettings(None)
@@ -3601,10 +3604,14 @@ class BotHandlers:
                 _key = data.get("k", None)
 
                 if chatId is None or _key is None:
-                    logger.error(f"handle_button: chatId or key is None in {data}")
+                    logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
                     return False
 
                 chatInfo = self._getChatInfo(chatId)
+                if chatInfo is None:
+                    logger.error(f"handle_chat_configuration: chatInfo is None in {chatId}")
+                    return False
+                
                 chatSettings = self.getChatSettings(chatId)
                 defaultChatSettings = self.getChatSettings(None)
 
@@ -3613,18 +3620,18 @@ class BotHandlers:
                 try:
                     key = ChatSettingsKey.fromId(_key)
                 except ValueError:
-                    logger.error(f"handle_button: wrong key: {_key}")
+                    logger.error(f"handle_chat_configuration: wrong key: {_key}")
                     return False
 
                 if key not in chatOptions:
-                    logger.error(f"handle_button: wrong key: {key}")
+                    logger.error(f"handle_chat_configuration: wrong key: {key}")
                     await message.edit_text(text=f"Unknown key: {key}")
                     return False
 
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
                 chatObj.set_bot(message.get_bot())
                 if not await self._isAdmin(user=user, chat=chatObj):
-                    logger.error(f"handle_button: user#{user.id} is not admin in {chatId} ({data})")
+                    logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId} ({data})")
                     await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
@@ -3702,27 +3709,30 @@ class BotHandlers:
                 self.cache["users"][userId].pop("activeConfigureId", None)
 
                 if chatId is None or _key is None:
-                    logger.error(f"handle_button: chatId or key is None in {data}")
+                    logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
                     return False
 
                 chatInfo = self._getChatInfo(chatId)
+                if chatInfo is None:
+                    logger.error(f"handle_chat_configuration: chatInfo is None for {chatId}")
+                    return False
                 chatOptions = chat_settings.getChatSettingsInfo()
 
                 try:
                     key = ChatSettingsKey.fromId(_key)
                 except ValueError:
-                    logger.error(f"handle_button: wrong key: {_key}")
+                    logger.error(f"handle_chat_configuration: wrong key: {_key}")
                     return False
 
                 if key not in chatOptions:
-                    logger.error(f"handle_button: wrong key: {key}")
+                    logger.error(f"handle_chat_configuration: wrong key: {key}")
                     await message.edit_text(text=f"Unknown key: {key}")
                     return False
 
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
                 chatObj.set_bot(message.get_bot())
                 if not await self._isAdmin(user=user, chat=chatObj):
-                    logger.error(f"handle_button: user#{user.id} is not admin in {chatId} ({data})")
+                    logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId} ({data})")
                     await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
@@ -3739,8 +3749,8 @@ class BotHandlers:
                 elif action == "sv":
                     self.setChatSettings(chatId, {key: data.get("v", None)})
                 else:
-                    logger.error(f"handle_button: wrong action: {action}")
-                    raise RuntimeError(f"handle_button: wrong action: {action}")
+                    logger.error(f"handle_chat_configuration: wrong action: {action}")
+                    raise RuntimeError(f"handle_chat_configuration: wrong action: {action}")
 
                 chatSettings = self.getChatSettings(chatId)
 
@@ -3770,7 +3780,7 @@ class BotHandlers:
             case "cancel":
                 await message.edit_text(text="Настройка закончена, буду ждать вас снова")
             case _:
-                logger.error(f"handle_button: unknown action: {data}")
+                logger.error(f"handle_chat_configuration: unknown action: {data}")
                 await message.edit_text(text=f"Unknown action: {action}")
                 return False
 
