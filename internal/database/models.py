@@ -3,6 +3,8 @@ Different DB-related models
 """
 
 from enum import StrEnum
+from typing import Optional, TypedDict, Union
+import datetime
 
 
 class MediaStatus(StrEnum):
@@ -44,3 +46,38 @@ class SpamReason(StrEnum):
     AUTO = "auto"
     USER = "user"
     ADMIN = "admin"
+
+
+class ChatMessageDict(TypedDict):
+    # From chat_message table
+    chat_id: int
+    message_id: int
+    date: datetime.datetime
+    user_id: int
+    reply_id: Optional[int]
+    thread_id: int
+    root_message_id: Optional[int]
+    message_text: str
+    message_type: str
+    message_category: Union[str, MessageCategory]
+    quote_text: Optional[str]
+    media_id: Optional[str]
+    created_at: datetime.datetime
+
+    # From User table
+    username: str
+    full_name: str
+
+    # From Media Info Table
+    media_file_unique_id: Optional[str]
+    media_file_id: Optional[str]
+    media_file_size: Optional[int]
+    media_media_type: Optional[str]
+    media_metadata: Optional[str]
+    media_status: Optional[Union[str, MediaStatus]]
+    media_mime_type: Optional[str]
+    media_local_url: Optional[str]
+    media_prompt: Optional[str]
+    media_description: Optional[str]
+    media_created_at: Optional[datetime.datetime]
+    media_updated_at: Optional[datetime.datetime]

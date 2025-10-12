@@ -753,3 +753,32 @@ This file records architectural and implementation decisions using a list format
 * MarkdownV2 output correctly escapes content while maintaining code block structure
 * HTML output properly contains all content within `<pre><code>` tags without parsing markdown syntax
 * Original user case now works perfectly: code blocks with lists are preserved intact
+
+[2025-10-11 23:26:00] - Implemented ChatMessageDict Validation in Database Wrapper
+
+## Decision
+
+* Resolved TODO comment in [`getChatMessagesSince()`](internal/database/wrapper.py:489) method by implementing proper [`ChatMessageDict`](internal/database/models.py:50) validation
+* Added [`_validate_chat_message_dict()`](internal/database/wrapper.py:443) method to ensure database rows match expected TypedDict structure
+* Applied validation to all methods returning [`ChatMessageDict`](internal/database/models.py:50) or `List[ChatMessageDict]`
+
+## Rationale 
+
+* The original TODO questioned whether raw database rows should be validated against the [`ChatMessageDict`](internal/database/models.py:50) TypedDict structure
+* Runtime validation ensures data integrity and catches schema mismatches early
+* Proper enum conversion for [`MessageCategory`](internal/database/models.py:21) and [`MediaStatus`](internal/database/models.py:10) provides type safety
+* Validation helps prevent runtime errors when consuming the returned data in bot handlers
+* Logging warnings for type mismatches aids in debugging database schema issues
+
+## Implementation Details
+
+* Created [`_validate_chat_message_dict()`](internal/database/wrapper.py:443) method with comprehensive validation:
+  - Converts string enum values to proper [`MessageCategory`](internal/database/models.py:21) and [`MediaStatus`](internal/database/models.py:10) enums
+  - Validates presence and types of required fields (chat_id, message_id, date, user_id, etc.)
+  - Provides detailed error logging for missing fields and type mismatches
+  - Returns validated dictionary cast as [`ChatMessageDict`](internal/database/models.py:50) with type ignore for runtime flexibility
+* Updated [`getChatMessagesSince()`](internal/database/wrapper.py:502) method to use validation on line 541
+* Updated [`getChatMessageByMessageId()`](internal/database/wrapper.py:548) method to use validation on line 566  
+* Updated [`getChatMessagesByRootId()`](internal/database/wrapper.py:573) method to use validation on line 595
+* Fixed all linting issues (whitespace, line length, binary operator placement) for clean code compliance
+* All methods now return properly validated [`ChatMessageDict`](internal/database/models.py:50) objects instead of raw dictionaries
