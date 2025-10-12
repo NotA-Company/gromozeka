@@ -44,6 +44,7 @@ class MediaProcessingInfo:
 class DelayedTaskFunction(StrEnum):
     SEND_MESSAGE = "sendMessage"
     DELETE_MESSAGE = "deleteMessage"
+    DO_EXIT = "doExit"
 
 
 class DelayedTask:
@@ -72,7 +73,7 @@ class DelayedTask:
     def __repr__(self) -> str:
         return (
             f"DelayedTask(taskId={self.taskId}, delayedUntil={self.delayedUntil}, "
-            "function={self.function}, kwargs={self.kwargs})"
+            f"function={self.function}, kwargs={self.kwargs})"
         )
 
     def __str__(self) -> str:
