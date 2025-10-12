@@ -900,3 +900,40 @@ This file records architectural and implementation decisions using a list format
   - Maintains all existing functionality while improving type safety
 * Updated imports in [`internal/database/wrapper.py`](internal/database/wrapper.py:15) to include [`MediaAttachmentDict`](internal/database/models.py:119)
 * All changes follow existing code patterns and maintain backward compatibility
+
+[2025-10-12 13:03:00] - Implemented DelayedTaskDict Validation in Database Wrapper
+
+## Decision
+
+* Resolved task to add DelayedTaskDict type and validation to [`getPendingDelayedTasks()`](internal/database/wrapper.py:1401) function
+* Created [`DelayedTaskDict`](internal/database/models.py:135) TypedDict following existing patterns for other database tables
+* Added [`_validateDictIsDelayedTaskDict()`](internal/database/wrapper.py:523) validation method with proper type checking
+* Updated [`getPendingDelayedTasks()`](internal/database/wrapper.py:1401) function to use validation and return properly typed results
+* Fixed type conversion issue in [`internal/bot/handlers.py`](internal/bot/handlers.py:326) for DelayedTaskFunction enum
+
+## Rationale 
+
+* Consistent with existing validation patterns for [`ChatMessageDict`](internal/database/models.py:51), [`ChatUserDict`](internal/database/models.py:86), [`ChatInfoDict`](internal/database/models.py:98), [`ChatTopicDict`](internal/database/models.py:108), and [`MediaAttachmentDict`](internal/database/models.py:120)
+* Runtime validation ensures data integrity and catches schema mismatches early for delayed tasks
+* Proper type safety prevents runtime errors when consuming delayed task data in bot handlers
+* Validation helps prevent runtime errors when processing delayed tasks from database
+* Logging warnings for type mismatches aids in debugging database schema issues
+
+## Implementation Details
+
+* Created [`DelayedTaskDict`](internal/database/models.py:135) TypedDict with all fields from delayed_tasks table:
+  - Required fields: id, delayed_ts, function, kwargs, is_done, created_at, updated_at
+  - All fields properly typed with correct Python types (str, int, bool, datetime.datetime)
+* Added [`_validateDictIsDelayedTaskDict()`](internal/database/wrapper.py:523) method with comprehensive validation:
+  - Validates presence and types of required fields
+  - Provides detailed error logging for missing fields and type mismatches
+  - Returns validated dictionary cast as [`DelayedTaskDict`](internal/database/models.py:135)
+* Updated [`getPendingDelayedTasks()`](internal/database/wrapper.py:1401) function:
+  - Changed return type from `List[Dict[str, Any]]` to `List[DelayedTaskDict]`
+  - Added validation call: `return [self._validateDictIsDelayedTaskDict(dict(row)) for row in cursor.fetchall()]`
+  - Maintains all existing functionality while improving type safety
+* Fixed type conversion in [`internal/bot/handlers.py`](internal/bot/handlers.py:326):
+  - Added `DelayedTaskFunction(task["function"])` to convert string to enum
+  - Resolves Pylance type error for function parameter
+* Updated imports in [`internal/database/wrapper.py`](internal/database/wrapper.py:20) to include [`DelayedTaskDict`](internal/database/models.py:135)
+* All changes follow existing code patterns and maintain backward compatibility
