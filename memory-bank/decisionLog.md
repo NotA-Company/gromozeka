@@ -865,3 +865,38 @@ This file records architectural and implementation decisions using a list format
 * Updated [`getChatTopics()`](internal/database/wrapper.py:1135) method to use validation instead of raw dict conversion
 * Fixed all linting issues and type safety warnings related to the TODO
 * All methods now return properly validated [`ChatTopicDict`](internal/database/models.py:108) objects instead of raw dictionaries
+
+[2025-10-12 12:58:00] - Implemented MediaAttachmentDict Validation in Database Wrapper
+
+## Decision
+
+* Resolved task to add MediaAttachmentDict type and validation to [`getMediaAttachment()`](internal/database/wrapper.py:1285) function
+* Created [`MediaAttachmentDict`](internal/database/models.py:119) TypedDict following existing patterns for other database tables
+* Added [`_validateDictIsMediaAttachmentDict()`](internal/database/wrapper.py:472) validation method with proper enum conversion and type checking
+* Updated [`getMediaAttachment()`](internal/database/wrapper.py:1285) function to use validation and return properly typed results
+
+## Rationale 
+
+* Consistent with existing validation patterns for [`ChatMessageDict`](internal/database/models.py:51), [`ChatUserDict`](internal/database/models.py:86), [`ChatInfoDict`](internal/database/models.py:98), and [`ChatTopicDict`](internal/database/models.py:108)
+* Runtime validation ensures data integrity and catches schema mismatches early for media attachments
+* Proper enum conversion for [`MediaStatus`](internal/database/models.py:10) provides type safety
+* Validation helps prevent runtime errors when consuming media attachment data in bot handlers
+* Logging warnings for type mismatches aids in debugging database schema issues
+
+## Implementation Details
+
+* Created [`MediaAttachmentDict`](internal/database/models.py:119) TypedDict with all fields from media_attachments table:
+  - Required fields: file_unique_id, media_type, metadata, created_at, updated_at
+  - Optional fields: file_id, file_size, mime_type, local_url, prompt, description
+  - Enum field: status (Union[str, MediaStatus]) with proper conversion
+* Added [`_validateDictIsMediaAttachmentDict()`](internal/database/wrapper.py:472) method with comprehensive validation:
+  - Converts string status values to proper [`MediaStatus`](internal/database/models.py:10) enum
+  - Validates presence and types of required fields
+  - Provides detailed error logging for missing fields and type mismatches
+  - Returns validated dictionary cast as [`MediaAttachmentDict`](internal/database/models.py:119)
+* Updated [`getMediaAttachment()`](internal/database/wrapper.py:1285) function:
+  - Changed return type from `Optional[Dict[str, Any]]` to `Optional[MediaAttachmentDict]`
+  - Added validation call: `return self._validateDictIsMediaAttachmentDict(row_dict)`
+  - Maintains all existing functionality while improving type safety
+* Updated imports in [`internal/database/wrapper.py`](internal/database/wrapper.py:15) to include [`MediaAttachmentDict`](internal/database/models.py:119)
+* All changes follow existing code patterns and maintain backward compatibility
