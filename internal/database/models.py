@@ -103,3 +103,15 @@ class ChatInfoDict(TypedDict):
     is_forum: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class ChatTopicDict(TypedDict):
+    chat_id: int
+    topic_id: int
+
+    icon_color: Optional[int]
+    icon_custom_emoji_id: Optional[str]
+    name: Optional[str]
+
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
