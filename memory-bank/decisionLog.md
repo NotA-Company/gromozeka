@@ -782,3 +782,30 @@ This file records architectural and implementation decisions using a list format
 * Updated [`getChatMessagesByRootId()`](internal/database/wrapper.py:573) method to use validation on line 595
 * Fixed all linting issues (whitespace, line length, binary operator placement) for clean code compliance
 * All methods now return properly validated [`ChatMessageDict`](internal/database/models.py:50) objects instead of raw dictionaries
+
+[2025-10-12 12:17:00] - Implemented ChatUserDict Validation in Database Wrapper
+
+## Decision
+
+* Resolved TODO comment in [`getChatUser()`](internal/database/wrapper.py:714) method by implementing proper [`ChatUserDict`](internal/database/models.py:86) validation
+* Added [`_validateDictIsChatUserDict()`](internal/database/wrapper.py:517) method to ensure database rows match expected TypedDict structure
+* Applied validation to both [`getChatUser()`](internal/database/wrapper.py:714) and [`getChatUsers()`](internal/database/wrapper.py:744) methods
+
+## Rationale 
+
+* The original TODO questioned whether raw database rows should be validated against the [`ChatUserDict`](internal/database/models.py:86) TypedDict structure
+* Runtime validation ensures data integrity and catches schema mismatches early
+* Consistent with existing [`_validateDictIsChatMessageDict()`](internal/database/wrapper.py:443) pattern for type safety
+* Validation helps prevent runtime errors when consuming the returned data in bot handlers
+* Logging warnings for type mismatches aids in debugging database schema issues
+
+## Implementation Details
+
+* Created [`_validateDictIsChatUserDict()`](internal/database/wrapper.py:517) method with comprehensive validation:
+  - Validates presence and types of required fields (chat_id, user_id, username, full_name, messages_count, created_at, updated_at)
+  - Provides detailed error logging for missing fields and type mismatches
+  - Returns validated dictionary cast as [`ChatUserDict`](internal/database/models.py:86) with type ignore for runtime flexibility
+* Updated [`getChatUser()`](internal/database/wrapper.py:714) method to use validation instead of raw dict conversion
+* Updated [`getChatUsers()`](internal/database/wrapper.py:744) method to use validation for all returned rows
+* Fixed all linting issues and type safety warnings
+* All methods now return properly validated [`ChatUserDict`](internal/database/models.py:86) objects instead of raw dictionaries
