@@ -41,6 +41,8 @@ spam-delete-all-user-messages = true
 spam-ban-treshold = 90
 # Minimal SPAM Score to add warn message
 spam-warn-treshold = 60
+# Allow to block old (with more, than `auto-spam-max-messages` messages) users with /spam command
+allow-mark-spam-old-users = false
 
 # Allow reaction in bot mention (by username and by name)
 allow-mention = true
