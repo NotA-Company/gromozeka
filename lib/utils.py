@@ -5,7 +5,7 @@ Common utilities for Gromozeka bot.
 import datetime
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +97,19 @@ def parseDelay(delayStr: str) -> int:
     raise ValueError(f"Invalid delay format: {delayStr}. Expected formats: '[DDd][HHh][MMm][SSs]' or 'HH:MM[:SS]'")
 
 
-def jsonCompactDump(data: Any, **kwargs) -> str:
+def jsonDumps(data: Any, compact: Optional[bool] = None, **kwargs) -> str:
     dumpKwargs = {
         "ensure_ascii": False,
         "default": str,
-        "separators": (",", ":"),
         "sort_keys": True,
-        **kwargs,
     }
+
+    if compact is None:
+        # If indent is passed, then user want pretty-printed JSON,
+        #  no need to use compact separators
+        compact = "indent" not in kwargs
+
+    if compact:
+        dumpKwargs["separators"] = (",", ":")
+    dumpKwargs.update(kwargs)
     return json.dumps(data, **dumpKwargs)
