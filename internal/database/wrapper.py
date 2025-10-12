@@ -17,6 +17,7 @@ from .models import (
     ChatMessageDict,
     ChatTopicDict,
     ChatUserDict,
+    DelayedTaskDict,
     MediaAttachmentDict,
     MediaStatus,
     MessageCategory,
@@ -229,7 +230,7 @@ class DatabaseWrapper:
             # PhotoSize(file_id='Ag...Q', file_size=47717, file_unique_id='A..y', height=320, width=320)
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS media_attachments (
+                CREATE TABLE IF NOT EXISTS media_attachments ( -- See MediaAttachmentDict
                     file_unique_id TEXT PRIMARY KEY,        -- Unique id of media - preserved for time
                     file_id TEXT,                           -- FileID for getting file content
                     file_size INTEGER,                      -- File size if any
@@ -251,7 +252,7 @@ class DatabaseWrapper:
             # TODO: Think about dropping old task, which is_done == True
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS delayed_tasks (
+                CREATE TABLE IF NOT EXISTS delayed_tasks ( -- See DelayedTaskDict
                     id TEXT PRIMARY KEY NOT NULL,           -- Unique task ID (usually uuid)
                     delayed_ts INTEGER NOT NULL,            -- DelayedTS (in bot's timezone. Or it Timestamp? dunno)
                     function TEXT NOT NULL,                 -- Function to call (see DelayedTaskFunction)
@@ -516,6 +517,41 @@ class DatabaseWrapper:
 
         except Exception as e:
             logger.error(f"Failed to validate MediaAttachmentDict: {e}")
+            logger.error(f"Row data: {row_dict}")
+            raise
+
+    def _validateDictIsDelayedTaskDict(self, row_dict: Dict[str, Any]) -> DelayedTaskDict:
+        """
+        Validate and convert a database row dictionary to DelayedTaskDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "id": str,
+                "delayed_ts": int,
+                "function": str,
+                "kwargs": str,
+                "is_done": bool,
+                "created_at": datetime.datetime,
+                "updated_at": datetime.datetime,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in row_dict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
+                    logger.warning(
+                        f"Field '{field}' has type {type(row_dict[field])}, expected {expected_type}"
+                    )
+
+            # Return the validated dictionary cast as DelayedTaskDict
+            return row_dict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate DelayedTaskDict: {e}")
             logger.error(f"Row data: {row_dict}")
             raise
 
@@ -1360,7 +1396,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to update delayed task: {e}")
             return False
 
-    def getPendingDelayedTasks(self) -> List[Dict[str, Any]]:
+    def getPendingDelayedTasks(self) -> List[DelayedTaskDict]:
         """Get all pending delayed tasks from the database."""
         try:
             with self.getCursor() as cursor:
@@ -1374,7 +1410,7 @@ class DatabaseWrapper:
                         "isDone": False,
                     },
                 )
-                return [dict(row) for row in cursor.fetchall()]
+                return [self._validateDictIsDelayedTaskDict(dict(row)) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get pending delayed tasks: {e}")
             return []

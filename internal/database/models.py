@@ -130,3 +130,13 @@ class MediaAttachmentDict(TypedDict):
     description: Optional[str]
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class DelayedTaskDict(TypedDict):
+    id: str
+    delayed_ts: int
+    function: str
+    kwargs: str
+    is_done: bool
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
