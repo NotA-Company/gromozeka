@@ -937,3 +937,37 @@ This file records architectural and implementation decisions using a list format
   - Resolves Pylance type error for function parameter
 * Updated imports in [`internal/database/wrapper.py`](internal/database/wrapper.py:20) to include [`DelayedTaskDict`](internal/database/models.py:135)
 * All changes follow existing code patterns and maintain backward compatibility
+
+[2025-10-12 13:11:00] - Implemented SpamMessageDict Validation in Database Wrapper
+
+## Decision
+
+* Resolved task to add SpamMessageDict type and validation to [`getSpamMessagesByText()`](internal/database/wrapper.py:1493) function
+* Created [`SpamMessageDict`](internal/database/models.py:144) TypedDict following existing patterns for other database tables
+* Added [`_validateDictIsSpamMessageDict()`](internal/database/wrapper.py:560) validation method with proper enum conversion and type checking
+* Updated [`getSpamMessagesByText()`](internal/database/wrapper.py:1493) function to use validation and return properly typed results
+
+## Rationale 
+
+* Consistent with existing validation patterns for [`ChatMessageDict`](internal/database/models.py:51), [`ChatUserDict`](internal/database/models.py:86), [`ChatInfoDict`](internal/database/models.py:98), [`ChatTopicDict`](internal/database/models.py:108), [`MediaAttachmentDict`](internal/database/models.py:120), and [`DelayedTaskDict`](internal/database/models.py:135)
+* Runtime validation ensures data integrity and catches schema mismatches early for spam messages
+* Proper enum conversion for [`SpamReason`](internal/database/models.py:41) provides type safety
+* Validation helps prevent runtime errors when consuming spam message data in bot handlers
+* Logging warnings for type mismatches aids in debugging database schema issues
+
+## Implementation Details
+
+* Created [`SpamMessageDict`](internal/database/models.py:144) TypedDict with all fields from spam_messages table:
+  - Required fields: chat_id, user_id, message_id, text, score, created_at, updated_at
+  - Enum field: reason (Union[str, SpamReason]) with proper conversion
+* Added [`_validateDictIsSpamMessageDict()`](internal/database/wrapper.py:560) method with comprehensive validation:
+  - Converts string reason values to proper [`SpamReason`](internal/database/models.py:41) enum
+  - Validates presence and types of required fields
+  - Provides detailed error logging for missing fields and type mismatches
+  - Returns validated dictionary cast as [`SpamMessageDict`](internal/database/models.py:144)
+* Updated [`getSpamMessagesByText()`](internal/database/wrapper.py:1493) function:
+  - Changed return type from `List[Dict[str, Any]]` to `List[SpamMessageDict]`
+  - Added validation call: `return [self._validateDictIsSpamMessageDict(dict(row)) for row in cursor.fetchall()]`
+  - Maintains all existing functionality while improving type safety
+* Updated imports in [`internal/database/wrapper.py`](internal/database/wrapper.py:22) to include [`SpamMessageDict`](internal/database/models.py:144)
+* All changes follow existing code patterns and maintain backward compatibility

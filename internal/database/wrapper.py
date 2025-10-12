@@ -19,6 +19,7 @@ from .models import (
     ChatUserDict,
     DelayedTaskDict,
     MediaAttachmentDict,
+    SpamMessageDict,
     MediaStatus,
     MessageCategory,
     SpamReason,
@@ -284,7 +285,7 @@ class DatabaseWrapper:
             # Spam messages for learning
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS spam_messages (
+                CREATE TABLE IF NOT EXISTS spam_messages ( -- See SpamMessageDict
                     chat_id INTEGER NOT NULL,    -- Chat ID
                     user_id INTEGER NOT NULL,    -- User ID
                     message_id INTEGER NOT NULL, -- Message ID
@@ -552,6 +553,49 @@ class DatabaseWrapper:
 
         except Exception as e:
             logger.error(f"Failed to validate DelayedTaskDict: {e}")
+            logger.error(f"Row data: {row_dict}")
+            raise
+
+    def _validateDictIsSpamMessageDict(self, row_dict: Dict[str, Any]) -> SpamMessageDict:
+        """
+        Validate and convert a database row dictionary to SpamMessageDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Convert enum string values to proper enum types if needed
+            if "reason" in row_dict and isinstance(row_dict["reason"], str):
+                try:
+                    row_dict["reason"] = SpamReason(row_dict["reason"])
+                except ValueError:
+                    logger.warning(f"Unknown spam reason: {row_dict['reason']}")
+                    # Keep as string if not a valid enum value
+
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "chat_id": int,
+                "user_id": int,
+                "message_id": int,
+                "text": str,
+                "score": float,
+                "created_at": datetime.datetime,
+                "updated_at": datetime.datetime,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in row_dict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
+                    logger.warning(
+                        f"Field '{field}' has type {type(row_dict[field])}, expected {expected_type}"
+                    )
+
+            # Return the validated dictionary cast as SpamMessageDict
+            return row_dict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate SpamMessageDict: {e}")
             logger.error(f"Row data: {row_dict}")
             raise
 
@@ -1446,7 +1490,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to add spam message: {e}")
             return False
 
-    def getSpamMessagesByText(self, text: str) -> List[Dict[str, Any]]:
+    def getSpamMessagesByText(self, text: str) -> List[SpamMessageDict]:
         """Get spam messages by text."""
         try:
             with self.getCursor() as cursor:
@@ -1460,7 +1504,7 @@ class DatabaseWrapper:
                         "text": f"%{text}%",
                     },
                 )
-                return [dict(row) for row in cursor.fetchall()]
+                return [self._validateDictIsSpamMessageDict(dict(row)) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get spam messages: {e}")
             return []
