@@ -12,7 +12,16 @@ import threading
 from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 
-from .models import ChatInfoDict, ChatMessageDict, ChatTopicDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
+from .models import (
+    ChatInfoDict,
+    ChatMessageDict,
+    ChatTopicDict,
+    ChatUserDict,
+    MediaAttachmentDict,
+    MediaStatus,
+    MessageCategory,
+    SpamReason,
+)
 from ..bot.models import MessageType
 
 logger = logging.getLogger(__name__)
@@ -458,8 +467,7 @@ class DatabaseWrapper:
 
                 if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
                     logger.warning(
-                        f"Field '{field}' has unexpected type: {type(row_dict[field])}, "
-                        f"expected {expected_type}"
+                        f"Field '{field}' has unexpected type: {type(row_dict[field])}, " f"expected {expected_type}"
                     )
 
             # Return the validated dictionary cast as ChatTopicDict
@@ -467,6 +475,47 @@ class DatabaseWrapper:
 
         except Exception as e:
             logger.error(f"Failed to validate ChatTopicDict: {e}")
+            logger.error(f"Row data: {row_dict}")
+            raise
+
+    def _validateDictIsMediaAttachmentDict(self, row_dict: Dict[str, Any]) -> MediaAttachmentDict:
+        """
+        Validate and convert a database row dictionary to MediaAttachmentDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Convert enum string values to proper enum types if needed
+            if "status" in row_dict and isinstance(row_dict["status"], str):
+                try:
+                    row_dict["status"] = MediaStatus(row_dict["status"])
+                except ValueError:
+                    logger.warning(f"Unknown media status: {row_dict['status']}")
+                    # Keep as string if not a valid enum value
+
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "file_unique_id": str,
+                "media_type": str,
+                "metadata": str,
+                "created_at": datetime.datetime,
+                "updated_at": datetime.datetime,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in row_dict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if row_dict[field] is not None and not isinstance(row_dict[field], expected_type):
+                    logger.warning(
+                        f"Field '{field}' has unexpected type: {type(row_dict[field])}, " f"expected {expected_type}"
+                    )
+
+            # Return the validated dictionary cast as MediaAttachmentDict
+            return row_dict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate MediaAttachmentDict: {e}")
             logger.error(f"Row data: {row_dict}")
             raise
 
@@ -1240,7 +1289,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to update media attachment: {e}")
             return False
 
-    def getMediaAttachment(self, fileUniqueId: str) -> Optional[Dict[str, Any]]:
+    def getMediaAttachment(self, fileUniqueId: str) -> Optional[MediaAttachmentDict]:
         """Get a media attachment from the database."""
         try:
             with self.getCursor() as cursor:
@@ -1253,7 +1302,10 @@ class DatabaseWrapper:
                 )
 
                 row = cursor.fetchone()
-                return dict(row) if row else None
+                if row:
+                    row_dict = dict(row)
+                    return self._validateDictIsMediaAttachmentDict(row_dict)
+                return None
         except Exception as e:
             logger.error(f"Failed to get media attachment: {e}")
             return None
