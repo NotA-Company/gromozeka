@@ -308,137 +308,9 @@ class DatabaseWrapper:
             """
             )
 
-    def setSetting(self, key: str, value: str) -> bool:
-        """Set a configuration setting."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT OR REPLACE INTO settings
-                    (key, value, updated_at)
-                    VALUES (:key, :value, CURRENT_TIMESTAMP)
-                """,
-                    {
-                        "key": key,
-                        "value": value,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to set setting {key}: {e}")
-            return False
-
-    def getSetting(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """Get a configuration setting."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-                row = cursor.fetchone()
-                return row["value"] if row else default
-        except Exception as e:
-            logger.error(f"Failed to get setting {key}: {e}")
-            return default
-
-    def getSettings(self) -> Dict[str, str]:
-        """Get all configuration settings."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute("SELECT * FROM settings")
-                return {row["key"]: row["value"] for row in cursor.fetchall()}
-        except Exception as e:
-            logger.error(f"Failed to get settings: {e}")
-            return {}
-
-    def saveChatMessage(
-        self,
-        date: datetime.datetime,
-        chatId: int,
-        userId: int,
-        messageId: int,
-        replyId: Optional[int] = None,
-        threadId: Optional[int] = None,
-        messageText: str = "",
-        messageType: MessageType = MessageType.TEXT,
-        messageCategory: MessageCategory = MessageCategory.UNSPECIFIED,
-        rootMessageId: Optional[int] = None,
-        quoteText: Optional[str] = None,
-        mediaId: Optional[str] = None,
-    ) -> bool:
-        """Save a chat message with detailed information."""
-        if threadId is None:
-            threadId = DEFAULT_THREAD_ID
-        try:
-            with self.getCursor() as cursor:
-                today = date.replace(hour=0, minute=0, second=0, microsecond=0)
-                cursor.execute(
-                    """
-                    INSERT INTO chat_messages
-                    (date, chat_id, user_id, message_id,
-                        reply_id, thread_id, message_text, message_type,
-                        message_category, root_message_id, quote_text,
-                        media_id
-                        )
-                    VALUES
-                    (:date, :chatId, :userId, :messageId,
-                        :replyId, :threadId, :messageText, :messageType,
-                        :messageCategory, :rootMessageId, :quoteText,
-                        :mediaId
-                        )
-                """,
-                    {
-                        "date": date,
-                        "chatId": chatId,
-                        "userId": userId,
-                        "messageId": messageId,
-                        "replyId": replyId,
-                        "threadId": threadId,
-                        "messageText": messageText,
-                        "messageType": messageType,
-                        "messageCategory": str(messageCategory),
-                        "rootMessageId": rootMessageId,
-                        "quoteText": quoteText,
-                        "mediaId": mediaId,
-                    },
-                )
-
-                cursor.execute(
-                    """
-                    UPDATE chat_users
-                    SET messages_count = messages_count + 1,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE chat_id = ? AND user_id = ?
-                """,
-                    (chatId, userId),
-                )
-
-                cursor.execute(
-                    """
-                    INSERT INTO chat_stats
-                    (chat_id, date, messages_count, updated_at)
-                    VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-                    ON CONFLICT (chat_id, date) DO UPDATE SET
-                        messages_count = messages_count + 1,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                    (chatId, today),
-                )
-
-                cursor.execute(
-                    """
-                    INSERT INTO chat_user_stats
-                    (chat_id, user_id, date, messages_count, updated_at)
-                    VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
-                    ON CONFLICT (chat_id, user_id, date) DO UPDATE SET
-                        messages_count = messages_count + 1,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                    (chatId, userId, today),
-                )
-
-                return True
-        except Exception as e:
-            logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
-            return False
+    ###
+    # TypedDict validation and conversion helpers
+    ###
 
     def _validateDictIsChatMessageDict(self, row_dict: Dict[str, Any]) -> ChatMessageDict:
         """
@@ -531,6 +403,145 @@ class DatabaseWrapper:
             logger.error(f"Failed to validate ChatUserDict: {e}")
             logger.error(f"Row data: {row_dict}")
             raise
+
+    ###
+    # Global Settings manipulation functions (Are they used an all?)
+    ###
+
+    def setSetting(self, key: str, value: str) -> bool:
+        """Set a configuration setting."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO settings
+                    (key, value, updated_at)
+                    VALUES (:key, :value, CURRENT_TIMESTAMP)
+                """,
+                    {
+                        "key": key,
+                        "value": value,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to set setting {key}: {e}")
+            return False
+
+    def getSetting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Get a configuration setting."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                return row["value"] if row else default
+        except Exception as e:
+            logger.error(f"Failed to get setting {key}: {e}")
+            return default
+
+    def getSettings(self) -> Dict[str, str]:
+        """Get all configuration settings."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute("SELECT * FROM settings")
+                return {row["key"]: row["value"] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.error(f"Failed to get settings: {e}")
+            return {}
+
+    ###
+    # Chat messages manipulation functions
+    ###
+    def saveChatMessage(
+        self,
+        date: datetime.datetime,
+        chatId: int,
+        userId: int,
+        messageId: int,
+        replyId: Optional[int] = None,
+        threadId: Optional[int] = None,
+        messageText: str = "",
+        messageType: MessageType = MessageType.TEXT,
+        messageCategory: MessageCategory = MessageCategory.UNSPECIFIED,
+        rootMessageId: Optional[int] = None,
+        quoteText: Optional[str] = None,
+        mediaId: Optional[str] = None,
+    ) -> bool:
+        """Save a chat message with detailed information."""
+        if threadId is None:
+            threadId = DEFAULT_THREAD_ID
+        try:
+            with self.getCursor() as cursor:
+                today = date.replace(hour=0, minute=0, second=0, microsecond=0)
+                cursor.execute(
+                    """
+                    INSERT INTO chat_messages
+                    (date, chat_id, user_id, message_id,
+                        reply_id, thread_id, message_text, message_type,
+                        message_category, root_message_id, quote_text,
+                        media_id
+                        )
+                    VALUES
+                    (:date, :chatId, :userId, :messageId,
+                        :replyId, :threadId, :messageText, :messageType,
+                        :messageCategory, :rootMessageId, :quoteText,
+                        :mediaId
+                        )
+                """,
+                    {
+                        "date": date,
+                        "chatId": chatId,
+                        "userId": userId,
+                        "messageId": messageId,
+                        "replyId": replyId,
+                        "threadId": threadId,
+                        "messageText": messageText,
+                        "messageType": messageType,
+                        "messageCategory": str(messageCategory),
+                        "rootMessageId": rootMessageId,
+                        "quoteText": quoteText,
+                        "mediaId": mediaId,
+                    },
+                )
+
+                cursor.execute(
+                    """
+                    UPDATE chat_users
+                    SET messages_count = messages_count + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE chat_id = ? AND user_id = ?
+                """,
+                    (chatId, userId),
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO chat_stats
+                    (chat_id, date, messages_count, updated_at)
+                    VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+                    ON CONFLICT (chat_id, date) DO UPDATE SET
+                        messages_count = messages_count + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    (chatId, today),
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO chat_user_stats
+                    (chat_id, user_id, date, messages_count, updated_at)
+                    VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+                    ON CONFLICT (chat_id, user_id, date) DO UPDATE SET
+                        messages_count = messages_count + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    (chatId, userId, today),
+                )
+
+                return True
+        except Exception as e:
+            logger.error(f"Failed to save chat message from user {userId} in chat {chatId}: {e}")
+            return False
 
     def getChatMessagesSince(
         self,
@@ -669,6 +680,10 @@ class DatabaseWrapper:
             logger.error(f"Failed to get chat messages for chat {chatId}, user {userId}: {e}")
             return []
 
+    ###
+    # Chat Users manipulation functions
+    ###
+
     def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> bool:
         """Store user as chat member + update username and updated_at."""
         try:
@@ -746,6 +761,123 @@ class DatabaseWrapper:
             logger.error(f"Failed to get users for chat {chatId}: {e}")
             return []
 
+    def getUserChats(self, userId: int) -> List[Dict[str, Any]]:
+        """Get chats, user was seen in"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT ci.* FROM chat_info ci
+                    JOIN chat_users cu ON cu.chat_id = ci.chat_id
+                    WHERE
+                        user_id = :userId
+                """,
+                    {
+                        "userId": userId,
+                    },
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get user#{userId} chats: {e}")
+            logger.exception(e)
+            return []
+
+    ###
+    # User Data manipulation functions
+    ###
+
+    def addUserData(self, userId: int, chatId: int, key: str, data: str) -> bool:
+        """Add user knowledge to the database."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO user_data
+                        (user_id, chat_id, key, data)
+                    VALUES
+                        (:userId, :chatId, :key, :data)
+                    ON CONFLICT DO UPDATE SET
+                        data = :data,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    {
+                        "userId": userId,
+                        "chatId": chatId,
+                        "key": key,
+                        "data": data,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add user knowledge: {e}")
+            return False
+
+    def getUserData(self, userId: int, chatId: int) -> Dict[str, str]:
+        """Get user knowledge from the database."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM user_data
+                    WHERE
+                        user_id = :userId AND chat_id = :chatId
+                """,
+                    {
+                        "userId": userId,
+                        "chatId": chatId,
+                    },
+                )
+                return {row["key"]: row["data"] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.error(f"Failed to get user knowledge: {e}")
+            return {}
+
+    def deleteUserData(self, userId: int, chatId: int, key: str) -> bool:
+        """Delete specific user data"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM user_data
+                    WHERE chat_id = :chatId AND
+                        user_id = :userId AND
+                        key = :key
+                    """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                        "key": key,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete user {chatId}:{userId} data {key}: {e}")
+            return False
+
+    def clearUserData(self, userId: int, chatId: int) -> bool:
+        """Clear all user data in chat"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM user_data
+                    WHERE chat_id = :chatId AND
+                        user_id = :userId
+                    """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to clear user {chatId}:{userId} data: {e}")
+            return False
+
+    ###
+    # Chat Settings manipulation (see chat_settings.py for more details)
+    ###
+
     def setChatSetting(self, chatId: int, key: str, value: Any) -> bool:
         """Set a setting for a chat."""
         try:
@@ -816,6 +948,129 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get settings for chat {chatId}: {e}")
             return {}
+
+    ###
+    # Chat Info manipulation
+    ###
+    def addChatInfo(
+        self,
+        chatId: int,
+        type: str,
+        title: Optional[str] = None,
+        username: Optional[str] = None,
+        isForum: Optional[bool] = False,
+    ) -> bool:
+        """Add chat info to the database."""
+        if isForum is None:
+            isForum = False
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO chat_info
+                        (chat_id, type, title, username, is_forum)
+                    VALUES
+                        (:chatId, :type, :title, :username, :isForum)
+                    ON CONFLICT DO UPDATE SET
+                        type = :type,
+                        title = :title,
+                        username = :username,
+                        is_forum = :isForum,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    {
+                        "chatId": chatId,
+                        "type": type,
+                        "title": title,
+                        "username": username,
+                        "isForum": isForum,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add chat info: {e}")
+            logger.exception(e)
+            return False
+
+    def getChatInfo(self, chatId: int) -> Dict[str, Any]:
+        """Get chat info from the database."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM chat_info
+                    WHERE
+                        chat_id = :chatId
+                """,
+                    {
+                        "chatId": chatId,
+                    },
+                )
+                return dict(cursor.fetchone())
+        except Exception as e:
+            logger.error(f"Failed to get chat info: {e}")
+            return {}
+
+    def updateChatTopicInfo(
+        self,
+        chatId: int,
+        topicId: int,
+        iconColor: Optional[int] = None,
+        customEmojiId: Optional[str] = None,
+        topicName: Optional[str] = None,
+    ) -> bool:
+        """Store user as chat member + update username and updated_at."""
+        if topicName is None:
+            topicName = "Default"
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO chat_topics
+                        (chat_id, topic_id, icon_color, icon_custom_emoji_id, name, updated_at)
+                    VALUES
+                        (:chatId, :topicId, :iconColor, :customEmojiId, :topicName, CURRENT_TIMESTAMP)
+                    ON CONFLICT(chat_id, topic_id) DO UPDATE SET
+                        icon_color = excluded.icon_color,
+                        icon_custom_emoji_id = excluded.icon_custom_emoji_id,
+                        name = excluded.name,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    {
+                        "chatId": chatId,
+                        "topicId": topicId,
+                        "iconColor": iconColor,
+                        "customEmojiId": customEmojiId,
+                        "topicName": topicName,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update chat topic {topicId} in chat {chatId}: {e}")
+            return False
+
+    def getChatTopics(self, chatId: int) -> List[Dict[str, Any]]:
+        """Get chat topics."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM chat_topics
+                    WHERE
+                        chat_id = :chatId
+                """,
+                    {
+                        "chatId": chatId,
+                    },
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get chat topics: {e}")
+            return []
+
+    ###
+    # Media Attachments manipulation functions
+    ###
 
     def addMediaAttachment(
         self,
@@ -934,6 +1189,10 @@ class DatabaseWrapper:
             logger.error(f"Failed to get media attachment: {e}")
             return None
 
+    ###
+    # Delayed Tasks manipulation (see bot/models.py)
+    ###
+
     def addDelayedTask(self, taskId: str, function: str, kwargs: str, delayedTS: int) -> bool:
         """Add a delayed task to the database."""
         try:
@@ -999,173 +1258,9 @@ class DatabaseWrapper:
             logger.error(f"Failed to get pending delayed tasks: {e}")
             return []
 
-    def addUserData(self, userId: int, chatId: int, key: str, data: str) -> bool:
-        """Add user knowledge to the database."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO user_data
-                        (user_id, chat_id, key, data)
-                    VALUES
-                        (:userId, :chatId, :key, :data)
-                    ON CONFLICT DO UPDATE SET
-                        data = :data,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                    {
-                        "userId": userId,
-                        "chatId": chatId,
-                        "key": key,
-                        "data": data,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to add user knowledge: {e}")
-            return False
-
-    def getUserData(self, userId: int, chatId: int) -> Dict[str, str]:
-        """Get user knowledge from the database."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT * FROM user_data
-                    WHERE
-                        user_id = :userId AND chat_id = :chatId
-                """,
-                    {
-                        "userId": userId,
-                        "chatId": chatId,
-                    },
-                )
-                return {row["key"]: row["data"] for row in cursor.fetchall()}
-        except Exception as e:
-            logger.error(f"Failed to get user knowledge: {e}")
-            return {}
-
-    def deleteUserData(self, userId: int, chatId: int, key: str) -> bool:
-        """Delete specific user data"""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    DELETE FROM user_data
-                    WHERE chat_id = :chatId AND
-                        user_id = :userId AND
-                        key = :key
-                    """,
-                    {
-                        "chatId": chatId,
-                        "userId": userId,
-                        "key": key,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to delete user {chatId}:{userId} data {key}: {e}")
-            return False
-
-    def clearUserData(self, userId: int, chatId: int) -> bool:
-        """Clear all user data in chat"""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    DELETE FROM user_data
-                    WHERE chat_id = :chatId AND
-                        user_id = :userId
-                    """,
-                    {
-                        "chatId": chatId,
-                        "userId": userId,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to clear user {chatId}:{userId} data: {e}")
-            return False
-
-    def addChatInfo(
-        self,
-        chatId: int,
-        type: str,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        isForum: Optional[bool] = False,
-    ) -> bool:
-        """Add chat info to the database."""
-        if isForum is None:
-            isForum = False
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO chat_info
-                        (chat_id, type, title, username, is_forum)
-                    VALUES
-                        (:chatId, :type, :title, :username, :isForum)
-                    ON CONFLICT DO UPDATE SET
-                        type = :type,
-                        title = :title,
-                        username = :username,
-                        is_forum = :isForum,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                    {
-                        "chatId": chatId,
-                        "type": type,
-                        "title": title,
-                        "username": username,
-                        "isForum": isForum,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to add chat info: {e}")
-            logger.exception(e)
-            return False
-
-    def getUserChats(self, userId: int) -> List[Dict[str, Any]]:
-        """Get chats, user was seen in"""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT ci.* FROM chat_info ci
-                    JOIN chat_users cu ON cu.chat_id = ci.chat_id
-                    WHERE
-                        user_id = :userId
-                """,
-                    {
-                        "userId": userId,
-                    },
-                )
-                return [dict(row) for row in cursor.fetchall()]
-        except Exception as e:
-            logger.error(f"Failed to get user#{userId} chats: {e}")
-            logger.exception(e)
-            return []
-
-    def getChatInfo(self, chatId: int) -> Dict[str, Any]:
-        """Get chat info from the database."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT * FROM chat_info
-                    WHERE
-                        chat_id = :chatId
-                """,
-                    {
-                        "chatId": chatId,
-                    },
-                )
-                return dict(cursor.fetchone())
-        except Exception as e:
-            logger.error(f"Failed to get chat info: {e}")
-            return {}
+    ###
+    # SPAM Processing functions
+    ###
 
     def addSpamMessage(
         self, chatId: int, userId: int, messageId: int, messageText: str, spamReason: SpamReason, score: float
@@ -1211,61 +1306,4 @@ class DatabaseWrapper:
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get spam messages: {e}")
-            return []
-
-    def updateChatTopicInfo(
-        self,
-        chatId: int,
-        topicId: int,
-        iconColor: Optional[int] = None,
-        customEmojiId: Optional[str] = None,
-        topicName: Optional[str] = None,
-    ) -> bool:
-        """Store user as chat member + update username and updated_at."""
-        if topicName is None:
-            topicName = "Default"
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO chat_topics
-                        (chat_id, topic_id, icon_color, icon_custom_emoji_id, name, updated_at)
-                    VALUES
-                        (:chatId, :topicId, :iconColor, :customEmojiId, :topicName, CURRENT_TIMESTAMP)
-                    ON CONFLICT(chat_id, topic_id) DO UPDATE SET
-                        icon_color = excluded.icon_color,
-                        icon_custom_emoji_id = excluded.icon_custom_emoji_id,
-                        name = excluded.name,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                    {
-                        "chatId": chatId,
-                        "topicId": topicId,
-                        "iconColor": iconColor,
-                        "customEmojiId": customEmojiId,
-                        "topicName": topicName,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to update chat topic {topicId} in chat {chatId}: {e}")
-            return False
-
-    def getChatTopics(self, chatId: int) -> List[Dict[str, Any]]:
-        """Get chat topics."""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT * FROM chat_topics
-                    WHERE
-                        chat_id = :chatId
-                """,
-                    {
-                        "chatId": chatId,
-                    },
-                )
-                return [dict(row) for row in cursor.fetchall()]
-        except Exception as e:
-            logger.error(f"Failed to get chat topics: {e}")
             return []
