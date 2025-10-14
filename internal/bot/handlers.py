@@ -1225,10 +1225,17 @@ class BotHandlers:
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
         """Check if message is spam."""
 
-        if ensuredMessage.getBaseMessage().is_automatic_forward:
+        message = ensuredMessage.getBaseMessage()
+        if message.is_automatic_forward:
             # https://docs.python-telegram-bot.org/en/stable/telegram.message.html#telegram.Message.is_automatic_forward
             # It's a automatic forward from linked Channel. Its not spam.
             return False
+
+        if ensuredMessage.sender.id == ensuredMessage.chat.id:
+            # If sender ID == chat ID, then it is anonymous admin, so it isn't spam
+            return False
+
+        # TODO: Check for admins?
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
@@ -1251,7 +1258,7 @@ class BotHandlers:
 
         # Check if for last 10 messages there are more same messages than different ones:
         userMessages = self.db.getChatMessagesByUser(
-            chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, limit=10
+            chatId=ensuredMessage.chat.id, userId=ensuredMessage.sender.id, limit=10
         )
         spamMessagesCount = 0
         nonSpamMessagesCount = 0
@@ -1269,10 +1276,33 @@ class BotHandlers:
             _spamScore = ((spamMessagesCount + 1) / (spamMessagesCount + 1 + nonSpamMessagesCount)) * 100
             spamScore = max(spamScore, _spamScore)
 
-        # TODO: Add some Bayes filter
+        # If we had the same spam messages, then it's also spam
+        sameSpamMessages = self.db.getSpamMessagesByText(ensuredMessage.messageText)
+        if len(sameSpamMessages) > 0:
+            logger.info(f"SPAM: Found {len(sameSpamMessages)} spam messages, so deciding, that it is SPAM")
+            spamScore = max(spamScore, 100)
 
-        banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
+        if message.text and message.entities:
+            for entity in message.entities:
+                match entity.type:
+                    case MessageEntityType.URL | MessageEntityType.TEXT_LINK:
+                        # Any URL looks like a spam
+                        spamScore = spamScore + 60
+                    case MessageEntityType.MENTION:
+                        mentionStr = message.text[entity.offset : entity.offset + entity.length]
+                        chatUser = self.db.getChatUserByUsername(chatId=ensuredMessage.chat.id, username=mentionStr)
+                        if chatUser is None:
+                            # Mentioning user not from chat looks like spam
+                            spamScore = spamScore + 60
+
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
+        banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
+
+        # TODO: Think about getting each word from stored spam messages, 
+        #  make dict{word: entries_count} and add some spamScore 
+        #  for each word from spam base (looks like very lazy bayes filter, lol)
+
+        # TODO: Add some Bayes filter
 
         if spamScore > banTreshold:
             logger.info(f"SPAM: spamScore: {spamScore} > {banTreshold} {ensuredMessage.getBaseMessage()}")

@@ -62,9 +62,9 @@ class ChatSettingsKey(StrEnum):
     SPAM_DELETE_ALL_USER_MESSAGES = "spam-delete-all-user-messages"
     DETECT_SPAM = "detect-spam"
     AUTO_SPAM_MAX_MESSAGES = "auto-spam-max-messages"
+    ALLOW_MARK_SPAM_OLD_USERS = "allow-mark-spam-old-users"
     SPAM_BAN_TRESHOLD = "spam-ban-treshold"
     SPAM_WARN_TRESHOLD = "spam-warn-treshold"
-    ALLOW_MARK_SPAM_OLD_USERS = "allow-mark-spam-old-users"
 
     def getId(self) -> int:
         """Return some unique id
@@ -234,16 +234,6 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "спаммером (автоматически или при помощи команды `/spam`)"
         ),
     },
-    ChatSettingsKey.SPAM_BAN_TRESHOLD: {
-        "type": ChatSettingsType.FLOAT,
-        "short": "SPAM-Порог для блокировки пользователя",
-        "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),
-    },
-    ChatSettingsKey.SPAM_WARN_TRESHOLD: {
-        "type": ChatSettingsType.FLOAT,
-        "short": "SPAM-Порог для предупреждения пользователя",
-        "long": ("Порог для предупреждения пользователя при автоматической проверке на спам" "(0-100)"),
-    },
     ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS: {
         "type": ChatSettingsType.BOOL,
         "short": "Разрешить помечать старых пользователей спаммером",
@@ -252,6 +242,16 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "сообщений в чате), как спаммеров при помощи команды `/spam` \n"
             "(Используется для того, что бы исклюить ошибки и очепятки)"
         ),
+    },
+    ChatSettingsKey.SPAM_WARN_TRESHOLD: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "SPAM-Порог для предупреждения пользователя",
+        "long": ("Порог для предупреждения пользователя при автоматической проверке на спам" "(0-100)"),
+    },
+    ChatSettingsKey.SPAM_BAN_TRESHOLD: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "SPAM-Порог для блокировки пользователя",
+        "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),
     },
 }
 
