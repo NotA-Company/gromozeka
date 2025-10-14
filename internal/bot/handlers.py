@@ -660,7 +660,11 @@ class BotHandlers:
 
         async def getUrlContent(url: str, **kwargs) -> str:
             # TODO: Check if content is text content
-            return str(requests.get(url).content)
+            try:
+                return str(requests.get(url).content)
+            except Exception as e:
+                logger.error(f"Error getting content from {url}: {e}")
+                return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
         async def setUserData(key: str, data: str, append: bool = False, **kwargs) -> str:
             newData = self.setUserData(
