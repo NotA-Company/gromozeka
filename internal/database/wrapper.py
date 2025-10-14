@@ -984,7 +984,30 @@ class DatabaseWrapper:
                 row = cursor.fetchone()
                 return self._validateDictIsChatUserDict(dict(row)) if row else None
         except Exception as e:
-            logger.error(f"Failed to get username for user {userId} in chat {chatId}: {e}")
+            logger.error(f"Failed to get user {userId} in chat {chatId}: {e}")
+            return None
+
+    def getChatUserByUsername(self, chatId: int, username: str) -> Optional[ChatUserDict]:
+        """Get the user id of a user in a chat."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM chat_users
+                    WHERE
+                        chat_id = :chatId
+                        AND username = :username
+                    LIMIT 1
+                """,
+                    {
+                        "chatId": chatId,
+                        "username": username,
+                    },
+                )
+                row = cursor.fetchone()
+                return self._validateDictIsChatUserDict(dict(row)) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get user {username} in chat {chatId}: {e}")
             return None
 
     def getChatUsers(
