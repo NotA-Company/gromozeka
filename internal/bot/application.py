@@ -99,6 +99,7 @@ class BotApplication:
         self.application.add_handler(CommandHandler("help", self.handlers.help_command))
         self.application.add_handler(CommandHandler("echo", self.handlers.echo_command))
         self.application.add_handler(CommandHandler("test", self.handlers.test_command))
+        self.application.add_handler(CommandHandler("pretrain_bayes", self.handlers.pretrain_bayes_command))
 
         self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
         self.application.add_handler(CommandHandler("analyze", self.handlers.analyze_command))
