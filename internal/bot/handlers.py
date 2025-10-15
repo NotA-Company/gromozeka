@@ -3836,7 +3836,7 @@ class BotHandlers:
                     resp += (
                         "\n\n\n"
                         f"## **{option['short']}** (`{key}`):\n"
-                        f" {option['long']}\n"
+                        # f" {option['long']}\n"
                         f" Тип: **{option['type']}**\n"
                         f" Изменено: **{'Да' if wasChanged else 'Нет'}**\n"
                         # f" Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
@@ -3920,6 +3920,7 @@ class BotHandlers:
                 resp = (
                     f"Настройка ключа **{chatOptions[key]['short']}** (`{key}`) в чате "
                     f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}):\n\n"
+                    f"Описание: \n{chatOptions[key]['long']}\n\n"
                     f"Тип: **{chatOptions[key]['type']}**\n"
                     f"Был ли изменён: **{'Да' if wasChanged else 'Нет'}**\n"
                     f"Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
