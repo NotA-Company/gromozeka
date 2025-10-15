@@ -1246,7 +1246,9 @@ class BotHandlers:
             # If sender ID == chat ID, then it is anonymous admin, so it isn't spam
             return False
 
-        # TODO: Check for admins?
+        if not ensuredMessage.messageText:
+            # TODO: Message without text, think about checking for spam
+            return False
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
@@ -1263,6 +1265,8 @@ class BotHandlers:
             # User has more message than limit, assume it isn't spammer
             await self.markAsHam(message=message)
             return False
+
+        # TODO: Check for admins?
 
         logger.debug(f"SPAM CHECK: {userMessages} < {maxCheckMessages}, checking message for spam ({ensuredMessage})")
 
@@ -3717,7 +3721,7 @@ class BotHandlers:
         self._updateEMessageUserData(ensuredMessage)
 
         chatId = ensuredMessage.chat.id
-        #userId = ensuredMessage.user.id
+        # userId = ensuredMessage.user.id
 
         if context.args:
             try:
@@ -3726,7 +3730,7 @@ class BotHandlers:
                 logger.error(f"Invalid chatId: {context.args[0]}")
 
         targetChat = Chat(id=chatId, type=Chat.PRIVATE if chatId > 0 else Chat.SUPERGROUP)
-        targetChat.set_bot(message.get_bot()) 
+        targetChat.set_bot(message.get_bot())
 
         if not await self._isAdmin(user=ensuredMessage.user, chat=targetChat):
             await self._sendMessage(
