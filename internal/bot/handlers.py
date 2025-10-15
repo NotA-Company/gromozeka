@@ -63,6 +63,7 @@ PROCESSING_TIMEOUT = 30 * 60  # 30 minutes
 PRIVATE_CHAT_CONTEXT_LENGTH = 50
 CHAT_ICON = "👥"
 PRIVATE_ICON = "👤"
+SUMMARIZATION_MAX_BATCH_LENGTH = 256
 
 
 def makeEmptyAsyncTask() -> asyncio.Task:
@@ -1138,6 +1139,11 @@ class BotHandlers:
         # -256 or *0.9 to ensure everything will be ok
         batchesCount = tokensCount // max(maxTokens - 256, maxTokens * 0.9) + 1
         batchLength = len(parsedMessages) // batchesCount
+
+        if batchLength > SUMMARIZATION_MAX_BATCH_LENGTH:
+            batchLenCoeff = batchLength // SUMMARIZATION_MAX_BATCH_LENGTH + 1
+            batchesCount = batchesCount * batchLenCoeff
+            batchLength = len(parsedMessages) // batchesCount
 
         logger.debug(
             f"Summarization: estimated total/max tokens: {tokensCount}/{maxTokens}. "
