@@ -3741,7 +3741,7 @@ class BotHandlers:
             return
 
         await self.trainBayesFromHistory(chatId=chatId)
-        stats = self.getBayesFilterStats(chatId=chatId)
+        stats = await self.getBayesFilterStats(chatId=chatId)
 
         await self._sendMessage(
             ensuredMessage,
