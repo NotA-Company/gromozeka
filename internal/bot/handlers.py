@@ -150,7 +150,7 @@ class BotHandlers:
                 ChatSettingsKey(k): ChatSettingsValue(v) for k, v in self.db.getChatSettings(chatId).items()
             }
 
-        if self.cache["chats"][chatId].get("settings", None):
+        if not self.cache["chats"][chatId].get("settings", None):
             raise ValueError
 
         if returnDefault:
