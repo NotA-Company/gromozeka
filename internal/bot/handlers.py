@@ -4096,6 +4096,8 @@ class BotHandlers:
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Parses the CallbackQuery and updates the message text."""
 
+        logger.debug(f"handle_button: {update}")
+
         query = update.callback_query
         if query is None:
             logger.error(f"CallbackQuery undefined in {update}")
@@ -4110,6 +4112,7 @@ class BotHandlers:
         if query.data is None:
             logger.error(f"CallbackQuery data undefined in {query}")
             return
+        
 
         user = query.from_user
 
