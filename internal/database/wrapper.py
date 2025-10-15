@@ -346,6 +346,55 @@ class DatabaseWrapper:
             """
             )
 
+            # Bayes filter tables for spam detection, dood!
+            # Token statistics for Bayes filter
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bayes_tokens (
+                    token TEXT NOT NULL,
+                    chat_id INTEGER,                    -- NULL for global stats
+                    spam_count INTEGER DEFAULT 0,       -- Occurrences in spam
+                    ham_count INTEGER DEFAULT 0,        -- Occurrences in ham
+                    total_count INTEGER DEFAULT 0,      -- Total occurrences
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (token, chat_id)
+                )
+            """
+            )
+
+            # Class statistics for Bayes filter
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bayes_classes (
+                    chat_id INTEGER,                    -- NULL for global stats
+                    is_spam BOOLEAN NOT NULL,           -- True=spam, False=ham
+                    message_count INTEGER DEFAULT 0,    -- Total messages
+                    token_count INTEGER DEFAULT 0,      -- Total tokens
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (chat_id, is_spam)
+                )
+            """
+            )
+
+            # Indexes for performance
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS bayes_tokens_chat_idx ON bayes_tokens(chat_id)
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS bayes_tokens_total_idx ON bayes_tokens(total_count)
+            """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS bayes_classes_chat_idx ON bayes_classes(chat_id)
+            """
+            )
+
     ###
     # TypedDict validation and conversion helpers
     ###
@@ -1661,10 +1710,28 @@ class DatabaseWrapper:
                     """
                     SELECT * FROM spam_messages
                     WHERE
-                        text LIKE :text
+                        text = :text
                 """,
                     {
-                        "text": f"%{text}%",
+                        "text": text,
+                    },
+                )
+                return [self._validateDictIsSpamMessageDict(dict(row)) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get spam messages: {e}")
+            return []
+
+    def getSpamMessages(self, limit: int = 1000) -> List[SpamMessageDict]:
+        """Get spam messages."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM spam_messages
+                    LIMIT :limit
+                """,
+                    {
+                        "limit": limit,
                     },
                 )
                 return [self._validateDictIsSpamMessageDict(dict(row)) for row in cursor.fetchall()]

@@ -66,6 +66,11 @@ class ChatSettingsKey(StrEnum):
     SPAM_BAN_TRESHOLD = "spam-ban-treshold"
     SPAM_WARN_TRESHOLD = "spam-warn-treshold"
 
+    # Bayes filter settings, dood!
+    BAYES_ENABLED = "bayes-enabled"
+    BAYES_MIN_CONFIDENCE = "bayes-min-confidence"
+    BAYES_AUTO_LEARN = "bayes-auto-learn"
+
     def getId(self) -> int:
         """Return some unique id
         WARNING: Do not store it anywhere, it can be changed on app reload
@@ -252,6 +257,31 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.FLOAT,
         "short": "SPAM-Порог для блокировки пользователя",
         "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),
+    },
+    # Bayes filter settings, dood!
+    ChatSettingsKey.BAYES_ENABLED: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Включить Bayes фильтр спама",
+        "long": (
+            "Включить использование Bayes фильтра для более точного определения спама. "
+            "Фильтр обучается на основе помеченных спам сообщений и обычных сообщений пользователей, dood!"
+        ),
+    },
+    ChatSettingsKey.BAYES_MIN_CONFIDENCE: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "Минимальная уверенность Bayes фильтра",
+        "long": (
+            "Минимальная уверенность Bayes фильтра для принятия решения (0.0-1.0). "
+            "Если уверенность ниже, результат Bayes фильтра игнорируется, dood!"
+        ),
+    },
+    ChatSettingsKey.BAYES_AUTO_LEARN: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Автоматическое обучение Bayes фильтра",
+        "long": (
+            "Автоматически обучать Bayes фильтр на помеченных спам сообщениях и обычных сообщениях пользователей. "
+            "Рекомендуется включить для улучшения точности со временем, dood!"
+        ),
     },
 }
 
