@@ -6,7 +6,11 @@ import asyncio
 from enum import StrEnum
 import logging
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NotRequired, Optional, TypedDict
+
+from internal.database.models import ChatInfoDict
+
+from .chat_settings import ChatSettingsKey, ChatSettingsValue
 
 
 logger = logging.getLogger(__name__)
@@ -79,3 +83,43 @@ class DelayedTask:
 
     def __str__(self) -> str:
         return self.__repr__()
+
+
+# Handlers Cache TypedDict
+
+
+class HCChatCacheDict(TypedDict):
+    settings: NotRequired[Dict[ChatSettingsKey, ChatSettingsValue]]
+    info: NotRequired[ChatInfoDict]
+    topics: NotRequired[Dict[int, Any]]
+
+
+class HandlersCacheDict(TypedDict):
+    # Cache structure:
+    chats: Dict[int, HCChatCacheDict]
+    # "chats": Dict[int, Any]= {
+    #     "<chatId>": Dict[str, Any] = {
+    #         "settings": Dict[ChatSettingsKey, ChatSettingsValue] = {...},
+    #         "info": Dict[str, any] = {...},
+    #         "topics": Dict[int, Any] = {
+    #             "<topicId>": Dict[str, Any] = {
+    #                 "iconColor": Optional[int],
+    #                 "customEmojiId": Optional[int],
+    #                 "name": Optional[str],
+    #             },
+    #         },
+    #     },
+    # },
+    chatUsers: Dict[str, Dict[str, Any]]
+    # "chatUsers": Dict[str, Any] = {
+    #     "<chatId>:<userId>": Dict[str, Any] = {
+    #         "data": Dict[str, str|List["str"]] = {...},
+    #     },
+    # },
+    users: Dict[int, Dict[str, Any]]
+    # "users": Dict[int, Any] = {
+    #     <userId>: Dict[str, Any] = {
+    #         "activeConfigureId": Dict[str, Any] = {...},
+    #         "activeSummarizationId": Dict[str, Any] = {...},
+    #     },
+    # },

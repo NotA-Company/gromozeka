@@ -10,7 +10,7 @@ import re
 
 import random
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 import uuid
 
 import requests
@@ -33,22 +33,25 @@ from lib.ai.models import (
     ModelResultStatus,
 )
 from lib.ai.manager import LLMManager
-
-from internal.database.wrapper import DatabaseWrapper
-from internal.database.models import ChatInfoDict, ChatMessageDict, MediaStatus, MessageCategory, SpamReason
-
+from lib.spam import NaiveBayesFilter, BayesConfig
 from lib.markdown import markdown_to_markdownv2
 import lib.utils as utils
+
+from internal.database.wrapper import DatabaseWrapper
+from internal.database.bayes_storage import DatabaseBayesStorage
+from internal.database.models import ChatInfoDict, ChatMessageDict, MediaStatus, MessageCategory, SpamReason
+
 from .ensured_message import EnsuredMessage
 from .models import (
     DelayedTask,
     DelayedTaskFunction,
+    HandlersCacheDict,
     LLMMessageFormat,
     MessageType,
     MediaProcessingInfo,
 )
 from .chat_settings import ChatSettingsKey, ChatSettingsValue
-from internal.bot import chat_settings
+from . import chat_settings
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,19 @@ class BotHandlers:
 
         self._isExiting = False
 
+        # Initialize Bayes spam filter, dood!
+        bayes_storage = DatabaseBayesStorage(database)
+        bayes_config = BayesConfig(
+            per_chat_stats=True,  # Use per-chat learning
+            alpha=1.0,  # Laplace smoothing
+            min_token_count=2,  # Minimum token occurrences
+            default_threshold=50.0,  # Default spam threshold
+            bayes_weight=0.5,  # Weight in combined score
+            debug_logging=True,  # Set to True for debugging
+        )
+        self.bayesFilter = NaiveBayesFilter(bayes_storage, bayes_config)
+        logger.info("Initialized Bayes spam filter, dood!")
+
         # Init different defaults
         self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
 
@@ -93,38 +109,11 @@ class BotHandlers:
 
         # Init cache
         # TODO: Should I use something thread-safe? or just better
-        self.cache: Dict[str, Dict[Any, Any]] = {
+        self.cache: HandlersCacheDict = {
             "chats": {},
             "chatUsers": {},
             "users": {},
         }
-        # Cache structure:
-        # cache: Dict[str, Dict[str, Any] = {
-        #     "chats": Dict[int, Any]= {
-        #         "<chatId>": Dict[str, Any] = {
-        #             "settings": Dict[ChatSettingsKey, ChatSettingsValue] = {...},
-        #             "info": Dict[str, any] = {...},
-        #             "topics": Dict[int, Any] = {
-        #                 "<topicId>": Dict[str, Any] = {
-        #                     "iconColor": Optional[int],
-        #                     "customEmojiId": Optional[int],
-        #                     "name": Optional[str],
-        #                 },
-        #             },
-        #         },
-        #     },
-        #     "chatUsers": Dict[str, Any] = {
-        #         "<chatId>:<userId>": Dict[str, Any] = {
-        #             "data": Dict[str, str|List["str"]] = {...},
-        #         },
-        #     },
-        #     "users": Dict[int, Any] = {
-        #         <userId>: Dict[str, Any] = {
-        #             "activeConfigureId": Dict[str, Any] = {...},
-        #             "activeSummarizationId": Dict[str, Any] = {...},
-        #         },
-        #     },
-        #  }
 
         self.asyncTasksQueue = asyncio.Queue()
         self.queueLastUpdated = time.time()
@@ -158,13 +147,16 @@ class BotHandlers:
 
         if "settings" not in self.cache["chats"][chatId]:
             self.cache["chats"][chatId]["settings"] = {
-                k: ChatSettingsValue(v) for k, v in self.db.getChatSettings(chatId).items()
+                ChatSettingsKey(k): ChatSettingsValue(v) for k, v in self.db.getChatSettings(chatId).items()
             }
 
-        if returnDefault:
-            return {**self.chatDefaults, **self.cache["chats"][chatId]["settings"]}
+        if self.cache["chats"][chatId].get("settings", None):
+            raise ValueError
 
-        return self.cache["chats"][chatId]["settings"]
+        if returnDefault:
+            return {**self.chatDefaults, **self.cache["chats"][chatId].get("settings", {})}
+
+        return self.cache["chats"][chatId].get("settings", {})
 
     def setChatSettings(self, chatId: int, settings: Dict[str, Any]) -> None:
         """Set the chat settings for the given chat."""
@@ -801,9 +793,11 @@ class BotHandlers:
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
         if "info" not in self.cache["chats"][chatId]:
-            self.cache["chats"][chatId]["info"] = self.db.getChatInfo(chatId)
+            chatInfo = self.db.getChatInfo(chatId)
+            if chatInfo is not None:
+                self.cache["chats"][chatId]["info"] = chatInfo
 
-        return self.cache["chats"][chatId]["info"]
+        return self.cache["chats"][chatId].get("info", None)
 
     def _updateChatInfo(self, chat: Chat) -> None:
         """Update Chat info. Do not save it to DB if it is in cache and wasn't changed"""
@@ -812,10 +806,19 @@ class BotHandlers:
 
         if chatId not in self.cache["chats"]:
             self.cache["chats"][chatId] = {}
-        if "info" not in self.cache["chats"][chatId]:
-            self.cache["chats"][chatId]["info"] = {}
 
-        cachedInfo = self.cache["chats"][chatId]["info"]
+        cachedInfo: ChatInfoDict = self.cache["chats"][chatId].get(
+            "info",
+            {
+                "chat_id": 0,
+                "title": None,
+                "username": None,
+                "is_forum": False,
+                "type": "",
+                "created_at": datetime.datetime.now(),
+                "updated_at": datetime.datetime.now(),
+            },
+        )
 
         if any(
             [
@@ -829,8 +832,10 @@ class BotHandlers:
                 "chat_id": chat.id,
                 "title": chat.title,
                 "username": chat.username,
-                "is_forum": chat.is_forum,
+                "is_forum": chat.is_forum or False,
                 "type": chat.type,
+                "created_at": datetime.datetime.now(),
+                "updated_at": datetime.datetime.now(),
             }
             self.cache["chats"][chatId]["info"] = cachedInfo
             self.db.addChatInfo(chatId, type=chat.type, title=chat.title, username=chat.username, isForum=chat.is_forum)
@@ -857,10 +862,14 @@ class BotHandlers:
             self.cache["chats"][chatId] = {}
         if "topics" not in self.cache["chats"][chatId]:
             self.cache["chats"][chatId]["topics"] = {}
-        if topicId not in self.cache["chats"][chatId]["topics"]:
-            self.cache["chats"][chatId]["topics"][topicId] = {}
+        if topicId not in self.cache["chats"][chatId]["topics"]:  # pyright: ignore[reportTypedDictNotRequiredAccess]
+            self.cache["chats"][chatId]["topics"][topicId] = {}  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
-        cachedInfo: Dict[str, Any] = self.cache["chats"][chatId]["topics"][topicId]
+        cachedInfo: Dict[str, Any] = self.cache["chats"][chatId][
+            "topics"
+        ][  # pyright: ignore[reportTypedDictNotRequiredAccess]
+            topicId
+        ]
 
         if any(
             [
@@ -875,7 +884,9 @@ class BotHandlers:
                 "customEmojiId": customEmojiId,
                 "name": name,
             }
-            self.cache["chats"][chatId]["topics"][topicId] = cachedInfo
+            self.cache["chats"][chatId]["topics"][  # pyright: ignore[reportTypedDictNotRequiredAccess]
+                topicId
+            ] = cachedInfo
             logger.debug(
                 f"Saving topic info to DB for chatId: {chatId}, "
                 f"topicId: {topicId}, iconColor: {iconColor}, "
@@ -1250,6 +1261,7 @@ class BotHandlers:
         maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
         if maxCheckMessages != 0 and userMessages > maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
+            await self.markAsHam(message=message)
             return False
 
         logger.debug(f"SPAM CHECK: {userMessages} < {maxCheckMessages}, checking message for spam ({ensuredMessage})")
@@ -1298,11 +1310,38 @@ class BotHandlers:
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
         banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
 
-        # TODO: Think about getting each word from stored spam messages, 
-        #  make dict{word: entries_count} and add some spamScore 
-        #  for each word from spam base (looks like very lazy bayes filter, lol)
+        # Add Bayes filter classification, dood!
+        if chatSettings[ChatSettingsKey.BAYES_ENABLED].toBool():
+            try:
+                bayesResult = await self.bayesFilter.classify(
+                    messageText=ensuredMessage.messageText,
+                    chatId=ensuredMessage.chat.id,
+                    threshold=warnTreshold,  # Use existing threshold
+                )
 
-        # TODO: Add some Bayes filter
+                # Check minimum confidence requirement
+                minConfidence = chatSettings[ChatSettingsKey.BAYES_MIN_CONFIDENCE].toFloat()
+                if bayesResult.confidence >= minConfidence:
+                    # Combine with existing spamScore using configurable weight
+                    _spamScore = min(warnTreshold, bayesResult.score)  # TODO: Temporary cap as warn treshold
+
+                    logger.debug(
+                        f"SPAM Bayes: - Rules Score: {spamScore:.2f}, Bayes Score: {bayesResult.score:.2f}, "
+                        f"Confidence: {bayesResult.confidence:.3f}, dood!"
+                    )
+
+                    # Use combined score for final decision
+                    spamScore = max(spamScore, _spamScore)  # TODO: Do \/
+                    # spamScore = spamScore + _spamScore
+                else:
+                    logger.debug(
+                        f"SPAM Bayes: confidence {bayesResult.confidence:.3f} < {minConfidence}, ignoring result, dood!"
+                    )
+
+            except Exception as e:
+                logger.error(f"Failed to run Bayes filter classification: {e}, dood!")
+                logger.exception(e)
+                # Continue with original spamScore if Bayes filter fails
 
         if spamScore > banTreshold:
             logger.info(f"SPAM: spamScore: {spamScore} > {banTreshold} {ensuredMessage.getBaseMessage()}")
@@ -1326,15 +1365,15 @@ class BotHandlers:
                 logger.error("Wasn't been able to send SPAM notification")
             await self.markAsSpam(message=ensuredMessage.getBaseMessage(), reason=SpamReason.AUTO, score=spamScore)
             return True
-        elif spamScore > warnTreshold:
-            logger.info(f"Possible SPAM: spamScore: {spamScore} > {warnTreshold} {ensuredMessage.getBaseMessage()}")
+        elif spamScore >= warnTreshold:
+            logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage.getBaseMessage()}")
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Возможно спам (Вероятность: {spamScore}, порог: {warnTreshold})\n"
                 "(Когда-нибудь тут будут кнопки спам\\не спам)",
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
-            # TODO: Add SPAM/Not-SPAM buttons, for non-spam also need to add ham-table for studying
+            # TODO: Add SPAM/Not-SPAM buttons
         else:
             logger.debug(f"Not SPAM: spamScore: {spamScore} < {warnTreshold} {ensuredMessage}")
 
@@ -1375,14 +1414,23 @@ class BotHandlers:
                     )
                     return
 
-        self.db.addSpamMessage(
-            chatId=chatId,
-            userId=userId,
-            messageId=message.message_id,
-            messageText=str(message.text),
-            spamReason=reason,
-            score=score if score is not None else 0,
-        )
+        # Learn from spam message using Bayes filter, dood!
+        if message.text and chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool():
+            try:
+                await self.bayesFilter.learnSpam(message_text=message.text, chatId=message.chat_id)
+                logger.debug(f"Bayes filter learned spam message: {message.message_id}, dood!")
+            except Exception as e:
+                logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
+
+        if message.text:
+            self.db.addSpamMessage(
+                chatId=chatId,
+                userId=userId,
+                messageId=message.message_id,
+                messageText=str(message.text),
+                spamReason=reason,
+                score=score if score is not None else 0,
+            )
 
         await bot.delete_message(chat_id=chatId, message_id=message.message_id)
         logger.debug("Deleted spam message")
@@ -1409,6 +1457,92 @@ class BotHandlers:
                     logger.exception(e)
         else:
             logger.debug("message.from_user is None")
+
+    async def markAsHam(self, message: Message) -> bool:
+        """Mark message as ham (not spam) for Bayes filter learning, dood!"""
+        if not message.text:
+            return False
+
+        try:
+            await self.bayesFilter.learnHam(messageText=message.text, chatId=message.chat_id)
+            logger.debug(f"Bayes filter learned ham message: {message.message_id}, dood!")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to learn ham message in Bayes filter: {e}, dood!")
+            return False
+
+    async def getBayesFilterStats(self, chatId: Optional[int] = None) -> Dict[str, Any]:
+        """Get Bayes filter statistics for debugging, dood!"""
+        try:
+            model_stats = await self.bayesFilter.getModelInfo(chatId)
+            return {
+                "total_spam_messages": model_stats.total_spam_messages,
+                "total_ham_messages": model_stats.total_ham_messages,
+                "total_messages": model_stats.total_messages,
+                "vocabulary_size": model_stats.vocabulary_size,
+                "spam_ratio": model_stats.spam_ratio,
+                "ham_ratio": model_stats.ham_ratio,
+                "chat_id": chatId,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get Bayes filter stats: {e}, dood!")
+            return {}
+
+    async def resetBayesFilter(self, chat_id: Optional[int] = None) -> bool:
+        """Reset Bayes filter statistics, dood!"""
+        try:
+            success = await self.bayesFilter.reset(chat_id)
+            if success:
+                scope = f"chat {chat_id}" if chat_id else "global"
+                logger.info(f"Successfully reset Bayes filter for {scope}, dood!")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to reset Bayes filter: {e}, dood!")
+            return False
+
+    async def trainBayesFromHistory(self, chatId: int, limit: int = 1000) -> Dict[str, int]:
+        """Train Bayes filter from existing spam messages and chat history, dood!"""
+        stats = {"spam_learned": 0, "ham_learned": 0, "failed": 0}
+
+        try:
+            # Learn from existing spam messages
+            spam_messages = self.db.getSpamMessages(limit=limit)  # Get all spam messages
+            spamUsersIds: Set[int] = {-1}
+            for spamMsg in spam_messages:
+                if spamMsg["chat_id"] == chatId and spamMsg["text"]:
+                    spamUsersIds.add(spamMsg["user_id"])
+                    success = await self.bayesFilter.learnSpam(message_text=spamMsg["text"], chatId=chatId)
+                    if success:
+                        stats["spam_learned"] += 1
+                    else:
+                        stats["failed"] += 1
+
+            # Learn from regular user messages as ham
+            hamMessages = self.db.getChatMessagesSince(
+                chatId=chatId, limit=limit, messageCategory=[MessageCategory.USER]
+            )
+            for hamMsg in hamMessages:
+                # Skip if already marked as spam
+                if all(
+                    (
+                        hamMsg["message_category"] != MessageCategory.USER_SPAM,
+                        hamMsg["message_text"],
+                        hamMsg["user_id"] not in spamUsersIds,
+                    )
+                ):
+                    success = await self.bayesFilter.learnHam(messageText=hamMsg["message_text"], chatId=chatId)
+                    if success:
+                        stats["ham_learned"] += 1
+                    else:
+                        stats["failed"] += 1
+
+            logger.info(f"Bayes training completed for chat {chatId}: {stats}, dood!")
+            return stats
+
+        except Exception as e:
+            logger.error(f"Failed to train Bayes filter from history: {e}, dood!")
+            stats["failed"] += 1
+            return stats
 
     ###
     # Handling messages
@@ -2311,7 +2445,9 @@ class BotHandlers:
             "`/clear_my_data` - Очистить все сзнания о Вас в этом чате\n"
             "\n"
             "`/configure` - Настроить поведение бота в одном из чатов, где вы админ\n"
-            "`/ban`|`/spam`|`/kick` - Указать боту на сообщение со спамом\n"
+            "`/spam` - Указать боту на сообщение со спамом\n"
+            "`/pretrain_bayes` `[<chatId>]` - Произвести преднастройку Байесовского спам "
+            "фильтра для указанного чата по известным спам-сообщениям и сообщениям чата\n"
             "\n"
             "**Так же этот бот может:**\n"
             "* Анализировать картинки и стикеры и отвечать на вопросы по ним\n"
@@ -3108,6 +3244,21 @@ class BotHandlers:
                     messageText=f"```json\n{utils.jsonDumps(self.cache, indent=2)}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
+
+            case "bayesStats":
+                for chatId, chatCache in self.cache["chats"].items():
+                    stats = await self.getBayesFilterStats(chatId=chatId)
+                    chatName = f"#{chatId}"
+                    chatInfo = chatCache.get("info", None)
+                    if chatInfo is not None:
+                        chatName = chatInfo["title"] or chatInfo["username"] or chatInfo["chat_id"]
+                    await self._sendMessage(
+                        ensuredMessage,
+                        messageText=f"Chat: **{chatName}**\n```json\n{utils.jsonDumps(stats, indent=2)}\n```\n",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    )
+                    await asyncio.sleep(0.5)
+
             case _:
                 await self._sendMessage(
                     ensuredMessage,
@@ -3547,6 +3698,52 @@ class BotHandlers:
 
         # Delete command message to reduce flood
         await message.delete()
+
+    async def pretrain_bayes_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /pretrain_bayes [<chatId>] command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self._updateEMessageUserData(ensuredMessage)
+
+        chatId = ensuredMessage.chat.id
+        #userId = ensuredMessage.user.id
+
+        if context.args:
+            try:
+                chatId = int(context.args[0])
+            except ValueError:
+                logger.error(f"Invalid chatId: {context.args[0]}")
+
+        targetChat = Chat(id=chatId, type=Chat.PRIVATE if chatId > 0 else Chat.SUPERGROUP)
+        targetChat.set_bot(message.get_bot()) 
+
+        if not await self._isAdmin(user=ensuredMessage.user, chat=targetChat):
+            await self._sendMessage(
+                ensuredMessage,
+                messageText="У Вас нет прав для выполнения данной команды.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        await self.trainBayesFromHistory(chatId=chatId)
+        stats = self.getBayesFilterStats(chatId=chatId)
+
+        await self._sendMessage(
+            ensuredMessage,
+            messageText=f"Готово:\n```json\n{utils.jsonDumps(stats, indent=2)}\n```\n",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
 
     async def _handle_chat_configuration(self, data: Dict[str, Any], message: Message, user: User) -> bool:
         """Parses the CallbackQuery and updates the message text."""
