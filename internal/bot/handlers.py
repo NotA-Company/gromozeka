@@ -1328,6 +1328,7 @@ class BotHandlers:
                     chatId=ensuredMessage.chat.id,
                     threshold=warnTreshold,  # Use existing threshold
                 )
+                logger.debug(f"SPAM Bayes: Check result: {bayesResult}")
 
                 # Check minimum confidence requirement
                 minConfidence = chatSettings[ChatSettingsKey.BAYES_MIN_CONFIDENCE].toFloat()
@@ -1336,8 +1337,8 @@ class BotHandlers:
                     _spamScore = min(warnTreshold, bayesResult.score)  # TODO: Temporary cap as warn treshold
 
                     logger.debug(
-                        f"SPAM Bayes: - Rules Score: {spamScore:.2f}, Bayes Score: {bayesResult.score:.2f}, "
-                        f"Confidence: {bayesResult.confidence:.3f}, dood!"
+                        f"SPAM Bayes: Rules Score: {spamScore:.2f}, Bayes Score: {bayesResult.score:.2f}, "
+                        f"Confidence: {bayesResult.confidence:.3f}"
                     )
 
                     # Use combined score for final decision
@@ -1345,11 +1346,11 @@ class BotHandlers:
                     # spamScore = spamScore + _spamScore
                 else:
                     logger.debug(
-                        f"SPAM Bayes: confidence {bayesResult.confidence:.3f} < {minConfidence}, ignoring result, dood!"
+                        f"SPAM Bayes: confidence {bayesResult.confidence:.3f} < {minConfidence}, ignoring result"
                     )
 
             except Exception as e:
-                logger.error(f"Failed to run Bayes filter classification: {e}, dood!")
+                logger.error(f"SPAM Bayes: Failed to run Bayes filter classification: {e}")
                 logger.exception(e)
                 # Continue with original spamScore if Bayes filter fails
 
