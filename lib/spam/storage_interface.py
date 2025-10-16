@@ -6,7 +6,7 @@ This allows for easy testing and future storage backend changes.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from .models import TokenStats, ClassStats, BayesModelStats
 
 
@@ -19,16 +19,16 @@ class BayesStorageInterface(ABC):
     """
 
     @abstractmethod
-    async def getTokenStats(self, token: str, chat_id: Optional[int] = None) -> Optional[TokenStats]:
+    async def getTokenStats(self, tokens: Iterable[str], chatId: Optional[int] = None) -> Dict[str, TokenStats]:
         """
-        Get statistics for a specific token
+        Get statistics for a specific tokens
 
         Args:
-            token: The token to get statistics for
-            chat_id: Optional chat ID for per-chat statistics
+            tokens: The tokens to get statistics for
+            chatId: Optional chat ID for per-chat statistics
 
         Returns:
-            TokenStats object or None if token not found
+            Dict: Token => TokenStats
         """
         pass
 
@@ -96,12 +96,12 @@ class BayesStorageInterface(ABC):
         pass
 
     @abstractmethod
-    async def getVocabularySize(self, chat_id: Optional[int] = None) -> int:
+    async def getVocabularySize(self, chatId: Optional[int] = None) -> int:
         """
         Get the size of the vocabulary (number of unique tokens)
 
         Args:
-            chat_id: Optional chat ID for per-chat statistics
+            chatId: Optional chat ID for per-chat statistics
 
         Returns:
             Number of unique tokens in vocabulary

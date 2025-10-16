@@ -22,14 +22,14 @@ class TokenStats:
     """Statistics for a single token in the Bayes filter"""
 
     token: str
-    spam_count: int  # Occurrences in spam messages
-    ham_count: int  # Occurrences in ham messages
-    total_count: int  # Total occurrences
+    spamCount: int  # Occurrences in spam messages
+    hamCount: int  # Occurrences in ham messages
+    totalCount: int  # Total occurrences
 
     def __post_init__(self):
         """Validate token statistics consistency"""
-        if self.total_count != self.spam_count + self.ham_count:
-            self.total_count = self.spam_count + self.ham_count
+        if self.totalCount != self.spamCount + self.hamCount:
+            self.totalCount = self.spamCount + self.hamCount
 
 
 @dataclass

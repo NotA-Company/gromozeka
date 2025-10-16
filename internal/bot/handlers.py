@@ -85,12 +85,12 @@ class BotHandlers:
         # Initialize Bayes spam filter, dood!
         bayes_storage = DatabaseBayesStorage(database)
         bayes_config = BayesConfig(
-            per_chat_stats=True,  # Use per-chat learning
+            perChatStats=True,  # Use per-chat learning
             alpha=1.0,  # Laplace smoothing
-            min_token_count=2,  # Minimum token occurrences
-            default_threshold=50.0,  # Default spam threshold
-            bayes_weight=0.5,  # Weight in combined score
-            debug_logging=True,  # Set to True for debugging
+            minTokenCount=2,  # Minimum token occurrences
+            defaultThreshold=50.0,  # Default spam threshold
+            debugLogging=True,  # Set to True for debugging
+            defaultSpamProbability=0.5,
         )
         self.bayesFilter = NaiveBayesFilter(bayes_storage, bayes_config)
         logger.info("Initialized Bayes spam filter, dood!")
