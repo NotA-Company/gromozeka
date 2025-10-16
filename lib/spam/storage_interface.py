@@ -66,7 +66,7 @@ class BayesStorageInterface(ABC):
 
     @abstractmethod
     async def updateClassStats(
-        self, is_spam: bool, message_increment: int = 1, token_increment: int = 0, chat_id: Optional[int] = None
+        self, isSpam: bool, messageIncrement: int = 1, tokenIncrement: int = 0, chatId: Optional[int] = None
     ) -> bool:
         """
         Update class statistics after learning

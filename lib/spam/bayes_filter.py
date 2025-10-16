@@ -241,7 +241,7 @@ class NaiveBayesFilter:
         Returns:
             True if learning succeeded
         """
-        return await self._learn(message_text, is_spam=True, chat_id=chatId)
+        return await self._learn(message_text, isSpam=True, chat_id=chatId)
 
     async def learnHam(self, messageText: str, chatId: Optional[int] = None) -> bool:
         """
@@ -254,9 +254,9 @@ class NaiveBayesFilter:
         Returns:
             True if learning succeeded
         """
-        return await self._learn(messageText, is_spam=False, chat_id=chatId)
+        return await self._learn(messageText, isSpam=False, chat_id=chatId)
 
-    async def _learn(self, message_text: str, is_spam: bool, chat_id: Optional[int] = None) -> bool:
+    async def _learn(self, message_text: str, isSpam: bool, chat_id: Optional[int] = None) -> bool:
         """
         Internal learning method
 
@@ -280,7 +280,7 @@ class NaiveBayesFilter:
         try:
             # Update class statistics
             await self.storage.updateClassStats(
-                is_spam=is_spam, message_increment=1, token_increment=len(tokens), chat_id=chat_id_param
+                isSpam=isSpam, messageIncrement=1, tokenIncrement=len(tokens), chatId=chat_id_param
             )
 
             # Batch update token statistics for performance
@@ -293,13 +293,13 @@ class NaiveBayesFilter:
 
             # Prepare batch updates
             for token, count in token_counts.items():
-                token_updates.append({"token": token, "is_spam": is_spam, "increment": count})
+                token_updates.append({"token": token, "is_spam": isSpam, "increment": count})
 
             # Perform batch update
             success = await self.storage.batchUpdateTokens(token_updates, chat_id_param)
 
             if success:
-                class_name = "spam" if is_spam else "ham"
+                class_name = "spam" if isSpam else "ham"
                 logger.debug(f"Successfully learned {class_name} message with {len(tokens)} tokens.")
             else:
                 logger.error("Failed to update token statistics during learning.")

@@ -49,7 +49,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
                     f"""
                     SELECT token, spam_count, ham_count, total_count
                     FROM bayes_tokens
-                    WHERE 
+                    WHERE
                         token IN ({tokenPlaceholdersStr})
                         AND ((:chatId IS NULL AND chat_id IS NULL) OR chat_id = :chatId)
                     """,
@@ -99,21 +99,22 @@ class DatabaseBayesStorage(BayesStorageInterface):
                 # Use INSERT OR REPLACE for SQLite compatibility
                 cursor.execute(
                     """
-                    INSERT OR REPLACE INTO bayes_tokens
+                    INSERT INTO bayes_tokens
                         (token, chat_id, spam_count, ham_count, total_count, created_at, updated_at)
                     VALUES (
                         :token,
                         :chat_id,
-                        COALESCE((SELECT spam_count FROM bayes_tokens WHERE token = :token AND
-                                 ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), 0) + :spam_inc,
-                        COALESCE((SELECT ham_count FROM bayes_tokens WHERE token = :token AND
-                                 ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), 0) + :ham_inc,
-                        COALESCE((SELECT total_count FROM bayes_tokens WHERE token = :token AND
-                                 ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), 0) + :increment,
-                        COALESCE((SELECT created_at FROM bayes_tokens WHERE token = :token AND
-                                 ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), CURRENT_TIMESTAMP),
+                        :spam_inc,
+                        :ham_inc,
+                        :increment,
+                        CURRENT_TIMESTAMP,
                         CURRENT_TIMESTAMP
                     )
+                    ON CONFLICT(token, chat_id) DO UPDATE SET
+                        spam_count = spam_count + :spam_inc,
+                        ham_count = ham_count + :ham_inc,
+                        total_count = total_count + :increment,
+                        updated_at = CURRENT_TIMESTAMP
                     """,
                     {
                         "token": token,
@@ -129,32 +130,33 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return False
 
     async def updateClassStats(
-        self, is_spam: bool, message_increment: int = 1, token_increment: int = 0, chat_id: Optional[int] = None
+        self, isSpam: bool, messageIncrement: int = 1, tokenIncrement: int = 0, chatId: Optional[int] = None
     ) -> bool:
         """Update class statistics after learning"""
         try:
             with self.db.getCursor() as cursor:
                 cursor.execute(
                     """
-                    INSERT OR REPLACE INTO bayes_classes
+                    INSERT INTO bayes_classes
                         (chat_id, is_spam, message_count, token_count, created_at, updated_at)
                     VALUES (
                         :chat_id,
                         :is_spam,
-                        COALESCE((SELECT message_count FROM bayes_classes WHERE is_spam = :is_spam AND
-                                 ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), 0) + :msg_inc,
-                        COALESCE((SELECT token_count FROM bayes_classes WHERE is_spam = :is_spam AND
-                                 ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), 0) + :tok_inc,
-                        COALESCE((SELECT created_at FROM bayes_classes WHERE is_spam = :is_spam AND
-                                 ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), CURRENT_TIMESTAMP),
+                        :msg_inc,
+                        :tok_inc,
+                        CURRENT_TIMESTAMP,
                         CURRENT_TIMESTAMP
                     )
+                    ON CONFLICT(chat_id, is_spam) DO UPDATE SET
+                        message_count = message_count + :msg_inc,
+                        token_count = token_count + :tok_inc,
+                        updated_at = CURRENT_TIMESTAMP
                     """,
-                    {"chat_id": chat_id, "is_spam": is_spam, "msg_inc": message_increment, "tok_inc": token_increment},
+                    {"chat_id": chatId, "is_spam": isSpam, "msg_inc": messageIncrement, "tok_inc": tokenIncrement},
                 )
                 return True
         except Exception as e:
-            logger.error(f"Failed to update class stats for is_spam={is_spam}: {e}, dood!")
+            logger.error(f"Failed to update class stats for is_spam={isSpam}: {e}, dood!")
             return False
 
     async def getAllTokens(self, chat_id: Optional[int] = None) -> List[str]:
@@ -263,21 +265,22 @@ class DatabaseBayesStorage(BayesStorageInterface):
                     # Use the same logic as update_token_stats but in batch
                     cursor.execute(
                         """
-                        INSERT OR REPLACE INTO bayes_tokens
+                        INSERT INTO bayes_tokens
                             (token, chat_id, spam_count, ham_count, total_count, created_at, updated_at)
                         VALUES (
                             :token,
                             :chat_id,
-                            COALESCE((SELECT spam_count FROM bayes_tokens WHERE token = :token AND
-                                ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), 0) + :spam_inc,
-                            COALESCE((SELECT ham_count FROM bayes_tokens WHERE token = :token AND
-                                ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), 0) + :ham_inc,
-                            COALESCE((SELECT total_count FROM bayes_tokens WHERE token = :token AND
-                                ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), 0) + :increment,
-                            COALESCE((SELECT created_at FROM bayes_tokens WHERE token = :token AND
-                                ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)), CURRENT_TIMESTAMP),
+                            :spam_inc,
+                            :ham_inc,
+                            :increment,
+                            CURRENT_TIMESTAMP,
                             CURRENT_TIMESTAMP
                         )
+                        ON CONFLICT(token, chat_id) DO UPDATE SET
+                            spam_count = spam_count + :spam_inc,
+                            ham_count = ham_count + :ham_inc,
+                            total_count = total_count + :increment,
+                            updated_at = CURRENT_TIMESTAMP
                         """,
                         {
                             "token": token,
