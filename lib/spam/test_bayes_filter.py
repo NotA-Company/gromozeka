@@ -41,7 +41,7 @@ async def test_bayes_filter():
         # db._initDatabase()
 
         # Initialize Bayes filter
-        config = BayesConfig(per_chat_stats=True, alpha=1.0, min_token_count=1, debug_logging=True)  # Lower for testing
+        config = BayesConfig(perChatStats=True, alpha=1.0, minTokenCount=1, debugLogging=True)  # Lower for testing
         bayes_filter = NaiveBayesFilter(storage, config)
 
         logger.info("=== Testing Bayes Filter, dood! ===")
@@ -139,11 +139,11 @@ async def test_bayes_filter():
 
         # Get top spam tokens
         top_spam = await storage.getTopSpamTokens(limit=5, chat_id=12345)
-        logger.info(f"Top spam tokens: {[(t.token, t.spam_count, t.ham_count) for t in top_spam[:3]]}")
+        logger.info(f"Top spam tokens: {[(t.token, t.spamCount, t.hamCount) for t in top_spam[:3]]}")
 
         # Get top ham tokens
         top_ham = await storage.getTopHamTokens(limit=5, chat_id=12345)
-        logger.info(f"Top ham tokens: {[(t.token, t.spam_count, t.ham_count) for t in top_ham[:3]]}")
+        logger.info(f"Top ham tokens: {[(t.token, t.spamCount, t.hamCount) for t in top_ham[:3]]}")
 
         # Test 10: Cleanup rare tokens
         logger.info("Test 10: Cleanup rare tokens")

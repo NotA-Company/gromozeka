@@ -6,7 +6,7 @@ using the existing DatabaseWrapper from the Gromozeka project.
 """
 
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Iterable, List, Optional, Dict, Any
 
 from internal.database.wrapper import DatabaseWrapper
 from lib.spam.storage_interface import BayesStorageInterface
@@ -33,31 +33,41 @@ class DatabaseBayesStorage(BayesStorageInterface):
         self.db = db
         logger.info("Initialized DatabaseBayesStorage, dood!")
 
-    async def getTokenStats(self, token: str, chat_id: Optional[int] = None) -> Optional[TokenStats]:
-        """Get statistics for a specific token"""
+    async def getTokenStats(self, tokens: Iterable[str], chatId: Optional[int] = None) -> Dict[str, TokenStats]:
+        """Get statistics for a specific tokens"""
+        params: Dict[str, Any] = {"chatId": chatId}
+        placeholders = []
+        for i, token in enumerate(tokens):
+            tName = f"token{i}"
+            placeholders.append(":" + tName)
+            params[tName] = token
+
+        tokenPlaceholdersStr = ", ".join(placeholders)
         try:
             with self.db.getCursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT token, spam_count, ham_count, total_count
                     FROM bayes_tokens
-                    WHERE token = :token
-                        AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
+                    WHERE 
+                        token IN ({tokenPlaceholdersStr})
+                        AND ((:chatId IS NULL AND chat_id IS NULL) OR chat_id = :chatId)
                     """,
-                    {"token": token, "chat_id": chat_id},
+                    params,
                 )
-                row = cursor.fetchone()
-                if row:
-                    return TokenStats(
+                ret: Dict[str, TokenStats] = {}
+                for row in cursor.fetchall():
+                    rDict = dict(row)
+                    ret[rDict["token"]] = TokenStats(
                         token=row["token"],
-                        spam_count=row["spam_count"],
-                        ham_count=row["ham_count"],
-                        total_count=row["total_count"],
+                        spamCount=row["spam_count"],
+                        hamCount=row["ham_count"],
+                        totalCount=row["total_count"],
                     )
-                return None
+                return ret
         except Exception as e:
-            logger.error(f"Failed to get token stats for '{token}': {e}, dood!")
-            return None
+            logger.error(f"Failed to get token stats for '{tokens}': {e}, dood!")
+            return {}
 
     async def getClassStats(self, is_spam: bool, chat_id: Optional[int] = None) -> ClassStats:
         """Get statistics for spam or ham class"""
@@ -164,16 +174,16 @@ class DatabaseBayesStorage(BayesStorageInterface):
             logger.error(f"Failed to get all tokens: {e}, dood!")
             return []
 
-    async def getVocabularySize(self, chat_id: Optional[int] = None) -> int:
+    async def getVocabularySize(self, chatId: Optional[int] = None) -> int:
         """Get the size of the vocabulary (number of unique tokens)"""
         try:
             with self.db.getCursor() as cursor:
                 cursor.execute(
                     """
                     SELECT COUNT(*) as vocab_size FROM bayes_tokens
-                    WHERE ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
+                    WHERE ((:chatId IS NULL AND chat_id IS NULL) OR chat_id = :chatId)
                     """,
-                    {"chat_id": chat_id},
+                    {"chatId": chatId},
                 )
                 row = cursor.fetchone()
                 return row["vocab_size"] if row else 0
@@ -306,9 +316,9 @@ class DatabaseBayesStorage(BayesStorageInterface):
                     results.append(
                         TokenStats(
                             token=row["token"],
-                            spam_count=row["spam_count"],
-                            ham_count=row["ham_count"],
-                            total_count=row["total_count"],
+                            spamCount=row["spam_count"],
+                            hamCount=row["ham_count"],
+                            totalCount=row["total_count"],
                         )
                     )
                 return results
@@ -338,9 +348,9 @@ class DatabaseBayesStorage(BayesStorageInterface):
                     results.append(
                         TokenStats(
                             token=row["token"],
-                            spam_count=row["spam_count"],
-                            ham_count=row["ham_count"],
-                            total_count=row["total_count"],
+                            spamCount=row["spam_count"],
+                            hamCount=row["ham_count"],
+                            totalCount=row["total_count"],
                         )
                     )
                 return results

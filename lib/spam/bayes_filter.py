@@ -25,45 +25,41 @@ class BayesConfig:
     alpha: float = 1.0
 
     # Minimum token occurrences to consider for classification
-    min_token_count: int = 2
+    minTokenCount: int = 2
 
     # Use per-chat statistics (True) or global (False)
-    per_chat_stats: bool = True
+    perChatStats: bool = True
 
     # Default spam threshold (0-100)
-    default_threshold: float = 50.0
+    defaultThreshold: float = 50.0
 
     # Minimum confidence to trust classification
-    min_confidence: float = 0.1
+    minConfidence: float = 0.1
 
     # Maximum tokens to consider per message (performance)
-    max_tokens_per_message: int = 1000
-
-    # Weight for combining with other spam detection methods
-    bayes_weight: float = 0.5
+    maxTokensPerMessage: int = 2000
 
     # Tokenizer configuration
-    tokenizer_config: Optional[TokenizerConfig] = None
+    tokenizerConfig: Optional[TokenizerConfig] = None
 
     # Enable debug logging
-    debug_logging: bool = False
+    debugLogging: bool = False
+
+    defaultSpamProbability: Optional[float] = None
 
     def __post_init__(self):
         """Validate configuration parameters"""
         if self.alpha <= 0:
             raise ValueError("Alpha must be positive for Laplace smoothing.")
 
-        if not (0 <= self.default_threshold <= 100):
+        if not (0 <= self.defaultThreshold <= 100):
             raise ValueError("Default threshold must be between 0 and 100.")
 
-        if not (0 <= self.min_confidence <= 1):
+        if not (0 <= self.minConfidence <= 1):
             raise ValueError("Min confidence must be between 0 and 1.")
 
-        if not (0 <= self.bayes_weight <= 1):
-            raise ValueError("Bayes weight must be between 0 and 1.")
-
-        if self.tokenizer_config is None:
-            self.tokenizer_config = TokenizerConfig()
+        if self.tokenizerConfig is None:
+            self.tokenizerConfig = TokenizerConfig()
 
 
 class NaiveBayesFilter:
@@ -84,13 +80,13 @@ class NaiveBayesFilter:
         """
         self.storage = storage
         self.config = config or BayesConfig()
-        self.tokenizer = MessageTokenizer(self.config.tokenizer_config)
+        self.tokenizer = MessageTokenizer(self.config.tokenizerConfig)
 
         # Setup logging
-        if self.config.debug_logging:
+        if self.config.debugLogging:
             logger.setLevel(logging.DEBUG)
 
-        logger.info(f"Initialized NaiveBayesFilter with per_chat_stats={self.config.per_chat_stats}")
+        logger.info(f"Initialized NaiveBayesFilter with per_chat_stats={self.config.perChatStats}")
 
     async def classify(
         self, messageText: str, chatId: Optional[int] = None, threshold: Optional[float] = None
@@ -107,7 +103,7 @@ class NaiveBayesFilter:
             SpamScore with classification results
         """
         if threshold is None:
-            threshold = self.config.default_threshold
+            threshold = self.config.defaultThreshold
 
         # Tokenize message
         tokens = self.tokenizer.tokenize(messageText)
@@ -118,17 +114,17 @@ class NaiveBayesFilter:
             return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
 
         # Limit tokens for performance
-        if len(tokens) > self.config.max_tokens_per_message:
-            logger.warning(f"Message has {len(tokens)} tokens, limiting to {self.config.max_tokens_per_message}.")
-            tokens = tokens[: self.config.max_tokens_per_message]
+        if len(tokens) > self.config.maxTokensPerMessage:
+            logger.warning(f"Message has {len(tokens)} tokens, limiting to {self.config.maxTokensPerMessage}.")
+            tokens = tokens[: self.config.maxTokensPerMessage]
 
         # Get chat ID parameter
-        chat_id_param = chatId if self.config.per_chat_stats else None
+        chatIdParam = chatId if self.config.perChatStats else None
 
         # Get class statistics
         try:
-            spam_stats = await self.storage.getClassStats(True, chat_id_param)
-            ham_stats = await self.storage.getClassStats(False, chat_id_param)
+            spam_stats = await self.storage.getClassStats(True, chatIdParam)
+            ham_stats = await self.storage.getClassStats(False, chatIdParam)
         except Exception as e:
             logger.error(f"Failed to get class stats: {e}.")
             return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
@@ -140,20 +136,24 @@ class NaiveBayesFilter:
             return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
 
         # Calculate prior probabilities
-        # p_spam = spam_stats.message_count / total_messages
-        # p_ham = ham_stats.message_count / total_messages
-        p_spam = 0.5
-        p_ham = 0.5
+        pSpam = 0.5
+        pHam = 0.5
+        if self.config.defaultSpamProbability is None:
+            pSpam = spam_stats.message_count / total_messages
+            pHam = ham_stats.message_count / total_messages
+        else:
+            pSpam = self.config.defaultSpamProbability
+            pHam = 1 - pSpam
 
-        logger.debug(f"Prior probabilities: P(spam)={p_spam:.3f}, P(ham)={p_ham:.3f}.")
+        logger.debug(f"Prior probabilities: P(spam)={pSpam:.3f}, P(ham)={pHam:.3f}.")
 
         # Calculate log probabilities (to avoid underflow)
-        log_p_spam = math.log(p_spam)
-        log_p_ham = math.log(p_ham)
+        logPSpam = math.log(pSpam)
+        logPHam = math.log(pHam)
 
         # Get vocabulary size for Laplace smoothing
         try:
-            vocab_size = await self.storage.getVocabularySize(chat_id_param)
+            vocab_size = await self.storage.getVocabularySize(chatIdParam)
         except Exception as e:
             logger.error(f"Failed to get vocabulary size: {e}.")
             vocab_size = 1000  # Fallback estimate
@@ -162,56 +162,53 @@ class NaiveBayesFilter:
         known_tokens = 0
 
         # Calculate likelihood for each unique token
-        unique_tokens = set(tokens)
-        for token in unique_tokens:
-            try:
-                token_stats = await self.storage.getTokenStats(token, chat_id_param)
-            except Exception as e:
-                logger.error(f"Failed to get token stats for '{token}': {e}.")
-                continue
+        uniqueTokens = set(tokens)
+        tokenStatsDict = await self.storage.getTokenStats(uniqueTokens, chatIdParam)
+        for token in uniqueTokens:
+            tokenStats = tokenStatsDict.get(token, None)
 
-            if token_stats is None or token_stats.total_count < self.config.min_token_count:
+            if tokenStats is None or tokenStats.totalCount < self.config.minTokenCount:
                 # Unknown or rare token, skip
-                logger.debug(f"Skipping rare token '{token}' (count: {token_stats.total_count if token_stats else 0}).")
+                logger.debug(f"Skipping rare token '{token}' (count: {tokenStats.totalCount if tokenStats else 0}).")
                 continue
 
             known_tokens += 1
 
             # Count occurrences of this token in the message
-            token_count = tokens.count(token)
+            tokenCount = tokens.count(token)
 
             # Laplace smoothing: P(token|class) = (count + alpha) / (total + alpha * vocab_size)
-            p_token_spam = (token_stats.spam_count + self.config.alpha) / (
+            pTokenSpam = (tokenStats.spamCount + self.config.alpha) / (
                 spam_stats.token_count + self.config.alpha * vocab_size
             )
-            p_token_ham = (token_stats.ham_count + self.config.alpha) / (
+            pTokenHam = (tokenStats.hamCount + self.config.alpha) / (
                 ham_stats.token_count + self.config.alpha * vocab_size
             )
 
             # Add to log probabilities (multiply by token count for frequency)
-            log_p_spam += math.log(p_token_spam) * token_count
-            log_p_ham += math.log(p_token_ham) * token_count
+            logPSpam += math.log(pTokenSpam) * tokenCount
+            logPHam += math.log(pTokenHam) * tokenCount
 
             # Store individual token contribution for debugging
-            token_spam_prob = (p_token_spam / (p_token_spam + p_token_ham)) * 100
+            token_spam_prob = (pTokenSpam / (pTokenSpam + pTokenHam)) * 100
             token_scores[token] = token_spam_prob
 
-            logger.debug(f"Token '{token}' (count: {token_count}): spam_prob={token_spam_prob:.1f}%.")
+            logger.debug(f"Token '{token}' (count: {tokenCount}): spam_prob={token_spam_prob:.1f}%.")
 
         # Convert log probabilities back to probabilities
         # Using log-sum-exp trick for numerical stability
-        max_log_p = max(log_p_spam, log_p_ham)
-        exp_spam = math.exp(log_p_spam - max_log_p)
-        exp_ham = math.exp(log_p_ham - max_log_p)
+        maxLogP = max(logPSpam, logPHam)
+        exp_spam = math.exp(logPSpam - maxLogP)
+        exp_ham = math.exp(logPHam - maxLogP)
 
         # Normalize to get probability
         spam_probability = exp_spam / (exp_spam + exp_ham)
         spam_score = spam_probability * 100
 
         # Calculate confidence based on number of known tokens and training data
-        confidence = self._calculate_confidence(known_tokens, len(unique_tokens), total_messages)
+        confidence = self._calculate_confidence(known_tokens, len(uniqueTokens), total_messages)
 
-        is_spam = spam_score >= threshold and confidence >= self.config.min_confidence
+        is_spam = spam_score >= threshold and confidence >= self.config.minConfidence
 
         logger.debug(f"Classification result: score={spam_score:.2f}%, confidence={confidence:.3f}, is_spam={is_spam}.")
 
@@ -278,7 +275,7 @@ class NaiveBayesFilter:
             logger.warning("No tokens found in training message, skipping.")
             return False
 
-        chat_id_param = chat_id if self.config.per_chat_stats else None
+        chat_id_param = chat_id if self.config.perChatStats else None
 
         try:
             # Update class statistics
@@ -359,7 +356,7 @@ class NaiveBayesFilter:
         Returns:
             BayesModelStats with model information
         """
-        chat_id_param = chat_id if self.config.per_chat_stats else None
+        chat_id_param = chat_id if self.config.perChatStats else None
 
         try:
             return await self.storage.getModelStats(chat_id_param)
@@ -380,7 +377,7 @@ class NaiveBayesFilter:
         Returns:
             True if reset succeeded
         """
-        chat_id_param = chat_id if self.config.per_chat_stats else None
+        chat_id_param = chat_id if self.config.perChatStats else None
 
         try:
             success = await self.storage.clearStats(chat_id_param)
@@ -405,7 +402,7 @@ class NaiveBayesFilter:
         Returns:
             Number of tokens removed
         """
-        chat_id_param = chat_id if self.config.per_chat_stats else None
+        chat_id_param = chat_id if self.config.perChatStats else None
 
         try:
             removed = await self.storage.cleanupRareTokens(min_count, chat_id_param)
