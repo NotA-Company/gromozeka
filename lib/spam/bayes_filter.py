@@ -140,8 +140,8 @@ class NaiveBayesFilter:
             return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
 
         # Calculate prior probabilities
-        #p_spam = spam_stats.message_count / total_messages
-        #p_ham = ham_stats.message_count / total_messages
+        # p_spam = spam_stats.message_count / total_messages
+        # p_ham = ham_stats.message_count / total_messages
         p_spam = 0.5
         p_ham = 0.5
 
@@ -172,9 +172,7 @@ class NaiveBayesFilter:
 
             if token_stats is None or token_stats.total_count < self.config.min_token_count:
                 # Unknown or rare token, skip
-                logger.debug(
-                    f"Skipping rare token '{token}' (count: {token_stats.total_count if token_stats else 0})."
-                )
+                logger.debug(f"Skipping rare token '{token}' (count: {token_stats.total_count if token_stats else 0}).")
                 continue
 
             known_tokens += 1
@@ -215,9 +213,7 @@ class NaiveBayesFilter:
 
         is_spam = spam_score >= threshold and confidence >= self.config.min_confidence
 
-        logger.debug(
-            f"Classification result: score={spam_score:.2f}%, confidence={confidence:.3f}, is_spam={is_spam}."
-        )
+        logger.debug(f"Classification result: score={spam_score:.2f}%, confidence={confidence:.3f}, is_spam={is_spam}.")
 
         return SpamScore(score=spam_score, is_spam=is_spam, confidence=confidence, token_scores=token_scores)
 

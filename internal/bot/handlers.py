@@ -4119,7 +4119,6 @@ class BotHandlers:
         if query.data is None:
             logger.error(f"CallbackQuery data undefined in {query}")
             return
-        
 
         user = query.from_user
 
