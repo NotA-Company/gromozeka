@@ -51,16 +51,16 @@ class BayesConfig:
     def __post_init__(self):
         """Validate configuration parameters"""
         if self.alpha <= 0:
-            raise ValueError("Alpha must be positive for Laplace smoothing, dood!")
+            raise ValueError("Alpha must be positive for Laplace smoothing.")
 
         if not (0 <= self.default_threshold <= 100):
-            raise ValueError("Default threshold must be between 0 and 100, dood!")
+            raise ValueError("Default threshold must be between 0 and 100.")
 
         if not (0 <= self.min_confidence <= 1):
-            raise ValueError("Min confidence must be between 0 and 1, dood!")
+            raise ValueError("Min confidence must be between 0 and 1.")
 
         if not (0 <= self.bayes_weight <= 1):
-            raise ValueError("Bayes weight must be between 0 and 1, dood!")
+            raise ValueError("Bayes weight must be between 0 and 1.")
 
         if self.tokenizer_config is None:
             self.tokenizer_config = TokenizerConfig()
@@ -90,7 +90,7 @@ class NaiveBayesFilter:
         if self.config.debug_logging:
             logger.setLevel(logging.DEBUG)
 
-        logger.info(f"Initialized NaiveBayesFilter with per_chat_stats={self.config.per_chat_stats}, dood!")
+        logger.info(f"Initialized NaiveBayesFilter with per_chat_stats={self.config.per_chat_stats}")
 
     async def classify(
         self, messageText: str, chatId: Optional[int] = None, threshold: Optional[float] = None
@@ -114,12 +114,12 @@ class NaiveBayesFilter:
 
         if not tokens:
             # No tokens, cannot classify
-            logger.debug("No tokens found in message, returning neutral score, dood!")
+            logger.debug("No tokens found in message, returning neutral score.")
             return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
 
         # Limit tokens for performance
         if len(tokens) > self.config.max_tokens_per_message:
-            logger.warning(f"Message has {len(tokens)} tokens, limiting to {self.config.max_tokens_per_message}, dood!")
+            logger.warning(f"Message has {len(tokens)} tokens, limiting to {self.config.max_tokens_per_message}.")
             tokens = tokens[: self.config.max_tokens_per_message]
 
         # Get chat ID parameter
@@ -130,20 +130,22 @@ class NaiveBayesFilter:
             spam_stats = await self.storage.getClassStats(True, chat_id_param)
             ham_stats = await self.storage.getClassStats(False, chat_id_param)
         except Exception as e:
-            logger.error(f"Failed to get class stats: {e}, dood!")
+            logger.error(f"Failed to get class stats: {e}.")
             return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
 
         # Check if we have training data
         total_messages = spam_stats.message_count + ham_stats.message_count
         if total_messages == 0:
-            logger.debug("No training data available, returning neutral score, dood!")
+            logger.debug("No training data available, returning neutral score.")
             return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
 
         # Calculate prior probabilities
-        p_spam = spam_stats.message_count / total_messages
-        p_ham = ham_stats.message_count / total_messages
+        #p_spam = spam_stats.message_count / total_messages
+        #p_ham = ham_stats.message_count / total_messages
+        p_spam = 0.5
+        p_ham = 0.5
 
-        logger.debug(f"Prior probabilities: P(spam)={p_spam:.3f}, P(ham)={p_ham:.3f}, dood!")
+        logger.debug(f"Prior probabilities: P(spam)={p_spam:.3f}, P(ham)={p_ham:.3f}.")
 
         # Calculate log probabilities (to avoid underflow)
         log_p_spam = math.log(p_spam)
@@ -153,7 +155,7 @@ class NaiveBayesFilter:
         try:
             vocab_size = await self.storage.getVocabularySize(chat_id_param)
         except Exception as e:
-            logger.error(f"Failed to get vocabulary size: {e}, dood!")
+            logger.error(f"Failed to get vocabulary size: {e}.")
             vocab_size = 1000  # Fallback estimate
 
         token_scores = {}
@@ -165,13 +167,13 @@ class NaiveBayesFilter:
             try:
                 token_stats = await self.storage.getTokenStats(token, chat_id_param)
             except Exception as e:
-                logger.error(f"Failed to get token stats for '{token}': {e}, dood!")
+                logger.error(f"Failed to get token stats for '{token}': {e}.")
                 continue
 
             if token_stats is None or token_stats.total_count < self.config.min_token_count:
                 # Unknown or rare token, skip
                 logger.debug(
-                    f"Skipping rare token '{token}' (count: {token_stats.total_count if token_stats else 0}), dood!"
+                    f"Skipping rare token '{token}' (count: {token_stats.total_count if token_stats else 0})."
                 )
                 continue
 
@@ -196,7 +198,7 @@ class NaiveBayesFilter:
             token_spam_prob = (p_token_spam / (p_token_spam + p_token_ham)) * 100
             token_scores[token] = token_spam_prob
 
-            logger.debug(f"Token '{token}' (count: {token_count}): spam_prob={token_spam_prob:.1f}%, dood!")
+            logger.debug(f"Token '{token}' (count: {token_count}): spam_prob={token_spam_prob:.1f}%.")
 
         # Convert log probabilities back to probabilities
         # Using log-sum-exp trick for numerical stability
@@ -214,7 +216,7 @@ class NaiveBayesFilter:
         is_spam = spam_score >= threshold and confidence >= self.config.min_confidence
 
         logger.debug(
-            f"Classification result: score={spam_score:.2f}%, confidence={confidence:.3f}, is_spam={is_spam}, dood!"
+            f"Classification result: score={spam_score:.2f}%, confidence={confidence:.3f}, is_spam={is_spam}."
         )
 
         return SpamScore(score=spam_score, is_spam=is_spam, confidence=confidence, token_scores=token_scores)
@@ -277,7 +279,7 @@ class NaiveBayesFilter:
         tokens = self.tokenizer.tokenize(message_text)
 
         if not tokens:
-            logger.warning("No tokens found in training message, skipping, dood!")
+            logger.warning("No tokens found in training message, skipping.")
             return False
 
         chat_id_param = chat_id if self.config.per_chat_stats else None
@@ -305,14 +307,14 @@ class NaiveBayesFilter:
 
             if success:
                 class_name = "spam" if is_spam else "ham"
-                logger.debug(f"Successfully learned {class_name} message with {len(tokens)} tokens, dood!")
+                logger.debug(f"Successfully learned {class_name} message with {len(tokens)} tokens.")
             else:
-                logger.error("Failed to update token statistics during learning, dood!")
+                logger.error("Failed to update token statistics during learning.")
 
             return success
 
         except Exception as e:
-            logger.error(f"Failed to learn from message: {e}, dood!")
+            logger.error(f"Failed to learn from message: {e}.")
             return False
 
     async def batch_learn(
@@ -348,7 +350,7 @@ class NaiveBayesFilter:
             if progress_callback:
                 progress_callback(i + 1, len(messages))
 
-        logger.info(f"Batch learning completed: {stats}, dood!")
+        logger.info(f"Batch learning completed: {stats}.")
         return stats
 
     async def getModelInfo(self, chat_id: Optional[int] = None) -> BayesModelStats:
@@ -366,7 +368,7 @@ class NaiveBayesFilter:
         try:
             return await self.storage.getModelStats(chat_id_param)
         except Exception as e:
-            logger.error(f"Failed to get model info: {e}, dood!")
+            logger.error(f"Failed to get model info: {e}.")
             # Return empty stats as fallback
             return BayesModelStats(
                 total_spam_messages=0, total_ham_messages=0, total_tokens=0, vocabulary_size=0, chat_id=chat_id_param
@@ -388,12 +390,12 @@ class NaiveBayesFilter:
             success = await self.storage.clearStats(chat_id_param)
             if success:
                 scope = f"chat {chat_id}" if chat_id_param else "global"
-                logger.info(f"Successfully reset {scope} Bayes filter statistics, dood!")
+                logger.info(f"Successfully reset {scope} Bayes filter statistics.")
             else:
-                logger.error("Failed to reset Bayes filter statistics, dood!")
+                logger.error("Failed to reset Bayes filter statistics.")
             return success
         except Exception as e:
-            logger.error(f"Failed to reset statistics: {e}, dood!")
+            logger.error(f"Failed to reset statistics: {e}.")
             return False
 
     async def cleanup_rare_tokens(self, min_count: int = 2, chat_id: Optional[int] = None) -> int:
@@ -411,10 +413,10 @@ class NaiveBayesFilter:
 
         try:
             removed = await self.storage.cleanupRareTokens(min_count, chat_id_param)
-            logger.info(f"Cleaned up {removed} rare tokens (min_count={min_count}), dood!")
+            logger.info(f"Cleaned up {removed} rare tokens (min_count={min_count}).")
             return removed
         except Exception as e:
-            logger.error(f"Failed to cleanup rare tokens: {e}, dood!")
+            logger.error(f"Failed to cleanup rare tokens: {e}.")
             return 0
 
     def validate_config(self) -> List[str]:
