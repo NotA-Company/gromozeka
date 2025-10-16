@@ -1333,17 +1333,13 @@ class BotHandlers:
                 # Check minimum confidence requirement
                 minConfidence = chatSettings[ChatSettingsKey.BAYES_MIN_CONFIDENCE].toFloat()
                 if bayesResult.confidence >= minConfidence:
-                    # Combine with existing spamScore using configurable weight
-                    _spamScore = min(warnTreshold, bayesResult.score)  # TODO: Temporary cap as warn treshold
-
                     logger.debug(
                         f"SPAM Bayes: Rules Score: {spamScore:.2f}, Bayes Score: {bayesResult.score:.2f}, "
                         f"Confidence: {bayesResult.confidence:.3f}"
                     )
 
                     # Use combined score for final decision
-                    spamScore = max(spamScore, _spamScore)  # TODO: Do \/
-                    # spamScore = spamScore + _spamScore
+                    spamScore = spamScore + bayesResult.score
                 else:
                     logger.debug(
                         f"SPAM Bayes: confidence {bayesResult.confidence:.3f} < {minConfidence}, ignoring result"
