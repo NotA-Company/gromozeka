@@ -1267,7 +1267,7 @@ class BotHandlers:
 
         userMessages = userInfo["messages_count"]
         maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
-        if maxCheckMessages != 0 and userMessages > maxCheckMessages:
+        if maxCheckMessages != 0 and userMessages >= maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
             await self.markAsHam(message=message)
             return False
@@ -1320,8 +1320,8 @@ class BotHandlers:
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
         banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
 
-        # Add Bayes filter classification, dood!
-        if chatSettings[ChatSettingsKey.BAYES_ENABLED].toBool():
+        # Add Bayes filter classification, if message wasn't been marked as spam already (for performance purposes)
+        if spamScore < banTreshold and chatSettings[ChatSettingsKey.BAYES_ENABLED].toBool():
             try:
                 bayesResult = await self.bayesFilter.classify(
                     messageText=ensuredMessage.messageText,
