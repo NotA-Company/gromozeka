@@ -94,7 +94,7 @@ class BotHandlers:
             defaultSpamProbability=0.5,
             tokenizerConfig=TokenizerConfig(
                 use_trigrams=True,
-                ),
+            ),
         )
         self.bayesFilter = NaiveBayesFilter(bayes_storage, bayes_config)
         logger.info("Initialized Bayes spam filter, dood!")
