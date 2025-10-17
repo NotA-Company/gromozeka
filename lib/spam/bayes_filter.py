@@ -89,9 +89,9 @@ class NaiveBayesFilter:
         logger.info(f"Initialized NaiveBayesFilter with per_chat_stats={self.config.perChatStats}")
 
     async def classify(
-        self, 
-        messageText: str, 
-        chatId: Optional[int] = None, 
+        self,
+        messageText: str,
+        chatId: Optional[int] = None,
         threshold: Optional[float] = None,
         ignoreTrigrams: bool = False,
     ) -> SpamScore:
