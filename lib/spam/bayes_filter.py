@@ -89,7 +89,11 @@ class NaiveBayesFilter:
         logger.info(f"Initialized NaiveBayesFilter with per_chat_stats={self.config.perChatStats}")
 
     async def classify(
-        self, messageText: str, chatId: Optional[int] = None, threshold: Optional[float] = None
+        self, 
+        messageText: str, 
+        chatId: Optional[int] = None, 
+        threshold: Optional[float] = None,
+        ignoreTrigrams: bool = False,
     ) -> SpamScore:
         """
         Classify a message as spam or ham
@@ -106,7 +110,7 @@ class NaiveBayesFilter:
             threshold = self.config.defaultThreshold
 
         # Tokenize message
-        tokens = self.tokenizer.tokenize(messageText)
+        tokens = self.tokenizer.tokenize(messageText, ignoreTrigrams=ignoreTrigrams)
 
         if not tokens:
             # No tokens, cannot classify

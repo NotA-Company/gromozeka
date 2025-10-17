@@ -163,7 +163,7 @@ class MessageTokenizer:
         self._word_pattern = re.compile(r"\b\w+\b")
         self._whitespace_pattern = re.compile(r"\s+")
 
-    def tokenize(self, text: str) -> List[str]:
+    def tokenize(self, text: str, ignoreTrigrams: bool = False) -> List[str]:
         """
         Convert text into list of tokens
 
@@ -186,7 +186,7 @@ class MessageTokenizer:
         filtered_words = self._filter_words(words)
 
         # Generate n-grams
-        tokens = self._generate_ngrams(filtered_words)
+        tokens = self._generate_ngrams(filtered_words, ignoreTrigrams=ignoreTrigrams)
 
         return tokens
 
@@ -242,7 +242,7 @@ class MessageTokenizer:
 
         return filtered
 
-    def _generate_ngrams(self, words: List[str]) -> List[str]:
+    def _generate_ngrams(self, words: List[str], ignoreTrigrams: bool = False) -> List[str]:
         """Generate n-grams from filtered words"""
         tokens = words.copy()  # Start with unigrams
 
@@ -252,7 +252,7 @@ class MessageTokenizer:
             tokens.extend(bigrams)
 
         # Add trigrams if enabled
-        if self.config.use_trigrams and len(words) > 2:
+        if self.config.use_trigrams and not ignoreTrigrams and len(words) > 2:
             trigrams = [f"{words[i]}_{words[i + 1]}_{words[i + 2]}" for i in range(len(words) - 2)]
             tokens.extend(trigrams)
 
