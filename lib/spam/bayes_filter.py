@@ -115,7 +115,7 @@ class NaiveBayesFilter:
         if not tokens:
             # No tokens, cannot classify
             logger.debug("No tokens found in message, returning neutral score.")
-            return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
+            return SpamScore(score=50.0, isSpam=False, confidence=0.0, tokenScores={})
 
         # Limit tokens for performance
         if len(tokens) > self.config.maxTokensPerMessage:
@@ -131,13 +131,13 @@ class NaiveBayesFilter:
             ham_stats = await self.storage.getClassStats(False, chatIdParam)
         except Exception as e:
             logger.error(f"Failed to get class stats: {e}.")
-            return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
+            return SpamScore(score=50.0, isSpam=False, confidence=0.0, tokenScores={})
 
         # Check if we have training data
         total_messages = spam_stats.message_count + ham_stats.message_count
         if total_messages == 0:
             logger.debug("No training data available, returning neutral score.")
-            return SpamScore(score=50.0, is_spam=False, confidence=0.0, token_scores={})
+            return SpamScore(score=50.0, isSpam=False, confidence=0.0, tokenScores={})
 
         # Calculate prior probabilities
         pSpam = 0.5
@@ -162,7 +162,7 @@ class NaiveBayesFilter:
             logger.error(f"Failed to get vocabulary size: {e}.")
             vocab_size = 1000  # Fallback estimate
 
-        token_scores = {}
+        tokenScores = {}
         known_tokens = 0
 
         # Calculate likelihood for each unique token
@@ -194,29 +194,38 @@ class NaiveBayesFilter:
             logPHam += math.log(pTokenHam) * tokenCount
 
             # Store individual token contribution for debugging
-            token_spam_prob = (pTokenSpam / (pTokenSpam + pTokenHam)) * 100
-            token_scores[token] = token_spam_prob
+            tokenSpamProb = (pTokenSpam / (pTokenSpam + pTokenHam)) * 100
+            tokenScores[token] = tokenSpamProb
 
-            logger.debug(f"Token '{token}' (count: {tokenCount}): spam_prob={token_spam_prob:.1f}%.")
+            # TODO: For debug purposes only
+            maxLogP = max(logPSpam, logPHam)
+            expSpam = math.exp(logPSpam - maxLogP)
+            expHam = math.exp(logPHam - maxLogP)
+
+            # Normalize to get probability
+            spamProbability = expSpam / (expSpam + expHam)
+            spamScore = spamProbability * 100
+
+            logger.debug(f"Token '{token}' (count: {tokenCount}): spam_prob={tokenSpamProb:.1f}%, logPSpam={logPSpam:.3f}, logPHam={logPHam:.3f}, spamScore={spamScore:.1f}%.")
 
         # Convert log probabilities back to probabilities
         # Using log-sum-exp trick for numerical stability
         maxLogP = max(logPSpam, logPHam)
-        exp_spam = math.exp(logPSpam - maxLogP)
-        exp_ham = math.exp(logPHam - maxLogP)
+        expSpam = math.exp(logPSpam - maxLogP)
+        expHam = math.exp(logPHam - maxLogP)
 
         # Normalize to get probability
-        spam_probability = exp_spam / (exp_spam + exp_ham)
-        spam_score = spam_probability * 100
+        spamProbability = expSpam / (expSpam + expHam)
+        spamScore = spamProbability * 100
 
         # Calculate confidence based on number of known tokens and training data
         confidence = self._calculate_confidence(known_tokens, len(uniqueTokens), total_messages)
 
-        is_spam = spam_score >= threshold and confidence >= self.config.minConfidence
+        isSpam = spamScore >= threshold and confidence >= self.config.minConfidence
 
-        logger.debug(f"Classification result: score={spam_score:.2f}%, confidence={confidence:.3f}, is_spam={is_spam}.")
+        logger.debug(f"Classification result: score={spamScore:.2f}%, confidence={confidence:.3f}, is_spam={isSpam}.")
 
-        return SpamScore(score=spam_score, is_spam=is_spam, confidence=confidence, token_scores=token_scores)
+        return SpamScore(score=spamScore, isSpam=isSpam, confidence=confidence, tokenScores=tokenScores)
 
     def _calculate_confidence(self, known_tokens: int, total_tokens: int, training_messages: int) -> float:
         """Calculate confidence in classification based on available data"""

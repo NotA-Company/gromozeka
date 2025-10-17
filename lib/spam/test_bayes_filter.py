@@ -49,7 +49,7 @@ async def test_bayes_filter():
         # Test 1: Classification without training (should return neutral)
         logger.info("Test 1: Classification without training")
         result = await bayes_filter.classify("Buy cheap products now!", chatId=12345)
-        logger.info(f"Score: {result.score:.2f}%, Is spam: {result.is_spam}, Confidence: {result.confidence:.3f}")
+        logger.info(f"Score: {result.score:.2f}%, Is spam: {result.isSpam}, Confidence: {result.confidence:.3f}")
         assert result.score == 50.0, f"Expected neutral score 50.0, got {result.score}"
 
         # Test 2: Learn some spam messages
@@ -98,19 +98,19 @@ async def test_bayes_filter():
         logger.info("Test 5: Classify spam-like message")
         result = await bayes_filter.classify("Buy cheap deals now!", chatId=12345, threshold=50.0)
         logger.info(
-            f"Spam-like message - Score: {result.score:.2f}%, Is spam: {result.is_spam}, "
+            f"Spam-like message - Score: {result.score:.2f}%, Is spam: {result.isSpam}, "
             f"Confidence: {result.confidence:.3f}"
         )
-        logger.info(f"Top tokens: {sorted(result.token_scores.items(), key=lambda x: x[1], reverse=True)[:3]}")
+        logger.info(f"Top tokens: {sorted(result.tokenScores.items(), key=lambda x: x[1], reverse=True)[:3]}")
 
         # Test 6: Classify ham-like message
         logger.info("Test 6: Classify ham-like message")
         result = await bayes_filter.classify("How are you today?", chatId=12345, threshold=50.0)
         logger.info(
-            f"Ham-like message - Score: {result.score:.2f}%, Is spam: {result.is_spam}, "
+            f"Ham-like message - Score: {result.score:.2f}%, Is spam: {result.isSpam}, "
             f"Confidence: {result.confidence:.3f}"
         )
-        logger.info(f"Top tokens: {sorted(result.token_scores.items(), key=lambda x: x[1], reverse=True)[:3]}")
+        logger.info(f"Top tokens: {sorted(result.tokenScores.items(), key=lambda x: x[1], reverse=True)[:3]}")
 
         # Test 7: Test per-chat isolation
         logger.info("Test 7: Per-chat isolation")
