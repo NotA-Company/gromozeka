@@ -35,6 +35,7 @@ from lib.ai.models import (
 from lib.ai.manager import LLMManager
 from lib.spam import NaiveBayesFilter, BayesConfig
 from lib.markdown import markdown_to_markdownv2
+from lib.spam.tokenizer import TokenizerConfig
 import lib.utils as utils
 
 from internal.database.wrapper import DatabaseWrapper
@@ -91,6 +92,9 @@ class BotHandlers:
             defaultThreshold=50.0,  # Default spam threshold
             debugLogging=True,  # Set to True for debugging
             defaultSpamProbability=0.5,
+            tokenizerConfig=TokenizerConfig(
+                use_trigrams=True,
+                ),
         )
         self.bayesFilter = NaiveBayesFilter(bayes_storage, bayes_config)
         logger.info("Initialized Bayes spam filter, dood!")
@@ -1327,8 +1331,16 @@ class BotHandlers:
                     messageText=ensuredMessage.messageText,
                     chatId=ensuredMessage.chat.id,
                     threshold=warnTreshold,  # Use existing threshold
+                    ignoreTrigrams=True,
+                )
+                bayesResultWTrigrams = await self.bayesFilter.classify(
+                    messageText=ensuredMessage.messageText,
+                    chatId=ensuredMessage.chat.id,
+                    threshold=warnTreshold,  # Use existing threshold
+                    ignoreTrigrams=False,
                 )
                 logger.debug(f"SPAM Bayes: Check result: {bayesResult}")
+                logger.debug(f"SPAM Bayes w3grams: Check result: {bayesResultWTrigrams}")
 
                 # Check minimum confidence requirement
                 minConfidence = chatSettings[ChatSettingsKey.BAYES_MIN_CONFIDENCE].toFloat()
