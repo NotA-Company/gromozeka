@@ -52,14 +52,14 @@ class SpamScore:
     """Result of spam classification"""
 
     score: float  # Probability of spam (0-100)
-    is_spam: bool  # True if score > threshold
+    isSpam: bool  # True if score > threshold
     confidence: float  # Confidence in prediction (0-1)
-    token_scores: Dict[str, float]  # Individual token contributions
+    tokenScores: Dict[str, float]  # Individual token contributions
     classification: SpamClassification = SpamClassification.UNKNOWN
 
     def __post_init__(self):
         """Set classification based on is_spam flag"""
-        if self.is_spam:
+        if self.isSpam:
             self.classification = SpamClassification.SPAM
         elif self.score < 50.0:  # If not spam and score is low, it's ham
             self.classification = SpamClassification.HAM
