@@ -4308,6 +4308,7 @@ class BotHandlers:
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
         logger.error(f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}")
+        logger.error(f"UpdateObj is: {update}")
         logger.exception(context.error)
 
     async def handle_bot(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
