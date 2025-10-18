@@ -99,10 +99,11 @@ class WeatherData(TypedDict):
 
     # https://openweathermap.org/api/one-call-3#parameter
 
-    lat: float
-    lon: float
-    timezone: str
-    current: CurrentWeather
+    lat: float  # Latitude
+    lon: float  # Longitude
+    timezone: str # Timezone name
+    timezone_offset: int # Timezone offset in seconds
+    current: CurrentWeather # Current weather data
     daily: List[DailyWeather]  # Up to 8 days
 
 
