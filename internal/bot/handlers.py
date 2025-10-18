@@ -156,6 +156,7 @@ class BotHandlers:
             }
 
         if not self.cache["chats"][chatId].get("settings", None):
+            logger.error(f"getChatSettings({chatId}): {self.cache["chats"][chatId]}")
             raise ValueError
 
         if returnDefault:
