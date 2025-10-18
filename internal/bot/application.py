@@ -102,6 +102,7 @@ class BotApplication:
         self.application.add_handler(CommandHandler("pretrain_bayes", self.handlers.pretrain_bayes_command))
         self.application.add_handler(CommandHandler("list_chats", self.handlers.list_chats_command))
         self.application.add_handler(CommandHandler(["learn_spam", "learn_ham"], self.handlers.learn_spam_ham_command))
+        self.application.add_handler(CommandHandler("get_spam_score", self.handlers.get_spam_score_command))
 
         self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
         self.application.add_handler(CommandHandler("analyze", self.handlers.analyze_command))
@@ -175,6 +176,7 @@ class BotApplication:
             ("/summary", "Summarisation of chat's messages for a day"),
             ("/topic_summary", "Summarisation of topic's messages for a day"),
             ("/list_chats", "List known chats"),
+            ("/get_spam_score", "Check if bot think this message is spam or not"),
         ]
 
         await self.application.bot.set_my_commands(commands=DefaultCommands, scope=telegram.BotCommandScopeDefault())

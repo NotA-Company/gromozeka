@@ -4183,7 +4183,7 @@ class BotHandlers:
         logger.debug(f"Command string: {commandStr}")
         isLearnSpam = commandStr.lower().startswith("/learn_spam")
 
-        repliedText = ensuredMessage.replyText
+        repliedText = ensuredMessage.replyText or ensuredMessage.quoteText
         if not repliedText or len(repliedText) < 3:
             await self._sendMessage(
                 ensuredMessage,
@@ -4241,6 +4241,53 @@ class BotHandlers:
                 f"Сообщение \n```\n{repliedText}\n```\n Запомнено как НЕ СПАМ для чата #`{chatId}`",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
+
+    async def get_spam_score_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /get_spam_score [<chatId>] command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+        
+        logger.debug(f"Message for SPAM Chaeck: {message}")
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+
+        chatType = ensuredMessage.chat.type
+        if chatType != Chat.PRIVATE:
+            logger.error(f"Unsupported chat type for /get_spam_score command: {chatType}")
+            return
+
+        repliedText = ensuredMessage.replyText or ensuredMessage.quoteText
+        if not repliedText or len(repliedText) < 3:
+            await self._sendMessage(
+                ensuredMessage,
+                "Команда должна быть ответом на сообщение достаточной длинны",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        chatId = ensuredMessage.chat.id
+        if context.args:
+            try:
+                chatId = int(context.args[0])
+            except Exception as e:
+                logger.error(f"Failed to parse chatId ({context.args[0]}): {e}")
+
+        spamScore = await self.bayesFilter.classify(repliedText, chatId=chatId)
+        await self._sendMessage(
+            ensuredMessage,
+            f"Сообщение \n```\n{repliedText}\n```\n В чате #`{chatId}` воспринимается как: \n"
+            f"```json\n{spamScore}\n```\n",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Parses the CallbackQuery and updates the message text."""

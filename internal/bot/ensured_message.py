@@ -166,9 +166,11 @@ class EnsuredMessage:
                 ensuredMessage.isReply = True
                 if message.reply_to_message.text:
                     ensuredMessage.replyText = message.reply_to_message.text
-                if message.quote and message.quote.text:
-                    ensuredMessage.isQuote = True
-                    ensuredMessage.quoteText = message.quote.text
+        
+        # It is possible, that quote isn't reply to message in this chat
+        if message.quote and message.quote.text:
+            ensuredMessage.isQuote = True
+            ensuredMessage.quoteText = message.quote.text
 
         # If this is topic message, then set threadId
         isTopicMessage = message.is_topic_message is True if message.is_topic_message is not None else False
