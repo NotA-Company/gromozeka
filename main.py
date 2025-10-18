@@ -34,19 +34,19 @@ class GromozekBot:
         self.config_manager = ConfigManager(config_path, config_dirs)
 
         # Initialize logging with config
-        initLogging(self.config_manager.get_logging_config())
+        initLogging(self.config_manager.getLoggingConfig())
 
         # Initialize database
-        self.database_manager = DatabaseManager(self.config_manager.get_database_config())
+        self.database_manager = DatabaseManager(self.config_manager.getDatabaseConfig())
 
         # Initialize LLM Manager
-        self.llm_manager = LLMManager(self.config_manager.get_models_config())
+        self.llm_manager = LLMManager(self.config_manager.getModelsConfig())
 
         # Initialize bot application
         self.bot_app = BotApplication(
-            config=self.config_manager.get_bot_config(),
-            botToken=self.config_manager.get_bot_token(),
-            database=self.database_manager.get_database(),
+            config=self.config_manager.getBotConfig(),
+            botToken=self.config_manager.getBotToken(),
+            database=self.database_manager.getDatabase(),
             llmManager=self.llm_manager,
         )
 

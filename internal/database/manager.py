@@ -17,22 +17,22 @@ class DatabaseManager:
     def __init__(self, config: Dict[str, Any]):
         """Initialize DatabaseManager with database configuration."""
         self.config = config
-        self.db = self._init_database()
+        self.db = self._initDatabase()
 
-    def _init_database(self) -> DatabaseWrapper:
+    def _initDatabase(self) -> DatabaseWrapper:
         """Initialize database connection."""
-        db_path = self.config.get("path", "bot_data.db")
-        max_connections = self.config.get("max_connections", 5)
+        dbPath = self.config.get("path", "bot_data.db")
+        maxConnections = self.config.get("max_connections", 5)
         timeout = self.config.get("timeout", 30)
 
         try:
-            db = DatabaseWrapper(db_path, max_connections, timeout)
-            logger.info(f"Database initialized: {db_path}")
+            db = DatabaseWrapper(dbPath, maxConnections, timeout)
+            logger.info(f"Database initialized: {dbPath}")
             return db
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
             sys.exit(1)
 
-    def get_database(self) -> DatabaseWrapper:
+    def getDatabase(self) -> DatabaseWrapper:
         """Get the database wrapper instance."""
         return self.db
