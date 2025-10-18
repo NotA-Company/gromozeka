@@ -4193,6 +4193,9 @@ class BotHandlers:
             return
 
         chatId = ensuredMessage.chat.id
+        # If it's quote from another chat, use it as chatId
+        if message.external_reply and message.external_reply.chat:
+            chatId = message.external_reply.chat.id
         if context.args:
             try:
                 chatId = int(context.args[0])
@@ -4275,6 +4278,9 @@ class BotHandlers:
             return
 
         chatId = ensuredMessage.chat.id
+        # If it's quote from another chat, use it as chatId
+        if message.external_reply and message.external_reply.chat:
+            chatId = message.external_reply.chat.id
         if context.args:
             try:
                 chatId = int(context.args[0])
