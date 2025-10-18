@@ -51,6 +51,7 @@ class ChatSettingsKey(StrEnum):
     ALLOW_DRAW = "allow-draw"
     ALLOW_ANALYZE = "allow-analyze"
     ALLOW_SUMMARY = "allow-summary"
+    ALLOW_WEATHER = "allow-weather"
 
     ALLOW_MENTION = "allow-mention"
     ALLOW_REPLY = "allow-reply"
@@ -174,6 +175,11 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.BOOL,
         "short": "Разрешить анализировать (`/analyze`)",
         "long": "Разрешить команду `/analyze` для анализа изображений указанным запросом",
+    },
+    ChatSettingsKey.ALLOW_WEATHER: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Разрешить узнавать погоду (`/weather`)",
+        "long": "Разрешить команду `/weather` для получения погоды в указанном городе",
     },
     ChatSettingsKey.ALLOW_SUMMARY: {
         "type": ChatSettingsType.BOOL,

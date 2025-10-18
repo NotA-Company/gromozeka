@@ -37,16 +37,14 @@ class DictWeatherCache(WeatherCacheInterface):
         """Remove expired entries from both caches"""
         # Clean weather cache
         expired_weather_keys = [
-            key for key, (_, timestamp) in self.weather_cache.items()
-            if self._is_expired(timestamp)
+            key for key, (_, timestamp) in self.weather_cache.items() if self._is_expired(timestamp)
         ]
         for key in expired_weather_keys:
             del self.weather_cache[key]
 
         # Clean geocoding cache
         expired_geocoding_keys = [
-            key for key, (_, timestamp) in self.geocoding_cache.items()
-            if self._is_expired(timestamp)
+            key for key, (_, timestamp) in self.geocoding_cache.items() if self._is_expired(timestamp)
         ]
         for key in expired_geocoding_keys:
             del self.geocoding_cache[key]
@@ -165,5 +163,5 @@ class DictWeatherCache(WeatherCacheInterface):
         return {
             "weather_entries": len(self.weather_cache),
             "geocoding_entries": len(self.geocoding_cache),
-            "total_entries": len(self.weather_cache) + len(self.geocoding_cache)
+            "total_entries": len(self.weather_cache) + len(self.geocoding_cache),
         }

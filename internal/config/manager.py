@@ -152,11 +152,10 @@ class ConfigManager:
             sys.exit(1)
         return token
 
-
     def getOpenWeatherMapConfig(self) -> Dict[str, Any]:
         """
         Get OpenWeatherMap configuration
-        
+
         Returns:
             Dict with OpenWeatherMap settings (api_key, ttls, etc.)
         """

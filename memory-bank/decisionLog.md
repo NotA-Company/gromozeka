@@ -1181,3 +1181,41 @@ This file records architectural and implementation decisions using a list format
 * Now properly sets both `created_at` and `updated_at` on INSERT, and only `updated_at` on UPDATE
 * Maintains all existing functionality while improving code quality and consistency
 * Follows the same pattern used throughout the codebase in methods like `addChatUser()`, `setChatInfo()`, `addChatSummarization()`, etc.
+
+[2025-10-18 21:08:00] - Removed Async Context Manager from OpenWeatherMap Client for Concurrent Requests
+
+## Decision
+
+* Removed `__aenter__` and `__aexit__` methods from [`OpenWeatherMapClient`](lib/openweathermap/client.py:16) class
+* Modified [`_makeRequest()`](lib/openweathermap/client.py:304) method to create new httpx session for each request
+* Updated all documentation and examples to remove async context manager usage
+* Removed context manager test from test suite
+
+## Rationale 
+
+* The original async context manager pattern with persistent session was not optimal for concurrent requests
+* Creating a new session for each request allows proper concurrent usage without session conflicts
+* This approach is more suitable for bot applications where multiple weather requests may happen simultaneously
+* Eliminates the need for users to manage context managers, simplifying the API usage
+* Each request gets its own isolated HTTP session, preventing any potential race conditions
+
+## Implementation Details
+
+* Removed `self.session: Optional[httpx.AsyncClient] = None` from constructor
+* Removed `__aenter__()` and `__aexit__()` async context manager methods
+* Updated `_makeRequest()` method to use `async with httpx.AsyncClient(timeout=self.requestTimeout) as session:`
+* Updated class docstring to reflect that it creates new sessions per request
+* Updated all examples in [`lib/openweathermap/examples.py`](lib/openweathermap/examples.py) to remove `async with` usage
+* Updated module documentation in [`lib/openweathermap/__init__.py`](lib/openweathermap/__init__.py)
+* Removed `test_context_manager()` test from [`lib/openweathermap/test_weather_client.py`](lib/openweathermap/test_weather_client.py)
+* All functionality preserved while improving concurrent request support
+* No breaking changes to the actual API methods - only the initialization pattern changed
+
+## Results
+
+* Client can now be used directly without context manager: `client = OpenWeatherMapClient(...)`
+* Each API request creates its own HTTP session for proper isolation
+* Multiple concurrent requests are now fully supported without conflicts
+* Simplified API usage - no need to manage async context managers
+* All existing functionality maintained with improved concurrency support
+* Ready for production use with proper concurrent request handling, dood!
