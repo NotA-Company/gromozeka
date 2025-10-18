@@ -169,12 +169,15 @@ class ChatSummarizationCacheDict(TypedDict):
 
 class CacheDict(TypedDict):
     """Weather cache entry from database"""
+
     key: str
-    data: str              # JSON-serialized response
+    data: str  # JSON-serialized response
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
+
 class CacheType(StrEnum):
     """Cache type enum"""
+
     WEATHER = "weather"  # Weather cache (coordinates -> weather data)
     GEOCODING = "geocoding"  # Geocoding cache (city name -> coordinates)

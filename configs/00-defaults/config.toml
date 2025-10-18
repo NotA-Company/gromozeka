@@ -28,6 +28,8 @@ allow-draw = true
 allow-analyze = true
 # Allow /summary and /topic_summary commands
 allow-summary = true
+# Allow /wather command
+allow-weather = true
 
 # Allow non-admins to send /spam command
 allow-user-spam-command = false
@@ -121,6 +123,7 @@ rotate = true
 
 
 [openweathermap]
+enabled = false
 # OpenWeatherMap API key from https://openweathermap.org/api
 api-key = "YOUR_OPENWEATHERMAP_API_KEY"
 
