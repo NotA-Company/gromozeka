@@ -1324,7 +1324,9 @@ class BotHandlers:
                             logger.debug(f"SPAM: Found mention ({mentionStr}) in message, adding 60 to spam score")
                             if mentionStr.endswith("bot"):
                                 spamScore = spamScore + 40
-                                logger.debug(f"SPAM: Found mention of bot ({mentionStr}) in message, adding 40 to spam score")
+                                logger.debug(
+                                    f"SPAM: Found mention of bot ({mentionStr}) in message, adding 40 to spam score"
+                                )
 
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
         banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
@@ -4114,6 +4116,62 @@ class BotHandlers:
         else:
             logger.error("Message undefined")
             return
+
+    async def list_chats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /list_chats [all] command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+
+        listAll = context.args and context.args[0].strip().lower() == "all"
+
+        chatType = ensuredMessage.chat.type
+        if chatType != Chat.PRIVATE:
+            logger.error(f"Unsupported chat type for /list_chats command: {chatType}")
+            return
+
+        if listAll:
+            listAll = await self._isAdmin(ensuredMessage.user, None, True)
+
+        knownChats = self.db.getAllGroupChats() if listAll else self.db.getUserChats(ensuredMessage.user.id)
+
+        resp = "Список доступных чатов:\n\n"
+
+        for chat in knownChats:
+            chatTitle: str = f"#{chat['chat_id']}"
+            if chat["title"]:
+                chatTitle = f"{CHAT_ICON} {chat['title']} ({chat["type"]})"
+            elif chat["username"]:
+                chatTitle = f"{PRIVATE_ICON} {chat['username']} ({chat["type"]})"
+            resp += f"* ID: #`{chat['chat_id']}`, Name: `{chatTitle}`\n"
+
+        await self._sendMessage(ensuredMessage, resp, messageCategory=MessageCategory.BOT_COMMAND_REPLY)
+
+    async def learn_spam_ham_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /learn_<spam|ham> [<chatId>] command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Parses the CallbackQuery and updates the message text."""
