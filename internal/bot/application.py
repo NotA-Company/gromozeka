@@ -174,7 +174,6 @@ class BotApplication:
             ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)"),
             ("/summary", "Summarisation of chat's messages for a day"),
             ("/topic_summary", "Summarisation of topic's messages for a day"),
-
             ("/list_chats", "List known chats"),
         ]
 
