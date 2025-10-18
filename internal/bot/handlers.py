@@ -33,14 +33,18 @@ from lib.ai.models import (
     ModelResultStatus,
 )
 from lib.ai.manager import LLMManager
+from lib.openweathermap.client import OpenWeatherMapClient
 from lib.spam import NaiveBayesFilter, BayesConfig
 from lib.markdown import markdown_to_markdownv2
 from lib.spam.tokenizer import TokenizerConfig
 import lib.utils as utils
 
-from internal.database.wrapper import DatabaseWrapper
-from internal.database.bayes_storage import DatabaseBayesStorage
-from internal.database.models import ChatInfoDict, ChatMessageDict, MediaStatus, MessageCategory, SpamReason
+from ..config.manager import ConfigManager
+
+from ..database.wrapper import DatabaseWrapper
+from ..database.bayes_storage import DatabaseBayesStorage
+from ..database.openweathermap_cache import DatabaseWeatherCache
+from ..database.models import ChatInfoDict, ChatMessageDict, MediaStatus, MessageCategory, SpamReason
 
 from .ensured_message import EnsuredMessage
 from .models import (
@@ -65,6 +69,7 @@ PRIVATE_CHAT_CONTEXT_LENGTH = 50
 CHAT_ICON = "👥"
 PRIVATE_ICON = "👤"
 SUMMARIZATION_MAX_BATCH_LENGTH = 256
+HPA_TO_MMHG = 0.75006157584567  # hPA to mmHg coefficent
 
 
 def makeEmptyAsyncTask() -> asyncio.Task:
@@ -75,17 +80,18 @@ def makeEmptyAsyncTask() -> asyncio.Task:
 class BotHandlers:
     """Contains all bot command and message handlers."""
 
-    def __init__(self, config: Dict[str, Any], database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
         """Initialize handlers with database and LLM model."""
-        self.config = config
+        self.configManager = configManager
+        self.config = configManager.getBotConfig()
         self.db = database
         self.llmManager = llmManager
 
         self._isExiting = False
 
-        # Initialize Bayes spam filter, dood!
-        bayes_storage = DatabaseBayesStorage(database)
-        bayes_config = BayesConfig(
+        # Initialize Bayes spam filter
+        bayesStorage = DatabaseBayesStorage(database)
+        bayesConfig = BayesConfig(
             perChatStats=True,  # Use per-chat learning
             alpha=1.0,  # Laplace smoothing
             minTokenCount=2,  # Minimum token occurrences
@@ -96,8 +102,20 @@ class BotHandlers:
                 use_trigrams=True,
             ),
         )
-        self.bayesFilter = NaiveBayesFilter(bayes_storage, bayes_config)
+        self.bayesFilter = NaiveBayesFilter(bayesStorage, bayesConfig)
         logger.info("Initialized Bayes spam filter, dood!")
+
+        openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
+        self.openWeatherMapClient: Optional[OpenWeatherMapClient] = None
+        if openWeatherMapConfig.get("enabled", False):
+            self.openWeatherMapClient = OpenWeatherMapClient(
+                apiKey=openWeatherMapConfig["api-key"],
+                cache=DatabaseWeatherCache(self.db),
+                geocodingTTL=openWeatherMapConfig.get("geocoding-cache-ttl", None),
+                weatherTTL=openWeatherMapConfig.get("weather-cache-ttl", None),
+                requestTimeout=openWeatherMapConfig.get("request-timeout", 10),
+                defaultLanguage=openWeatherMapConfig.get("default-language", "ru"),
+            )
 
         # Init different defaults
         self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
@@ -3519,6 +3537,97 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             addMessagePrefix=imgAddPrefix,
         )
+
+    async def weather_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /weather <city> [<country>] command."""
+        # Get Weather for given city (and country)
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        if not chatSettings[ChatSettingsKey.ALLOW_WEATHER].toBool() and not await self._isAdmin(
+            ensuredMessage.user, None, True
+        ):
+            logger.info(f"Unauthorized /weather command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
+            return
+
+        city = ""
+        countryCode: Optional[str] = None
+
+        if context.args:
+            city = context.args[0]
+            if len(context.args) > 1:
+                countryCode = context.args[1]
+        else:
+            await self._sendMessage(
+                ensuredMessage,
+                messageText="Необходимо указать город для получения погоды.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        if self.openWeatherMapClient is None:
+            await self._sendMessage(
+                ensuredMessage,
+                messageText="Провайдер погоды не настроен.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        try:
+            weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
+            if weatherData is None:
+                await self._sendMessage(
+                    ensuredMessage,
+                    f"Не удалось получить погоду для города {city}",
+                    messageCategory=MessageCategory.BOT_ERROR,
+                )
+                return
+
+            cityName = weatherData["location"]["local_names"].get("ru", weatherData["location"]["name"])
+            country = weatherData["location"]["country"]
+            weatherCurrent = weatherData["weather"]["current"]
+            weatherTime = str(datetime.datetime.fromtimestamp(weatherCurrent["dt"], tz=datetime.timezone.utc))
+            pressureMmHg = int(weatherCurrent["pressure"] * HPA_TO_MMHG)
+            # TODO: add convertation from code to name
+
+            resp = (
+                f"Погода в городе **{cityName}**, {country} на **{weatherTime}**:\n\n"
+                f"{weatherCurrent['weather_description'].capitalize()}, облачность {weatherCurrent['clouds']}%\n"
+                f"**Температура**: _{weatherCurrent['temp']} °C_\n"
+                f"**Ощущается как**: _{weatherCurrent['feels_like']} °C_\n"
+                f"**Давление**: _{pressureMmHg} мм рт. ст._\n"
+                f"**Влажность**: _{weatherCurrent['humidity']}%_\n"
+                f"**УФ-Индекс**: _{weatherCurrent['uvi']}_\n"
+                f"**Ветер**: _{weatherCurrent['wind_deg']}°, {weatherCurrent['wind_speed']} м/с_\n"
+                f"**Восход**: _{datetime.datetime.fromtimestamp(weatherCurrent['sunrise'], tz=datetime.timezone.utc)}_\n"  # noqa: E501
+                f"**Закат**: _{datetime.datetime.fromtimestamp(weatherCurrent['sunset'], tz=datetime.timezone.utc)}_\n"
+            )
+            await self._sendMessage(
+                ensuredMessage,
+                resp,
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            )
+        except Exception as e:
+            logger.error(f"Error while getting weather: {e}")
+            logger.exception(e)
+            await self._sendMessage(
+                ensuredMessage,
+                messageText="Ошибка при получении погоды.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
 
     async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /remind <time> command."""

@@ -10,7 +10,7 @@ import sys
 import os
 
 # Add project root to path  # noqa: E402
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))  # noqa: E402
 
 from lib.openweathermap.dict_cache import DictWeatherCache  # noqa: E402
 from lib.openweathermap.models import GeocodingResult, WeatherData  # noqa: E402
@@ -25,45 +25,47 @@ async def test_dict_cache():
 
     # Test data
     test_geocoding: GeocodingResult = {
-        'name': 'Moscow',
-        'local_names': {'en': 'Moscow', 'ru': 'Москва'},
-        'lat': 55.7558,
-        'lon': 37.6173,
-        'country': 'RU',
-        'state': None
+        "name": "Moscow",
+        "local_names": {"en": "Moscow", "ru": "Москва"},
+        "lat": 55.7558,
+        "lon": 37.6173,
+        "country": "RU",
+        "state": None,
     }
 
     test_weather: WeatherData = {
-        'lat': 55.7558,
-        'lon': 37.6173,
-        'timezone': 'Europe/Moscow',
-        'current': {
-            'dt': 1697654400,
-            'temp': 15.5,
-            'feels_like': 14.2,
-            'pressure': 1013,
-            'humidity': 65,
-            'clouds': 20,
-            'wind_speed': 3.5,
-            'wind_deg': 180,
-            'weather_id': 800,
-            'weather_main': 'Clear',
-            'weather_description': 'clear sky'
+        "lat": 55.7558,
+        "lon": 37.6173,
+        "timezone": "Europe/Moscow",
+        "current": {
+            "dt": 1697654400,
+            "temp": 15.5,
+            "feels_like": 14.2,
+            "pressure": 1013,
+            "humidity": 65,
+            "clouds": 20,
+            "wind_speed": 3.5,
+            "wind_deg": 180,
+            "weather_id": 800,
+            "weather_main": "Clear",
+            "weather_description": "clear sky",
         },
-        'daily': [{
-            'dt': 1697654400,
-            'temp_day': 15.5,
-            'temp_min': 10.0,
-            'temp_max': 18.0,
-            'pressure': 1013,
-            'humidity': 65,
-            'wind_speed': 3.5,
-            'clouds': 20,
-            'weather_id': 800,
-            'weather_main': 'Clear',
-            'weather_description': 'clear sky',
-            'pop': 0.1
-        }]
+        "daily": [
+            {
+                "dt": 1697654400,
+                "temp_day": 15.5,
+                "temp_min": 10.0,
+                "temp_max": 18.0,
+                "pressure": 1013,
+                "humidity": 65,
+                "wind_speed": 3.5,
+                "clouds": 20,
+                "weather_id": 800,
+                "weather_main": "Clear",
+                "weather_description": "clear sky",
+                "pop": 0.1,
+            }
+        ],
     }
 
     # Test geocoding cache
@@ -82,7 +84,7 @@ async def test_dict_cache():
     # Retrieve data
     result = await cache.getGeocoging("Moscow,RU")
     assert result is not None, "Should retrieve stored data"
-    assert result['name'] == 'Moscow', "Retrieved data should match stored data"
+    assert result["name"] == "Moscow", "Retrieved data should match stored data"
     print("✓ Successfully retrieved geocoding data")
 
     # Test weather cache
@@ -101,7 +103,7 @@ async def test_dict_cache():
     # Retrieve weather data
     result = await cache.getWeather("55.7558,37.6173")
     assert result is not None, "Should retrieve stored weather data"
-    assert result['current']['temp'] == 15.5, "Retrieved weather data should match stored data"
+    assert result["current"]["temp"] == 15.5, "Retrieved weather data should match stored data"
     print("✓ Successfully retrieved weather data")
 
     # Test TTL expiration
@@ -133,15 +135,15 @@ async def test_dict_cache():
     print("\n5. Testing cache statistics...")
     stats = cache.get_stats()
     print(f"Cache stats: {stats}")
-    assert stats['geocoding_entries'] >= 0, "Should have geocoding stats"
-    assert stats['weather_entries'] >= 0, "Should have weather stats"
+    assert stats["geocoding_entries"] >= 0, "Should have geocoding stats"
+    assert stats["weather_entries"] >= 0, "Should have weather stats"
     print("✓ Cache statistics work correctly")
 
     # Test cache clear
     print("\n6. Testing cache clear...")
     cache.clear()
     stats = cache.get_stats()
-    assert stats['total_entries'] == 0, "Cache should be empty after clear"
+    assert stats["total_entries"] == 0, "Cache should be empty after clear"
     print("✓ Cache clear works correctly")
 
     print("\n✅ All tests passed! DictWeatherCache implementation is working correctly, dood!")

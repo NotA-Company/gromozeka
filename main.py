@@ -28,31 +28,31 @@ logger = logging.getLogger(__name__)
 class GromozekBot:
     """Main bot orchestrator that coordinates all components."""
 
-    def __init__(self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None):
+    def __init__(self, configPath: str = "config.toml", config_dirs: Optional[List[str]] = None):
         """Initialize bot with all components."""
         # Initialize configuration
-        self.config_manager = ConfigManager(config_path, config_dirs)
+        self.configManager = ConfigManager(configPath, config_dirs)
 
         # Initialize logging with config
-        initLogging(self.config_manager.getLoggingConfig())
+        initLogging(self.configManager.getLoggingConfig())
 
         # Initialize database
-        self.database_manager = DatabaseManager(self.config_manager.getDatabaseConfig())
+        self.database_manager = DatabaseManager(self.configManager.getDatabaseConfig())
 
         # Initialize LLM Manager
-        self.llm_manager = LLMManager(self.config_manager.getModelsConfig())
+        self.llmManager = LLMManager(self.configManager.getModelsConfig())
 
         # Initialize bot application
-        self.bot_app = BotApplication(
-            config=self.config_manager.getBotConfig(),
-            botToken=self.config_manager.getBotToken(),
+        self.botApp = BotApplication(
+            configManager=self.configManager,
+            botToken=self.configManager.getBotToken(),
             database=self.database_manager.getDatabase(),
-            llmManager=self.llm_manager,
+            llmManager=self.llmManager,
         )
 
     def run(self):
         """Start the bot."""
-        self.bot_app.run()
+        self.botApp.run()
 
 
 def parse_arguments():
@@ -150,7 +150,7 @@ def daemonize(pid_file: str):
         os.dup2(dev_null_w.fileno(), sys.stderr.fileno())
 
 
-def pretty_print_config(config_manager: ConfigManager):
+def prettyPrintConfig(config_manager: ConfigManager):
     """Pretty-print the loaded configuration and exit, dood!"""
     print("=== Gromozeka Configuration ===")
     print()
@@ -182,7 +182,7 @@ def main():
         if args.print_config:
             # Initialize only the config manager to load and print config
             config_manager = ConfigManager(config_path=args.config, config_dirs=args.config_dir)
-            pretty_print_config(config_manager)
+            prettyPrintConfig(config_manager)
             sys.exit(0)
 
         # Fork to background if daemon mode requested
@@ -190,7 +190,7 @@ def main():
             daemonize(args.pid_file)
 
         # Initialize bot with custom config path and directories
-        bot = GromozekBot(config_path=args.config, config_dirs=args.config_dir)
+        bot = GromozekBot(configPath=args.config, config_dirs=args.config_dir)
         bot.run()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 import sys
-from typing import Any, Awaitable, Dict, Optional
+from typing import Awaitable, Dict, Optional
 from telegram import Update
 import telegram
 from telegram.ext import (
@@ -19,7 +19,8 @@ from telegram.ext import (
 )
 
 from lib.ai.manager import LLMManager
-from internal.database.wrapper import DatabaseWrapper
+from ..config.manager import ConfigManager
+from ..database.wrapper import DatabaseWrapper
 from .handlers import BotHandlers
 
 logger = logging.getLogger(__name__)
@@ -72,18 +73,18 @@ class BotApplication:
 
     def __init__(
         self,
-        config: Dict[str, Any],
+        configManager: ConfigManager,
         botToken: str,
         database: DatabaseWrapper,
         llmManager: LLMManager,
     ):
         """Initialize bot application with token, database, and LLM model."""
-        self.config = config
+        self.configManager = configManager
         self.botToken = botToken
         self.database = database
         self.llmManager = llmManager
         self.application = None
-        self.handlers = BotHandlers(config, database, llmManager)
+        self.handlers = BotHandlers(configManager, database, llmManager)
         self._schedulerTask: Optional[asyncio.Task] = None
 
     def setupHandlers(self):
@@ -107,6 +108,7 @@ class BotApplication:
         self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
         self.application.add_handler(CommandHandler("analyze", self.handlers.analyze_command))
         self.application.add_handler(CommandHandler("draw", self.handlers.draw_command))
+        self.application.add_handler(CommandHandler("weather", self.handlers.weather_command))
         self.application.add_handler(CommandHandler("remind", self.handlers.remind_command))
 
         self.application.add_handler(CommandHandler("get_my_data", self.handlers.get_my_data_command))
@@ -172,6 +174,7 @@ class BotApplication:
             ("/start", "Start bot interaction"),
             ("/draw", "Generate image by given prompt"),
             ("/analyze", "Analyze media in answered message by given prompt"),
+            ("/weather", "Get weather for given city"),
             ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)"),
             ("/summary", "Summarisation of chat's messages for a day"),
             ("/topic_summary", "Summarisation of topic's messages for a day"),

@@ -5,6 +5,7 @@
 !/configs/00-defaults
 /*.db
 /bak/
+/*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

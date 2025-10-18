@@ -207,7 +207,8 @@ class NaiveBayesFilter:
             spamScore = spamProbability * 100
 
             logger.debug(
-                f"Token '{token}' (count: {tokenCount}): spam_prob={tokenSpamProb:.1f}%, logPSpam={logPSpam:.3f}, logPHam={logPHam:.3f}, spamScore={spamScore:.1f}%."
+                f"Token '{token}' (count: {tokenCount}): spam_prob={tokenSpamProb:.1f}%, "
+                f"logPSpam={logPSpam:.3f}, logPHam={logPHam:.3f}, spamScore={spamScore:.1f}%."
             )
 
         # Convert log probabilities back to probabilities
