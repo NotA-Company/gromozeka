@@ -4248,7 +4248,7 @@ class BotHandlers:
         if not message:
             logger.error("Message undefined")
             return
-        
+
         logger.debug(f"Message for SPAM Chaeck: {message}")
 
         ensuredMessage: Optional[EnsuredMessage] = None

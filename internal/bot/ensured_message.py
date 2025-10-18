@@ -166,7 +166,7 @@ class EnsuredMessage:
                 ensuredMessage.isReply = True
                 if message.reply_to_message.text:
                     ensuredMessage.replyText = message.reply_to_message.text
-        
+
         # It is possible, that quote isn't reply to message in this chat
         if message.quote and message.quote.text:
             ensuredMessage.isQuote = True
