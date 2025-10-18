@@ -245,7 +245,7 @@ class NaiveBayesFilter:
 
         return min(1.0, confidence)
 
-    async def learnSpam(self, message_text: str, chatId: Optional[int] = None) -> bool:
+    async def learnSpam(self, messageText: str, chatId: Optional[int] = None) -> bool:
         """
         Learn from a spam message
 
@@ -256,7 +256,7 @@ class NaiveBayesFilter:
         Returns:
             True if learning succeeded
         """
-        return await self._learn(message_text, isSpam=True, chat_id=chatId)
+        return await self._learn(messageText, isSpam=True, chat_id=chatId)
 
     async def learnHam(self, messageText: str, chatId: Optional[int] = None) -> bool:
         """
@@ -271,7 +271,7 @@ class NaiveBayesFilter:
         """
         return await self._learn(messageText, isSpam=False, chat_id=chatId)
 
-    async def _learn(self, message_text: str, isSpam: bool, chat_id: Optional[int] = None) -> bool:
+    async def _learn(self, messageText: str, isSpam: bool, chat_id: Optional[int] = None) -> bool:
         """
         Internal learning method
 
@@ -284,7 +284,7 @@ class NaiveBayesFilter:
             True if learning succeeded
         """
         # Tokenize message
-        tokens = self.tokenizer.tokenize(message_text)
+        tokens = self.tokenizer.tokenize(messageText)
 
         if not tokens:
             logger.warning("No tokens found in training message, skipping.")

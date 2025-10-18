@@ -1445,7 +1445,7 @@ class BotHandlers:
         # Learn from spam message using Bayes filter, dood!
         if message.text and chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool():
             try:
-                await self.bayesFilter.learnSpam(message_text=message.text, chatId=message.chat_id)
+                await self.bayesFilter.learnSpam(messageText=message.text, chatId=message.chat_id)
                 logger.debug(f"Bayes filter learned spam message: {message.message_id}, dood!")
             except Exception as e:
                 logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
@@ -1539,7 +1539,7 @@ class BotHandlers:
             for spamMsg in spam_messages:
                 if spamMsg["chat_id"] == chatId and spamMsg["text"]:
                     spamUsersIds.add(spamMsg["user_id"])
-                    success = await self.bayesFilter.learnSpam(message_text=spamMsg["text"], chatId=chatId)
+                    success = await self.bayesFilter.learnSpam(messageText=spamMsg["text"], chatId=chatId)
                     if success:
                         stats["spam_learned"] += 1
                     else:
@@ -2858,7 +2858,7 @@ class BotHandlers:
                 break
 
         logger.debug(f"Command string: {commandStr}")
-        isTopicSummary = commandStr.startswith("/topic_summary")
+        isTopicSummary = commandStr.lower().startswith("/topic_summary")
 
         chatType = ensuredMessage.chat.type
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
@@ -3120,7 +3120,7 @@ class BotHandlers:
                 break
 
         logger.debug(f"Command string: {commandStr}")
-        isSet = commandStr.startswith("/set")
+        isSet = commandStr.lower().startswith("/set")
 
         chat = ensuredMessage.chat
 
@@ -4172,6 +4172,74 @@ class BotHandlers:
             return
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+
+        commandStr = ""
+        for entity in message.entities:
+            if entity.type == MessageEntityType.BOT_COMMAND:
+                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
+                break
+
+        logger.debug(f"Command string: {commandStr}")
+        isLearnSpam = commandStr.lower().startswith("/learn_spam")
+
+        repliedText = ensuredMessage.replyText
+        if not repliedText or len(repliedText) < 3:
+            await self._sendMessage(
+                ensuredMessage,
+                "Команда должна быть ответом на сообщение достаточной длинны",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        chatId = ensuredMessage.chat.id
+        if context.args:
+            try:
+                chatId = int(context.args[0])
+            except Exception as e:
+                logger.error(f"Failed to parse chatId ({context.args[0]}): {e}")
+
+        chatObj = Chat(id=chatId, type=Chat.PRIVATE)
+        chatObj.set_bot(context.bot)
+        isAdmin = await self._isAdmin(ensuredMessage.user, chatObj, allowBotOwners=True)
+
+        if not isAdmin:
+            await self._sendMessage(
+                ensuredMessage,
+                "Вы не являетесь администратором в указанном чате",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        if isLearnSpam:
+            await self.bayesFilter.learnSpam(messageText=repliedText, chatId=chatId)
+            self.db.addSpamMessage(
+                chatId=chatId,
+                userId=0,
+                messageId=0,
+                messageText=repliedText,
+                spamReason=SpamReason.ADMIN,
+                score=100,
+            )
+            await self._sendMessage(
+                ensuredMessage,
+                f"Сообщение \n```\n{repliedText}\n```\n Запомнено как СПАМ для чата #`{chatId}`",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            )
+        else:
+            await self.bayesFilter.learnHam(messageText=repliedText, chatId=chatId)
+            self.db.addHamMessage(
+                chatId=chatId,
+                userId=0,
+                messageId=0,
+                messageText=repliedText,
+                spamReason=SpamReason.ADMIN,
+                score=100,
+            )
+            await self._sendMessage(
+                ensuredMessage,
+                f"Сообщение \n```\n{repliedText}\n```\n Запомнено как НЕ СПАМ для чата #`{chatId}`",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            )
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Parses the CallbackQuery and updates the message text."""
