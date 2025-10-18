@@ -118,3 +118,18 @@ console-level = "INFO"
 file = "logs/openai.log"
 file-level = "DEBUG"
 rotate = true
+
+
+[openweathermap]
+# OpenWeatherMap API key from https://openweathermap.org/api
+api-key = "YOUR_OPENWEATHERMAP_API_KEY"
+
+# Cache time-to-live in seconds
+geocoding-cache-ttl = 2592000  # 30 days (coordinates rarely change)
+weather-cache-ttl = 3600       # 60 minutes (weather updates frequently)
+
+# API request timeout in seconds
+request-timeout = 10
+
+# Default language for location names (ru, en, etc.)
+default-language = "ru"
