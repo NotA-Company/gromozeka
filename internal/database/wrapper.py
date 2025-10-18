@@ -23,6 +23,8 @@ from .models import (
     DelayedTaskDict,
     MediaAttachmentDict,
     SpamMessageDict,
+    CacheDict,
+    CacheType,
     MediaStatus,
     MessageCategory,
     SpamReason,
@@ -78,8 +80,8 @@ class DatabaseWrapper:
     that can be easily replaced with other database backends.
     """
 
-    def __init__(self, db_path: str, maxConnections: int = 5, timeout: float = 30.0):
-        self.dbPath = db_path
+    def __init__(self, dbPath: str, maxConnections: int = 5, timeout: float = 30.0):
+        self.dbPath = dbPath
         self.maxConnections = maxConnections
         self.timeout = timeout
         self._local = threading.local()
@@ -416,6 +418,19 @@ class DatabaseWrapper:
             """
             )
 
+            # Cache tables (for OpenWeatherMap for now)
+            for cacheType in CacheType:
+                cursor.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS cache_{cacheType} (
+                        key TEXT PRIMARY KEY,
+                        data TEXT NOT NULL,                -- JSON-serialized data
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+
     ###
     # TypedDict validation and conversion helpers
     ###
@@ -724,6 +739,36 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to validate ChatSummarizationCacheDict: {e}")
             logger.error(f"Row data: {row_dict}")
+            raise
+
+    def _validateDictIsCacheDict(self, rowDict: Dict[str, Any]) -> CacheDict:
+        """
+        Validate and convert a database row dictionary to CacheDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "key": str,
+                "data": str,
+                "created_at": datetime.datetime,
+                "updated_at": datetime.datetime,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in rowDict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if rowDict[field] is not None and not isinstance(rowDict[field], expected_type):
+                    logger.warning(f"Field '{field}' has type {type(rowDict[field])}, expected {expected_type}")
+
+            # Return the validated dictionary cast as CacheDict
+            return rowDict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate CacheDict: {e}")
+            logger.error(f"Row data: {rowDict}")
             raise
 
     ###
@@ -1807,3 +1852,55 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get spam messages: {e}")
             return []
+
+    ###
+    # Cache manipulation functions
+    ###
+
+    def getCacheEntry(self, key: str, cacheType: CacheType, ttl: Optional[int] = None) -> Optional[CacheDict]:
+        """Get weather cache entry by key and type"""
+        try:
+            minimalUpdatedAt = datetime.datetime.now() - datetime.timedelta(seconds=ttl) if ttl else None
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT *
+                    FROM cache_{cacheType}
+                    WHERE key = :cacheKey AND
+                    (:minimalUpdatedAt IS NULL OR updated_at > :minimalUpdatedAt)
+                """,
+                    {
+                        "cacheKey": key,
+                        "minimalUpdatedAt": minimalUpdatedAt,
+                    },
+                )
+
+                row = cursor.fetchone()
+                if row:
+                    row_dict = dict(row)
+                    return self._validateDictIsCacheDict(row_dict)
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get weather cache: {e}")
+            return None
+
+    def setCacheEntry(self, key: str, data: str, cacheType: CacheType) -> bool:
+        """Store weather cache entry"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    f"""
+                    INSERT INTO cache_{cacheType}
+                        (key, data, created_at, updated_at)
+                    VALUES
+                        (:key, :data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(key) DO UPDATE SET
+                        data = :data,
+                        updated_at = CURRENT_TIMESTAMP
+                """,
+                    {"key": key, "data": data},
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to set weather cache: {e}")
+            return False

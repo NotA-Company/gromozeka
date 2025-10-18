@@ -18,9 +18,9 @@ class ConfigManager:
         """Initialize ConfigManager with config file path and optional config directories."""
         self.config_path = config_path
         self.config_dirs = config_dirs or []
-        self.config = self._load_config()
+        self.config = self._loadConfig()
 
-    def _find_toml_files_recursive(self, directory: str) -> List[Path]:
+    def _findTomlFilesRecursive(self, directory: str) -> List[Path]:
         """Recursively find all .toml files in a directory, dood!"""
         toml_files = []
         dir_path = Path(directory)
@@ -44,14 +44,14 @@ class ConfigManager:
 
         return sorted(toml_files)  # Sort for consistent ordering
 
-    def _merge_configs(self, base_config: Dict[str, Any], new_config: Dict[str, Any]) -> Dict[str, Any]:
+    def _mergeConfigs(self, base_config: Dict[str, Any], new_config: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively merge two configuration dictionaries, dood!"""
         merged = base_config.copy()
 
         for key, value in new_config.items():
             if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
                 # Recursively merge nested dictionaries
-                merged[key] = self._merge_configs(merged[key], value)
+                merged[key] = self._mergeConfigs(merged[key], value)
             else:
                 # Override with new value
                 merged[key] = value
@@ -75,7 +75,7 @@ class ConfigManager:
                     or if an unexpected error occurs during configuration loading.
     """
 
-    def _load_config(self) -> Dict[str, Any]:
+    def _loadConfig(self) -> Dict[str, Any]:
         """Load configuration from TOML file and optional config directories."""
         # Start with main config file
         config_file = Path(self.config_path)
@@ -96,7 +96,7 @@ class ConfigManager:
                 logger.info(f"Scanning {len(self.config_dirs)} config directories for .toml files, dood!")
 
                 for config_dir in self.config_dirs:
-                    toml_files = self._find_toml_files_recursive(config_dir)
+                    toml_files = self._findTomlFilesRecursive(config_dir)
                     logger.info(f"Found {len(toml_files)} .toml files in {config_dir}")
 
                     for toml_file in toml_files:
@@ -105,7 +105,7 @@ class ConfigManager:
                                 dir_config = tomli.load(f)
 
                             # Merge this config into the main config
-                            config = self._merge_configs(config, dir_config)
+                            config = self._mergeConfigs(config, dir_config)
                             logger.info(f"Merged config from {toml_file}")
 
                         except Exception as e:
@@ -128,26 +128,36 @@ class ConfigManager:
         """Get configuration value by key."""
         return self.config.get(key, default)
 
-    def get_bot_config(self) -> Dict[str, Any]:
+    def getBotConfig(self) -> Dict[str, Any]:
         """Get bot-specific configuration."""
         return self.get("bot", {})
 
-    def get_database_config(self) -> Dict[str, Any]:
+    def getDatabaseConfig(self) -> Dict[str, Any]:
         """Get database-specific configuration."""
         return self.get("database", {})
 
-    def get_logging_config(self) -> Dict[str, Any]:
+    def getLoggingConfig(self) -> Dict[str, Any]:
         """Get logging-specific configuration."""
         return self.get("logging", {})
 
-    def get_models_config(self) -> Dict[str, Any]:
+    def getModelsConfig(self) -> Dict[str, Any]:
         """Get models configuration for LLM manager, dood!"""
         return self.get("models", {})
 
-    def get_bot_token(self) -> str:
+    def getBotToken(self) -> str:
         """Get bot token from configuration."""
-        token = self.get_bot_config().get("token", "")
+        token = self.getBotConfig().get("token", "")
         if token in ["", "YOUR_BOT_TOKEN_HERE"]:
             logger.error("Please set your bot token in config.toml!")
             sys.exit(1)
         return token
+
+
+    def getOpenWeatherMapConfig(self) -> Dict[str, Any]:
+        """
+        Get OpenWeatherMap configuration
+        
+        Returns:
+            Dict with OpenWeatherMap settings (api_key, ttls, etc.)
+        """
+        return self.get("openweathermap", {})
