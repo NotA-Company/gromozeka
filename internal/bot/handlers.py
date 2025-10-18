@@ -1314,12 +1314,17 @@ class BotHandlers:
                     case MessageEntityType.URL | MessageEntityType.TEXT_LINK:
                         # Any URL looks like a spam
                         spamScore = spamScore + 60
+                        logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
                     case MessageEntityType.MENTION:
                         mentionStr = message.text[entity.offset : entity.offset + entity.length]
                         chatUser = self.db.getChatUserByUsername(chatId=ensuredMessage.chat.id, username=mentionStr)
                         if chatUser is None:
                             # Mentioning user not from chat looks like spam
                             spamScore = spamScore + 60
+                            logger.debug(f"SPAM: Found mention ({mentionStr}) in message, adding 60 to spam score")
+                            if mentionStr.endswith("bot"):
+                                spamScore = spamScore + 40
+                                logger.debug(f"SPAM: Found mention of bot ({mentionStr}) in message, adding 40 to spam score")
 
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
         banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
@@ -1361,6 +1366,8 @@ class BotHandlers:
                 logger.error(f"SPAM Bayes: Failed to run Bayes filter classification: {e}")
                 logger.exception(e)
                 # Continue with original spamScore if Bayes filter fails
+        else:
+            logger.debug("SPAM Bayes: Bayes filter disabled or not needed")
 
         if spamScore > banTreshold:
             logger.info(f"SPAM: spamScore: {spamScore} > {banTreshold} {ensuredMessage.getBaseMessage()}")
