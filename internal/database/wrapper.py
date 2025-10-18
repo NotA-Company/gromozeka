@@ -304,6 +304,25 @@ class DatabaseWrapper:
             """
             )
 
+            # Ham messages for learning
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ham_messages ( -- See SpamMessageDict
+                    chat_id INTEGER NOT NULL,    -- Chat ID
+                    user_id INTEGER NOT NULL,    -- User ID
+                    message_id INTEGER NOT NULL, -- Message ID
+
+                    text TEXT NOT NULL,         -- Message text
+                    reason TEXT NOT NULL,       -- Reason for spam (see SpamReason)
+                    score FLOAT NOT NULL,       -- Spam score (0 - 100)
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (chat_id, user_id, message_id)
+                )
+            """
+            )
+
             # Chat Topics
             cursor.execute(
                 """
@@ -1695,7 +1714,7 @@ class DatabaseWrapper:
             return []
 
     ###
-    # SPAM Processing functions
+    # SPAM/Ham Processing functions
     ###
 
     def addSpamMessage(
@@ -1723,6 +1742,33 @@ class DatabaseWrapper:
                 return True
         except Exception as e:
             logger.error(f"Failed to add spam message: {e}")
+            return False
+
+    def addHamMessage(
+        self, chatId: int, userId: int, messageId: int, messageText: str, spamReason: SpamReason, score: float
+    ) -> bool:
+        """Add ham message to the database."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO ham_messages
+                        (chat_id, user_id, message_id, text, reason, score)
+                    VALUES
+                        (:chatId, :userId, :messageId, :messageText, :spamReason, :score)
+                """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                        "messageId": messageId,
+                        "messageText": messageText,
+                        "spamReason": spamReason.value,
+                        "score": score,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add ham message: {e}")
             return False
 
     def getSpamMessagesByText(self, text: str) -> List[SpamMessageDict]:
