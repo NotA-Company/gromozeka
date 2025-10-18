@@ -12,6 +12,8 @@ import threading
 from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 
+from telegram import Chat
+
 from .models import (
     ChatInfoDict,
     ChatMessageDict,
@@ -1107,6 +1109,27 @@ class DatabaseWrapper:
                 return [self._validateDictIsChatInfoDict(dict(row)) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get user#{userId} chats: {e}")
+            logger.exception(e)
+            return []
+
+    def getAllGroupChats(self) -> List[ChatInfoDict]:
+        """Get chats, user was seen in"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT ci.* FROM chat_info ci
+                    WHERE
+                        type in (:groupChat, :supergroupChat)
+                """,
+                    {
+                        "groupChat": Chat.GROUP,
+                        "supergroupChat": Chat.SUPERGROUP,
+                    },
+                )
+                return [self._validateDictIsChatInfoDict(dict(row)) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get group chats: {e}")
             logger.exception(e)
             return []
 
