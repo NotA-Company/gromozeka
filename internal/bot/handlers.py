@@ -2014,7 +2014,7 @@ class BotHandlers:
                 countryCode = weatherLocation[1].strip()
 
             # TODO: Try to convert city to initial form (Москве -> Москва)
-            # TODO: Try to convert cjuntry to country code (Россия -> RU)
+            # TODO: Try to convert country to country code (Россия -> RU)
 
             weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
             if weatherData is None:
