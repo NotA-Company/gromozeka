@@ -632,6 +632,7 @@ class BotHandlers:
         ensuredMessage: EnsuredMessage,
         context: ContextTypes.DEFAULT_TYPE,
         useTools: bool = False,
+        sendIntermediateMessages: bool = True,
     ) -> ModelRunResult:
         """Call the LLM with the given messages."""
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
@@ -689,11 +690,41 @@ class BotHandlers:
             )
             return utils.jsonDumps({"done": True, "key": key, "data": newData})
 
+        async def getWeatherByCity(city: str, countryCode: Optional[str] = None, **kwargs) -> str:
+            try:
+                if self.openWeatherMapClient is None:
+                    return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
+
+                ret = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
+                if ret is None:
+                    return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
+
+                return utils.jsonDumps({**ret, "done": True})
+            except Exception as e:
+                logger.error(f"Error getting weather: {e}")
+                return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+
+        async def getWeatherByCoords(lat: float, lon: float, **kwargs) -> str:
+            try:
+                if self.openWeatherMapClient is None:
+                    return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
+
+                ret = await self.openWeatherMapClient.getWeather(lat, lon)
+                if ret is None:
+                    return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
+
+                return utils.jsonDumps({**ret, "done": True})
+            except Exception as e:
+                logger.error(f"Error getting weather: {e}")
+                return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+
         tools: Dict[str, LLMAbstractTool] = {}
         functions: Dict[str, Callable] = {
             "get_url_content": getUrlContent,
             "generate_and_send_image": generateAndSendImage,
             "add_user_data": setUserData,
+            "get_weather_by_city": getWeatherByCity,
+            "get_weather_by_coords": getWeatherByCoords,
         }
 
         if useTools:
@@ -780,6 +811,53 @@ class BotHandlers:
                 ],
                 function=functions["add_user_data"],
             )
+            if self.openWeatherMapClient is not None:
+                tools["get_weather_by_city"] = LLMToolFunction(
+                    name="get_weather_by_city",
+                    description=(
+                        "Get weather and forecast for given city. Return JSON of current weather "
+                        "and weather forecast for next following days. "
+                        "Temperature returned in Celsius."
+                    ),
+                    parameters=[
+                        LLMFunctionParameter(
+                            name="city",
+                            description="City to get weather in",
+                            type=LLMParameterType.STRING,
+                            required=True,
+                        ),
+                        LLMFunctionParameter(
+                            name="countryCode",
+                            description="ISO 3166 country code of city",
+                            type=LLMParameterType.STRING,
+                            required=False,
+                        ),
+                    ],
+                    function=functions["get_weather_by_city"],
+                )
+                tools["get_weather_by_coords"] = LLMToolFunction(
+                    name="get_weather_by_coords",
+                    description=(
+                        "Get weather and forecast for given location. Return JSON of current weather "
+                        "and weather forecast for next following days. "
+                        "Temperature returned in Celsius."
+                    ),
+                    parameters=[
+                        LLMFunctionParameter(
+                            name="lat",
+                            description="Latitude of location",
+                            type=LLMParameterType.NUMBER,
+                            required=True,
+                        ),
+                        LLMFunctionParameter(
+                            name="lon",
+                            description="Longitude of location",
+                            type=LLMParameterType.NUMBER,
+                            required=True,
+                        ),
+                    ],
+                    function=functions["get_weather_by_coords"],
+                )
 
         ret: Optional[ModelRunResult] = None
         toolsUsed = False
@@ -789,6 +867,12 @@ class BotHandlers:
             )
             logger.debug(f"LLM returned: {ret} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
             if ret.status == ModelResultStatus.TOOL_CALLS:
+                if ret.resultText and sendIntermediateMessages:
+                    try:
+                        await self._sendMessage(ensuredMessage, ret.resultText, messageCategory=MessageCategory.BOT)
+                    except Exception as e:
+                        logger.error(f"Failed to send intermediate message: {e}")
+
                 toolsUsed = True
                 newMessages = [ret.toModelMessage()]
 
@@ -1996,7 +2080,12 @@ class BotHandlers:
         # End of What There
 
         # Weather
-        weatherRequestList = ["какая погода в городе", "какая погода в", "какая погода", "погода в городе", "погода в"]
+        weatherRequestList = [
+            "какая погода в городе ",
+            "какая погода в ",
+            "погода в городе ",
+            "погода в ",
+        ]
         isWeatherRequest = False
         reqContent = ""
         for weatherReq in weatherRequestList:
