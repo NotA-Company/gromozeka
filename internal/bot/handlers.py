@@ -34,6 +34,7 @@ from lib.ai.models import (
 )
 from lib.ai.manager import LLMManager
 from lib.openweathermap.client import OpenWeatherMapClient
+from lib.openweathermap.models import CombinedWeatherResult
 from lib.spam import NaiveBayesFilter, BayesConfig
 from lib.markdown import markdown_to_markdownv2
 from lib.spam.tokenizer import TokenizerConfig
@@ -1258,6 +1259,29 @@ class BotHandlers:
             )
             time.sleep(1)
 
+    async def _formatWeather(self, weatherData: CombinedWeatherResult) -> str:
+        """Format weather data."""
+        cityName = weatherData["location"]["local_names"].get("ru", weatherData["location"]["name"])
+        country = weatherData["location"]["country"]
+        # TODO: add convertation from code to name
+        weatherCurrent = weatherData["weather"]["current"]
+        weatherTime = str(datetime.datetime.fromtimestamp(weatherCurrent["dt"], tz=datetime.timezone.utc))
+        pressureMmHg = int(weatherCurrent["pressure"] * HPA_TO_MMHG)
+        sunriseTime = datetime.datetime.fromtimestamp(weatherCurrent["sunrise"], tz=datetime.timezone.utc).timetz()
+        sunsetTime = datetime.datetime.fromtimestamp(weatherCurrent["sunset"], tz=datetime.timezone.utc).timetz()
+        return (
+            f"Погода в городе **{cityName}**, {country} на **{weatherTime}**:\n\n"
+            f"{weatherCurrent['weather_description'].capitalize()}, облачность {weatherCurrent['clouds']}%\n"
+            f"**Температура**: _{weatherCurrent['temp']} °C_\n"
+            f"**Ощущается как**: _{weatherCurrent['feels_like']} °C_\n"
+            f"**Давление**: _{pressureMmHg} мм рт. ст._\n"
+            f"**Влажность**: _{weatherCurrent['humidity']}%_\n"
+            f"**УФ-Индекс**: _{weatherCurrent['uvi']}_\n"
+            f"**Ветер**: _{weatherCurrent['wind_deg']}°, {weatherCurrent['wind_speed']} м/с_\n"
+            f"**Восход**: _{sunriseTime}_\n"
+            f"**Закат**: _{sunsetTime}_\n"
+        )
+
     ###
     # SPAM Handling
     ###
@@ -1970,6 +1994,49 @@ class BotHandlers:
                 )
 
         # End of What There
+
+        # Weather
+        weatherRequestList = ["какая погода в городе", "какая погода в", "какая погода", "погода в городе", "погода в"]
+        isWeatherRequest = False
+        reqContent = ""
+        for weatherReq in weatherRequestList:
+            if messageTextLower.startswith(weatherReq):
+                reqContent = messageText[len(weatherReq) :].strip().rstrip(" ?")
+                if reqContent:
+                    isWeatherRequest = True
+                    break
+
+        if isWeatherRequest and self.openWeatherMapClient is not None:
+            weatherLocation = reqContent.split(",")
+            city = weatherLocation[0].strip()
+            countryCode = None
+            if len(weatherLocation) > 1:
+                countryCode = weatherLocation[1].strip()
+
+            # TODO: Try to convert city to initial form (Москве -> Москва)
+            # TODO: Try to convert cjuntry to country code (Россия -> RU)
+
+            weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
+            if weatherData is None:
+                return (
+                    await self._sendMessage(
+                        ensuredMessage,
+                        f"Не удалось получить погоду для города {city}",
+                        messageCategory=MessageCategory.BOT_ERROR,
+                    )
+                    is not None
+                )
+
+            resp = await self._formatWeather(weatherData)
+
+            return (
+                await self._sendMessage(
+                    ensuredMessage,
+                    resp,
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+                is not None
+            )
 
         # Handle LLM Action
         reqMessages = [
@@ -3595,25 +3662,8 @@ class BotHandlers:
                 )
                 return
 
-            cityName = weatherData["location"]["local_names"].get("ru", weatherData["location"]["name"])
-            country = weatherData["location"]["country"]
-            weatherCurrent = weatherData["weather"]["current"]
-            weatherTime = str(datetime.datetime.fromtimestamp(weatherCurrent["dt"], tz=datetime.timezone.utc))
-            pressureMmHg = int(weatherCurrent["pressure"] * HPA_TO_MMHG)
-            # TODO: add convertation from code to name
+            resp = await self._formatWeather(weatherData)
 
-            resp = (
-                f"Погода в городе **{cityName}**, {country} на **{weatherTime}**:\n\n"
-                f"{weatherCurrent['weather_description'].capitalize()}, облачность {weatherCurrent['clouds']}%\n"
-                f"**Температура**: _{weatherCurrent['temp']} °C_\n"
-                f"**Ощущается как**: _{weatherCurrent['feels_like']} °C_\n"
-                f"**Давление**: _{pressureMmHg} мм рт. ст._\n"
-                f"**Влажность**: _{weatherCurrent['humidity']}%_\n"
-                f"**УФ-Индекс**: _{weatherCurrent['uvi']}_\n"
-                f"**Ветер**: _{weatherCurrent['wind_deg']}°, {weatherCurrent['wind_speed']} м/с_\n"
-                f"**Восход**: _{datetime.datetime.fromtimestamp(weatherCurrent['sunrise'], tz=datetime.timezone.utc)}_\n"  # noqa: E501
-                f"**Закат**: _{datetime.datetime.fromtimestamp(weatherCurrent['sunset'], tz=datetime.timezone.utc)}_\n"
-            )
             await self._sendMessage(
                 ensuredMessage,
                 resp,

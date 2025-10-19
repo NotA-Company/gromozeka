@@ -101,9 +101,9 @@ class WeatherData(TypedDict):
 
     lat: float  # Latitude
     lon: float  # Longitude
-    timezone: str # Timezone name
-    timezone_offset: int # Timezone offset in seconds
-    current: CurrentWeather # Current weather data
+    timezone: str  # Timezone name
+    timezone_offset: int  # Timezone offset in seconds
+    current: CurrentWeather  # Current weather data
     daily: List[DailyWeather]  # Up to 8 days
 
 
