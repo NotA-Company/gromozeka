@@ -71,6 +71,7 @@ CHAT_ICON = "👥"
 PRIVATE_ICON = "👤"
 SUMMARIZATION_MAX_BATCH_LENGTH = 256
 HPA_TO_MMHG = 0.75006157584567  # hPA to mmHg coefficent
+GEOCODER_LOCATION_LANGS = ["en", "ru"]
 
 
 def makeEmptyAsyncTask() -> asyncio.Task:
@@ -699,6 +700,11 @@ class BotHandlers:
                 if ret is None:
                     return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
 
+                # Drop useless local_names to decrease context
+                for lang in ret["location"]["local_names"].keys():
+                    if lang not in GEOCODER_LOCATION_LANGS:
+                        ret["location"]["local_names"].pop(lang, None)
+
                 return utils.jsonDumps({**ret, "done": True})
             except Exception as e:
                 logger.error(f"Error getting weather: {e}")
@@ -772,16 +778,9 @@ class BotHandlers:
                     "2. You learned new information about user "
                     "(e.g., real name, birth dare, what he like, etc).\n"
                     "3. You want to remember something relating to user.\n"
-                    "4. There is some new information, you didn't know before.\n"
-                    "5. When you needs to store information related to the user "
+                    "4. When you needs to store information related to the user "
                     "to improve interaction quality (e.g., remembering formatting preferences, "
                     "command usage frequency, communication style).\n"
-                    "6. When you receives confirmation of information from the user "
-                    "(e.g., the user confirms their email address, phone number, or other contact details)."
-                    "7. When you analyzes user behavior and makes conclusions that could be helpful for "
-                    "personalization (e.g., determining user's active hours, preferred discussion topics)."
-                    "8. When user provides information that could be used to improve the service "
-                    "(e.g., feedback, suggestions, feature improvement ideas)."
                     "\n"
                     "Will return new data for given key."
                 ),
@@ -2106,26 +2105,26 @@ class BotHandlers:
             # TODO: Try to convert country to country code (Россия -> RU)
 
             weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
-            if weatherData is None:
+            if weatherData is not None:
                 return (
                     await self._sendMessage(
                         ensuredMessage,
-                        f"Не удалось получить погоду для города {city}",
-                        messageCategory=MessageCategory.BOT_ERROR,
+                        await self._formatWeather(weatherData),
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     )
                     is not None
                 )
 
-            resp = await self._formatWeather(weatherData)
-
-            return (
-                await self._sendMessage(
-                    ensuredMessage,
-                    resp,
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                )
-                is not None
-            )
+            #  else:
+            #     #  Do not return. Let LLM to make better request
+            #     return (
+            #         await self._sendMessage(
+            #             ensuredMessage,
+            #             f"Не удалось получить погоду для города {city}",
+            #             messageCategory=MessageCategory.BOT_ERROR,
+            #         )
+            #         is not None
+            #     )
 
         # Handle LLM Action
         reqMessages = [
