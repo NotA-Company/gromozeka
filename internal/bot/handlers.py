@@ -701,7 +701,7 @@ class BotHandlers:
                     return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
 
                 # Drop useless local_names to decrease context
-                for lang in ret["location"]["local_names"].keys():
+                for lang in list(ret["location"]["local_names"].keys()):
                     if lang not in GEOCODER_LOCATION_LANGS:
                         ret["location"]["local_names"].pop(lang, None)
 
