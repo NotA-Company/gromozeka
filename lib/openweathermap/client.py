@@ -263,7 +263,6 @@ class OpenWeatherMapClient:
             "lon": float(responseData.get("lon", lon)),
             "timezone": responseData.get("timezone", ""),
             "timezone_offset": responseData.get("timezone_offset", 0),
-
             "current": currentWeather,
             "daily": dailyForecasts,
         }
