@@ -621,7 +621,7 @@ class BotHandlers:
         photoCaption: Optional[str] = None,
         sendMessageKWargs: Optional[Dict[str, Any]] = None,
         tryMarkdownV2: bool = True,
-        tryParseInputJSON: bool = False,
+        tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
         sendErrorIfAny: bool = True,
         skipLogs: bool = False,
         mediaPrompt: Optional[str] = None,
@@ -686,11 +686,17 @@ class BotHandlers:
                 # Send text
 
                 # If response is json, parse it
+                if tryParseInputJSON is None:
+                    tryParseInputJSON = re.match(r"^\s*`*\s*{", messageText) is not None
+                    if tryParseInputJSON:
+                        logger.debug(f"JSONPreParser: message '{messageText}' looks like JSON, tryштп parse it")
                 if tryParseInputJSON:
                     try:
-                        jsonReply = json.loads(messageText.strip("`"))
+                        jsonReply = json.loads(messageText.strip("` \n\r"))
                         if "text" in jsonReply:
                             messageText = str(jsonReply["text"]).strip()
+                        elif "message" in jsonReply:
+                            messageText = str(jsonReply["message"]).strip()
                         elif "media_description" in jsonReply:
                             messageText = str(jsonReply["media_description"]).strip()
                         else:
@@ -879,7 +885,7 @@ class BotHandlers:
             except Exception as e:
                 logger.error(f"Error getting weather: {e}")
                 return utils.jsonDumps({"done": False, "errorMessage": str(e)})
-            
+
         async def getCurrentDateTime(**kwargs) -> str:
             now = datetime.datetime.now(datetime.timezone.utc)
             return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
@@ -1018,13 +1024,13 @@ class BotHandlers:
                     ],
                     function=functions["get_weather_by_coords"],
                 )
-            
+
             tools["get_time"] = LLMToolFunction(
-                    name="get_current_datetime",
-                    description="Get current date and time",
-                    parameters=[],
-                    function=functions["get_current_datetime"],
-                )
+                name="get_current_datetime",
+                description="Get current date and time",
+                parameters=[],
+                function=functions["get_current_datetime"],
+            )
 
         ret: Optional[ModelRunResult] = None
         toolsUsed = False
@@ -2801,7 +2807,9 @@ class BotHandlers:
                 CommandCategory.ADMIN,
             ]:
                 if commandCategory in commandInfo.categories:
-                    commands[commandCategory].append("* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage)
+                    commands[commandCategory].append(
+                        "* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage
+                    )
 
         help_text = (
             "🤖 **Gromozeka Bot Help**\n\n"
