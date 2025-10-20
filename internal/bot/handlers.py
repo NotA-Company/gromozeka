@@ -689,7 +689,8 @@ class BotHandlers:
                 if tryParseInputJSON is None:
                     tryParseInputJSON = re.match(r"^\s*`*\s*{", messageText) is not None
                     if tryParseInputJSON:
-                        logger.debug(f"JSONPreParser: message '{messageText}' looks like JSON, tryштп parse it")
+                        logger.debug(f"JSONPreParser: message '{messageText}' looks like JSON, tring parse it")
+
                 if tryParseInputJSON:
                     try:
                         jsonReply = json.loads(messageText.strip("` \n\r"))
