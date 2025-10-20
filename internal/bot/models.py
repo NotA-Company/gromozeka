@@ -3,10 +3,11 @@ Models: Different data models for our bot
 """
 
 import asyncio
-from enum import StrEnum
+from dataclasses import dataclass
+from enum import Enum, StrEnum, auto
 import logging
 
-from typing import Any, Dict, NotRequired, Optional, TypedDict
+from typing import Any, Callable, Dict, NotRequired, Optional, Sequence, Set, TypedDict
 
 from internal.database.models import ChatInfoDict
 
@@ -123,3 +124,22 @@ class HandlersCacheDict(TypedDict):
     #         "activeSummarizationId": Dict[str, Any] = {...},
     #     },
     # },
+
+
+class CommandCategory(Enum):
+    DEFAULT = auto()  # Available everywhere
+    PRIVATE = auto()  # Available in private chats
+    GROUP = auto()  # Available in group chats
+    ADMIN = auto()  # Available in group chats for Admins
+    BOT_OWNER = auto()  # Available for Bot Owners
+    HIDDEN = auto()  # Hide from command list
+
+
+@dataclass
+class CommandHandlerInfo:
+    commands: Sequence[str]
+    shortDescription: str
+    helpMessage: str
+    categories: Set[CommandCategory]
+    # handler: tgTypes.HandlerCallback[tgUpdate.Update, tgTypes.CCT, tgTypes.RT],
+    handler: Callable
