@@ -10,7 +10,7 @@ import re
 
 import random
 import time
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 import uuid
 
 import requests
@@ -49,6 +49,8 @@ from ..database.models import ChatInfoDict, ChatMessageDict, MediaStatus, Messag
 
 from .ensured_message import EnsuredMessage
 from .models import (
+    CommandCategory,
+    CommandHandlerInfo,
     DelayedTask,
     DelayedTaskFunction,
     HandlersCacheDict,
@@ -150,11 +152,165 @@ class BotHandlers:
         self._isExiting = True
         await self._addDelayedTask(time.time(), DelayedTaskFunction.DO_EXIT, kwargs={}, skipDB=True)
 
-    ###
-    # Helpers for getting needed Models or Prompts
-    ###
-    def updateDefaults(self) -> None:
-        pass
+    def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
+        return [
+            CommandHandlerInfo(
+                commands=("start",),
+                shortDescription="Start bot interaction",
+                helpMessage=": Начать работу с ботом.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.start_command,
+            ),
+            CommandHandlerInfo(
+                commands=("help",),
+                shortDescription="Print help",
+                helpMessage=": Показать список доступных команд.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.help_command,
+            ),
+            CommandHandlerInfo(
+                commands=("echo",),
+                shortDescription="<Message> - Echo message back",
+                helpMessage=" `<message>`: Просто ответить переданным сообщением " "(для тестирования живости бота).",
+                categories={CommandCategory.PRIVATE, CommandCategory.HIDDEN},
+                handler=self.echo_command,
+            ),
+            CommandHandlerInfo(
+                commands=("test",),
+                shortDescription="<Test suite> [<args>] - Run some tests",
+                helpMessage=" `<test_name>` `[<test_args>]``: Запустить тест " "(используется для тестирования).",
+                categories={CommandCategory.BOT_OWNER, CommandCategory.HIDDEN},
+                handler=self.test_command,
+            ),
+            CommandHandlerInfo(
+                commands=("pretrain_bayes",),
+                shortDescription="[<chatId>] - initially train bayes filter with up to 1000 last messages",
+                helpMessage=" `[<chatId>]`: Предобучить Баесовский антиспам фильтр на последних 1000 сообщениях.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.pretrain_bayes_command,
+            ),
+            CommandHandlerInfo(
+                commands=("list_chats",),
+                shortDescription="[all] - List chats, where bot seen you",
+                helpMessage=": Вывести список чатов, где бот вас видел.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.list_chats_command,
+            ),
+            CommandHandlerInfo(
+                commands=("learn_spam", "learn_ham"),
+                shortDescription="[<chatId>] - learn answered message (or quote) as spam/ham for given chat",
+                helpMessage=" `[<chatId>]`: Обучить баесовский фильтр на указанным сообщении (или цитате) "
+                "как спам/не-спам.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.learn_spam_ham_command,
+            ),
+            CommandHandlerInfo(
+                commands=("get_spam_score",),
+                shortDescription="[<chatId>] - Analyze answered (or qoted) message for spam and print result",
+                helpMessage=" `[<chatId>]`: Выдать результат проверки указанного сообщения (или цитаты) на спам.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.get_spam_score_command,
+            ),
+            CommandHandlerInfo(
+                commands=("summary", "topic_summary"),
+                shortDescription="[<maxMessages>] [<chatId>] [<topicId>] - Summarise given chat "
+                "(call without arguments to start wizard)",
+                helpMessage=" `[<maxMessages>]` `[<chatId>]` `[<topicId>]`: Сделать суммаризацию чата "
+                "(запускайте без аргументов для запуска мастера).",
+                categories={CommandCategory.PRIVATE},
+                handler=self.summary_command,
+            ),
+            CommandHandlerInfo(
+                commands=("analyze",),
+                shortDescription="<prompt> - Analyse answered media with given prompt",
+                helpMessage=" `<prompt>`: Проанализировать медиа используя указанный промпт "
+                "(на данный момент доступен только анализ картинок и статических стикеров).",
+                categories={CommandCategory.PRIVATE},
+                handler=self.analyze_command,
+            ),
+            CommandHandlerInfo(
+                commands=("draw",),
+                shortDescription="[<prompt>] - Draw image with given prompt "
+                "(use qoute or replied message as prompt if any)",
+                helpMessage=" `[<prompt>]`: Сгенерировать изображение, используя указанный промпт. "
+                "Так же может быть ответом на сообщение или цитированием.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.draw_command,
+            ),
+            CommandHandlerInfo(
+                commands=("weather",),
+                shortDescription="<city> [<countryCode>] - Get weather for given city",
+                helpMessage=" `<city>` `[<countryCode>]`: Показать погоду в указанном городе "
+                "(можно добавить 2х-буквенный код страны для уточнения).",
+                categories={CommandCategory.PRIVATE},
+                handler=self.weather_command,
+            ),
+            CommandHandlerInfo(
+                commands=("remind",),
+                shortDescription="<delay> [<message>] - Remind me after given delay "
+                "with message or replied message/quote",
+                helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через "
+                "указанное время (можно использовать цитирование или ответ на сообщение).",
+                categories={CommandCategory.PRIVATE},
+                handler=self.remind_command,
+            ),
+            CommandHandlerInfo(
+                commands=("get_my_data",),
+                shortDescription="Dump data, bot knows about you in this chat",
+                helpMessage=": Показать запомненную информацию о Вас в текущем чате.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.get_my_data_command,
+            ),
+            CommandHandlerInfo(
+                commands=("delete_my_data",),
+                shortDescription="<key> - Delete user data for given key",
+                helpMessage=" `<key>`: Удалить информацию о Вас по указанному ключу.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.delete_my_data_command,
+            ),
+            CommandHandlerInfo(
+                commands=("clear_my_data",),
+                shortDescription="Clear all user data",
+                helpMessage=": Очистить все сзнания о Вас в этом чате.",
+                categories={CommandCategory.PRIVATE},
+                handler=self.clear_my_data_command,
+            ),
+            CommandHandlerInfo(
+                commands=("spam",),
+                shortDescription="Mark answered message as spam",
+                helpMessage=": Указать боту на сообщение со спамом (должно быть ответом на спам-сообщение).",
+                categories={CommandCategory.ADMIN},
+                handler=self.spam_command,
+            ),
+            CommandHandlerInfo(
+                commands=("models",),
+                shortDescription="Get list of known LLM models",
+                helpMessage=": Вывести список всех известных моделей и их параметров.",
+                categories={CommandCategory.BOT_OWNER},
+                handler=self.models_command,
+            ),
+            CommandHandlerInfo(
+                commands=("settings",),
+                shortDescription="Dump all settings for this chat",
+                helpMessage=": Вывести список настроек для данного чата",
+                categories={CommandCategory.BOT_OWNER},
+                handler=self.chat_settings_command,
+            ),
+            CommandHandlerInfo(
+                commands=("set", "unset"),
+                shortDescription="<key> <value> - Set/Unset given setting for current chat",
+                helpMessage=" `<key>` `<value>`: установить/сбросить настройку чата",
+                categories={CommandCategory.BOT_OWNER},
+                handler=self.set_or_unset_chat_setting_command,
+            ),
+            CommandHandlerInfo(
+                commands=("configure",),
+                shortDescription="Start chat configuration wizard",
+                helpMessage=": Настроить поведение бота в одном из чатов, где вы админ",
+                categories={CommandCategory.PRIVATE},
+                handler=self.configure_command,
+            ),
+        ]
 
     ###
     # Chat settings Managenent
@@ -723,6 +879,10 @@ class BotHandlers:
             except Exception as e:
                 logger.error(f"Error getting weather: {e}")
                 return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+            
+        async def getCurrentDateTime(**kwargs) -> str:
+            now = datetime.datetime.now(datetime.timezone.utc)
+            return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
 
         tools: Dict[str, LLMAbstractTool] = {}
         functions: Dict[str, Callable] = {
@@ -731,6 +891,7 @@ class BotHandlers:
             "add_user_data": setUserData,
             "get_weather_by_city": getWeatherByCity,
             "get_weather_by_coords": getWeatherByCoords,
+            "get_current_datetime": getCurrentDateTime,
         }
 
         if useTools:
@@ -856,6 +1017,13 @@ class BotHandlers:
                         ),
                     ],
                     function=functions["get_weather_by_coords"],
+                )
+            
+            tools["get_time"] = LLMToolFunction(
+                    name="get_current_datetime",
+                    description="Get current date and time",
+                    parameters=[],
+                    function=functions["get_current_datetime"],
                 )
 
         ret: Optional[ModelRunResult] = None
@@ -2620,36 +2788,28 @@ class BotHandlers:
         ensuredMessage = EnsuredMessage.fromMessage(update.message)
         isBotOwner = await self._isAdmin(ensuredMessage.user, allowBotOwners=True)
 
+        commands: Dict[CommandCategory, List[str]] = {}
+        for commandCategory in CommandCategory:
+            commands[commandCategory] = []
+
+        for commandInfo in self.getCommandHandlers():
+            for commandCategory in [
+                CommandCategory.BOT_OWNER,
+                CommandCategory.DEFAULT,
+                CommandCategory.PRIVATE,
+                CommandCategory.GROUP,
+                CommandCategory.ADMIN,
+            ]:
+                if commandCategory in commandInfo.categories:
+                    commands[commandCategory].append("* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage)
+
         help_text = (
             "🤖 **Gromozeka Bot Help**\n\n"
             "**Поддерживаемые команды:**\n"
-            "`/start` - Начать работу с ботом\n"
-            "`/help` - Показать список доступных команд\n"
-            "`/echo` `<message>` - Просто ответить переданным сообщением "
-            "(для тестирования живости бота)\n"
-            "\n"
-            "`/summary` `[<messages_count>=0] [<chunks_count>=0]` - "
-            "Суммаризировать сообщения в чате за сегодня "
-            "(при указании количества сообщений - суммаризировать последние N сообщений)\n"
-            "`/topic_summary` `[<messages_count>=0] [<chunks_count>=0]` - "
-            "Суммаризировать сообщения в топике чата за сегодня "
-            "(при указании количества сообщений - суммаризировать последние N сообщений)\n"
-            "`/analyze` `<prompt>` Проанализировать медиа "
-            "(на данный момент доступен только анализ картинок и статических стикеров), "
-            "используя указанный промпт\n"
-            "`/draw` `[<prompt>]` Сгенерировать изображение, используя указанный промпт. "
-            "Так же может быть ответом на сообщение (или цитированием части сообщения)\n"
-            "`/remind` `<DDdHHhMMmSSs|HH:MM[:SS]>` - напомнить указанный текст через "
-            "указанное время (можно использовать цитирование или ответ на сообщение)\n"
-            "\n"
-            "`/get_my_data` - Показать запомненную информацию о Вас в текущем чате\n"
-            "`/delete_my_data` `<key>` - Удалить информацию о Вас по указанному ключу\n"
-            "`/clear_my_data` - Очистить все сзнания о Вас в этом чате\n"
-            "\n"
-            "`/configure` - Настроить поведение бота в одном из чатов, где вы админ\n"
-            "`/spam` - Указать боту на сообщение со спамом\n"
-            "`/pretrain_bayes` `[<chatId>]` - Произвести преднастройку Байесовского спам "
-            "фильтра для указанного чата по известным спам-сообщениям и сообщениям чата\n"
+            f"{"\n".join(commands[CommandCategory.DEFAULT])}\n\n"
+            f"{"\n".join(commands[CommandCategory.PRIVATE])}\n\n"
+            f"{"\n".join(commands[CommandCategory.GROUP])}\n\n"
+            f"{"\n".join(commands[CommandCategory.ADMIN])}\n\n"
             "\n"
             "**Так же этот бот может:**\n"
             "* Анализировать картинки и стикеры и отвечать на вопросы по ним\n"
@@ -2666,11 +2826,7 @@ class BotHandlers:
             help_text += (
                 "\n\n"
                 "**Команды, доступные только владельцам бота:**\n"
-                "`/test` `<test_name> [<test_args>]` - Запустить тест "
-                "(используется для тестирования)\n"
-                "`/models` - вывести список доступных моделей и их параметров\n"
-                "`/settings` - вывести список настроек чата\n"
-                "`/set`|`/unset` `<key> <value>` - установить/удалить настройку чата\n"
+                f"{"\n".join(commands[CommandCategory.BOT_OWNER])}\n"
             )
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
@@ -3768,7 +3924,7 @@ class BotHandlers:
             return
 
     async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /remind <time> command."""
+        """Handle /remind <time> [<message>] command."""
         message = update.message
         if not message:
             logger.error("Message undefined")

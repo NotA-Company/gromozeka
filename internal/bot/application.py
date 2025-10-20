@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 import sys
-from typing import Awaitable, Dict, Optional
+from typing import Awaitable, Dict, List, Optional
 from telegram import Update
 import telegram
 from telegram.ext import (
@@ -18,6 +18,7 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
+from internal.bot.models import CommandCategory
 from lib.ai.manager import LLMManager
 from ..config.manager import ConfigManager
 from ..database.wrapper import DatabaseWrapper
@@ -96,31 +97,10 @@ class BotApplication:
         # self.handlers.initDelayedScheduler(self.application.bot)
 
         # Command handlers
-        self.application.add_handler(CommandHandler("start", self.handlers.start_command))
-        self.application.add_handler(CommandHandler("help", self.handlers.help_command))
-        self.application.add_handler(CommandHandler("echo", self.handlers.echo_command))
-        self.application.add_handler(CommandHandler("test", self.handlers.test_command))
-        self.application.add_handler(CommandHandler("pretrain_bayes", self.handlers.pretrain_bayes_command))
-        self.application.add_handler(CommandHandler("list_chats", self.handlers.list_chats_command))
-        self.application.add_handler(CommandHandler(["learn_spam", "learn_ham"], self.handlers.learn_spam_ham_command))
-        self.application.add_handler(CommandHandler("get_spam_score", self.handlers.get_spam_score_command))
+        for commandInfo in self.handlers.getCommandHandlers():
+            self.application.add_handler(CommandHandler(commandInfo.commands, commandInfo.handler))
 
-        self.application.add_handler(CommandHandler(["summary", "topic_summary"], self.handlers.summary_command))
-        self.application.add_handler(CommandHandler("analyze", self.handlers.analyze_command))
-        self.application.add_handler(CommandHandler("draw", self.handlers.draw_command))
-        self.application.add_handler(CommandHandler("weather", self.handlers.weather_command))
-        self.application.add_handler(CommandHandler("remind", self.handlers.remind_command))
-
-        self.application.add_handler(CommandHandler("get_my_data", self.handlers.get_my_data_command))
-        self.application.add_handler(CommandHandler("delete_my_data", self.handlers.delete_my_data_command))
-        self.application.add_handler(CommandHandler("clear_my_data", self.handlers.clear_my_data_command))
-
-        self.application.add_handler(CommandHandler("spam", self.handlers.spam_command))
-
-        self.application.add_handler(CommandHandler("models", self.handlers.models_command))
-        self.application.add_handler(CommandHandler("settings", self.handlers.chat_settings_command))
-        self.application.add_handler(CommandHandler(["set", "unset"], self.handlers.set_or_unset_chat_setting_command))
-        self.application.add_handler(CommandHandler("configure", self.handlers.configure_command))
+        # Buttons
         self.application.add_handler(CallbackQueryHandler(self.handlers.handle_button))
 
         # Message handler for regular text messages
@@ -165,24 +145,44 @@ class BotApplication:
         # Configure Commands
         DefaultCommands = []
         ChatCommands = []
-        ChatAdminCommands = [
-            ("/spam", "Mark message as spam"),
-        ]
-        PrivateCommands = [
-            ("/configure", "Start bot configuration"),
-            ("/help", "Print help"),
-            ("/start", "Start bot interaction"),
-            ("/draw", "Generate image by given prompt"),
-            ("/analyze", "Analyze media in answered message by given prompt"),
-            ("/weather", "Get weather for given city"),
-            ("/remind", "Remind after given time (HH:MM[:SS] or DDdHHhMMmSSs)"),
-            ("/summary", "Summarisation of chat's messages for a day"),
-            ("/topic_summary", "Summarisation of topic's messages for a day"),
-            ("/list_chats", "List known chats"),
-            ("/get_spam_score", "Check if bot think this message is spam or not"),
-        ]
+        ChatAdminCommands = []
+        PrivateCommands = []
+
+        for commandInfo in self.handlers.getCommandHandlers():
+            if CommandCategory.HIDDEN in commandInfo.categories:
+                continue
+
+            botCommandList: List[telegram.BotCommand] = []
+            description = commandInfo.shortDescription
+            if len(description) > telegram.BotCommand.MAX_DESCRIPTION:
+                description = description[: telegram.BotCommand.MAX_DESCRIPTION - 3] + "..."
+            for command in commandInfo.commands:
+                botCommandList.append(telegram.BotCommand(command, description))
+
+            if CommandCategory.DEFAULT in commandInfo.categories:
+                DefaultCommands.extend(botCommandList)
+                continue
+            if CommandCategory.PRIVATE in commandInfo.categories:
+                PrivateCommands.extend(botCommandList)
+            if CommandCategory.GROUP in commandInfo.categories:
+                ChatCommands.extend(botCommandList)
+            if CommandCategory.ADMIN in commandInfo.categories:
+                ChatAdminCommands.extend(botCommandList)
+
+        logger.debug(
+            "Commands configured: "
+            f"{len(DefaultCommands)} default, "
+            f"{len(PrivateCommands)} private, "
+            f"{len(ChatCommands)} group, "
+            f"{len(ChatAdminCommands)} admin"
+        )
+        logger.debug(f"DefaultCommands: {DefaultCommands}")
+        logger.debug(f"PrivateCommands: {PrivateCommands}")
+        logger.debug(f"ChatCommands: {ChatCommands}")
+        logger.debug(f"ChatAdminCommands: {ChatAdminCommands}")
 
         await self.application.bot.set_my_commands(commands=DefaultCommands, scope=telegram.BotCommandScopeDefault())
+        await application.bot.set_my_commands(commands=DefaultCommands, scope=telegram.BotCommandScopeDefault())
         await self.application.bot.set_my_commands(
             commands=DefaultCommands + PrivateCommands, scope=telegram.BotCommandScopeAllPrivateChats()
         )
