@@ -381,8 +381,7 @@ class EnsuredMessage:
         quoteText = self.quoteText
         if quoteText is not None and len(quoteText) > 30:
             quoteText = f"{quoteText[:25]}...({len(quoteText)})"
-        return utils.jsonDumps(
-            {
+        ret = {
                 "sender": self.sender,
                 "chat.id": self.chat.id,
                 "messageId": self.messageId,
@@ -399,10 +398,11 @@ class EnsuredMessage:
                 "mediaId": self.mediaId,
                 "mediaContent": self.mediaContent,
                 "userData": "{...}" if self.userData else None,
-            },
-            compact=False,
-            sort_keys=False,
-        )
+            }
+        for key in list(ret.keys()):
+            if ret[key] is None:
+                ret.pop(key, None)
+        return utils.jsonDumps(ret, compact=False, sort_keys=False)
 
     def setSender(self, sender: Union[User, Chat, MessageSender]):
         if isinstance(sender, User):
