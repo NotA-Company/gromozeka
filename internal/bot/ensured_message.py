@@ -401,6 +401,7 @@ class EnsuredMessage:
                 "userData": "{...}" if self.userData else None,
             },
             compact=False,
+            sort_keys=False,
         )
 
     def setSender(self, sender: Union[User, Chat, MessageSender]):
