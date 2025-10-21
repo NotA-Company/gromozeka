@@ -1715,7 +1715,10 @@ class BotHandlers:
         chatSettings = self.getChatSettings(message.chat_id)
         bot = message.get_bot()
 
-        logger.debug(f"Handling spam message: #{message.chat_id}:{message.message_id} '{message.text}' from {message.from_user}. Reason: {reason}")
+        logger.debug(
+            f"Handling spam message: #{message.chat_id}:{message.message_id} '{message.text}'"
+            f" from {message.from_user}. Reason: {reason}"
+        )
 
         chatId = message.chat_id
         userId = message.from_user.id if message.from_user is not None else 0
@@ -1984,7 +1987,8 @@ class BotHandlers:
                 ensuredMessage.setMediaProcessingInfo(media)
 
             case _:
-                logger.error(f"Unsupported message type: {ensuredMessage.messageType}")
+                # For unsupported message types, just log a warning and process caption like text message
+                logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
                 # return
 
         if not self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):

@@ -27,6 +27,8 @@ MEDIA_AWAIT_DELAY = 2.5
 
 
 class MessageSender:
+    __slots__ = ("id", "name", "username")
+
     def __init__(self, id: int, name: str, username: str):
         self.id = id
         self.name = name
@@ -50,34 +52,72 @@ class MessageSender:
 """
 A class to encapsulate and ensure the presence of essential message attributes from a Telegram message.
 
-This class processes a `Message` object, extracting and validating key information such as user, chat, message text,
-reply information, and topic-related data. It raises exceptions for missing critical fields and logs warnings for
-unexpected or missing data. It also provides methods to retrieve the original message and a JSON string representation
-of selected attributes.
+This class processes a `Message` object or database chat message, extracting and validating key information such as
+user, chat, message text, reply information, quote information, topic-related data, and media content. It provides
+methods for LLM formatting, media processing, and conversion to model messages for AI interactions.
 
 Attributes:
     user (User): The user who sent the message.
     chat (Chat): The chat the message belongs to.
+    sender (MessageSender): The sender information (user or chat).
     messageId (int): The unique identifier of the message.
-    date (datetime): The date and time when the message was sent.
+    date (datetime.datetime): The date and time when the message was sent.
     messageText (str): The text of the message, or an empty string if not present.
-    messageType (str): The type of the message, defaults to "text" or "unknown" if text is missing.
+    messageType (MessageType): The type of the message (TEXT, IMAGE, VIDEO, AUDIO, etc.).
+    isReply (bool): Indicates if the message is a reply.
     replyId (Optional[int]): The ID of the message being replied to, if applicable.
     replyText (Optional[str]): The text of the message being replied to, if applicable.
-    isReply (bool): Indicates if the message is a reply.
-    threadId (Optional[int]): The thread ID if the message is in a topic.
+    isQuote (bool): Indicates if the message contains a quote.
+    quoteText (Optional[str]): The quoted text content, if applicable.
     isTopicMessage (bool): Indicates if the message is part of a forum topic.
+    threadId (Optional[int]): The thread ID if the message is in a topic.
+    mediaId (Optional[str]): Unique identifier for media attachments.
+    mediaContent (Optional[str]): Description of media content, if applicable.
+    userData (Optional[Dict[str, Any]]): Additional user data associated with the message.
+
+Class Methods:
+    fromMessage: Creates EnsuredMessage from a Telegram Message object.
+    fromDBChatMessage: Creates EnsuredMessage from a database ChatMessageDict.
 
 Methods:
     getBaseMessage: Returns the original `Message` object.
+    setBaseMessage: Sets the original `Message` object.
+    setUserData: Sets additional user data for the message.
+    setMediaId: Sets the media identifier.
+    setMediaProcessingInfo: Sets media processing information.
+    updateMediaContent: Updates media content from database (async).
+    formatForLLM: Formats the message for LLM consumption in JSON or TEXT format (async).
+    toModelMessage: Converts to ModelMessage for AI model interactions (async).
+    setSender: Sets the sender information from User, Chat, or MessageSender.
     __str__: Returns a JSON string representation of the message's key attributes.
 
 Raises:
-    ValueError: If the message's user or chat information is missing.
+    ValueError: If the message's user or chat information is missing, or if invalid sender type is provided.
 """
 
 
 class EnsuredMessage:
+    __slots__ = (
+        "_message",
+        "user",
+        "chat",
+        "sender",
+        "messageId",
+        "date",
+        "messageText",
+        "messageType",
+        "replyId",
+        "replyText",
+        "isReply",
+        "isQuote",
+        "quoteText",
+        "threadId",
+        "isTopicMessage",
+        "mediaContent",
+        "mediaId",
+        "_mediaProcessingInfo",
+        "userData",
+    )
 
     def __init__(
         self,
@@ -93,6 +133,7 @@ class EnsuredMessage:
 
         self.user: User = user
         self.chat: Chat = chat
+        self.sender: MessageSender = MessageSender.fromUser(user)
 
         self.messageId: int = messageId
         self.date: datetime.datetime = date
@@ -116,8 +157,6 @@ class EnsuredMessage:
 
         self.userData: Optional[Dict[str, Any]] = None
 
-        self.sender: MessageSender = MessageSender.fromUser(user)
-
     @classmethod
     def fromMessage(cls, message: Message) -> "EnsuredMessage":
         """Create EnsuredMessage from Telegram message"""
@@ -129,24 +168,82 @@ class EnsuredMessage:
 
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
+        if message.text:
+            messageText = message.text_markdown_v2
+        elif message.caption:
+            messageText = message.caption_markdown_v2
 
         # If there are photo in message, set proper type + handle caption (if any) as messageText
         if message.photo:
+            if messageType != MessageType.TEXT:
+                logger.warning(
+                    f"EnsuredMessage.fromMessage: messageType is {messageType}, "
+                    f"but message has photo: {message.photo}"
+                )
             messageType = MessageType.IMAGE
-            if message.caption:
-                messageText = message.caption_markdown_v2
 
         if message.sticker:
+            if messageType != MessageType.TEXT:
+                logger.warning(
+                    f"EnsuredMessage.fromMessage: messageType is {messageType}, "
+                    f"but message has sticker: {message.sticker}"
+                )
             messageType = MessageType.STICKER
             messageText = message.sticker.emoji if message.sticker.emoji else ""
+
+        if message.animation:
+            if messageType != MessageType.TEXT:
+                logger.warning(
+                    f"EnsuredMessage.fromMessage: messageType is {messageType}, "
+                    f"but message has animation: {message.animation}"
+                )
+            messageType = MessageType.ANIMATION
+
+        if message.video:
+            if messageType != MessageType.TEXT:
+                logger.warning(
+                    f"EnsuredMessage.fromMessage: messageType is {messageType}, "
+                    f"but message has video: {message.video}"
+                )
+            messageType = MessageType.VIDEO
+
+        if message.video_note:
+            if messageType != MessageType.TEXT:
+                logger.warning(
+                    f"EnsuredMessage.fromMessage: messageType is {messageType}, "
+                    f"but message has video_note: {message.video_note}"
+                )
+            messageType = MessageType.VIDEO_NOTE
+
+        if message.audio:
+            if messageType != MessageType.TEXT:
+                logger.warning(
+                    f"EnsuredMessage.fromMessage: messageType is {messageType}, "
+                    f"but message has audio: {message.audio}"
+                )
+            messageType = MessageType.AUDIO
+
+        if message.voice:
+            if messageType != MessageType.TEXT:
+                logger.warning(
+                    f"EnsuredMessage.fromMessage: messageType is {messageType}, "
+                    f"but message has voice: {message.voice}"
+                )
+            messageType = MessageType.VOICE
+
+        if message.document:
+            if messageType != MessageType.TEXT:
+                logger.warning(
+                    f"EnsuredMessage.fromMessage: messageType is {messageType}, "
+                    f"but message has document: {message.document}"
+                )
+            messageType = MessageType.DOCUMENT
 
         if messageType == MessageType.TEXT:
             if not message.text:
                 # Probably not a text message, just log it for now
                 logger.error(f"Message text undefined: {message}")
                 messageType = MessageType.UNKNOWN
-            else:
-                messageText = message.text_markdown_v2
 
         ensuredMessage = EnsuredMessage(
             user=message.from_user,
@@ -382,23 +479,23 @@ class EnsuredMessage:
         if quoteText is not None and len(quoteText) > 30:
             quoteText = f"{quoteText[:25]}...({len(quoteText)})"
         ret = {
-                "sender": self.sender,
-                "chat.id": self.chat.id,
-                "messageId": self.messageId,
-                "date": self.date.isoformat(),
-                "messageType": self.messageType,
-                "messageText": self.messageText,
-                "isReply": self.isReply,
-                "replyId": self.replyId,
-                "replyText": replyText,
-                "isQuote": self.isQuote,
-                "quoteText": quoteText,
-                "isTopicMessage": self.isTopicMessage,
-                "threadId": self.threadId,
-                "mediaId": self.mediaId,
-                "mediaContent": self.mediaContent,
-                "userData": "{...}" if self.userData else None,
-            }
+            "sender": self.sender,
+            "chat.id": self.chat.id,
+            "messageId": self.messageId,
+            "date": self.date.isoformat(),
+            "messageType": self.messageType,
+            "messageText": self.messageText,
+            "isReply": self.isReply,
+            "replyId": self.replyId,
+            "replyText": replyText,
+            "isQuote": self.isQuote,
+            "quoteText": quoteText,
+            "isTopicMessage": self.isTopicMessage,
+            "threadId": self.threadId,
+            "mediaId": self.mediaId,
+            "mediaContent": self.mediaContent,
+            "userData": "{...}" if self.userData else None,
+        }
         for key in list(ret.keys()):
             if ret[key] is None:
                 ret.pop(key, None)
