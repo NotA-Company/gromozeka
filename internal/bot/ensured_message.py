@@ -134,7 +134,7 @@ class EnsuredMessage:
         if message.photo:
             messageType = MessageType.IMAGE
             if message.caption:
-                messageText = message.caption
+                messageText = message.caption_markdown_v2
 
         if message.sticker:
             messageType = MessageType.STICKER
@@ -146,7 +146,7 @@ class EnsuredMessage:
                 logger.error(f"Message text undefined: {message}")
                 messageType = MessageType.UNKNOWN
             else:
-                messageText = message.text
+                messageText = message.text_markdown_v2
 
         ensuredMessage = EnsuredMessage(
             user=message.from_user,
@@ -165,7 +165,7 @@ class EnsuredMessage:
                 ensuredMessage.replyId = message.reply_to_message.message_id
                 ensuredMessage.isReply = True
                 if message.reply_to_message.text:
-                    ensuredMessage.replyText = message.reply_to_message.text
+                    ensuredMessage.replyText = message.reply_to_message.text_markdown_v2
 
         # It is possible, that quote isn't reply to message in this chat
         if message.quote and message.quote.text:
@@ -375,9 +375,15 @@ class EnsuredMessage:
         )
 
     def __str__(self) -> str:
+        replyText = self.replyText
+        if replyText is not None and len(replyText) > 30:
+            replyText = f"{replyText[:25]}...({len(replyText)})"
+        quoteText = self.quoteText
+        if quoteText is not None and len(quoteText) > 30:
+            quoteText = f"{quoteText[:25]}...({len(quoteText)})"
         return utils.jsonDumps(
             {
-                "user.id": self.user.id,
+                "sender": self.sender,
                 "chat.id": self.chat.id,
                 "messageId": self.messageId,
                 "date": self.date.isoformat(),
@@ -385,9 +391,9 @@ class EnsuredMessage:
                 "messageText": self.messageText,
                 "replyId": self.replyId,
                 "isReply": self.isReply,
-                "replyText": self.replyText,
+                "replyText": replyText,
                 "isQuote": self.isQuote,
-                "quoteText": self.quoteText,
+                "quoteText": quoteText,
                 "threadId": self.threadId,
                 "isTopicMessage": self.isTopicMessage,
                 "mediaId": self.mediaId,
