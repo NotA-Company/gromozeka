@@ -1583,6 +1583,8 @@ class BotHandlers:
 
         spamScore = 0.0
 
+        # TODO: Check user full_name for spam
+
         # Check if for last 10 messages there are more same messages than different ones:
         userMessages = self.db.getChatMessagesByUser(
             chatId=ensuredMessage.chat.id, userId=ensuredMessage.sender.id, limit=10
@@ -1692,10 +1694,10 @@ class BotHandlers:
                 )
             else:
                 logger.error("Wasn't been able to send SPAM notification")
-            await self.markAsSpam(message=ensuredMessage.getBaseMessage(), reason=SpamReason.AUTO, score=spamScore)
+            await self.markAsSpam(message=message, reason=SpamReason.AUTO, score=spamScore)
             return True
         elif spamScore >= warnTreshold:
-            logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage.getBaseMessage()}")
+            logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage}")
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Возможно спам (Вероятность: {spamScore}, порог: {warnTreshold})\n"
@@ -1713,7 +1715,7 @@ class BotHandlers:
         chatSettings = self.getChatSettings(message.chat_id)
         bot = message.get_bot()
 
-        logger.debug(f"handling spam message: {message}. Reason: {reason}")
+        logger.debug(f"Handling spam message: #{message.chat_id}:{message.message_id} '{message.text}' from {message.from_user}. Reason: {reason}")
 
         chatId = message.chat_id
         userId = message.from_user.id if message.from_user is not None else 0
