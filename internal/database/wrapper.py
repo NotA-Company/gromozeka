@@ -817,6 +817,28 @@ class DatabaseWrapper:
             logger.error(f"Failed to get user {userId} in chat {chatId}: {e}")
             return None
 
+    def markUserAsSpammer(self, chatId: int, userId: int) -> bool:
+        """Mark a user as spammer."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE chat_users
+                    SET is_spammer = TRUE
+                    WHERE
+                        chat_id = :chatId
+                        AND user_id = :userId
+                """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to mark user {userId} as spammer in chat {chatId}: {e}")
+            return False
+
     def getChatUserByUsername(self, chatId: int, username: str) -> Optional[ChatUserDict]:
         """Get the user id of a user in a chat."""
         try:

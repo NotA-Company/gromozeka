@@ -1712,85 +1712,91 @@ class BotHandlers:
 
     async def markAsSpam(self, message: Message, reason: SpamReason, score: Optional[float] = None):
         """Delete spam message, ban user and save message to spamDB"""
-        chatSettings = self.getChatSettings(message.chat_id)
+        ensuredMessage = EnsuredMessage.fromMessage(message)
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         bot = message.get_bot()
+        
 
         logger.debug(
-            f"Handling spam message: #{message.chat_id}:{message.message_id} '{message.text}'"
-            f" from {message.from_user}. Reason: {reason}"
+            f"Handling spam message: #{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+            f" '{ensuredMessage.messageText}'"
+            f" from {ensuredMessage.sender}. Reason: {reason}"
         )
 
-        chatId = message.chat_id
-        userId = message.from_user.id if message.from_user is not None else 0
+        chatId = ensuredMessage.chat.id
+        userId = ensuredMessage.sender.id
 
-        if message.from_user is not None:
-            if await self._isAdmin(user=message.from_user, chat=message.chat):
-                # It is admin, do nothing
-                logger.warning(f"Tried to mark Admin {message.from_user} as SPAM")
+        if await self._isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat):
+            # It is admin, do nothing
+            logger.warning(f"Tried to mark Admin {ensuredMessage.sender} as SPAM")
+            await self._sendMessage(
+                ensuredMessage,
+                messageText="Алярм! Попытка представить администратора спаммером",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            )
+            return
+
+        canMarkOldUsers = chatSettings[ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS].toBool()
+        if reason != SpamReason.ADMIN or not canMarkOldUsers:
+            # Check if we are trying to ban old chat member and it is not from Admin
+            userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
+            maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
+            if maxSpamMessages != 0 and userInfo and userInfo["messages_count"] > maxSpamMessages:
+                logger.warning(f"Tried to mark old user {ensuredMessage.sender} as SPAM")
                 await self._sendMessage(
-                    EnsuredMessage.fromMessage(message),
-                    messageText="Алярм! Попытка представить администратора спаммером",
+                    ensuredMessage,
+                    messageText="Алярм! Попытка представить честного пользователя спаммером",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
                 return
 
-            canMarkOldUsers = chatSettings[ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS].toBool()
-            if reason != SpamReason.ADMIN or not canMarkOldUsers:
-                # Check if we are trying to ban old chat member and it is not from Admin
-                userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
-                maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
-                if maxSpamMessages != 0 and userInfo and userInfo["messages_count"] > maxSpamMessages:
-                    logger.warning(f"Tried to mark old user {message.from_user} as SPAM")
-                    await self._sendMessage(
-                        EnsuredMessage.fromMessage(message),
-                        messageText="Алярм! Попытка представить честного пользователя спаммером",
-                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    )
-                    return
-
         # Learn from spam message using Bayes filter, dood!
-        if message.text and chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool():
+        if ensuredMessage.messageText and chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool():
             try:
-                await self.bayesFilter.learnSpam(messageText=message.text, chatId=message.chat_id)
-                logger.debug(f"Bayes filter learned spam message: {message.message_id}, dood!")
+                await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
+                logger.debug(f"Bayes filter learned spam message: {ensuredMessage.messageId}, dood!")
             except Exception as e:
                 logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
 
-        if message.text:
+        if ensuredMessage.messageText:
             self.db.addSpamMessage(
                 chatId=chatId,
                 userId=userId,
-                messageId=message.message_id,
-                messageText=str(message.text),
+                messageId=ensuredMessage.messageId,
+                messageText=str(ensuredMessage.messageText),
                 spamReason=reason,
                 score=score if score is not None else 0,
             )
 
-        await bot.delete_message(chat_id=chatId, message_id=message.message_id)
+        await bot.delete_message(chat_id=chatId, message_id=ensuredMessage.messageId)
         logger.debug("Deleted spam message")
+        if message.sender_chat is not None:
+            await bot.ban_chat_sender_chat(chat_id=chatId, sender_chat_id=message.sender_chat.id)
         if message.from_user is not None:
             await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
-            logger.debug(f"Banned user {message.from_user} in chat {message.chat}")
-            if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
-                userMessages = self.db.getChatMessagesByUser(
-                    chatId=chatId,
-                    userId=userId,
-                    limit=10,  # Do not delete more that 10 messages
-                )
-                logger.debug(f"Trying to delete more user messages: {userMessages}")
-                messageIds: List[int] = []
-                for msg in userMessages:
-                    if msg["message_id"] != message.message_id:
-                        messageIds.append(msg["message_id"])
-
-                try:
-                    if messageIds:
-                        await bot.delete_messages(chat_id=chatId, message_ids=messageIds)
-                except Exception as e:
-                    logger.error("Failed during deleteing spam message:")
-                    logger.exception(e)
         else:
-            logger.debug("message.from_user is None")
+            logger.error(f"message.from_user is None (sender is {ensuredMessage.sender})")
+        
+        self.db.markUserAsSpammer(chatId=chatId, userId=userId)
+        logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.chat}")
+        if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
+            userMessages = self.db.getChatMessagesByUser(
+                chatId=chatId,
+                userId=userId,
+                limit=10,  # Do not delete more that 10 messages
+            )
+            logger.debug(f"Trying to delete more user messages: {userMessages}")
+            messageIds: List[int] = []
+            for msg in userMessages:
+                if msg["message_id"] != ensuredMessage.messageId:
+                    messageIds.append(msg["message_id"])
+
+            try:
+                if messageIds:
+                    await bot.delete_messages(chat_id=chatId, message_ids=messageIds)
+            except Exception as e:
+                logger.error("Failed during deleteing spam message:")
+                logger.exception(e)
 
     async def markAsHam(self, message: Message) -> bool:
         """Mark message as ham (not spam) for Bayes filter learning, dood!"""
