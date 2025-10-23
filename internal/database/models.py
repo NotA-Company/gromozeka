@@ -91,6 +91,7 @@ class ChatUserDict(TypedDict):
     full_name: str
     timezone: Optional[str]
     messages_count: int
+    is_spammer: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
