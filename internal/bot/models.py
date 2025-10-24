@@ -156,6 +156,7 @@ class CommandHandlerInfo:
     # handler: tgTypes.HandlerCallback[tgUpdate.Update, tgTypes.CCT, tgTypes.RT],
     handler: Callable
 
+
 class ButtonDataKey(StrEnum):
     ConfigureAction = "a"
     SummarizationAction = "s"
@@ -164,10 +165,11 @@ class ButtonDataKey(StrEnum):
     TopicId = "t"
     MaxMessages = "m"
     Prompt = "p"
-    
+
     Key = "k"
     Value = "v"
     UserAction = "ua"
+
 
 class ButtonConfigureAction(StrEnum):
     Init = "init"
@@ -180,6 +182,7 @@ class ButtonConfigureAction(StrEnum):
     ResetValue = "s-"
     SetValue = "sv"
 
+
 class ButtonSummarizationAction(StrEnum):
     Summarization = "s"
     TopicSummarization = "t"
@@ -190,4 +193,4 @@ class ButtonSummarizationAction(StrEnum):
 
     @classmethod
     def all(cls) -> Sequence[str]:
-        return [ v.value for v in cls ]
+        return [v.value for v in cls]
