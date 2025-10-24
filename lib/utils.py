@@ -123,16 +123,16 @@ def packDict(
 ) -> str:
     """
     Pack dictionary into string representation.
-    
+
     Args:
         data: Dictionary to pack
         kvSeparator: Separator between key and value (default ":")
         valuesSeparator: Separator between key-value pairs (default ",")
         sortKeys: Whether to sort keys (default True)
-        
+
     Returns:
         String representation of the dictionary
-        
+
     Note:
         Type information is lost during packing. When unpacking, the function
         makes a best guess at the original types. Strings that consist only of
@@ -150,7 +150,7 @@ def packDict(
     for key in keys:
         value = data[key]
         if value is None:
-            value = "" 
+            value = ""
         pairs.append(f"{key}{kvSeparator}{value}")
 
     return valuesSeparator.join(pairs)
@@ -163,15 +163,15 @@ def unpackDict(
 ) -> Dict[str | int, str | int | float | bool | None]:
     """
     Unpack string representation back to dictionary.
-    
+
     Args:
         data: String representation of dictionary
         kvSeparator: Separator between key and value (default ":")
         valuesSeparator: Separator between key-value pairs (default ",")
-        
+
     Returns:
         Dictionary reconstructed from string
-        
+
     Note:
         Type information is lost during packing. This function makes a best guess
         at the original types. Strings that consist only of digits will be converted
