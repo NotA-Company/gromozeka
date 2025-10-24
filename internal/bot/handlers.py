@@ -1552,15 +1552,22 @@ class BotHandlers:
             f"**Закат**: _{sunsetTime}_\n"
         )
 
-    def parseUserMetadata(self, userInfo: ChatUserDict) -> UserMetadataDict:
+    def parseUserMetadata(self, userInfo: Optional[ChatUserDict]) -> UserMetadataDict:
         """Get user metadata."""
+        if userInfo is None:
+            return {}
+
         metadataStr = userInfo["metadata"]
         if metadataStr:
             return json.loads(metadataStr)
         return {}
 
-    def setUserMetadata(self, chatId: int, userId: int, metadata: UserMetadataDict) -> None:
+    def setUserMetadata(self, chatId: int, userId: int, metadata: UserMetadataDict, isUpdate: bool = False) -> None:
         """Set user metadata."""
+        if isUpdate:
+            userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
+            metadata = {**self.parseUserMetadata(userInfo), **metadata}
+
         metadataStr = utils.jsonDumps(metadata)
         self.db.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
 
