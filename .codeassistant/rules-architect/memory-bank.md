@@ -4,7 +4,7 @@ memory_bank_strategy:
       - **CHECK FOR MEMORY BANK:**
       </thinking>
           <thinking>
-        * Memory bank is in memory-bank/ directory.
+        * First, check if the memory-bank/ directory exists.
           </thinking>
           <list_files>
           <path>.</path>
