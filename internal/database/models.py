@@ -46,6 +46,7 @@ class SpamReason(StrEnum):
     AUTO = "auto"
     USER = "user"
     ADMIN = "admin"
+    UNBAN = "unban"
 
 
 class ChatMessageDict(TypedDict):
@@ -92,6 +93,7 @@ class ChatUserDict(TypedDict):
     timezone: Optional[str]
     messages_count: int
     is_spammer: bool
+    metadata: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
