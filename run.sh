@@ -7,6 +7,7 @@ cd `dirname $0`
 [ -z "$ENV" ] && ENV="local"
 [ -z "$COMPRESSOR" ] && COMPRESSOR="xz -9e"
 [ -z "$DO_PIP_UPDATE" ] && DO_PIP_UPDATE="1"
+[ -z "$DO_GIT_PULL" ] && DO_GIT_PULL="0"
 
 mkdir -p logs
 # Compress old logs
@@ -14,6 +15,11 @@ mkdir -p logs
 #    $COMPRESSOR $log
 #done
 #Temporary disable
+
+# Do git pull if needed
+if [ "$DO_GIT_PULL" = "1" ]; then
+    git pull
+fi
 
 # Do PIP Update if needed
 if [ "$DO_PIP_UPDATE" = "1" ]; then
