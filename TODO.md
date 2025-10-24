@@ -7,7 +7,7 @@
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [x] Add support for spam-handling
-- [ ] Add Bayes filtering into spam-detection
+- [x] Add Bayes filtering into spam-detection
 - [x] Add some AI support via YandexCloud
-- [ ] Add Summarization caching support (chatId+prompt+dates)
+- [x] Add Summarization caching support (chatId+prompt+dates)
 - [ ] On /spam change message_category in DB as well (probably for all messages?)
