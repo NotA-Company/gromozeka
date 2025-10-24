@@ -157,6 +157,10 @@ class CommandHandlerInfo:
     handler: Callable
 
 
+class UserMetadataDict(TypedDict):
+    notSpammer: NotRequired[bool]  # True if user defined as not spammer
+
+
 class ButtonDataKey(StrEnum):
     ConfigureAction = "a"
     SummarizationAction = "s"
