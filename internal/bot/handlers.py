@@ -1603,6 +1603,7 @@ class BotHandlers:
         # If user marked as spammer, ban it again
         if userInfo["is_spammer"]:
             logger.info(f"SPAM: User {sender} is marked as spammer, banning it again")
+            logger.info(f"SPAM: {userInfo}")
             spamScore = spamScore + 100
 
         # Check if for last 10 messages there are more same messages than different ones:
