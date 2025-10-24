@@ -62,10 +62,11 @@ def convert_timestamp(val: bytes) -> datetime.datetime:
 
 
 def convert_boolean(val: bytes) -> bool:
+    #logger.debug(f"Converting {val} (int: {int(val)}, {int(val[0])}) to {bool(int(val[0]))}")
     if len(val) == 0:
         return False
     elif len(val) == 1:
-        return bool(int(val[0]))
+        return bool(int(val))
     else:
         raise ValueError(f"Invalid boolean value: {val}")
 
