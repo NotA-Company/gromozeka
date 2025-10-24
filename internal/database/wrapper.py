@@ -62,7 +62,7 @@ def convert_timestamp(val: bytes) -> datetime.datetime:
 
 
 def convert_boolean(val: bytes) -> bool:
-    #logger.debug(f"Converting {val} (int: {int(val)}, {int(val[0])}) to {bool(int(val[0]))}")
+    # logger.debug(f"Converting {val} (int: {int(val)}, {int(val[0])}) to {bool(int(val[0]))}")
     if len(val) == 0:
         return False
     elif len(val) == 1:
@@ -818,14 +818,14 @@ class DatabaseWrapper:
             logger.error(f"Failed to get user {userId} in chat {chatId}: {e}")
             return None
 
-    def markUserAsSpammer(self, chatId: int, userId: int) -> bool:
+    def markUserIsSpammer(self, chatId: int, userId: int, isSpammer: bool) -> bool:
         """Mark a user as spammer."""
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
                     """
                     UPDATE chat_users
-                    SET is_spammer = TRUE
+                    SET is_spammer = :isSpammer
                     WHERE
                         chat_id = :chatId
                         AND user_id = :userId
@@ -833,6 +833,7 @@ class DatabaseWrapper:
                     {
                         "chatId": chatId,
                         "userId": userId,
+                        "isSpammer": isSpammer,
                     },
                 )
                 return True
@@ -1590,6 +1591,27 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get spam messages: {e}")
             return []
+
+    def deleteSpamMessagesByUserId(self, chatId: int, userId: int) -> bool:
+        """Delete spam messages by user id."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM spam_messages
+                    WHERE
+                        chat_id = :chatId AND
+                        user_id = :userId
+                """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete spam messages: {e}")
+            return False
 
     ###
     # Cache manipulation functions
