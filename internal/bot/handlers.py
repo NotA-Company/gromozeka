@@ -45,7 +45,7 @@ from ..config.manager import ConfigManager
 from ..database.wrapper import DatabaseWrapper
 from ..database.bayes_storage import DatabaseBayesStorage
 from ..database.openweathermap_cache import DatabaseWeatherCache
-from ..database.models import ChatInfoDict, ChatMessageDict, MediaStatus, MessageCategory, SpamReason
+from ..database.models import ChatInfoDict, ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
 
 from .ensured_message import EnsuredMessage
 from .models import (
@@ -1553,7 +1553,10 @@ class BotHandlers:
             # It's a automatic forward from linked Channel. Its not spam.
             return False
 
-        if ensuredMessage.sender.id == ensuredMessage.chat.id:
+        sender = ensuredMessage.sender
+        chatId = ensuredMessage.chat.id
+
+        if sender.id == chatId:
             # If sender ID == chat ID, then it is anonymous admin, so it isn't spam
             return False
 
@@ -1561,20 +1564,29 @@ class BotHandlers:
             # TODO: Message without text, think about checking for spam
             return False
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(chatId)
 
-        userInfo = self.db.getChatUser(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id)
+        userInfo: Optional[ChatUserDict] = self.db.getChatUser(chatId=chatId, userId=sender.id)
         if not userInfo:
             logger.debug(f"userInfo for {ensuredMessage} is null, assume it's first user message")
             userInfo = {
+                "chat_id": chatId,
+                "user_id": sender.id,
+                "username": sender.username,
+                "full_name": sender.name,
                 "messages_count": 1,
+                "is_spammer": False,
+                "created_at": datetime.datetime.now(),
+                "updated_at": datetime.datetime.now(),
+                "timezone": "",
             }
 
         userMessages = userInfo["messages_count"]
         maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
         if maxCheckMessages != 0 and userMessages >= maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
-            await self.markAsHam(message=message)
+            if not userInfo["is_spammer"]:
+                await self.markAsHam(message=message)
             return False
 
         # TODO: Check for admins?
@@ -1585,9 +1597,14 @@ class BotHandlers:
 
         # TODO: Check user full_name for spam
 
+        # If user marked as spammer, ban it again
+        if userInfo["is_spammer"]:
+            logger.info(f"SPAM: User {sender} is marked as spammer, banning it again")
+            spamScore = spamScore + 100
+
         # Check if for last 10 messages there are more same messages than different ones:
         userMessages = self.db.getChatMessagesByUser(
-            chatId=ensuredMessage.chat.id, userId=ensuredMessage.sender.id, limit=10
+            chatId=chatId, userId=sender.id, limit=10
         )
         spamMessagesCount = 0
         nonSpamMessagesCount = 0
@@ -1611,15 +1628,29 @@ class BotHandlers:
             logger.info(f"SPAM: Found {len(sameSpamMessages)} spam messages, so deciding, that it is SPAM")
             spamScore = max(spamScore, 100)
 
-        if message.text and message.entities:
-            for entity in message.entities:
+        messageText = ensuredMessage.messageText
+        entities = message.entities
+        if message.text:
+            messageText = message.text
+            entities = message.entities
+        elif message.caption:
+            messageText = message.caption
+            entities = message.caption_entities
+        else:
+            logger.error(
+                f"SPAM: {chatId}#{ensuredMessage.messageId}: "
+                "text and caption are empty while messageText isn't/"
+            )
+
+        if messageText and entities:
+            for entity in entities:
                 match entity.type:
                     case MessageEntityType.URL | MessageEntityType.TEXT_LINK:
                         # Any URL looks like a spam
                         spamScore = spamScore + 60
                         logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
                     case MessageEntityType.MENTION:
-                        mentionStr = message.text[entity.offset : entity.offset + entity.length]
+                        mentionStr = messageText[entity.offset : entity.offset + entity.length]
                         chatUser = self.db.getChatUserByUsername(chatId=ensuredMessage.chat.id, username=mentionStr)
                         if chatUser is None:
                             # Mentioning user not from chat looks like spam
@@ -1628,7 +1659,7 @@ class BotHandlers:
                             if mentionStr.endswith("bot"):
                                 spamScore = spamScore + 40
                                 logger.debug(
-                                    f"SPAM: Found mention of bot ({mentionStr}) in message, adding 40 to spam score"
+                                    f"SPAM: Found mention of bot ({mentionStr}) in message, adding 40 more to spam score"
                                 )
 
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
@@ -1639,13 +1670,13 @@ class BotHandlers:
             try:
                 bayesResult = await self.bayesFilter.classify(
                     messageText=ensuredMessage.messageText,
-                    chatId=ensuredMessage.chat.id,
+                    chatId=chatId,
                     threshold=warnTreshold,  # Use existing threshold
                     ignoreTrigrams=True,
                 )
                 bayesResultWTrigrams = await self.bayesFilter.classify(
                     messageText=ensuredMessage.messageText,
-                    chatId=ensuredMessage.chat.id,
+                    chatId=chatId,
                     threshold=warnTreshold,  # Use existing threshold
                     ignoreTrigrams=False,
                 )
@@ -1672,14 +1703,14 @@ class BotHandlers:
                 logger.exception(e)
                 # Continue with original spamScore if Bayes filter fails
         else:
-            logger.debug("SPAM Bayes: Bayes filter disabled or not needed")
+            logger.debug(f"SPAM Bayes: Bayes filter disabled or not needed (spamScore: {spamScore})")
 
         if spamScore > banTreshold:
             logger.info(f"SPAM: spamScore: {spamScore} > {banTreshold} {ensuredMessage.getBaseMessage()}")
-            userName = ensuredMessage.user.full_name or ensuredMessage.user.username
+            userName = sender.name or sender.username
             banMessage = await self._sendMessage(
                 ensuredMessage,
-                messageText=f"Пользователь [{userName}](tg://user?id={ensuredMessage.user.id})"
+                messageText=f"Пользователь [{userName}](tg://user?id={sender.id})"
                 " заблокирован за спам.\n"
                 f"(Вероятность: {spamScore}, порог: {banTreshold})\n"
                 "(Данное сообщение будет удалено в течение минуты)",
@@ -1715,7 +1746,6 @@ class BotHandlers:
         ensuredMessage = EnsuredMessage.fromMessage(message)
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         bot = message.get_bot()
-        
 
         logger.debug(
             f"Handling spam message: #{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
@@ -1776,7 +1806,7 @@ class BotHandlers:
             await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
         else:
             logger.error(f"message.from_user is None (sender is {ensuredMessage.sender})")
-        
+
         self.db.markUserAsSpammer(chatId=chatId, userId=userId)
         logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.chat}")
         if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
