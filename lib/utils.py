@@ -5,7 +5,7 @@ Common utilities for Gromozeka bot.
 import datetime
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -113,3 +113,107 @@ def jsonDumps(data: Any, compact: Optional[bool] = None, **kwargs) -> str:
         dumpKwargs["separators"] = (",", ":")
     dumpKwargs.update(kwargs)
     return json.dumps(data, **dumpKwargs)
+
+
+def packDict(
+    data: Dict[str | int, str | int | float | bool | None],
+    kvSeparator: str = ":",
+    valuesSeparator: str = ",",
+    sortKeys: bool = True,
+) -> str:
+    """
+    Pack dictionary into string representation.
+    
+    Args:
+        data: Dictionary to pack
+        kvSeparator: Separator between key and value (default ":")
+        valuesSeparator: Separator between key-value pairs (default ",")
+        sortKeys: Whether to sort keys (default True)
+        
+    Returns:
+        String representation of the dictionary
+        
+    Note:
+        Type information is lost during packing. When unpacking, the function
+        makes a best guess at the original types. Strings that consist only of
+        digits will be converted to integers, strings with decimal points will
+        be converted to floats, and "true"/"false" (case insensitive) will be
+        converted to booleans.
+    """
+    if not data:
+        return ""
+
+    pairs = []
+    keys = data.keys()
+    if sortKeys:
+        keys = sorted(keys)
+    for key in keys:
+        value = data[key]
+        if value is None:
+            value = "" 
+        pairs.append(f"{key}{kvSeparator}{value}")
+
+    return valuesSeparator.join(pairs)
+
+
+def unpackDict(
+    data: str,
+    kvSeparator: str = ":",
+    valuesSeparator: str = ",",
+) -> Dict[str | int, str | int | float | bool | None]:
+    """
+    Unpack string representation back to dictionary.
+    
+    Args:
+        data: String representation of dictionary
+        kvSeparator: Separator between key and value (default ":")
+        valuesSeparator: Separator between key-value pairs (default ",")
+        
+    Returns:
+        Dictionary reconstructed from string
+        
+    Note:
+        Type information is lost during packing. This function makes a best guess
+        at the original types. Strings that consist only of digits will be converted
+        to integers, strings with decimal points will be converted to floats, and
+        "true"/"false" (case insensitive) will be converted to booleans.
+    """
+    if not data:
+        return {}
+
+    result = {}
+    pairs = data.split(valuesSeparator)
+
+    for pair in pairs:
+        if kvSeparator in pair:
+            key, value = pair.split(kvSeparator, 1)
+
+            # Try to convert key to int if possible
+            if key.isdigit():
+                key = int(key)
+
+            # Try to convert value to appropriate type
+            # Only convert to boolean if it's exactly "true" or "false" (case insensitive)
+            if value == "":
+                value = None
+            elif value.lower() == "true":
+                value = True
+            elif value.lower() == "false":
+                value = False
+            # Only convert to float if it contains a decimal point
+            elif "." in value and value.replace(".", "").isdigit():
+                value = float(value)
+            # Only convert to int if it's all digits and not a float
+            # If it has leading zero, then do not convert to int
+            elif all(
+                [
+                    value.isdigit() or (value[0] == "-" and value[1:].isdigit()),
+                    value[0] != "0" or len(value) == 1,
+                ]
+            ):
+                value = int(value)
+            # Otherwise keep as string
+
+            result[key] = value
+
+    return result
