@@ -1606,9 +1606,7 @@ class BotHandlers:
             spamScore = spamScore + 100
 
         # Check if for last 10 messages there are more same messages than different ones:
-        userMessages = self.db.getChatMessagesByUser(
-            chatId=chatId, userId=sender.id, limit=10
-        )
+        userMessages = self.db.getChatMessagesByUser(chatId=chatId, userId=sender.id, limit=10)
         spamMessagesCount = 0
         nonSpamMessagesCount = 0
         for msg in userMessages:
@@ -1641,8 +1639,7 @@ class BotHandlers:
             entities = message.caption_entities
         else:
             logger.error(
-                f"SPAM: {chatId}#{ensuredMessage.messageId}: "
-                "text and caption are empty while messageText isn't/"
+                f"SPAM: {chatId}#{ensuredMessage.messageId}: " "text and caption are empty while messageText isn't/"
             )
 
         if messageText and entities:
@@ -1662,7 +1659,8 @@ class BotHandlers:
                             if mentionStr.endswith("bot"):
                                 spamScore = spamScore + 40
                                 logger.debug(
-                                    f"SPAM: Found mention of bot ({mentionStr}) in message, adding 40 more to spam score"
+                                    f"SPAM: Found mention of bot ({mentionStr}) in message, "
+                                    "adding 40 more to spam score"
                                 )
 
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
@@ -2913,7 +2911,7 @@ class BotHandlers:
                 messageCategory=MessageCategory.BOT_ERROR,
             )
 
-    async def _handle_summarization(self, data: Dict[str|int, Any], message: Message, user: User):
+    async def _handle_summarization(self, data: Dict[str | int, Any], message: Message, user: User):
         """Process summarization buttons."""
 
         # Used keys:
@@ -2929,7 +2927,10 @@ class BotHandlers:
             self.cache["users"][userId] = {}
         self.cache["users"][userId].pop("activeSummarizationId", None)
 
-        exitButton = InlineKeyboardButton("Отмена", callback_data=utils.packDict({ButtonDataKey.SummarizationAction: ButtonSummarizationAction.Cancel}))
+        exitButton = InlineKeyboardButton(
+            "Отмена",
+            callback_data=utils.packDict({ButtonDataKey.SummarizationAction: ButtonSummarizationAction.Cancel}),
+        )
         action: Optional[str] = data.get(ButtonDataKey.SummarizationAction, None)
         if action is None or action not in ButtonSummarizationAction.all():
             ValueError(f"Wrong action in {data}")
@@ -3069,7 +3070,7 @@ class BotHandlers:
                     topicTitle = f", топик **{topic["name"]}**"
                     break
 
-        dataTemplate: Dict[ButtonDataKey, str|int|None] = {
+        dataTemplate: Dict[ButtonDataKey, str | int | None] = {
             ButtonDataKey.SummarizationAction: action,
             ButtonDataKey.ChatId: chatId,
             ButtonDataKey.MaxMessages: maxMessages,
@@ -3114,7 +3115,9 @@ class BotHandlers:
                     )
                 case 2:
                     currentPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
-                    self.cache["users"][userId]["activeSummarizationId"][ButtonDataKey.SummarizationAction] = action + "+"
+                    self.cache["users"][userId]["activeSummarizationId"][ButtonDataKey.SummarizationAction] = (
+                        action + "+"
+                    )
 
                     await message.edit_text(
                         text=markdown_to_markdownv2(
@@ -4248,7 +4251,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def _handle_chat_configuration(self, data: Dict[str|int, Any], message: Message, user: User) -> bool:
+    async def _handle_chat_configuration(self, data: Dict[str | int, Any], message: Message, user: User) -> bool:
         """Parses the CallbackQuery and updates the message text."""
 
         # Used keys:
