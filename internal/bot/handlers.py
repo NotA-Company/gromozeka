@@ -313,6 +313,14 @@ class BotHandlers:
                 categories={CommandCategory.PRIVATE},
                 handler=self.configure_command,
             ),
+            CommandHandlerInfo(
+                commands=("unban",),
+                shortDescription="[<username>] - Unban user from current chat",
+                helpMessage="[@<username>]: Разбанить пользователя в данном чате. "
+                "Так же может быть ответом на сообщение забаненного пользователя.",
+                categories={CommandCategory.ADMIN},
+                handler=self.unban_command,
+            ),
         ]
 
     ###
@@ -1809,7 +1817,7 @@ class BotHandlers:
         else:
             logger.error(f"message.from_user is None (sender is {ensuredMessage.sender})")
 
-        self.db.markUserAsSpammer(chatId=chatId, userId=userId)
+        self.db.markUserIsSpammer(chatId=chatId, userId=userId, isSpammer=True)
         logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.chat}")
         if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
             userMessages = self.db.getChatMessagesByUser(
@@ -4832,6 +4840,62 @@ class BotHandlers:
             ensuredMessage,
             f"Сообщение \n```\n{repliedText}\n```\n В чате #`{chatId}` воспринимается как: \n"
             f"```json\n{spamScore}\n```\n",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+    async def unban_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /unban [<@username>] command."""
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
+            return
+
+        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+
+        user: Optional[ChatUserDict] = None
+        if context.args:
+            username = context.args[0]
+            if not username.startswith("@"):
+                username = "@" + username
+            user = self.db.getChatUserByUsername(ensuredMessage.chat.id, username)
+
+        if user is None and message.reply_to_message and message.reply_to_message.from_user:
+            user = self.db.getChatUser(chatId=ensuredMessage.chat.id, userId=message.reply_to_message.from_user.id)
+
+        if user is None:
+            await self._sendMessage(
+                ensuredMessage,
+                "Пользователь не найден",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        isAdmin = await self._isAdmin(ensuredMessage.user, ensuredMessage.chat, allowBotOwners=True)
+
+        if not isAdmin:
+            await self._sendMessage(
+                ensuredMessage,
+                "Вы не являетесь администратором в этом чате",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        bot = message.get_bot()
+        await bot.unban_chat_member(chat_id=user["chat_id"], user_id=user["user_id"], only_if_banned=True)
+        self.db.markUserIsSpammer(chatId=user["chat_id"], userId=user["user_id"], isSpammer=False)
+        self.db.deleteSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
+
+        userName = user["full_name"] if user["full_name"] else user["username"]
+        await self._sendMessage(
+            ensuredMessage,
+            f"Пользователь [{userName}](tg://user?id={user['user_id']}) разбанен",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
