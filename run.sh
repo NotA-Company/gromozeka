@@ -17,6 +17,7 @@ mkdir -p logs
 
 # Do PIP Update if needed
 if [ "$DO_PIP_UPDATE" = "1" ]; then
+    [ -d venv ] || python3 -m venv venv
     ./venv/bin/pip install -r ./requirements.txt
 fi
 
