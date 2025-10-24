@@ -60,6 +60,7 @@ from .models import (
     LLMMessageFormat,
     MessageType,
     MediaProcessingInfo,
+    UserMetadataDict,
 )
 from .chat_settings import ChatSettingsKey, ChatSettingsValue
 from . import chat_settings
@@ -1551,6 +1552,18 @@ class BotHandlers:
             f"**Закат**: _{sunsetTime}_\n"
         )
 
+    def parseUserMetadata(self, userInfo: ChatUserDict) -> UserMetadataDict:
+        """Get user metadata."""
+        metadataStr = userInfo["metadata"]
+        if metadataStr:
+            return json.loads(metadataStr)
+        return {}
+
+    def setUserMetadata(self, chatId: int, userId: int, metadata: UserMetadataDict) -> None:
+        """Set user metadata."""
+        metadataStr = utils.jsonDumps(metadata)
+        self.db.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
+
     ###
     # SPAM Handling
     ###
@@ -1590,6 +1603,7 @@ class BotHandlers:
                 "created_at": datetime.datetime.now(),
                 "updated_at": datetime.datetime.now(),
                 "timezone": "",
+                "metadata": "",
             }
 
         userMessages = userInfo["messages_count"]
@@ -1598,6 +1612,12 @@ class BotHandlers:
             # User has more message than limit, assume it isn't spammer
             if not userInfo["is_spammer"]:
                 await self.markAsHam(message=message)
+            return False
+
+        userMetadata = self.parseUserMetadata(userInfo=userInfo)
+
+        if userMetadata.get("notSpammer", False):
+            logger.info(f"SPAM: User {sender} explicitely marked as not spammer, skipping spam check")
             return False
 
         # TODO: Check for admins?
@@ -4888,9 +4908,28 @@ class BotHandlers:
             return
 
         bot = message.get_bot()
+        # Unban user from chat
         await bot.unban_chat_member(chat_id=user["chat_id"], user_id=user["user_id"], only_if_banned=True)
+        # Mark user as not spammer
         self.db.markUserIsSpammer(chatId=user["chat_id"], userId=user["user_id"], isSpammer=False)
+
+        # Get user messages, remembered as spam, delete them from spam base and add them to ham base
+        userMessages = self.db.getSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
         self.db.deleteSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
+        for userMsg in userMessages:
+            self.db.addHamMessage(
+                chatId=userMsg["chat_id"],
+                userId=userMsg["user_id"],
+                messageId=userMsg["message_id"],
+                messageText=userMsg["text"],
+                spamReason=SpamReason.UNBAN,
+                score=userMsg["score"],
+            )
+
+        # Set user metadata[notSpammer] = True to skip spam-check for this user in this chat
+        userMetadata = self.parseUserMetadata(user)
+        userMetadata["notSpammer"] = True
+        self.setUserMetadata(chatId=user["chat_id"], userId=user["user_id"], metadata=userMetadata)
 
         userName = user["full_name"] if user["full_name"] else user["username"]
         await self._sendMessage(

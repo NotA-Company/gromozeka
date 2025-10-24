@@ -221,6 +221,7 @@ class DatabaseWrapper:
                 "username": str,
                 "full_name": str,
                 "messages_count": int,
+                "metadata": str,
                 "created_at": datetime.datetime,
                 "updated_at": datetime.datetime,
             }
@@ -839,6 +840,30 @@ class DatabaseWrapper:
                 return True
         except Exception as e:
             logger.error(f"Failed to mark user {userId} as spammer in chat {chatId}: {e}")
+            return False
+
+    def updateUserMetadata(self, chatId: int, userId: int, metadata: str) -> bool:
+        """Update metadata for a chat user."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE chat_users
+                    SET metadata = :metadata,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE
+                        chat_id = :chatId
+                        AND user_id = :userId
+                """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                        "metadata": metadata,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update metadata for user {userId} in chat {chatId}: {e}")
             return False
 
     def getChatUserByUsername(self, chatId: int, username: str) -> Optional[ChatUserDict]:
@@ -1612,6 +1637,27 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to delete spam messages: {e}")
             return False
+
+    def getSpamMessagesByUserId(self, chatId: int, userId: int) -> List[SpamMessageDict]:
+        """Get spam messages by user id."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM spam_messages
+                    WHERE
+                        chat_id = :chatId AND
+                        user_id = :userId
+                """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                    },
+                )
+                return [self._validateDictIsSpamMessageDict(dict(row)) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get spam messages: {e}")
+            return []
 
     ###
     # Cache manipulation functions
