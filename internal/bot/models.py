@@ -155,3 +155,39 @@ class CommandHandlerInfo:
     categories: Set[CommandCategory]
     # handler: tgTypes.HandlerCallback[tgUpdate.Update, tgTypes.CCT, tgTypes.RT],
     handler: Callable
+
+class ButtonDataKey(StrEnum):
+    ConfigureAction = "a"
+    SummarizationAction = "s"
+
+    ChatId = "c"
+    TopicId = "t"
+    MaxMessages = "m"
+    Prompt = "p"
+    
+    Key = "k"
+    Value = "v"
+    UserAction = "ua"
+
+class ButtonConfigureAction(StrEnum):
+    Init = "init"
+    Cancel = "cancel"
+
+    ConfigureChat = "chat"
+    ConfigureKey = "sk"
+    SetTrue = "st"
+    SetFalse = "sf"
+    ResetValue = "s-"
+    SetValue = "sv"
+
+class ButtonSummarizationAction(StrEnum):
+    Summarization = "s"
+    TopicSummarization = "t"
+    SummarizationStart = "s+"
+    TopicSummarizationStart = "t+"
+
+    Cancel = "cancel"
+
+    @classmethod
+    def all(cls) -> Sequence[str]:
+        return [ v.value for v in cls ]

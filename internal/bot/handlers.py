@@ -49,6 +49,9 @@ from ..database.models import ChatInfoDict, ChatMessageDict, ChatUserDict, Media
 
 from .ensured_message import EnsuredMessage
 from .models import (
+    ButtonConfigureAction,
+    ButtonDataKey,
+    ButtonSummarizationAction,
     CommandCategory,
     CommandHandlerInfo,
     DelayedTask,
@@ -1938,10 +1941,10 @@ class BotHandlers:
                     if activeConfigureId is not None:
                         await self._handle_chat_configuration(
                             data={
-                                "a": "sv",
-                                "c": activeConfigureId["chatId"],
-                                "k": ChatSettingsKey(activeConfigureId["key"]).getId(),
-                                "v": messageText,
+                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
+                                ButtonDataKey.ChatId: activeConfigureId["chatId"],
+                                ButtonDataKey.Key: ChatSettingsKey(activeConfigureId["key"]).getId(),
+                                ButtonDataKey.Value: messageText,
                             },
                             message=activeConfigureId["message"],
                             user=user,
@@ -1952,16 +1955,16 @@ class BotHandlers:
                     if activeSummarizationId is not None:
                         data = activeSummarizationId.copy()
                         data.pop("message", None)
-                        k = data.pop("k", None)
+                        k = data.pop(ButtonDataKey.UserAction, None)
                         match k:
                             case 1:
                                 try:
-                                    data["m"] = int(messageText.strip())
+                                    data[ButtonDataKey.MaxMessages] = int(messageText.strip())
                                 except Exception as e:
                                     logger.error(f"Not int: {messageText}")
                                     logger.exception(e)
                             case 2:
-                                data["p"] = messageText
+                                data[ButtonDataKey.Prompt] = messageText
                             case _:
                                 logger.error(f"Wrong K in data {activeSummarizationId}")
                         await self._handle_summarization(
@@ -2910,7 +2913,7 @@ class BotHandlers:
                 messageCategory=MessageCategory.BOT_ERROR,
             )
 
-    async def _handle_summarization(self, data: Dict[str, Any], message: Message, user: User):
+    async def _handle_summarization(self, data: Dict[str|int, Any], message: Message, user: User):
         """Process summarization buttons."""
 
         # Used keys:
@@ -2918,7 +2921,7 @@ class BotHandlers:
         # c: ChatId
         # t: topicId
         # m: MaxMessages/time
-        # k: user action (1 - set max messages, 2 - set prompt)
+        # ua: user action (1 - set max messages, 2 - set prompt)
 
         chatSettings = self.getChatSettings(message.chat_id)
         userId = user.id
@@ -2926,24 +2929,25 @@ class BotHandlers:
             self.cache["users"][userId] = {}
         self.cache["users"][userId].pop("activeSummarizationId", None)
 
-        exitButton = InlineKeyboardButton("Отмена", callback_data=utils.jsonDumps({"s": "s", "e": "cancel"}))
-        action: Optional[str] = data.get("s", None)
-        if action is None or action not in ["s", "t", "s+", "t+"]:
+        exitButton = InlineKeyboardButton("Отмена", callback_data=utils.packDict({ButtonDataKey.SummarizationAction: ButtonSummarizationAction.Cancel}))
+        action: Optional[str] = data.get(ButtonDataKey.SummarizationAction, None)
+        if action is None or action not in ButtonSummarizationAction.all():
             ValueError(f"Wrong action in {data}")
             return  # Useless, used for fixing typechecking issues
+
         isToticSummary = action.startswith("t")
 
-        if data.get("e", None) == "cancel":
+        if action == ButtonSummarizationAction.Cancel:
             await message.edit_text(text="Суммаризация отменена")
             return
 
-        maxMessages = data.get("m", None)
+        maxMessages = data.get(ButtonDataKey.MaxMessages, None)
         if maxMessages is None:
             maxMessages = 0
 
         userChats = self.db.getUserChats(user.id)
 
-        chatId = data.get("c", None)
+        chatId = data.get(ButtonDataKey.ChatId, None)
         # Choose chatID
         if not isinstance(chatId, int):
             keyboard: List[List[InlineKeyboardButton]] = []
@@ -2959,7 +2963,13 @@ class BotHandlers:
                     [
                         InlineKeyboardButton(
                             chatTitle,
-                            callback_data=utils.jsonDumps({"c": chat["chat_id"], "s": action, "m": maxMessages}),
+                            callback_data=utils.packDict(
+                                {
+                                    ButtonDataKey.ChatId: chat["chat_id"],
+                                    ButtonDataKey.SummarizationAction: action,
+                                    ButtonDataKey.MaxMessages: maxMessages,
+                                }
+                            ),
                         )
                     ]
                 )
@@ -2991,7 +3001,7 @@ class BotHandlers:
         elif chatInfo["username"]:
             chatTitle = f"{PRIVATE_ICON} {chatInfo['username']} ({chatInfo['type']})"
 
-        topicId = data.get("t", None)
+        topicId = data.get(ButtonDataKey.TopicId, None)
         # Choose TopicID if needed
         if isToticSummary and topicId is None:
             # await message.edit_text("Список топиков пока не поддержан")
@@ -3016,8 +3026,13 @@ class BotHandlers:
                     [
                         InlineKeyboardButton(
                             str(topic["name"]),
-                            callback_data=utils.jsonDumps(
-                                {"c": chatId, "s": action, "m": maxMessages, "t": topic["topic_id"]}
+                            callback_data=utils.packDict(
+                                {
+                                    ButtonDataKey.ChatId: chatId,
+                                    ButtonDataKey.SummarizationAction: action,
+                                    ButtonDataKey.MaxMessages: maxMessages,
+                                    ButtonDataKey.TopicId: topic["topic_id"],
+                                }
                             ),
                         )
                     ]
@@ -3027,7 +3042,12 @@ class BotHandlers:
                 [
                     InlineKeyboardButton(
                         "<< Назад к списку чатов",
-                        callback_data=utils.jsonDumps({"s": action, "m": maxMessages}),
+                        callback_data=utils.packDict(
+                            {
+                                ButtonDataKey.SummarizationAction: action,
+                                ButtonDataKey.MaxMessages: maxMessages,
+                            }
+                        ),
                     )
                 ]
             )
@@ -3049,20 +3069,20 @@ class BotHandlers:
                     topicTitle = f", топик **{topic["name"]}**"
                     break
 
-        dataTemplate: Dict[str, Any] = {
-            "s": action,
-            "c": chatId,
-            "m": maxMessages,
+        dataTemplate: Dict[ButtonDataKey, str|int|None] = {
+            ButtonDataKey.SummarizationAction: action,
+            ButtonDataKey.ChatId: chatId,
+            ButtonDataKey.MaxMessages: maxMessages,
         }
         if topicId is not None:
-            dataTemplate["t"] = topicId
+            dataTemplate[ButtonDataKey.TopicId] = topicId
 
         # Check If User need to Enter Messages/Prompt:
-        userActionK = data.get("k", None)
+        userActionK = data.get(ButtonDataKey.UserAction, None)
         if userActionK is not None:
             self.cache["users"][userId]["activeSummarizationId"] = {
                 **dataTemplate,
-                "k": userActionK,
+                ButtonDataKey.UserAction: userActionK,
                 "message": message,
             }
 
@@ -3070,13 +3090,13 @@ class BotHandlers:
                 [
                     InlineKeyboardButton(
                         "Начать суммаризацию с текущими настройками",
-                        callback_data=utils.jsonDumps({**dataTemplate, "s": action + "+"}),
+                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.SummarizationAction: action + "+"}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "<< Назад",
-                        callback_data=utils.jsonDumps(dataTemplate),
+                        callback_data=utils.packDict(dataTemplate),  # pyright: ignore[reportArgumentType]
                     )
                 ],
                 [exitButton],
@@ -3094,7 +3114,7 @@ class BotHandlers:
                     )
                 case 2:
                     currentPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
-                    self.cache["users"][userId]["activeSummarizationId"]["s"] = action + "+"
+                    self.cache["users"][userId]["activeSummarizationId"][ButtonDataKey.SummarizationAction] = action + "+"
 
                     await message.edit_text(
                         text=markdown_to_markdownv2(
@@ -3126,31 +3146,31 @@ class BotHandlers:
                 [
                     InlineKeyboardButton(
                         "Начать суммаризацию",
-                        callback_data=utils.jsonDumps({**dataTemplate, "s": action + "+"}),
+                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.SummarizationAction: action + "+"}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "Суммаризация за сегодня",
-                        callback_data=utils.jsonDumps({**dataTemplate, "m": 0}),
+                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.MaxMessages: 0}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "Суммаризация за вчера",
-                        callback_data=utils.jsonDumps({**dataTemplate, "m": -1}),
+                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.MaxMessages: -1}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "Установить количество сообщений для суммаризации",
-                        callback_data=utils.jsonDumps({**dataTemplate, "k": 1}),
+                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.UserAction: 1}),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "Установить промпт",
-                        callback_data=utils.jsonDumps({**dataTemplate, "k": 2}),
+                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.UserAction: 2}),
                     )
                 ],
                 [exitButton],
@@ -3207,7 +3227,7 @@ class BotHandlers:
             chatSettings=chatSettings,
             sinceDT=sinceDT,
             tillDT=tillDT,
-            summarizationPrompt=data.get("p", None),
+            summarizationPrompt=data.get(ButtonDataKey.Prompt, None),
             maxMessages=maxMessages,
         )
 
@@ -4228,7 +4248,7 @@ class BotHandlers:
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    async def _handle_chat_configuration(self, data: Dict[str, Any], message: Message, user: User) -> bool:
+    async def _handle_chat_configuration(self, data: Dict[str|int, Any], message: Message, user: User) -> bool:
         """Parses the CallbackQuery and updates the message text."""
 
         # Used keys:
@@ -4237,12 +4257,15 @@ class BotHandlers:
         # k: Key
         # v: Value
 
-        exitButton = InlineKeyboardButton("Закончить настройку", callback_data=utils.jsonDumps({"a": "cancel"}))
-        action = data.get("a", None)
+        exitButton = InlineKeyboardButton(
+            "Закончить настройку",
+            callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+        )
+        action = data.get(ButtonDataKey.ConfigureAction, None)
         # if "k" in data:
         #    action = "set_key"
         match action:
-            case "init":
+            case ButtonConfigureAction.Init:
                 userChats = self.db.getUserChats(user.id)
                 keyboard: List[List[InlineKeyboardButton]] = []
                 # chatSettings = self.getChatSettings(ensuredMessage.chat.id)
@@ -4268,7 +4291,12 @@ class BotHandlers:
                             [
                                 InlineKeyboardButton(
                                     buttonTitle,
-                                    callback_data=utils.jsonDumps({"c": chat["chat_id"], "a": "chat"}),
+                                    callback_data=utils.packDict(
+                                        {
+                                            ButtonDataKey.ChatId: chat["chat_id"],
+                                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                                        }
+                                    ),
                                 )
                             ]
                         )
@@ -4279,8 +4307,8 @@ class BotHandlers:
 
                 keyboard.append([exitButton])
                 await message.edit_text(text="Выберите чат для настройки:", reply_markup=InlineKeyboardMarkup(keyboard))
-            case "chat":
-                chatId = data.get("c", None)
+            case ButtonConfigureAction.ConfigureChat:
+                chatId = data.get(ButtonDataKey.ChatId, None)
                 if chatId is None:
                     logger.error(f"handle_chat_configuration: chatId is None in {data}")
                     return False
@@ -4328,12 +4356,25 @@ class BotHandlers:
                         [
                             InlineKeyboardButton(
                                 keyTitle,
-                                callback_data=utils.jsonDumps({"c": chatId, "k": key.getId(), "a": "sk"}),
+                                callback_data=utils.packDict(
+                                    {
+                                        ButtonDataKey.ChatId: chatId,
+                                        ButtonDataKey.Key: key.getId(),
+                                        ButtonDataKey.ConfigureAction: "sk",
+                                    }
+                                ),
                             )
                         ]
                     )
 
-                keyboard.append([InlineKeyboardButton("<< Назад", callback_data=utils.jsonDumps({"a": "init"}))])
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            "<< Назад",
+                            callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init}),
+                        )
+                    ]
+                )
                 keyboard.append([exitButton])
 
                 respMD = markdown_to_markdownv2(resp)
@@ -4348,9 +4389,9 @@ class BotHandlers:
                     await message.edit_text(text=f"Error while editing message: {e}")
                     return False
 
-            case "sk":
-                chatId = data.get("c", None)
-                _key = data.get("k", None)
+            case ButtonConfigureAction.ConfigureKey:
+                chatId = data.get(ButtonDataKey.ChatId, None)
+                _key = data.get(ButtonDataKey.Key, None)
 
                 if chatId is None or _key is None:
                     logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
@@ -4412,7 +4453,13 @@ class BotHandlers:
                         [
                             InlineKeyboardButton(
                                 "Включить (True)",
-                                callback_data=utils.jsonDumps({"a": "s+", "c": chatId, "k": _key}),
+                                callback_data=utils.packDict(
+                                    {
+                                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetTrue,
+                                        ButtonDataKey.ChatId: chatId,
+                                        ButtonDataKey.Key: _key,
+                                    }
+                                ),
                             )
                         ]
                     )
@@ -4420,7 +4467,13 @@ class BotHandlers:
                         [
                             InlineKeyboardButton(
                                 "Выключить (False)",
-                                callback_data=utils.jsonDumps({"a": "s-", "c": chatId, "k": _key}),
+                                callback_data=utils.packDict(
+                                    {
+                                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetFalse,
+                                        ButtonDataKey.ChatId: chatId,
+                                        ButtonDataKey.Key: _key,
+                                    }
+                                ),
                             )
                         ]
                     )
@@ -4429,12 +4482,28 @@ class BotHandlers:
                     [
                         InlineKeyboardButton(
                             "Сбросить в значение по умолчанию",
-                            callback_data=utils.jsonDumps({"a": "s#", "c": chatId, "k": _key}),
+                            callback_data=utils.packDict(
+                                {
+                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.ResetValue,
+                                    ButtonDataKey.ChatId: chatId,
+                                    ButtonDataKey.Key: _key,
+                                }
+                            ),
                         )
                     ]
                 )
                 keyboard.append(
-                    [InlineKeyboardButton("<< Назад", callback_data=utils.jsonDumps({"a": "chat", "c": chatId}))]
+                    [
+                        InlineKeyboardButton(
+                            "<< Назад",
+                            callback_data=utils.packDict(
+                                {
+                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                                    ButtonDataKey.ChatId: chatId,
+                                }
+                            ),
+                        )
+                    ]
                 )
                 keyboard.append([exitButton])
 
@@ -4450,9 +4519,14 @@ class BotHandlers:
                     await message.edit_text(text=f"Error while editing message: {e}")
                     return False
 
-            case "s+" | "s-" | "s#" | "sv":
-                chatId = data.get("c", None)
-                _key = data.get("k", None)
+            case (
+                ButtonConfigureAction.SetTrue
+                | ButtonConfigureAction.SetFalse
+                | ButtonConfigureAction.ResetValue
+                | ButtonConfigureAction.SetValue
+            ):
+                chatId = data.get(ButtonDataKey.ChatId, None)
+                _key = data.get(ButtonDataKey.Key, None)
 
                 userId = user.id
                 if userId not in self.cache["users"]:
@@ -4492,14 +4566,14 @@ class BotHandlers:
 
                 resp = ""
 
-                if action == "s+":
+                if action == ButtonConfigureAction.SetTrue:
                     self.setChatSettings(chatId, {key: True})
                 elif action == "s-":
                     self.setChatSettings(chatId, {key: False})
                 elif action == "s#":
                     self.unsetChatSetting(chatId, key)
                 elif action == "sv":
-                    self.setChatSettings(chatId, {key: data.get("v", None)})
+                    self.setChatSettings(chatId, {key: data.get(ButtonDataKey.Value, None)})
                 else:
                     logger.error(f"handle_chat_configuration: wrong action: {action}")
                     raise RuntimeError(f"handle_chat_configuration: wrong action: {action}")
@@ -4515,7 +4589,13 @@ class BotHandlers:
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            "<< К настройкам чата", callback_data=utils.jsonDumps({"a": "chat", "c": chatId})
+                            "<< К настройкам чата",
+                            callback_data=utils.packDict(
+                                {
+                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                                    ButtonDataKey.ChatId: chatId,
+                                }
+                            ),
                         )
                     ]
                 )
@@ -4533,7 +4613,7 @@ class BotHandlers:
                     await message.edit_text(text=f"Error while editing message: {e}")
                     return False
 
-            case "cancel":
+            case ButtonConfigureAction.Cancel:
                 await message.edit_text(text="Настройка закончена, буду ждать вас снова")
             case _:
                 logger.error(f"handle_chat_configuration: unknown action: {data}")
@@ -4567,7 +4647,9 @@ class BotHandlers:
 
         # TODO: Add support for /configure <chatId>
         if msg is not None:
-            await self._handle_chat_configuration({"a": "init"}, message=msg, user=ensuredMessage.user)
+            await self._handle_chat_configuration(
+                {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init}, message=msg, user=ensuredMessage.user
+            )
         else:
             logger.error("Message undefined")
             return
@@ -4771,16 +4853,7 @@ class BotHandlers:
 
         user = query.from_user
 
-        data: Optional[Dict[str, Any]] = None
-        try:
-            data = json.loads(query.data)
-        except Exception as e:
-            logger.error(f"Error while parsing callback query data: {e}")
-            return
-
-        if data is None:
-            logger.error("handle_button: data is None")
-            return
+        data = utils.unpackDict(query.data)
 
         if query.message is None:
             logger.error(f"handle_button: message is None in {query}")
@@ -4790,7 +4863,7 @@ class BotHandlers:
             logger.error(f"handle_button: message is not a Message in {query}")
             return
 
-        configureAction = data.get("a", None)
+        configureAction = data.get(ButtonDataKey.ConfigureAction, None)
         # Used keys:
         # a: Action
         # c: ChatId
@@ -4800,7 +4873,7 @@ class BotHandlers:
             await self._handle_chat_configuration(data, query.message, user)
             return
 
-        summaryAction = data.get("s", None)
+        summaryAction = data.get(ButtonDataKey.SummarizationAction, None)
         # Used keys:
         # s: Action
         # c: ChatId
