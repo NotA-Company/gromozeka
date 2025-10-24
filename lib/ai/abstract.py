@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 import json
 import logging
 from typing import Dict, Iterable, List, Any, Optional
-import tiktoken
 
 from .models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
 
@@ -118,10 +117,9 @@ class AbstractModel(ABC):
             text = data
         else:
             text = json.dumps(data, ensure_ascii=False)
-
-        encoder = tiktoken.get_encoding(self.tiktokenEncoding)
-        tokensCount = len(encoder.encode(text))
-        # As we use some 3rd part tokenizer, it won't count tokens properly,
+        # In average, each token is 4 characters long
+        tokensCount = len(text) // 4
+        # As we use estimated token count, it won't count tokens properly,
         # so we need to multiply by some coefficient to be sure
         return int(tokensCount * self.tokensCountCoeff)
 
