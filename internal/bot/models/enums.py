@@ -4,9 +4,6 @@ Enums: Different enum types for bot models
 
 from enum import StrEnum
 
-# Re-export MessageType from shared_enums to avoid circular dependency
-from internal.models.shared_enums import MessageType
-
 
 class LLMMessageFormat(StrEnum):
     JSON = "json"
