@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
 import logging
+import inspect
 
 from typing import Any, Callable, Dict, NotRequired, Optional, Sequence, Set, TypedDict
 
@@ -15,6 +16,9 @@ from .chat_settings import ChatSettingsKey, ChatSettingsValue
 
 
 logger = logging.getLogger(__name__)
+
+# Attribute name for storing handler metadata, dood!
+_HANDLER_METADATA_ATTR = "_command_handler_info"
 
 
 class LLMMessageFormat(StrEnum):
@@ -155,6 +159,109 @@ class CommandHandlerInfo:
     categories: Set[CommandCategory]
     # handler: tgTypes.HandlerCallback[tgUpdate.Update, tgTypes.CCT, tgTypes.RT],
     handler: Callable
+
+    def copy(self) -> "CommandHandlerInfo":
+        return CommandHandlerInfo(
+            commands=self.commands,
+            shortDescription=self.shortDescription,
+            helpMessage=self.helpMessage,
+            categories=self.categories,
+            handler=self.handler,
+        )
+
+
+def commandHandler(
+    commands: Sequence[str],
+    shortDescription: str,
+    helpMessage: str,
+    categories: Optional[Set[CommandCategory]] = None,
+) -> Callable:
+    """
+    Decorator to mark a method as a command handler, dood!
+    
+    This decorator attaches metadata to the method without registering it globally.
+    The class instance will discover and collect decorated methods during initialization.
+    
+    Args:
+        commands: Tuple of command names (without /)
+        shortDescription: Short description for command list
+        helpMessage: Detailed help message
+        categories: Set of CommandCategory values
+    
+    Example:
+        @commandHandler(
+            commands=("start",),
+            shortDescription="Start bot interaction",
+            helpMessage=": Начать работу с ботом.",
+            categories={CommandCategory.PRIVATE}
+        )
+        async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            # Implementation here
+            pass
+    """
+    if categories is None:
+        categories = {CommandCategory.DEFAULT}
+
+    def decorator(func: Callable) -> Callable:
+        # Store metadata as an attribute on the function
+        metadata = CommandHandlerInfo(
+            commands=commands,
+            shortDescription=shortDescription,
+            helpMessage=helpMessage,
+            categories=categories,
+            handler=func,
+        )
+        setattr(func, _HANDLER_METADATA_ATTR, metadata)
+
+        # Return the original function unchanged
+        return func
+
+    return decorator
+
+
+class CommandHandlerMixin:
+    """
+    Mixin class that provides automatic command handler discovery, dood!
+    
+    Any class that inherits from this mixin will automatically discover
+    all methods decorated with @commandHandler during initialization.
+    """
+    
+    def __init__(self):
+        """Initialize and discover command handlers."""
+        self._commandHandlers: list[CommandHandlerInfo] = []
+        self._discoverCommandHandlers()
+    
+    def _discoverCommandHandlers(self) -> None:
+        """
+        Discover all decorated command handler methods in this instance, dood!
+        
+        This method inspects all methods of the class and collects those
+        that have been decorated with @commandHandler.
+        """
+        
+        # Get all methods of this instance
+        for _, method in inspect.getmembers(self, predicate=inspect.ismethod):
+            # Check if the method has handler metadata
+            if hasattr(method, _HANDLER_METADATA_ATTR):
+                metadata = getattr(method, _HANDLER_METADATA_ATTR)
+                if not isinstance(metadata, CommandHandlerInfo):
+                    raise ValueError(f"Invalid handler metadata for {method.__name__}: {metadata}")
+                
+                # Create CommandHandlerInfo with the bound method
+                handlerInfo = metadata.copy()
+                handlerInfo.handler = method # Already bound to self
+                
+                self._commandHandlers.append(handlerInfo)
+    
+    def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
+        """
+        Get all command handlers for this instance, dood!
+        
+        Returns:
+            Sequence of CommandHandlerInfo objects
+        """
+        return self._commandHandlers.copy()
 
 
 class UserMetadataDict(TypedDict):
