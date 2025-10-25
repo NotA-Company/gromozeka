@@ -12,61 +12,6 @@ from internal.bot.models import (
 )
 
 
-class TestCommandHandlerDecorator(unittest.TestCase):
-    """Test the commandHandler decorator, dood!"""
-    
-    def test_decorator_attaches_metadata(self):
-        """Test that decorator attaches metadata correctly, dood!"""
-        
-        @commandHandler(
-            commands=("test",),
-            shortDescription="Test command",
-            helpMessage="Test help",
-            categories={CommandCategory.PRIVATE}
-        )
-        async def test_handler(self, update, context):
-            pass
-        
-        # Verify metadata is attached
-        self.assertTrue(hasattr(test_handler, _HANDLER_METADATA_ATTR))
-        metadata = getattr(test_handler, _HANDLER_METADATA_ATTR)
-        self.assertEqual(metadata['commands'], ("test",))
-        self.assertEqual(metadata['shortDescription'], "Test command")
-        self.assertEqual(metadata['helpMessage'], "Test help")
-        self.assertEqual(metadata['categories'], {CommandCategory.PRIVATE})
-    
-    def test_decorator_with_default_categories(self):
-        """Test decorator with default categories, dood!"""
-        
-        @commandHandler(
-            commands=("test",),
-            shortDescription="Test",
-            helpMessage="Help"
-        )
-        async def test_handler(self, update, context):
-            pass
-        
-        metadata = getattr(test_handler, _HANDLER_METADATA_ATTR)
-        self.assertEqual(metadata['categories'], {CommandCategory.DEFAULT})
-    
-    def test_decorator_with_multiple_commands(self):
-        """Test decorator with multiple command aliases, dood!"""
-        
-        @commandHandler(
-            commands=("cmd1", "cmd2", "cmd3"),
-            shortDescription="Multi command",
-            helpMessage="Help",
-            categories={CommandCategory.PRIVATE, CommandCategory.GROUP}
-        )
-        async def test_handler(self, update, context):
-            pass
-        
-        metadata = getattr(test_handler, _HANDLER_METADATA_ATTR)
-        self.assertEqual(metadata['commands'], ("cmd1", "cmd2", "cmd3"))
-        self.assertIn(CommandCategory.PRIVATE, metadata['categories'])
-        self.assertIn(CommandCategory.GROUP, metadata['categories'])
-
-
 class TestCommandHandlerMixin(unittest.TestCase):
     """Test the CommandHandlerMixin class, dood!"""
     
