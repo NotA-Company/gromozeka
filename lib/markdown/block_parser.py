@@ -491,23 +491,31 @@ class BlockParser:
         return temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.NEWLINE
 
     def _has_blank_line_before_current(self) -> bool:
-        """Check if there's a blank line before the current position."""
+        """Check if there's a blank line before the current position.
+        
+        A blank line is defined as two NEWLINE tokens with only optional SPACE tokens between them.
+        """
         if self.pos < 2:
             return False
-
+        
         # Look backwards from current position
         temp_pos = self.pos - 1
-
+        
         # Skip spaces before current token (for indented list markers)
         while temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.SPACE:
             temp_pos -= 1
-
+        
         # Now we should be at a newline (end of previous line)
         if temp_pos < 0 or self.tokens[temp_pos].type != TokenType.NEWLINE:
             return False
-
+        
+        # This is the first NEWLINE, now look for the second one
         temp_pos -= 1
-
+        
+        # Skip any spaces between the two newlines (blank line with spaces)
+        while temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.SPACE:
+            temp_pos -= 1
+        
         # Check if there's another newline before that (blank line)
         return temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.NEWLINE
 
