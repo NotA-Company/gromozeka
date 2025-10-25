@@ -48,26 +48,27 @@ from ..database.bayes_storage import DatabaseBayesStorage
 from ..database.openweathermap_cache import DatabaseWeatherCache
 from ..database.models import ChatInfoDict, ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
 
-from .ensured_message import EnsuredMessage
 from .models import (
     ButtonConfigureAction,
     ButtonDataKey,
     ButtonSummarizationAction,
+    ChatSettingsKey,
+    ChatSettingsValue,
     CommandCategory,
     CommandHandlerInfo,
     CommandHandlerMixin,
     CommandHandlerOrder,
     DelayedTask,
     DelayedTaskFunction,
+    EnsuredMessage,
     HandlersCacheDict,
     LLMMessageFormat,
     MessageType,
     MediaProcessingInfo,
     UserMetadataDict,
     commandHandler,
+    getChatSettingsInfo,
 )
-from .chat_settings import ChatSettingsKey, ChatSettingsValue
-from . import chat_settings
 
 logger = logging.getLogger(__name__)
 
@@ -4382,7 +4383,7 @@ class BotHandlers(CommandHandlerMixin):
                 chatSettings = self.getChatSettings(chatId)
                 defaultChatSettings = self.getChatSettings(None)
 
-                chatOptions = chat_settings.getChatSettingsInfo()
+                chatOptions = getChatSettingsInfo()
                 keyboard: List[List[InlineKeyboardButton]] = []
 
                 for key, option in chatOptions.items():
@@ -4452,7 +4453,7 @@ class BotHandlers(CommandHandlerMixin):
                 chatSettings = self.getChatSettings(chatId)
                 defaultChatSettings = self.getChatSettings(None)
 
-                chatOptions = chat_settings.getChatSettingsInfo()
+                chatOptions = getChatSettingsInfo()
 
                 try:
                     key = ChatSettingsKey.fromId(_key)
@@ -4589,7 +4590,7 @@ class BotHandlers(CommandHandlerMixin):
                 if chatInfo is None:
                     logger.error(f"handle_chat_configuration: chatInfo is None for {chatId}")
                     return False
-                chatOptions = chat_settings.getChatSettingsInfo()
+                chatOptions = getChatSettingsInfo()
 
                 try:
                     key = ChatSettingsKey.fromId(_key)
