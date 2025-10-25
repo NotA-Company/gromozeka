@@ -50,6 +50,19 @@ Code
 ```
 """
 
+text = """
+Test 1:
+
+* Paragraph 1.1.
+* Paragraph 1.2.
+
+* Paragraph 2.1.
+* Paragraph 2.2.
+
+* Paragraph 3.1.
+* Paragraph 3.2.
+"""
+
 
 print("\n==== INPUT ====\n")
 print(text)

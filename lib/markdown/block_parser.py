@@ -287,13 +287,15 @@ class BlockParser:
             if current_marker_indentation != list_indentation:
                 break
 
+            # Check if there's a blank line before this list marker (except for first item)
+            # A blank line before a list marker means we should start a new list
+            if len(md_list.children) > 0 and self._has_blank_line_before_current():
+                # Blank line found before this marker - end current list
+                break
+
             item = self._parse_list_item()
             if item:
                 md_list.add_child(item)
-
-            # Check for blank lines between items (makes list loose)
-            if self._has_blank_line_ahead():
-                md_list.is_tight = False
 
         return md_list
 
@@ -487,6 +489,51 @@ class BlockParser:
 
         # Check for another newline (blank line)
         return temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.NEWLINE
+
+    def _has_blank_line_before_current(self) -> bool:
+        """Check if there's a blank line before the current position.
+        
+        A blank line is defined as two NEWLINE tokens with only optional SPACE tokens between them.
+        """
+        if self.pos < 2:
+            return False
+        
+        # Look backwards from current position
+        temp_pos = self.pos - 1
+        
+        # Skip spaces before current token (for indented list markers)
+        while temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.SPACE:
+            temp_pos -= 1
+        
+        # Now we should be at a newline (end of previous line)
+        if temp_pos < 0 or self.tokens[temp_pos].type != TokenType.NEWLINE:
+            return False
+        
+        # This is the first NEWLINE, now look for the second one
+        temp_pos -= 1
+        
+        # Skip any spaces between the two newlines (blank line with spaces)
+        while temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.SPACE:
+            temp_pos -= 1
+        
+        # Check if there's another newline before that (blank line)
+        return temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.NEWLINE
+
+    def _has_double_blank_line_ahead(self) -> bool:
+        """Check if there are two consecutive blank lines (double newline) coming up."""
+        temp_pos = self.pos
+
+        # Skip current newline if any
+        if temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.NEWLINE:
+            temp_pos += 1
+
+        # Check for first blank line (newline)
+        if temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.NEWLINE:
+            temp_pos += 1
+            # Check for second blank line (another newline)
+            return temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.NEWLINE
+
+        return False
 
     def _is_at_line_start(self) -> bool:
         """Check if we're at the start of a line."""
