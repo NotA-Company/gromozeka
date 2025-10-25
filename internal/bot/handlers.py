@@ -21,6 +21,7 @@ from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ExtBot, ContextTypes
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
+from telegram._utils.entities import parse_message_entity
 
 from lib.ai.abstract import AbstractModel, LLMAbstractTool
 from lib.ai.models import (
@@ -1527,7 +1528,7 @@ class BotHandlers(CommandHandlerMixin):
                         spamScore = spamScore + 60
                         logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
                     case MessageEntityType.MENTION:
-                        mentionStr = messageText[entity.offset : entity.offset + entity.length]
+                        mentionStr = parse_message_entity(messageText, entity)
                         chatUser = self.db.getChatUserByUsername(chatId=ensuredMessage.chat.id, username=mentionStr)
                         if chatUser is None:
                             # Mentioning user not from chat looks like spam
