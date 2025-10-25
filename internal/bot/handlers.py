@@ -3617,6 +3617,43 @@ class BotHandlers(CommandHandlerMixin):
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     )
                     await asyncio.sleep(0.5)
+            case "dumpEntities":
+                if message.reply_to_message is None:
+                    await self._sendMessage(
+                        ensuredMessage,
+                        messageText="`dumpEntities` should be retpy to message with entities",
+                        messageCategory=MessageCategory.BOT_ERROR,
+                    )
+                    return
+                repliedMessage = message.reply_to_message
+                if not repliedMessage.entities:
+                    await self._sendMessage(
+                        ensuredMessage,
+                        messageText="No entities found",
+                        messageCategory=MessageCategory.BOT_ERROR,
+                    )
+                    return
+                entities = repliedMessage.entities
+                messageText = repliedMessage.text or ""
+                ret = ""
+                for entity in entities:
+                    ret += (
+                        f"{entity.type}: {entity.offset} {entity.length}:\n```\n"
+                        f"{messageText[entity.offset:entity.offset + entity.length]}\n```\n"
+                        f"```\n{entity}\n```\n"
+                    )
+                await self._sendMessage(
+                    ensuredMessage,
+                    messageText=ret,
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+                
+                await self._sendMessage(
+                    ensuredMessage,
+                    messageText=f"```\n{repliedMessage.parse_entities()}\n```",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+                
 
             case _:
                 await self._sendMessage(
