@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from internal.database.wrapper import DatabaseWrapper
 from internal.database.migrations import MigrationManager, MIGRATIONS
+from internal.database.migrations.versions import DISCOVERED_MIGRATIONS, discoverMigrations
 
 # Setup logging
 logging.basicConfig(
@@ -67,7 +68,6 @@ def test_fresh_database():
                 "chat_messages",
                 "chat_users",
                 "chat_info",
-                "example_features",  # From migration 002
             ]
             
             for table in expectedTables:
@@ -139,13 +139,11 @@ def test_rollback():
         assert newVersion == initialVersion - 1, \
             f"Expected version {initialVersion - 1}, got {newVersion}"
         
-        # Check that example_features table is gone
+        # Check that metadata column is gone (from migration 003)
         with db.getCursor() as cursor:
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='example_features'"
-            )
-            result = cursor.fetchone()
-            assert result is None, "example_features table should be dropped"
+            cursor.execute("PRAGMA table_info(chat_users)")
+            columns = [row[1] for row in cursor.fetchall()]
+            assert "metadata" not in columns, "metadata column should be dropped"
         
         logger.info("✅ Rollback test PASSED, dood!")
         return True
@@ -207,6 +205,167 @@ def test_existing_database():
             os.unlink(dbPath)
 
 
+def test_auto_discovery():
+    """Test migration auto-discovery functionality, dood!"""
+    logger.info("=" * 60)
+    logger.info("TEST: Migration Auto-Discovery")
+    logger.info("=" * 60)
+    
+    try:
+        # Test that DISCOVERED_MIGRATIONS is populated
+        assert len(DISCOVERED_MIGRATIONS) > 0, "DISCOVERED_MIGRATIONS should not be empty"
+        logger.info(f"Found {len(DISCOVERED_MIGRATIONS)} discovered migrations")
+        
+        # Test that discovered migrations match manual migrations
+        assert len(DISCOVERED_MIGRATIONS) == len(MIGRATIONS), \
+            f"Discovered {len(DISCOVERED_MIGRATIONS)} migrations, expected {len(MIGRATIONS)}"
+        
+        # Test that versions are correct
+        discoveredVersions = [m.version for m in DISCOVERED_MIGRATIONS]
+        manualVersions = [m.version for m in MIGRATIONS]
+        assert discoveredVersions == manualVersions, \
+            f"Discovered versions {discoveredVersions} don't match manual {manualVersions}"
+        
+        # Test that descriptions match
+        for discovered, manual in zip(DISCOVERED_MIGRATIONS, MIGRATIONS):
+            assert discovered.description == manual.description, \
+                f"Description mismatch: {discovered.description} vs {manual.description}"
+        
+        logger.info("✅ Auto-discovery test PASSED, dood!")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Auto-discovery test FAILED: {e}")
+        logger.exception(e)
+        return False
+
+
+def test_getMigration_functions():
+    """Test that all migration files have getMigration() functions, dood!"""
+    logger.info("=" * 60)
+    logger.info("TEST: getMigration() Functions")
+    logger.info("=" * 60)
+    
+    try:
+        # Known migration modules and their classes
+        expectedModules = {
+            1: ("migration_001_initial_schema", "Migration001InitialSchema"),
+            2: ("migration_002_add_is_spammer_to_chat_users", "Migration002AddIsSpammerToChatUsers"),
+            3: ("migration_003_add_metadata_to_chat_users", "Migration003AddMetadataToChatUsers"),
+        }
+        
+        # Test each expected migration module
+        for version, (moduleName, expectedClassName) in expectedModules.items():
+            # Import the module
+            module = __import__(f"internal.database.migrations.versions.{moduleName}",
+                              fromlist=[moduleName])
+            
+            # Check getMigration function exists
+            assert hasattr(module, "getMigration"), \
+                f"Module {moduleName} missing getMigration() function"
+            
+            # Test that getMigration() returns the correct class
+            returnedClass = module.getMigration()
+            assert returnedClass.__name__ == expectedClassName, \
+                f"getMigration() in {moduleName} returned {returnedClass.__name__}, expected {expectedClassName}"
+            
+            # Test that the returned class has the correct version
+            assert returnedClass.version == version, \
+                f"getMigration() in {moduleName} returned class with version {returnedClass.version}, expected {version}"
+            
+            logger.debug(f"✅ {moduleName}.getMigration() works correctly")
+        
+        logger.info("✅ getMigration() functions test PASSED, dood!")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ getMigration() functions test FAILED: {e}")
+        logger.exception(e)
+        return False
+
+
+def test_loadMigrationsFromVersions():
+    """Test MigrationManager.loadMigrationsFromVersions() method, dood!"""
+    logger.info("=" * 60)
+    logger.info("TEST: loadMigrationsFromVersions() Method")
+    logger.info("=" * 60)
+    
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        dbPath = f.name
+    
+    try:
+        db = DatabaseWrapper(dbPath)
+        manager = MigrationManager(db)
+        
+        # Test loadMigrationsFromVersions()
+        manager.loadMigrationsFromVersions()
+        
+        # Check that migrations were loaded
+        assert len(manager.migrations) > 0, "No migrations loaded"
+        assert len(manager.migrations) == len(DISCOVERED_MIGRATIONS), \
+            f"Loaded {len(manager.migrations)} migrations, expected {len(DISCOVERED_MIGRATIONS)}"
+        
+        # Check that versions are correct
+        loadedVersions = [m.version for m in manager.migrations]
+        discoveredVersions = [m.version for m in DISCOVERED_MIGRATIONS]
+        assert loadedVersions == discoveredVersions, \
+            f"Loaded versions {loadedVersions} don't match discovered {discoveredVersions}"
+        
+        logger.info("✅ loadMigrationsFromVersions() test PASSED, dood!")
+        return True
+        
+    finally:
+        if os.path.exists(dbPath):
+            os.unlink(dbPath)
+
+
+def test_database_wrapper_auto_discovery():
+    """Test that DatabaseWrapper uses auto-discovery, dood!"""
+    logger.info("=" * 60)
+    logger.info("TEST: DatabaseWrapper Auto-Discovery")
+    logger.info("=" * 60)
+    
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        dbPath = f.name
+    
+    try:
+        # Initialize database (should use auto-discovery)
+        db = DatabaseWrapper(dbPath)
+        
+        # Check that all migrations were applied
+        manager = MigrationManager(db)
+        currentVersion = manager.getCurrentVersion()
+        
+        assert currentVersion == len(DISCOVERED_MIGRATIONS), \
+            f"Expected version {len(DISCOVERED_MIGRATIONS)}, got {currentVersion}"
+        
+        # Check that tables exist
+        with db.getCursor() as cursor:
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            )
+            tables = [row[0] for row in cursor.fetchall()]
+            logger.info(f"Created tables: {', '.join(tables)}")
+            
+            # Verify key tables exist
+            expectedTables = [
+                "settings",
+                "chat_messages",
+                "chat_users",
+                "chat_info",
+            ]
+            
+            for table in expectedTables:
+                assert table in tables, f"Table {table} not found"
+        
+        logger.info("✅ DatabaseWrapper auto-discovery test PASSED, dood!")
+        return True
+        
+    finally:
+        if os.path.exists(dbPath):
+            os.unlink(dbPath)
+
+
 def main():
     """Run all tests, dood!"""
     logger.info("Starting migration tests, dood!")
@@ -216,6 +375,10 @@ def main():
         test_migration_status,
         test_rollback,
         test_existing_database,
+        test_auto_discovery,
+        test_getMigration_functions,
+        test_loadMigrationsFromVersions,
+        test_database_wrapper_auto_discovery,
     ]
     
     passed = 0

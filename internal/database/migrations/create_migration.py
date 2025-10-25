@@ -77,7 +77,7 @@ def createMigration(description: str) -> None:
 TODO: Implement the migration logic below
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Type
 from ..base import BaseMigration
 
 if TYPE_CHECKING:
@@ -117,6 +117,11 @@ class {class_name}(BaseMigration):
                 cursor.execute("DROP TABLE IF EXISTS new_table")
         """
         raise NotImplementedError("Rollback not implemented yet, dood!")
+
+
+def getMigration() -> Type[BaseMigration]:
+    """Return the migration class for this module, dood!"""
+    return {class_name}
 '''
     
     # Write file
@@ -130,15 +135,10 @@ class {class_name}(BaseMigration):
     print("📝 Next steps, dood:")
     print(f"   1. Edit {file_path}")
     print(f"   2. Implement up() and down() methods")
-    print(f"   3. Add to internal/database/migrations/versions/__init__.py:")
-    print(f"      from . import {filename[:-3]}")
-    print(f"      # Add to __all__ list")
-    print(f"   4. Add to internal/database/migrations/__init__.py:")
-    print(f"      from .versions import {filename[:-3]}")
-    print(f"      # Add {class_name} to MIGRATIONS list")
+    print(f"   3. Test your migration:")
+    print("      ./venv/bin/python3 internal/database/migrations/test_migrations.py")
     print()
-    print("🧪 Test your migration:")
-    print("   ./venv/bin/python3 internal/database/migrations/test_migrations.py")
+    print("✨ Auto-discovery is enabled! No manual registration needed, dood!")
 
 
 def main():

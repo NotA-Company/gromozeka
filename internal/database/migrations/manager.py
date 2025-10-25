@@ -60,6 +60,16 @@ class MigrationManager:
         self.migrations = sorted(migrations, key=lambda m: m.version)
         logger.debug(f"Registered {len(self.migrations)} migrations, dood!")
 
+    def loadMigrationsFromVersions(self) -> None:
+        """
+        Load migrations automatically from versions package, dood!
+        
+        This replaces the need for manual registration.
+        """
+        from .versions import DISCOVERED_MIGRATIONS
+        self.registerMigrations(DISCOVERED_MIGRATIONS)
+        logger.info(f"Auto-loaded {len(DISCOVERED_MIGRATIONS)} migrations, dood!")
+
     def getCurrentVersion(self) -> int:
         """
         Get current migration version from settings table, dood!

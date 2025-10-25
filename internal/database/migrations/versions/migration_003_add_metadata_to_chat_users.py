@@ -4,7 +4,7 @@ Add metadata column to chat_users table, dood!
 This migration adds a text column to store metadata for chat users.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Type
 from ..base import BaseMigration
 
 if TYPE_CHECKING:
@@ -43,7 +43,12 @@ class Migration003AddMetadataToChatUsers(BaseMigration):
         with db.getCursor() as cursor:
             cursor.execute(
                 """
-                ALTER TABLE chat_users 
+                ALTER TABLE chat_users
                 DROP COLUMN metadata
             """
             )
+
+
+def getMigration() -> Type[BaseMigration]:
+    """Return the migration class for this module, dood!"""
+    return Migration003AddMetadataToChatUsers
