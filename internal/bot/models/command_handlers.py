@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # Attribute name for storing handler metadata, dood!
 _HANDLER_METADATA_ATTR = "_command_handler_info"
 
+
 class CommandCategory(Enum):
     DEFAULT = auto()  # Available everywhere
     PRIVATE = auto()  # Available in private chats
