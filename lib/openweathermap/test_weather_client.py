@@ -8,7 +8,6 @@ including unit tests for the client, cache, and integration scenarios.
 import pytest
 import json
 from unittest.mock import Mock, AsyncMock, patch
-from datetime import datetime, timedelta
 
 # Add project root to path for imports
 import sys
@@ -267,7 +266,6 @@ class TestDatabaseWeatherCache:
     @pytest.fixture
     def mock_db(self):
         """Mock database wrapper"""
-        from internal.database.models import CacheType
 
         db = Mock()
         db.getCacheEntry = Mock(return_value=None)
