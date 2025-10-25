@@ -5,7 +5,10 @@ Common utilities for Gromozeka bot.
 import datetime
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from telegram import Message
 
 logger = logging.getLogger(__name__)
 
@@ -217,3 +220,55 @@ def unpackDict(
             result[key] = value
 
     return result
+
+
+def dumpMessage(message: "Message") -> str:
+    """
+    Dump a Telegram Message object to string using original __repr__, dood!
+    
+    When reply_to_message is present, replaces it with a compact representation
+    showing only: message_id, user_id, chat_id, and first 10 chars of text (if any).
+    All other fields (entities, files, etc.) are preserved from the original repr.
+    
+    Args:
+        message: Telegram Message object to dump
+        
+    Returns:
+        String representation of the message with compact reply_to_message
+        
+    Example:
+        >>> dumpMessage(message)
+        'Message(message_id=123, ..., reply_to_message={message_id=122, user_id=111, chat_id=456, text="Hi there!"})'
+    """
+    # Get the original repr
+    originalRepr = repr(message)
+    
+    # If there's no reply_to_message, just return the original
+    if not message.reply_to_message:
+        return originalRepr
+    
+    # Build compact representation of reply_to_message
+    replyParts = []
+    replyMsg = message.reply_to_message
+    
+    replyParts.append(f"message_id={replyMsg.message_id}")
+    
+    if replyMsg.from_user:
+        replyParts.append(f"from_user={replyMsg.from_user}")
+    
+    if replyMsg.chat:
+        replyParts.append(f"chatId={replyMsg.chat.id}")
+    
+    if replyMsg.text:
+        textPreview = replyMsg.text[:10]+"..." if len(replyMsg.text) > 10 else replyMsg.text
+        replyParts.append(f"text={textPreview!r}")
+    
+    compactReply = f"{{{', '.join(replyParts)}}}"
+    
+    # Get the full repr of reply_to_message to find and replace it
+    replyRepr = repr(replyMsg)
+    
+    # Replace the full reply_to_message repr with compact version
+    modifiedRepr = originalRepr.replace(f"reply_to_message={replyRepr}", f"reply_to_message={compactReply}")
+    
+    return modifiedRepr
