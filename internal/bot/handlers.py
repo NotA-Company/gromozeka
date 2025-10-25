@@ -2775,7 +2775,7 @@ class BotHandlers(CommandHandlerMixin):
         )
 
         if isBotOwner:
-            help_text += "\n\n" "**Команды, доступные только владельцам бота:**\n" f"{"\n".join(botOwnerCommands)}\n"
+            help_text += "\n\n**Команды, доступные только владельцам бота:**\n" f"{"\n".join(botOwnerCommands)}\n"
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
         # logger.debug(f"Help text: {help_text}")
