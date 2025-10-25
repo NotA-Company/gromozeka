@@ -3296,6 +3296,12 @@ class BotHandlers(CommandHandlerMixin):
             case _:
                 logger.error(f"Unsupported chat type for Summarization: {chatType}")
 
+    @commandHandler(
+        commands=("models",),
+        shortDescription="Get list of known LLM models",
+        helpMessage=": Вывести список всех известных моделей и их параметров.",
+        categories={CommandCategory.BOT_OWNER}
+    )
     async def models_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /models command."""
         modelsPerMessage = 4
@@ -3356,6 +3362,12 @@ class BotHandlers(CommandHandlerMixin):
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
+    @commandHandler(
+        commands=("settings",),
+        shortDescription="Dump all settings for this chat",
+        helpMessage=": Вывести список настроек для данного чата",
+        categories={CommandCategory.BOT_OWNER}
+    )
     async def chat_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /settings command."""
         message = update.message
@@ -3397,6 +3409,12 @@ class BotHandlers(CommandHandlerMixin):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
+    @commandHandler(
+        commands=("set", "unset"),
+        shortDescription="<key> <value> - Set/Unset given setting for current chat",
+        helpMessage=" `<key>` `<value>`: установить/сбросить настройку чата",
+        categories={CommandCategory.BOT_OWNER}
+    )
     async def set_or_unset_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /[un]set <key> <value> command."""
         logger.debug(f"Got set or unset command: {update}")
@@ -4592,6 +4610,12 @@ class BotHandlers(CommandHandlerMixin):
 
         return True
 
+    @commandHandler(
+        commands=("configure",),
+        shortDescription="Start chat configuration wizard",
+        helpMessage=": Настроить поведение бота в одном из чатов, где вы админ",
+        categories={CommandCategory.PRIVATE}
+    )
     async def configure_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /configure command."""
 
@@ -4819,6 +4843,12 @@ class BotHandlers(CommandHandlerMixin):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
+    @commandHandler(
+        commands=("unban",),
+        shortDescription="[<username>] - Unban user from current chat",
+        helpMessage="[@<username>]: Разбанить пользователя в данном чате. Так же может быть ответом на сообщение забаненного пользователя.",
+        categories={CommandCategory.ADMIN}
+    )
     async def unban_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /unban [<@username>] command."""
         message = update.message
