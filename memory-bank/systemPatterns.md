@@ -146,3 +146,4 @@ All tests are executed via `make test` command, which:
 * **When creating new test suites:** Follow existing patterns (pytest for new code, custom runners for specialized needs)
 * **Before committing:** Always run `make test` to ensure all tests pass
 * **When refactoring:** Update affected tests immediately
+* **After any changes:** Run `make format` and `make lint` to ensure code quality

@@ -53,7 +53,7 @@ test:
 	@echo ""
 	@echo "🌤️  Running OpenWeatherMap tests..."
 	$(PYTHON) lib/openweathermap/test_dict_cache.py
-	@echo "⚠️  Skipping test_weather_client.py (test mocking issues - not related to circular import)"
+	$(PYTHON) -m pytest lib/openweathermap/test_weather_client.py -v
 	@echo ""
 	@echo "🗄️  Running Database Migration tests..."
 	$(PYTHON) internal/database/migrations/test_migrations.py
