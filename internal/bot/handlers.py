@@ -1873,8 +1873,8 @@ class BotHandlers(CommandHandlerMixin):
             # Not new message, ignore
             logger.warning(f"Message undefined in {update}")
             return
-        
-        #logger.debug(f"Message: {message}")
+
+        # logger.debug(f"Message: {message}")
         logger.debug(f"Message: {utils.dumpMessage(message)}")
 
         ensuredMessage: Optional[EnsuredMessage] = None
