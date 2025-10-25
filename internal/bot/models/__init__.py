@@ -8,8 +8,11 @@ from .enums import (
     ButtonDataKey,
     ButtonSummarizationAction,
     LLMMessageFormat,
-    MessageType,
 )
+
+# Re-export MessageType from shared_enums to avoid circular dependency
+from ..models import MessageType
+
 
 # Delayed Tasks
 from .delayed_tasks import DelayedTask, DelayedTaskFunction

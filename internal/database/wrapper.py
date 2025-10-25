@@ -30,7 +30,7 @@ from .models import (
     SpamReason,
 )
 # Import from shared_enums to avoid circular dependency
-from internal.models.shared_enums import MessageType
+from internal.models import MessageType
 
 logger = logging.getLogger(__name__)
 
