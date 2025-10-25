@@ -117,3 +117,35 @@ This file tracks the project's current status, including recent changes, current
 * **Migrations:** Test suite at internal/database/migrations/test_migrations.py
 * **Bot Handlers:** pytest-based tests in tests/ directory
 * **Utilities:** pytest-based tests in lib/tests/ directory
+
+[2025-10-25 22:45:00] - CacheService Design Proposal Created
+
+## Current Focus
+
+* Designed comprehensive CacheService to replace TypedDict cache in handlers/main.py
+* Proposal includes singleton pattern, namespace support, and selective persistence
+* Waiting for user review before implementation
+
+## Recent Changes
+
+* Created `docs/design/cache-service-design.md` with detailed design proposal
+* Key features designed:
+  - Singleton pattern for global access
+  - Namespace-based organization (chats, chatUsers, users)
+  - Selective persistence with different strategies (MEMORY_ONLY, ON_CHANGE, ON_SHUTDOWN, PERIODIC)
+  - Thread-safety with RLock
+  - TTL support for cache entries
+  - Decorators for method-level caching
+  - Database persistence layer
+  - Backward compatibility considerations
+
+## Design Highlights
+
+* **Architecture**: Modular structure under `internal/cache/` directory
+* **Persistence Levels**: 
+  - MEMORY_ONLY for temporary data
+  - ON_CHANGE for critical settings
+  - ON_SHUTDOWN for relatively static data
+  - PERIODIC for important but non-critical data
+* **Migration Strategy**: Three-phase approach for safe transition
+* **Database**: New `cache_storage` table for persistent cache entries
