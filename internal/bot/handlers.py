@@ -94,7 +94,7 @@ class BotHandlers(CommandHandlerMixin):
         """Initialize handlers with database and LLM model."""
         # Initialize the mixin (discovers handlers)
         super().__init__()
-        
+
         self.configManager = configManager
         self.config = configManager.getBotConfig()
         self.db = database
@@ -2694,7 +2694,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("start",),
         shortDescription="Start bot interaction",
         helpMessage=": Начать работу с ботом.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
@@ -2716,7 +2716,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("help",),
         shortDescription="Print help",
         helpMessage=": Показать список доступных команд.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /help command."""
@@ -2781,7 +2781,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("echo",),
         shortDescription="<Message> - Echo message back",
         helpMessage=" `<message>`: Просто ответить переданным сообщением (для тестирования живости бота).",
-        categories={CommandCategory.PRIVATE, CommandCategory.HIDDEN}
+        categories={CommandCategory.PRIVATE, CommandCategory.HIDDEN},
     )
     async def echo_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /echo command."""
@@ -3136,9 +3136,11 @@ class BotHandlers(CommandHandlerMixin):
 
     @commandHandler(
         commands=("summary", "topic_summary"),
-        shortDescription="[<maxMessages>] [<chatId>] [<topicId>] - Summarise given chat (call without arguments to start wizard)",
-        helpMessage=" `[<maxMessages>]` `[<chatId>]` `[<topicId>]`: Сделать суммаризацию чата (запускайте без аргументов для запуска мастера).",
-        categories={CommandCategory.PRIVATE}
+        shortDescription="[<maxMessages>] [<chatId>] [<topicId>] - Summarise given chat "
+        "(call without arguments to start wizard)",
+        helpMessage=" `[<maxMessages>]` `[<chatId>]` `[<topicId>]`: Сделать суммаризацию чата "
+        "(запускайте без аргументов для запуска мастера).",
+        categories={CommandCategory.PRIVATE},
     )
     async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /[topic_]summary [<messages> <chunks> <chatId> <threadId>]command."""
@@ -3481,7 +3483,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("test",),
         shortDescription="<Test suite> [<args>] - Run some tests",
         helpMessage=" `<test_name>` `[<test_args>]``: Запустить тест (используется для тестирования).",
-        categories={CommandCategory.BOT_OWNER, CommandCategory.HIDDEN}
+        categories={CommandCategory.BOT_OWNER, CommandCategory.HIDDEN},
     )
     async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /test <suite> [<args>] command."""
@@ -3608,8 +3610,9 @@ class BotHandlers(CommandHandlerMixin):
     @commandHandler(
         commands=("analyze",),
         shortDescription="<prompt> - Analyse answered media with given prompt",
-        helpMessage=" `<prompt>`: Проанализировать медиа используя указанный промпт (на данный момент доступен только анализ картинок и статических стикеров).",
-        categories={CommandCategory.PRIVATE}
+        helpMessage=" `<prompt>`: Проанализировать медиа используя указанный промпт "
+        "(на данный момент доступен только анализ картинок и статических стикеров).",
+        categories={CommandCategory.PRIVATE},
     )
     async def analyze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /analyze <prompt> command."""
@@ -3740,9 +3743,10 @@ class BotHandlers(CommandHandlerMixin):
 
     @commandHandler(
         commands=("draw",),
-        shortDescription="[<prompt>] - Draw image with given prompt (use qoute or replied message as prompt if any)",
-        helpMessage=" `[<prompt>]`: Сгенерировать изображение, используя указанный промпт. Так же может быть ответом на сообщение или цитированием.",
-        categories={CommandCategory.PRIVATE}
+        shortDescription="[<prompt>] - Draw image with given prompt " "(use qoute or replied message as prompt if any)",
+        helpMessage=" `[<prompt>]`: Сгенерировать изображение, используя указанный промпт. "
+        "Так же может быть ответом на сообщение или цитированием.",
+        categories={CommandCategory.PRIVATE},
     )
     async def draw_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /draw <prompt> command."""
@@ -3845,8 +3849,9 @@ class BotHandlers(CommandHandlerMixin):
     @commandHandler(
         commands=("weather",),
         shortDescription="<city> [<countryCode>] - Get weather for given city",
-        helpMessage=" `<city>` `[<countryCode>]`: Показать погоду в указанном городе (можно добавить 2х-буквенный код страны для уточнения).",
-        categories={CommandCategory.PRIVATE}
+        helpMessage=" `<city>` `[<countryCode>]`: Показать погоду в указанном городе "
+        "(можно добавить 2х-буквенный код страны для уточнения).",
+        categories={CommandCategory.PRIVATE},
     )
     async def weather_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /weather <city> [<country>] command."""
@@ -3925,8 +3930,9 @@ class BotHandlers(CommandHandlerMixin):
     @commandHandler(
         commands=("remind",),
         shortDescription="<delay> [<message>] - Remind me after given delay with message or replied message/quote",
-        helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через указанное время (можно использовать цитирование или ответ на сообщение).",
-        categories={CommandCategory.PRIVATE}
+        helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через указанное время "
+        "(можно использовать цитирование или ответ на сообщение).",
+        categories={CommandCategory.PRIVATE},
     )
     async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /remind <time> [<message>] command."""
@@ -3999,7 +4005,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("get_my_data",),
         shortDescription="Dump data, bot knows about you in this chat",
         helpMessage=": Показать запомненную информацию о Вас в текущем чате.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def get_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /get_my_data command."""
@@ -4029,7 +4035,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("delete_my_data",),
         shortDescription="<key> - Delete user data for given key",
         helpMessage=" `<key>`: Удалить информацию о Вас по указанному ключу.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def delete_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /delete_my_data <key> command."""
@@ -4075,7 +4081,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("clear_my_data",),
         shortDescription="Clear all user data",
         helpMessage=": Очистить все сзнания о Вас в этом чате.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def clear_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /clear_my_data command."""
@@ -4113,7 +4119,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("spam",),
         shortDescription="Mark answered message as spam",
         helpMessage=": Указать боту на сообщение со спамом (должно быть ответом на спам-сообщение).",
-        categories={CommandCategory.ADMIN}
+        categories={CommandCategory.ADMIN},
     )
     async def spam_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /spam command."""
@@ -4164,7 +4170,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("pretrain_bayes",),
         shortDescription="[<chatId>] - initially train bayes filter with up to 1000 last messages",
         helpMessage=" `[<chatId>]`: Предобучить Баесовский антиспам фильтр на последних 1000 сообщениях.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def pretrain_bayes_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /pretrain_bayes [<chatId>] command."""
@@ -4622,7 +4628,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("list_chats",),
         shortDescription="[all] - List chats, where bot seen you",
         helpMessage=": Вывести список чатов, где бот вас видел.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def list_chats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /list_chats [all] command."""
@@ -4668,7 +4674,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("learn_spam", "learn_ham"),
         shortDescription="[<chatId>] - learn answered message (or quote) as spam/ham for given chat",
         helpMessage=" `[<chatId>]`: Обучить баесовский фильтр на указанным сообщении (или цитате) как спам/не-спам.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def learn_spam_ham_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /learn_<spam|ham> [<chatId>] command."""
@@ -4761,7 +4767,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("get_spam_score",),
         shortDescription="[<chatId>] - Analyze answered (or qoted) message for spam and print result",
         helpMessage=" `[<chatId>]`: Выдать результат проверки указанного сообщения (или цитаты) на спам.",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
     )
     async def get_spam_score_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /get_spam_score [<chatId>] command."""
