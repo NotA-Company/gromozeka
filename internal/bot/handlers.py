@@ -56,6 +56,7 @@ from .models import (
     CommandCategory,
     CommandHandlerInfo,
     CommandHandlerMixin,
+    CommandHandlerOrder,
     DelayedTask,
     DelayedTaskFunction,
     HandlersCacheDict,
@@ -2696,6 +2697,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="Start bot interaction",
         helpMessage=": Начать работу с ботом.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.FIRST,
     )
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
@@ -2718,6 +2720,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="Print help",
         helpMessage=": Показать список доступных команд.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.SECOND,
     )
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /help command."""
@@ -2728,11 +2731,16 @@ class BotHandlers(CommandHandlerMixin):
         ensuredMessage = EnsuredMessage.fromMessage(update.message)
         isBotOwner = await self._isAdmin(ensuredMessage.user, allowBotOwners=True)
 
-        commands: Dict[CommandCategory, List[str]] = {}
-        for commandCategory in CommandCategory:
-            commands[commandCategory] = []
+        commands: Dict[CommandHandlerOrder, List[str]] = {}
+        for commandOrder in CommandHandlerOrder:
+            commands[commandOrder] = []
+        botOwnerCommands: List[str] = []
 
-        for commandInfo in self.getCommandHandlers():
+        # Sort command handlers by order, then by command name
+        sortedHandlers = sorted(self.getCommandHandlers(), key=lambda h: (h.order, h.commands[0]))
+
+        for commandInfo in sortedHandlers:
+            helpText = "* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage
             for commandCategory in [
                 CommandCategory.BOT_OWNER,
                 CommandCategory.DEFAULT,
@@ -2741,17 +2749,19 @@ class BotHandlers(CommandHandlerMixin):
                 CommandCategory.ADMIN,
             ]:
                 if commandCategory in commandInfo.categories:
-                    commands[commandCategory].append(
-                        "* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage
-                    )
+                    if commandCategory == CommandCategory.BOT_OWNER:
+                        botOwnerCommands.append(helpText)
+                    else:
+                        commands[commandInfo.order].append(helpText)
 
+        commandsStr = ""
+        for v in commands.values():
+            if v:
+                commandsStr += f"{'\n'.join(v)}\n\n"
         help_text = (
             "🤖 **Gromozeka Bot Help**\n\n"
             "**Поддерживаемые команды:**\n"
-            f"{"\n".join(commands[CommandCategory.DEFAULT])}\n\n"
-            f"{"\n".join(commands[CommandCategory.PRIVATE])}\n\n"
-            f"{"\n".join(commands[CommandCategory.GROUP])}\n\n"
-            f"{"\n".join(commands[CommandCategory.ADMIN])}\n\n"
+            f"{commandsStr}\n\n"
             "\n"
             "**Так же этот бот может:**\n"
             "* Анализировать картинки и стикеры и отвечать на вопросы по ним\n"
@@ -2768,10 +2778,11 @@ class BotHandlers(CommandHandlerMixin):
             help_text += (
                 "\n\n"
                 "**Команды, доступные только владельцам бота:**\n"
-                f"{"\n".join(commands[CommandCategory.BOT_OWNER])}\n"
+                f"{"\n".join(botOwnerCommands)}\n"
             )
 
         self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
+        #logger.debug(f"Help text: {help_text}")
         await self._sendMessage(
             ensuredMessage,
             messageText=help_text,
@@ -2783,6 +2794,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="<Message> - Echo message back",
         helpMessage=" `<message>`: Просто ответить переданным сообщением (для тестирования живости бота).",
         categories={CommandCategory.PRIVATE, CommandCategory.HIDDEN},
+        order=CommandHandlerOrder.SECOND,
     )
     async def echo_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /echo command."""
@@ -3142,6 +3154,7 @@ class BotHandlers(CommandHandlerMixin):
         helpMessage=" `[<maxMessages>]` `[<chatId>]` `[<topicId>]`: Сделать суммаризацию чата "
         "(запускайте без аргументов для запуска мастера).",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.NORMAL,
     )
     async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /[topic_]summary [<messages> <chunks> <chatId> <threadId>]command."""
@@ -3301,7 +3314,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("models",),
         shortDescription="Get list of known LLM models",
         helpMessage=": Вывести список всех известных моделей и их параметров.",
-        categories={CommandCategory.BOT_OWNER}
+        categories={CommandCategory.BOT_OWNER},
     )
     async def models_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /models command."""
@@ -3367,7 +3380,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("settings",),
         shortDescription="Dump all settings for this chat",
         helpMessage=": Вывести список настроек для данного чата",
-        categories={CommandCategory.BOT_OWNER}
+        categories={CommandCategory.BOT_OWNER},
     )
     async def chat_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /settings command."""
@@ -3414,7 +3427,7 @@ class BotHandlers(CommandHandlerMixin):
         commands=("set", "unset"),
         shortDescription="<key> <value> - Set/Unset given setting for current chat",
         helpMessage=" `<key>` `<value>`: установить/сбросить настройку чата",
-        categories={CommandCategory.BOT_OWNER}
+        categories={CommandCategory.BOT_OWNER},
     )
     async def set_or_unset_chat_setting_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /[un]set <key> <value> command."""
@@ -3503,6 +3516,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="<Test suite> [<args>] - Run some tests",
         helpMessage=" `<test_name>` `[<test_args>]``: Запустить тест (используется для тестирования).",
         categories={CommandCategory.BOT_OWNER, CommandCategory.HIDDEN},
+        order=CommandHandlerOrder.TEST,
     )
     async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /test <suite> [<args>] command."""
@@ -3648,13 +3662,12 @@ class BotHandlers(CommandHandlerMixin):
                     messageText=ret,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
-                
+
                 await self._sendMessage(
                     ensuredMessage,
                     messageText=f"```\n{repliedMessage.parse_entities()}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
-                
 
             case _:
                 await self._sendMessage(
@@ -3669,6 +3682,7 @@ class BotHandlers(CommandHandlerMixin):
         helpMessage=" `<prompt>`: Проанализировать медиа используя указанный промпт "
         "(на данный момент доступен только анализ картинок и статических стикеров).",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.NORMAL,
     )
     async def analyze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /analyze <prompt> command."""
@@ -3803,6 +3817,7 @@ class BotHandlers(CommandHandlerMixin):
         helpMessage=" `[<prompt>]`: Сгенерировать изображение, используя указанный промпт. "
         "Так же может быть ответом на сообщение или цитированием.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.NORMAL,
     )
     async def draw_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /draw <prompt> command."""
@@ -3908,6 +3923,7 @@ class BotHandlers(CommandHandlerMixin):
         helpMessage=" `<city>` `[<countryCode>]`: Показать погоду в указанном городе "
         "(можно добавить 2х-буквенный код страны для уточнения).",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.NORMAL,
     )
     async def weather_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /weather <city> [<country>] command."""
@@ -3989,6 +4005,7 @@ class BotHandlers(CommandHandlerMixin):
         helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через указанное время "
         "(можно использовать цитирование или ответ на сообщение).",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.NORMAL,
     )
     async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /remind <time> [<message>] command."""
@@ -4062,6 +4079,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="Dump data, bot knows about you in this chat",
         helpMessage=": Показать запомненную информацию о Вас в текущем чате.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.TECHNICAL,
     )
     async def get_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /get_my_data command."""
@@ -4092,6 +4110,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="<key> - Delete user data for given key",
         helpMessage=" `<key>`: Удалить информацию о Вас по указанному ключу.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.TECHNICAL,
     )
     async def delete_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /delete_my_data <key> command."""
@@ -4138,6 +4157,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="Clear all user data",
         helpMessage=": Очистить все сзнания о Вас в этом чате.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.TECHNICAL,
     )
     async def clear_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /clear_my_data command."""
@@ -4176,6 +4196,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="Mark answered message as spam",
         helpMessage=": Указать боту на сообщение со спамом (должно быть ответом на спам-сообщение).",
         categories={CommandCategory.ADMIN},
+        order=CommandHandlerOrder.SPAM,
     )
     async def spam_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /spam command."""
@@ -4227,6 +4248,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="[<chatId>] - initially train bayes filter with up to 1000 last messages",
         helpMessage=" `[<chatId>]`: Предобучить Баесовский антиспам фильтр на последних 1000 сообщениях.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.SPAM,
     )
     async def pretrain_bayes_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /pretrain_bayes [<chatId>] command."""
@@ -4652,7 +4674,8 @@ class BotHandlers(CommandHandlerMixin):
         commands=("configure",),
         shortDescription="Start chat configuration wizard",
         helpMessage=": Настроить поведение бота в одном из чатов, где вы админ",
-        categories={CommandCategory.PRIVATE}
+        categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.NORMAL,
     )
     async def configure_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /configure command."""
@@ -4691,6 +4714,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="[all] - List chats, where bot seen you",
         helpMessage=": Вывести список чатов, где бот вас видел.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.TECHNICAL,
     )
     async def list_chats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /list_chats [all] command."""
@@ -4737,6 +4761,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="[<chatId>] - learn answered message (or quote) as spam/ham for given chat",
         helpMessage=" `[<chatId>]`: Обучить баесовский фильтр на указанным сообщении (или цитате) как спам/не-спам.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.SPAM,
     )
     async def learn_spam_ham_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /learn_<spam|ham> [<chatId>] command."""
@@ -4830,6 +4855,7 @@ class BotHandlers(CommandHandlerMixin):
         shortDescription="[<chatId>] - Analyze answered (or qoted) message for spam and print result",
         helpMessage=" `[<chatId>]`: Выдать результат проверки указанного сообщения (или цитаты) на спам.",
         categories={CommandCategory.PRIVATE},
+        order=CommandHandlerOrder.SPAM,
     )
     async def get_spam_score_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /get_spam_score [<chatId>] command."""
@@ -4884,8 +4910,10 @@ class BotHandlers(CommandHandlerMixin):
     @commandHandler(
         commands=("unban",),
         shortDescription="[<username>] - Unban user from current chat",
-        helpMessage="[@<username>]: Разбанить пользователя в данном чате. Так же может быть ответом на сообщение забаненного пользователя.",
-        categories={CommandCategory.ADMIN}
+        helpMessage="[@<username>]: Разбанить пользователя в данном чате. "
+        "Так же может быть ответом на сообщение забаненного пользователя.",
+        categories={CommandCategory.ADMIN},
+        order=CommandHandlerOrder.SPAM,
     )
     async def unban_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /unban [<@username>] command."""
