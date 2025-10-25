@@ -29,7 +29,8 @@ from .models import (
     MessageCategory,
     SpamReason,
 )
-from ..bot.models import MessageType
+# Import from shared_enums to avoid circular dependency
+from internal.models.shared_enums import MessageType
 
 logger = logging.getLogger(__name__)
 

@@ -18,8 +18,11 @@ import logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from internal.database.wrapper import DatabaseWrapper
-from internal.database.migrations import MigrationManager, MIGRATIONS
+from internal.database.migrations import MigrationManager
 from internal.database.migrations.versions import DISCOVERED_MIGRATIONS, discoverMigrations
+
+# Use DISCOVERED_MIGRATIONS as MIGRATIONS for backward compatibility
+MIGRATIONS = DISCOVERED_MIGRATIONS
 
 # Setup logging
 logging.basicConfig(
