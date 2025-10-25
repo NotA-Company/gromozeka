@@ -119,14 +119,14 @@ def commandHandler(
     def decorator(func: Callable) -> Callable:
         # Register the handler
         registry = CommandRegistry()
-        handler_info = CommandHandlerInfo(
+        handlerInfo = CommandHandlerInfo(
             commands=commands,
             shortDescription=shortDescription,
             helpMessage=helpMessage,
             categories=categories,
             handler=func,
         )
-        registry.register(handler_info)
+        registry.register(handlerInfo)
         
         # Return the original function unchanged
         return func
@@ -151,14 +151,14 @@ class BotHandlers:
     def _bindHandlers(self) -> None:
         """Bind registered handlers to this instance, dood!"""
         registry = CommandRegistry()
-        for handler_info in registry.getHandlers():
+        for handlerInfo in registry.getHandlers():
             # Replace the unbound handler with a bound method
-            original_handler = handler_info.handler
-            if hasattr(original_handler, '__self__'):
+            originalHandler = handlerInfo.handler
+            if hasattr(originalHandler, '__self__'):
                 # Already bound, skip
                 continue
             # Bind the handler to this instance
-            handler_info.handler = original_handler.__get__(self, type(self))
+            handlerInfo.handler = originalHandler.__get__(self, type(self))
     
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
         """Get all registered command handlers."""
