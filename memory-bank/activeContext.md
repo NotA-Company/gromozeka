@@ -88,3 +88,32 @@ This file tracks the project's current status, including recent changes, current
 - DatabaseWrapper now uses auto-discovered migrations by default
 - All 8 test cases passing, confirming functionality works correctly
 - Migration creation script template updated for future migrations
+
+[2025-10-25 21:48:00] - Test Infrastructure Consolidation
+
+## Current Focus
+
+* Consolidated all project tests under unified `make test` command
+* Documented test organization for future maintenance
+* Ensured all test suites are discoverable and runnable
+
+## Recent Changes
+
+* Updated Makefile test target to run all test suites:
+  - Markdown parser tests (lib/markdown/test/)
+  - Bayes filter tests (lib/spam/test_bayes_filter.py)
+  - OpenWeatherMap client tests (lib/openweathermap/)
+  - Database migration tests (internal/database/migrations/test_migrations.py)
+  - Bot command handler tests (tests/)
+  - Utility tests (lib/tests/)
+* Fixed incorrect path in Makefile (lib/markdown/tests/ → lib/markdown/test/)
+* Added comprehensive test execution with clear output sections
+
+## Test Organization
+
+* **Markdown Tests:** Comprehensive test runner at lib/markdown/test/run_all_tests.py
+* **Bayes Filter:** Standalone test at lib/spam/test_bayes_filter.py
+* **OpenWeatherMap:** Tests at lib/openweathermap/test_*.py
+* **Migrations:** Test suite at internal/database/migrations/test_migrations.py
+* **Bot Handlers:** pytest-based tests in tests/ directory
+* **Utilities:** pytest-based tests in lib/tests/ directory

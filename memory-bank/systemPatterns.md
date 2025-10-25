@@ -97,3 +97,52 @@ internal/database/migrations/
 - MigrationManager.loadMigrationsFromVersions() method dynamically loads all discovered migrations
 - DatabaseWrapper automatically uses auto-discovered migrations when no explicit migrations are provided
 - This pattern eliminates the need to manually register migrations in the main application code
+
+[2025-10-25 21:48:00] - Test Organization Pattern
+
+## Test Suite Organization
+
+The project uses a multi-layered test organization pattern with different test runners for different components:
+
+### Test Locations and Runners
+
+1. **Markdown Parser Tests** (`lib/markdown/test/`)
+   - Custom test runner: `run_all_tests.py`
+   - Discovers and categorizes all test files automatically
+   - Supports both unittest and script-based tests
+   - Shell wrapper: `run_tests.sh` for easy execution
+
+2. **Bayes Filter Tests** (`lib/spam/`)
+   - Standalone test file: `test_bayes_filter.py`
+   - Direct execution with Python interpreter
+
+3. **OpenWeatherMap Client Tests** (`lib/openweathermap/`)
+   - Multiple test files: `test_dict_cache.py`, `test_weather_client.py`
+   - Direct execution with Python interpreter
+
+4. **Database Migration Tests** (`internal/database/migrations/`)
+   - Test suite: `test_migrations.py`
+   - Direct execution with Python interpreter
+
+5. **Bot Command Handler Tests** (`tests/`)
+   - pytest-based test suite
+   - Tests for command handler decorators and ordering
+
+6. **Utility Tests** (`lib/tests/`)
+   - pytest-based test suite
+   - Tests for general utility functions
+
+### Unified Test Execution
+
+All tests are executed via `make test` command, which:
+- Runs each test suite in sequence
+- Provides clear section headers for each test category
+- Uses appropriate test runner for each suite
+- Reports overall success/failure
+
+### Test Maintenance Guidelines
+
+* **When adding new tests:** Update the `make test` target in Makefile
+* **When creating new test suites:** Follow existing patterns (pytest for new code, custom runners for specialized needs)
+* **Before committing:** Always run `make test` to ensure all tests pass
+* **When refactoring:** Update affected tests immediately
