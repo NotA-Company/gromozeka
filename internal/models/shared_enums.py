@@ -7,6 +7,7 @@ from enum import StrEnum
 
 class MessageType(StrEnum):
     """Message type enum - shared between database and bot modules"""
+
     TEXT = "text"
     # PHOTO      - https://docs.python-telegram-bot.org/en/stable/telegram.photosize.html#telegram.PhotoSize
     IMAGE = "image"

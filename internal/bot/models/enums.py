@@ -11,7 +11,6 @@ class LLMMessageFormat(StrEnum):
     SMART = "smart"  # JSON for user messages and text for bot messages
 
 
-
 class ButtonDataKey(StrEnum):
     ConfigureAction = "a"
     SummarizationAction = "s"

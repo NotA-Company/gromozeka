@@ -131,10 +131,10 @@ class TestOpenWeatherMapClient:
         # Patch _makeRequest before calling to verify it's not called
         with patch.object(client, "_makeRequest") as mock_request:
             result = await client.getCoordinates("Moscow", "RU")
-            
+
             # Verify result from cache
             assert result == cached_result
-            
+
             # Verify no API call was made
             mock_request.assert_not_called()
 
@@ -188,10 +188,10 @@ class TestOpenWeatherMapClient:
         # Patch _makeRequest before calling to verify it's not called
         with patch.object(client, "_makeRequest") as mock_request:
             result = await client.getWeather(55.7558, 37.6173)
-            
+
             # Verify result from cache
             assert result == cached_result
-            
+
             # Verify no API call was made
             mock_request.assert_not_called()
 
@@ -268,7 +268,7 @@ class TestDatabaseWeatherCache:
     def mock_db(self):
         """Mock database wrapper"""
         from internal.database.models import CacheType
-        
+
         db = Mock()
         db.getCacheEntry = Mock(return_value=None)
         db.setCacheEntry = Mock(return_value=True)
@@ -283,7 +283,7 @@ class TestDatabaseWeatherCache:
     async def test_get_weather_existing(self, cache, mock_db):
         """Test getting existing weather cache entry"""
         from internal.database.models import CacheType
-        
+
         # Mock database return with weather data
         cached_weather = {
             "lat": 55.7558,
@@ -305,7 +305,7 @@ class TestDatabaseWeatherCache:
     async def test_get_geocoding_existing(self, cache, mock_db):
         """Test getting existing geocoding cache entry"""
         from internal.database.models import CacheType
-        
+
         # Mock database return with geocoding data
         cached_geocoding = {
             "name": "Moscow",
@@ -335,9 +335,9 @@ class TestDatabaseWeatherCache:
     async def test_set_weather(self, cache, mock_db):
         """Test storing weather entry"""
         from internal.database.models import CacheType
-        
+
         mock_db.setCacheEntry.return_value = True
-        
+
         weather_data = {
             "lat": 55.7558,
             "lon": 37.6173,
@@ -358,9 +358,9 @@ class TestDatabaseWeatherCache:
     async def test_set_geocoding(self, cache, mock_db):
         """Test storing geocoding entry"""
         from internal.database.models import CacheType
-        
+
         mock_db.setCacheEntry.return_value = True
-        
+
         geocoding_data = {
             "name": "Moscow",
             "lat": 55.7558,
@@ -381,7 +381,7 @@ class TestDatabaseWeatherCache:
     async def test_expired_entry(self, cache, mock_db):
         """Test that expired entries return None"""
         from internal.database.models import CacheType
-        
+
         # When TTL check fails, getCacheEntry returns None
         mock_db.getCacheEntry.return_value = None
 
@@ -395,7 +395,7 @@ class TestDatabaseWeatherCache:
     async def test_valid_entry(self, cache, mock_db):
         """Test that valid entries are returned"""
         from internal.database.models import CacheType
-        
+
         # Mock recent entry
         cached_data = {"temp": 15.5}
         mock_db.getCacheEntry.return_value = {
@@ -416,7 +416,7 @@ class TestIntegration:
     async def test_full_workflow_with_real_cache(self):
         """Test full workflow with real cache implementation"""
         from internal.database.models import CacheType
-        
+
         # Mock database wrapper
         mock_db = Mock()
         mock_db.getCacheEntry = Mock(return_value=None)
@@ -460,7 +460,7 @@ class TestIntegration:
 
         # Verify cache operations - both geocoding and weather should be cached
         assert mock_db.setCacheEntry.call_count == 2
-        
+
         # Verify the cache calls were made with correct types
         calls = mock_db.setCacheEntry.call_args_list
         cache_types = [call[1]["cacheType"] for call in calls]
