@@ -147,3 +147,50 @@ All tests are executed via `make test` command, which:
 * **Before committing:** Always run `make test` to ensure all tests pass
 * **When refactoring:** Update affected tests immediately
 * **After any changes:** Run `make format` and `make lint` to ensure code quality
+
+[2025-10-25 22:16:51] - Development Workflow Pattern
+
+## Code Quality Workflow
+
+The project enforces code quality through automated formatting and linting tools, dood!
+
+### Required Commands After Code Changes
+
+1. **Code Formatting** (`make format`)
+   - **When to use:** After making any code changes, before committing
+   - **Purpose:** Automatically formats Python code according to project standards
+   - **Tool:** Uses configured formatters (likely black, isort, or similar)
+   - **Command:** `make format`
+   - **Behavior:** Modifies files in-place to match formatting standards
+
+2. **Code Linting** (`make lint`)
+   - **When to use:** After formatting, before committing
+   - **Purpose:** Checks code for style issues, potential bugs, and code quality problems
+   - **Tool:** Uses configured linters (flake8, pylint, or similar based on `.flake8` config)
+   - **Command:** `make lint`
+   - **Behavior:** Reports issues that need to be fixed manually
+   - **Action Required:** Fix all reported linter issues before committing
+
+### Standard Development Workflow
+
+```bash
+# 1. Make your code changes
+# 2. Format the code
+make format
+
+# 3. Check for linting issues
+make lint
+
+# 4. Fix any reported issues
+# 5. Run tests to ensure nothing broke
+make test
+
+# 6. Commit your changes
+```
+
+### Integration with Other Patterns
+
+* **Before committing:** Always run `make format` → `make lint` → `make test`
+* **After task completion:** Include formatting and linting in the completion checklist
+* **During code review:** Ensure all code passes formatting and linting checks
+* **CI/CD Integration:** These checks should be automated in the deployment pipeline
