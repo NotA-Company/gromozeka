@@ -54,6 +54,7 @@ from .models import (
     ButtonSummarizationAction,
     CommandCategory,
     CommandHandlerInfo,
+    CommandHandlerMixin,
     DelayedTask,
     DelayedTaskFunction,
     HandlersCacheDict,
@@ -61,6 +62,7 @@ from .models import (
     MessageType,
     MediaProcessingInfo,
     UserMetadataDict,
+    commandHandler,
 )
 from .chat_settings import ChatSettingsKey, ChatSettingsValue
 from . import chat_settings
@@ -85,11 +87,14 @@ def makeEmptyAsyncTask() -> asyncio.Task:
     return asyncio.create_task(asyncio.sleep(0))
 
 
-class BotHandlers:
-    """Contains all bot command and message handlers."""
+class BotHandlers(CommandHandlerMixin):
+    """Contains all bot command and message handlers, dood!"""
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
         """Initialize handlers with database and LLM model."""
+        # Initialize the mixin (discovers handlers)
+        super().__init__()
+        
         self.configManager = configManager
         self.config = configManager.getBotConfig()
         self.db = database
@@ -157,14 +162,12 @@ class BotHandlers:
         await self._addDelayedTask(time.time(), DelayedTaskFunction.DO_EXIT, kwargs={}, skipDB=True)
 
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
-        return [
-            CommandHandlerInfo(
-                commands=("start",),
-                shortDescription="Start bot interaction",
-                helpMessage=": Начать работу с ботом.",
-                categories={CommandCategory.PRIVATE},
-                handler=self.start_command,
-            ),
+        # Get auto-discovered handlers from the mixin
+        handlers = list(super().getCommandHandlers())
+        
+        # Add manually registered handlers (for backward compatibility during migration)
+        # Note: start_command is now auto-discovered, so we don't add it manually
+        handlers.extend([
             CommandHandlerInfo(
                 commands=("help",),
                 shortDescription="Print help",
@@ -322,7 +325,9 @@ class BotHandlers:
                 categories={CommandCategory.ADMIN},
                 handler=self.unban_command,
             ),
-        ]
+        ])
+        
+        return handlers
 
     ###
     # Chat settings Managenent
@@ -2849,6 +2854,12 @@ class BotHandlers:
     # COMMANDS Handlers
     ###
 
+    @commandHandler(
+        commands=("start",),
+        shortDescription="Start bot interaction",
+        helpMessage=": Начать работу с ботом.",
+        categories={CommandCategory.PRIVATE}
+    )
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command."""
         user = update.effective_user
