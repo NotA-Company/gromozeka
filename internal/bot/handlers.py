@@ -1866,13 +1866,16 @@ class BotHandlers(CommandHandlerMixin):
                 logger.error(f"Unsupported chat type: {chatType}")
 
     async def handle_chat_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        logger.debug(f"Handling group message: {update}")
+        logger.debug(f"Handling group message #{update.update_id}")
 
         message = update.message
         if not message:
             # Not new message, ignore
             logger.warning(f"Message undefined in {update}")
             return
+        
+        #logger.debug(f"Message: {message}")
+        logger.debug(f"Message: {utils.dumpMessage(message)}")
 
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
@@ -4860,7 +4863,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error("Message undefined")
             return
 
-        logger.debug(f"Message for SPAM Chaeck: {message}")
+        logger.debug(f"Message for SPAM Check: {utils.dumpMessage(message)}")
 
         ensuredMessage: Optional[EnsuredMessage] = None
         try:
