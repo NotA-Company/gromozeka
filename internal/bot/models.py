@@ -4,7 +4,7 @@ Models: Different data models for our bot
 
 import asyncio
 from dataclasses import dataclass
-from enum import Enum, StrEnum, auto
+from enum import Enum, IntEnum, StrEnum, auto
 import logging
 import inspect
 
@@ -151,12 +151,25 @@ class CommandCategory(Enum):
     HIDDEN = auto()  # Hide from command list
 
 
+class CommandHandlerOrder(IntEnum):
+    """Order for command handlers in help and bot commands list, dood!"""
+
+    FIRST = 0
+    SECOND = 10
+    NORMAL = 50
+    SPAM = 70
+    TECHNICAL = 80
+    TEST = 90
+    LAST = 100
+
+
 @dataclass
 class CommandHandlerInfo:
     commands: Sequence[str]
     shortDescription: str
     helpMessage: str
     categories: Set[CommandCategory]
+    order: CommandHandlerOrder
     # handler: tgTypes.HandlerCallback[tgUpdate.Update, tgTypes.CCT, tgTypes.RT],
     handler: Callable
 
@@ -166,6 +179,7 @@ class CommandHandlerInfo:
             shortDescription=self.shortDescription,
             helpMessage=self.helpMessage,
             categories=self.categories,
+            order=self.order,
             handler=self.handler,
         )
 
@@ -175,6 +189,7 @@ def commandHandler(
     shortDescription: str,
     helpMessage: str,
     categories: Optional[Set[CommandCategory]] = None,
+    order: CommandHandlerOrder = CommandHandlerOrder.NORMAL,
 ) -> Callable:
     """
     Decorator to mark a method as a command handler, dood!
@@ -187,13 +202,15 @@ def commandHandler(
         shortDescription: Short description for command list
         helpMessage: Detailed help message
         categories: Set of CommandCategory values
+        order: Order for sorting commands in help and bot commands list (default: CommandHandlerOrder.NORMAL)
 
     Example:
         @commandHandler(
             commands=("start",),
             shortDescription="Start bot interaction",
             helpMessage=": Начать работу с ботом.",
-            categories={CommandCategory.PRIVATE}
+            categories={CommandCategory.PRIVATE},
+            order=CommandHandlerOrder.FIRST
         )
         async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # Implementation here
@@ -209,6 +226,7 @@ def commandHandler(
             shortDescription=shortDescription,
             helpMessage=helpMessage,
             categories=categories,
+            order=order,
             handler=func,
         )
         setattr(func, _HANDLER_METADATA_ATTR, metadata)

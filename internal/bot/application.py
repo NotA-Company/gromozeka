@@ -143,7 +143,10 @@ class BotApplication:
         ChatAdminCommands = []
         PrivateCommands = []
 
-        for commandInfo in self.handlers.getCommandHandlers():
+        # Sort command handlers by order, then by command name
+        sortedHandlers = sorted(self.handlers.getCommandHandlers(), key=lambda h: (h.order, h.commands[0]))
+
+        for commandInfo in sortedHandlers:
             if CommandCategory.HIDDEN in commandInfo.categories:
                 continue
 
