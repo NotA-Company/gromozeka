@@ -1,5 +1,5 @@
 """
-Bot Models: Re-export all models for backward compatibility
+Bot Models: Export all models
 """
 
 # Enums
@@ -11,7 +11,7 @@ from .enums import (
 )
 
 # Re-export MessageType from shared_enums to avoid circular dependency
-from ..models import MessageType
+from ...models import MessageType
 
 
 # Delayed Tasks
