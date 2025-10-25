@@ -25,7 +25,7 @@ text2 = """
    
 * Item 2.1
 * Item 2.2
-"""
+"""  # noqa: W293
 
 # Test 3: Multiple spaces on blank line
 text3 = """
@@ -34,7 +34,7 @@ text3 = """
      
 * Item 2.1
 * Item 2.2
-"""
+"""  # noqa: W293
 
 print("Test 1: Normal blank line (no spaces)")
 print("=" * 60)
