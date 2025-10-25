@@ -28,11 +28,10 @@ class TestOpenWeatherMapClient:
     def mock_cache(self):
         """Mock cache for testing"""
         cache = Mock(spec=WeatherCacheInterface)
-        cache.get = AsyncMock(return_value=None)
-        cache.set = AsyncMock(return_value=True)
-        cache.isExpired = AsyncMock(return_value=True)
-        cache.clearExpired = AsyncMock(return_value=0)
-        cache.clearAll = AsyncMock(return_value=True)
+        cache.getWeather = AsyncMock(return_value=None)
+        cache.setWeather = AsyncMock(return_value=True)
+        cache.getGeocoging = AsyncMock(return_value=None)
+        cache.setGeocoging = AsyncMock(return_value=True)
         return cache
 
     @pytest.fixture
@@ -97,8 +96,7 @@ class TestOpenWeatherMapClient:
     async def test_get_coordinates_success(self, client, mock_cache, sample_geocoding_response):
         """Test successful geocoding"""
         # Mock cache miss
-        mock_cache.isExpired.return_value = True
-        mock_cache.get.return_value = None
+        mock_cache.getGeocoging.return_value = None
 
         # Mock API response
         with patch.object(client, "_makeRequest", return_value=sample_geocoding_response):
@@ -113,8 +111,8 @@ class TestOpenWeatherMapClient:
         assert result["local_names"]["ru"] == "Москва"
 
         # Verify cache operations
-        mock_cache.isExpired.assert_called_once_with("moscow,RU", "geocoding", 2592000)
-        mock_cache.set.assert_called_once()
+        mock_cache.getGeocoging.assert_called_once_with("moscow,RU", 2592000)
+        mock_cache.setGeocoging.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_coordinates_from_cache(self, client, mock_cache):
@@ -128,24 +126,23 @@ class TestOpenWeatherMapClient:
             "country": "RU",
             "state": None,
         }
-        mock_cache.isExpired.return_value = False
-        mock_cache.get.return_value = json.dumps(cached_result)
+        mock_cache.getGeocoging.return_value = cached_result
 
-        result = await client.getCoordinates("Moscow", "RU")
-
-        # Verify result from cache
-        assert result == cached_result
-
-        # Verify no API call was made
+        # Patch _makeRequest before calling to verify it's not called
         with patch.object(client, "_makeRequest") as mock_request:
+            result = await client.getCoordinates("Moscow", "RU")
+            
+            # Verify result from cache
+            assert result == cached_result
+            
+            # Verify no API call was made
             mock_request.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_coordinates_not_found(self, client, mock_cache):
         """Test geocoding when city not found"""
         # Mock cache miss and empty API response
-        mock_cache.isExpired.return_value = True
-        mock_cache.get.return_value = None
+        mock_cache.getGeocoging.return_value = None
 
         with patch.object(client, "_makeRequest", return_value=[]):
             result = await client.getCoordinates("NonexistentCity")
@@ -156,8 +153,7 @@ class TestOpenWeatherMapClient:
     async def test_get_weather_success(self, client, mock_cache, sample_weather_response):
         """Test successful weather fetch"""
         # Mock cache miss
-        mock_cache.isExpired.return_value = True
-        mock_cache.get.return_value = None
+        mock_cache.getWeather.return_value = None
 
         # Mock API response
         with patch.object(client, "_makeRequest", return_value=sample_weather_response):
@@ -173,8 +169,8 @@ class TestOpenWeatherMapClient:
         assert len(result["daily"]) == 1
 
         # Verify cache operations
-        mock_cache.isExpired.assert_called_once_with("55.7558,37.6173", "weather", 1800)
-        mock_cache.set.assert_called_once()
+        mock_cache.getWeather.assert_called_once_with("55.7558,37.6173", 1800)
+        mock_cache.setWeather.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_weather_from_cache(self, client, mock_cache):
@@ -187,13 +183,17 @@ class TestOpenWeatherMapClient:
             "current": {"temp": 15.5, "weather_description": "clear sky"},
             "daily": [],
         }
-        mock_cache.isExpired.return_value = False
-        mock_cache.get.return_value = json.dumps(cached_result)
+        mock_cache.getWeather.return_value = cached_result
 
-        result = await client.getWeather(55.7558, 37.6173)
-
-        # Verify result from cache
-        assert result == cached_result
+        # Patch _makeRequest before calling to verify it's not called
+        with patch.object(client, "_makeRequest") as mock_request:
+            result = await client.getWeather(55.7558, 37.6173)
+            
+            # Verify result from cache
+            assert result == cached_result
+            
+            # Verify no API call was made
+            mock_request.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_weather_by_city_success(
@@ -201,8 +201,8 @@ class TestOpenWeatherMapClient:
     ):
         """Test combined operation"""
         # Mock cache misses
-        mock_cache.isExpired.return_value = True
-        mock_cache.get.return_value = None
+        mock_cache.getGeocoging.return_value = None
+        mock_cache.getWeather.return_value = None
 
         # Mock both API calls
         with patch.object(client, "_makeRequest") as mock_request:
@@ -224,8 +224,7 @@ class TestOpenWeatherMapClient:
     async def test_get_weather_by_city_geocoding_fails(self, client, mock_cache):
         """Test combined operation when geocoding fails"""
         # Mock cache miss and empty geocoding response
-        mock_cache.isExpired.return_value = True
-        mock_cache.get.return_value = None
+        mock_cache.getGeocoging.return_value = None
 
         with patch.object(client, "_makeRequest", return_value=[]):
             result = await client.getWeatherByCity("NonexistentCity")
@@ -236,8 +235,7 @@ class TestOpenWeatherMapClient:
     async def test_api_error_handling(self, client, mock_cache):
         """Test API error handling"""
         # Mock cache miss
-        mock_cache.isExpired.return_value = True
-        mock_cache.get.return_value = None
+        mock_cache.getGeocoging.return_value = None
 
         # Mock API error
         with patch.object(client, "_makeRequest", return_value=None):
@@ -249,9 +247,8 @@ class TestOpenWeatherMapClient:
     async def test_cache_error_handling(self, client, mock_cache):
         """Test cache error handling"""
         # Mock cache error
-        mock_cache.isExpired.side_effect = Exception("Cache error")
-        mock_cache.get.side_effect = Exception("Cache error")
-        mock_cache.set.side_effect = Exception("Cache error")
+        mock_cache.getGeocoging.side_effect = Exception("Cache error")
+        mock_cache.setGeocoging.side_effect = Exception("Cache error")
 
         # Should still work with API call
         sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
@@ -270,11 +267,11 @@ class TestDatabaseWeatherCache:
     @pytest.fixture
     def mock_db(self):
         """Mock database wrapper"""
+        from internal.database.models import CacheType
+        
         db = Mock()
-        db.getWeatherCache = Mock(return_value=None)
-        db.setWeatherCache = Mock(return_value=True)
-        db.clearExpiredWeatherCache = Mock(return_value=5)
-        db.clearAllWeatherCache = Mock(return_value=True)
+        db.getCacheEntry = Mock(return_value=None)
+        db.setCacheEntry = Mock(return_value=True)
         return db
 
     @pytest.fixture
@@ -283,94 +280,133 @@ class TestDatabaseWeatherCache:
         return DatabaseWeatherCache(mock_db)
 
     @pytest.mark.asyncio
-    async def test_get_existing(self, cache, mock_db):
-        """Test getting existing cache entry"""
-        # Mock database return
-        mock_db.getWeatherCache.return_value = {
-            "cache_key": "moscow,ru",
-            "cache_type": "geocoding",
-            "data": '{"name": "Moscow"}',
-            "created_at": datetime.now(),
-            "updated_at": datetime.now(),
+    async def test_get_weather_existing(self, cache, mock_db):
+        """Test getting existing weather cache entry"""
+        from internal.database.models import CacheType
+        
+        # Mock database return with weather data
+        cached_weather = {
+            "lat": 55.7558,
+            "lon": 37.6173,
+            "timezone": "Europe/Moscow",
+            "current": {"temp": 15.5},
+            "daily": [],
+        }
+        mock_db.getCacheEntry.return_value = {
+            "data": json.dumps(cached_weather),
         }
 
-        result = await cache.get("moscow,ru", "geocoding")
+        result = await cache.getWeather("55.7558,37.6173", 1800)
 
-        assert result == '{"name": "Moscow"}'
-        mock_db.getWeatherCache.assert_called_once_with("moscow,ru", "geocoding")
+        assert result == cached_weather
+        mock_db.getCacheEntry.assert_called_once_with("55.7558,37.6173", cacheType=CacheType.WEATHER, ttl=1800)
+
+    @pytest.mark.asyncio
+    async def test_get_geocoding_existing(self, cache, mock_db):
+        """Test getting existing geocoding cache entry"""
+        from internal.database.models import CacheType
+        
+        # Mock database return with geocoding data
+        cached_geocoding = {
+            "name": "Moscow",
+            "lat": 55.7558,
+            "lon": 37.6173,
+            "country": "RU",
+        }
+        mock_db.getCacheEntry.return_value = {
+            "data": json.dumps(cached_geocoding),
+        }
+
+        result = await cache.getGeocoging("moscow,ru", 2592000)
+
+        assert result == cached_geocoding
+        mock_db.getCacheEntry.assert_called_once_with("moscow,ru", cacheType=CacheType.GEOCODING, ttl=2592000)
 
     @pytest.mark.asyncio
     async def test_get_nonexistent(self, cache, mock_db):
         """Test getting non-existent entry"""
-        mock_db.getWeatherCache.return_value = None
+        mock_db.getCacheEntry.return_value = None
 
-        result = await cache.get("nonexistent", "geocoding")
+        result = await cache.getWeather("nonexistent", 1800)
 
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_set_new(self, cache, mock_db):
-        """Test storing new entry"""
-        mock_db.setWeatherCache.return_value = True
-
-        result = await cache.set("test_key", "geocoding", '{"test": "data"}')
-
-        assert result is True
-        mock_db.setWeatherCache.assert_called_once_with("test_key", "geocoding", '{"test": "data"}')
-
-    @pytest.mark.asyncio
-    async def test_is_expired_true(self, cache, mock_db):
-        """Test expired entry detection"""
-        # Mock old entry
-        old_time = datetime.now() - timedelta(hours=2)
-        mock_db.getWeatherCache.return_value = {
-            "cache_key": "test",
-            "cache_type": "weather",
-            "data": "{}",
-            "created_at": old_time,
-            "updated_at": old_time,
+    async def test_set_weather(self, cache, mock_db):
+        """Test storing weather entry"""
+        from internal.database.models import CacheType
+        
+        mock_db.setCacheEntry.return_value = True
+        
+        weather_data = {
+            "lat": 55.7558,
+            "lon": 37.6173,
+            "current": {"temp": 15.5},
+            "daily": [],
         }
 
-        result = await cache.isExpired("test", "weather", 3600)  # 1 hour TTL
+        result = await cache.setWeather("55.7558,37.6173", weather_data)
 
         assert result is True
+        # Verify the call was made with correct parameters
+        assert mock_db.setCacheEntry.called
+        call_args = mock_db.setCacheEntry.call_args
+        assert call_args[0][0] == "55.7558,37.6173"
+        assert call_args[1]["cacheType"] == CacheType.WEATHER
 
     @pytest.mark.asyncio
-    async def test_is_expired_false(self, cache, mock_db):
-        """Test valid entry detection"""
+    async def test_set_geocoding(self, cache, mock_db):
+        """Test storing geocoding entry"""
+        from internal.database.models import CacheType
+        
+        mock_db.setCacheEntry.return_value = True
+        
+        geocoding_data = {
+            "name": "Moscow",
+            "lat": 55.7558,
+            "lon": 37.6173,
+            "country": "RU",
+        }
+
+        result = await cache.setGeocoging("moscow,ru", geocoding_data)
+
+        assert result is True
+        # Verify the call was made with correct parameters
+        assert mock_db.setCacheEntry.called
+        call_args = mock_db.setCacheEntry.call_args
+        assert call_args[0][0] == "moscow,ru"
+        assert call_args[1]["cacheType"] == CacheType.GEOCODING
+
+    @pytest.mark.asyncio
+    async def test_expired_entry(self, cache, mock_db):
+        """Test that expired entries return None"""
+        from internal.database.models import CacheType
+        
+        # When TTL check fails, getCacheEntry returns None
+        mock_db.getCacheEntry.return_value = None
+
+        # Request with 1 hour TTL - should return None for expired entry
+        result = await cache.getWeather("test", 3600)
+
+        assert result is None
+        mock_db.getCacheEntry.assert_called_once_with("test", cacheType=CacheType.WEATHER, ttl=3600)
+
+    @pytest.mark.asyncio
+    async def test_valid_entry(self, cache, mock_db):
+        """Test that valid entries are returned"""
+        from internal.database.models import CacheType
+        
         # Mock recent entry
-        recent_time = datetime.now() - timedelta(minutes=30)
-        mock_db.getWeatherCache.return_value = {
-            "cache_key": "test",
-            "cache_type": "weather",
-            "data": "{}",
-            "created_at": recent_time,
-            "updated_at": recent_time,
+        cached_data = {"temp": 15.5}
+        mock_db.getCacheEntry.return_value = {
+            "data": json.dumps(cached_data),
         }
 
-        result = await cache.isExpired("test", "weather", 3600)  # 1 hour TTL
+        # Request with 1 hour TTL - should return data
+        result = await cache.getWeather("test", 3600)
 
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_clear_expired(self, cache, mock_db):
-        """Test clearing expired entries"""
-        mock_db.clearExpiredWeatherCache.return_value = 3
-
-        result = await cache.clearExpired("weather", 3600)
-
-        assert result == 3
-        mock_db.clearExpiredWeatherCache.assert_called_once_with("weather", 3600)
-
-    @pytest.mark.asyncio
-    async def test_clear_all(self, cache, mock_db):
-        """Test clearing all entries"""
-        mock_db.clearAllWeatherCache.return_value = True
-
-        result = await cache.clearAll("geocoding")
-
-        assert result is True
-        mock_db.clearAllWeatherCache.assert_called_once_with("geocoding")
+        assert result == cached_data
+        mock_db.getCacheEntry.assert_called_once_with("test", cacheType=CacheType.WEATHER, ttl=3600)
 
 
 class TestIntegration:
@@ -379,12 +415,12 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_full_workflow_with_real_cache(self):
         """Test full workflow with real cache implementation"""
+        from internal.database.models import CacheType
+        
         # Mock database wrapper
         mock_db = Mock()
-        mock_db.getWeatherCache = Mock(return_value=None)
-        mock_db.setWeatherCache = Mock(return_value=True)
-        mock_db.clearExpiredWeatherCache = Mock(return_value=0)
-        mock_db.clearAllWeatherCache = Mock(return_value=True)
+        mock_db.getCacheEntry = Mock(return_value=None)
+        mock_db.setCacheEntry = Mock(return_value=True)
 
         # Create real cache with mock DB
         cache = DatabaseWeatherCache(mock_db)
@@ -422,8 +458,14 @@ class TestIntegration:
         assert result["location"]["name"] == "Moscow"
         assert result["weather"]["current"]["temp"] == 15.5
 
-        # Verify cache operations
-        assert mock_db.setWeatherCache.call_count == 2  # Both geocoding and weather cached
+        # Verify cache operations - both geocoding and weather should be cached
+        assert mock_db.setCacheEntry.call_count == 2
+        
+        # Verify the cache calls were made with correct types
+        calls = mock_db.setCacheEntry.call_args_list
+        cache_types = [call[1]["cacheType"] for call in calls]
+        assert CacheType.GEOCODING in cache_types
+        assert CacheType.WEATHER in cache_types
 
 
 if __name__ == "__main__":

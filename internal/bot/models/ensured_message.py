@@ -15,7 +15,8 @@ import telegram.constants
 from lib.ai.models import ModelMessage
 import lib.utils as utils
 
-from .enums import LLMMessageFormat, MessageType
+from .enums import LLMMessageFormat
+from ...models import MessageType
 from .media import MediaProcessingInfo
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.database.wrapper import DatabaseWrapper
