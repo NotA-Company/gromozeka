@@ -41,14 +41,14 @@ from lib.markdown import markdown_to_markdownv2
 from lib.spam.tokenizer import TokenizerConfig
 import lib.utils as utils
 
-from ..config.manager import ConfigManager
+from ...config.manager import ConfigManager
 
-from ..database.wrapper import DatabaseWrapper
-from ..database.bayes_storage import DatabaseBayesStorage
-from ..database.openweathermap_cache import DatabaseWeatherCache
-from ..database.models import ChatInfoDict, ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
+from ...database.wrapper import DatabaseWrapper
+from ...database.bayes_storage import DatabaseBayesStorage
+from ...database.openweathermap_cache import DatabaseWeatherCache
+from ...database.models import ChatInfoDict, ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
 
-from .models import (
+from ..models import (
     ButtonConfigureAction,
     ButtonDataKey,
     ButtonSummarizationAction,
@@ -69,7 +69,7 @@ from .models import (
     commandHandler,
     getChatSettingsInfo,
 )
-from . import constants
+from .. import constants
 
 logger = logging.getLogger(__name__)
 
