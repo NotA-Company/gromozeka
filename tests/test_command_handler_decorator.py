@@ -7,6 +7,7 @@ from internal.bot.models import (
     CommandCategory,
     CommandHandlerInfo,
     CommandHandlerMixin,
+    CommandHandlerOrder,
     commandHandler,
 )
 
@@ -157,6 +158,7 @@ class TestCommandHandlerInfo(unittest.TestCase):
             helpMessage="Help",
             categories={CommandCategory.PRIVATE},
             handler=dummy_handler,
+            order=CommandHandlerOrder.NORMAL,
         )
 
         self.assertEqual(info.commands, ("test",))
