@@ -178,16 +178,16 @@ def commandHandler(
 ) -> Callable:
     """
     Decorator to mark a method as a command handler, dood!
-    
+
     This decorator attaches metadata to the method without registering it globally.
     The class instance will discover and collect decorated methods during initialization.
-    
+
     Args:
         commands: Tuple of command names (without /)
         shortDescription: Short description for command list
         helpMessage: Detailed help message
         categories: Set of CommandCategory values
-    
+
     Example:
         @commandHandler(
             commands=("start",),
@@ -222,24 +222,24 @@ def commandHandler(
 class CommandHandlerMixin:
     """
     Mixin class that provides automatic command handler discovery, dood!
-    
+
     Any class that inherits from this mixin will automatically discover
     all methods decorated with @commandHandler during initialization.
     """
-    
+
     def __init__(self):
         """Initialize and discover command handlers."""
         self._commandHandlers: list[CommandHandlerInfo] = []
         self._discoverCommandHandlers()
-    
+
     def _discoverCommandHandlers(self) -> None:
         """
         Discover all decorated command handler methods in this instance, dood!
-        
+
         This method inspects all methods of the class and collects those
         that have been decorated with @commandHandler.
         """
-        
+
         # Get all methods of this instance
         for _, method in inspect.getmembers(self, predicate=inspect.ismethod):
             # Check if the method has handler metadata
@@ -247,17 +247,17 @@ class CommandHandlerMixin:
                 metadata = getattr(method, _HANDLER_METADATA_ATTR)
                 if not isinstance(metadata, CommandHandlerInfo):
                     raise ValueError(f"Invalid handler metadata for {method.__name__}: {metadata}")
-                
+
                 # Create CommandHandlerInfo with the bound method
                 handlerInfo = metadata.copy()
-                handlerInfo.handler = method # Already bound to self
-                
+                handlerInfo.handler = method  # Already bound to self
+
                 self._commandHandlers.append(handlerInfo)
-    
+
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
         """
         Get all command handlers for this instance, dood!
-        
+
         Returns:
             Sequence of CommandHandlerInfo objects
         """
