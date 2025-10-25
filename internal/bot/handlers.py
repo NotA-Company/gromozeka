@@ -69,20 +69,9 @@ from .models import (
     commandHandler,
     getChatSettingsInfo,
 )
+from . import constants
 
 logger = logging.getLogger(__name__)
-
-DUNNO_EMOJI = "🤷‍♂️"
-TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-MAX_QUEUE_LENGTH = 32
-MAX_QUEUE_AGE = 30 * 60  # 30 minutes
-PROCESSING_TIMEOUT = 30 * 60  # 30 minutes
-PRIVATE_CHAT_CONTEXT_LENGTH = 50
-CHAT_ICON = "👥"
-PRIVATE_ICON = "👤"
-SUMMARIZATION_MAX_BATCH_LENGTH = 256
-HPA_TO_MMHG = 0.75006157584567  # hPA to mmHg coefficent
-GEOCODER_LOCATION_LANGS = ["en", "ru"]
 
 
 def makeEmptyAsyncTask() -> asyncio.Task:
@@ -293,7 +282,7 @@ class BotHandlers(CommandHandlerMixin):
 
     async def addTaskToAsyncedQueue(self, task: asyncio.Task) -> None:
         """Add a task to the queue."""
-        if self.asyncTasksQueue.qsize() > MAX_QUEUE_LENGTH:
+        if self.asyncTasksQueue.qsize() > constants.MAX_QUEUE_LENGTH:
             logger.info("Queue is full, processing oldest task")
             oldTask = await self.asyncTasksQueue.get()
             if not isinstance(oldTask, asyncio.Task):
@@ -311,13 +300,13 @@ class BotHandlers(CommandHandlerMixin):
         if self.asyncTasksQueue.empty():
             return
 
-        if (not forceProcessAll) and (self.queueLastUpdated + MAX_QUEUE_AGE > time.time()):
+        if (not forceProcessAll) and (self.queueLastUpdated + constants.MAX_QUEUE_AGE > time.time()):
             return
 
         if forceProcessAll:
             logger.info("Processing background tasks queue due to forceProcessAll=True")
         else:
-            logger.info(f"Processing queue due to age ({MAX_QUEUE_AGE})")
+            logger.info(f"Processing queue due to age ({constants.MAX_QUEUE_AGE})")
 
         # TODO: Do it properly
         # Little hack to avoid concurency in processing queue
@@ -721,7 +710,7 @@ class BotHandlers(CommandHandlerMixin):
 
                 # Drop useless local_names to decrease context
                 for lang in list(ret["location"]["local_names"].keys()):
-                    if lang not in GEOCODER_LOCATION_LANGS:
+                    if lang not in constants.GEOCODER_LOCATION_LANGS:
                         ret["location"]["local_names"].pop(lang, None)
 
                 return utils.jsonDumps({**ret, "done": True})
@@ -1278,8 +1267,8 @@ class BotHandlers(CommandHandlerMixin):
         batchesCount = tokensCount // max(maxTokens - 256, maxTokens * 0.9) + 1
         batchLength = len(parsedMessages) // batchesCount
 
-        if batchLength > SUMMARIZATION_MAX_BATCH_LENGTH:
-            batchLenCoeff = batchLength // SUMMARIZATION_MAX_BATCH_LENGTH + 1
+        if batchLength > constants.SUMMARIZATION_MAX_BATCH_LENGTH:
+            batchLenCoeff = batchLength // constants.SUMMARIZATION_MAX_BATCH_LENGTH + 1
             batchesCount = batchesCount * batchLenCoeff
             batchLength = len(parsedMessages) // batchesCount
 
@@ -1346,9 +1335,9 @@ class BotHandlers(CommandHandlerMixin):
         # If any message is too long, just split it into multiple messages
         tmpResMessages = []
         for msg in resMessages:
-            while len(msg) > TELEGRAM_MAX_MESSAGE_LENGTH:
-                head = msg[:TELEGRAM_MAX_MESSAGE_LENGTH]
-                msg = msg[TELEGRAM_MAX_MESSAGE_LENGTH:]
+            while len(msg) > constants.TELEGRAM_MAX_MESSAGE_LENGTH:
+                head = msg[:constants.TELEGRAM_MAX_MESSAGE_LENGTH]
+                msg = msg[constants.TELEGRAM_MAX_MESSAGE_LENGTH:]
                 tmpResMessages.append(head)
             if msg:
                 tmpResMessages.append(msg)
@@ -1380,7 +1369,7 @@ class BotHandlers(CommandHandlerMixin):
         # TODO: add convertation from code to name
         weatherCurrent = weatherData["weather"]["current"]
         weatherTime = str(datetime.datetime.fromtimestamp(weatherCurrent["dt"], tz=datetime.timezone.utc))
-        pressureMmHg = int(weatherCurrent["pressure"] * HPA_TO_MMHG)
+        pressureMmHg = int(weatherCurrent["pressure"] * constants.HPA_TO_MMHG)
         sunriseTime = datetime.datetime.fromtimestamp(weatherCurrent["sunrise"], tz=datetime.timezone.utc).timetz()
         sunsetTime = datetime.datetime.fromtimestamp(weatherCurrent["sunset"], tz=datetime.timezone.utc).timetz()
         return (
@@ -2149,7 +2138,7 @@ class BotHandlers(CommandHandlerMixin):
         if isWhatThere and ensuredMessage.isReply and message.reply_to_message:
             # TODO: Move getting parent message to separate function
             ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
-            response = DUNNO_EMOJI
+            response = constants.DUNNO_EMOJI
             if ensuredReply.messageType != MessageType.TEXT:
                 # Not text message, try to get it content from DB
 
@@ -2167,7 +2156,7 @@ class BotHandlers(CommandHandlerMixin):
                     await eStoredMsg.updateMediaContent(self.db)
                     response = eStoredMsg.mediaContent
                     if response is None or response == "":
-                        response = DUNNO_EMOJI
+                        response = constants.DUNNO_EMOJI
 
                 return (
                     await self._sendMessage(
@@ -2294,9 +2283,9 @@ class BotHandlers(CommandHandlerMixin):
     ) -> bool:
         """Process message in private chat"""
         # If it message in private chat and no other methods catched message,
-        # then just do LLM answer with context of last PRIVATE_CHAT_CONTEXT_LENGTH messages
+        # then just do LLM answer with context of last constants.PRIVATE_CHAT_CONTEXT_LENGTH messages
 
-        messages = self.db.getChatMessagesSince(ensuredMessage.chat.id, limit=PRIVATE_CHAT_CONTEXT_LENGTH)
+        messages = self.db.getChatMessagesSince(ensuredMessage.chat.id, limit=constants.PRIVATE_CHAT_CONTEXT_LENGTH)
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
@@ -2388,7 +2377,7 @@ class BotHandlers(CommandHandlerMixin):
                     self.db.getChatMessagesSince(
                         chatId=ensuredMessage.chat.id,
                         threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
-                        limit=PRIVATE_CHAT_CONTEXT_LENGTH,
+                        limit=constants.PRIVATE_CHAT_CONTEXT_LENGTH,
                     )
                 )
             )
@@ -2525,7 +2514,7 @@ class BotHandlers(CommandHandlerMixin):
                             )
                             mediaDate = datetime.datetime.fromisoformat(mediaDate)
 
-                        if utils.getAgeInSecs(mediaDate) > PROCESSING_TIMEOUT:
+                        if utils.getAgeInSecs(mediaDate) > constants.PROCESSING_TIMEOUT:
                             logger.warning(
                                 f"{mediaType}#{ret.id} already in database but in status "
                                 f"{mediaAttachment['status']} and is too old ({mediaDate}), reprocessing it"
@@ -2864,9 +2853,9 @@ class BotHandlers(CommandHandlerMixin):
             for chat in userChats:
                 chatTitle: str = f"#{chat['chat_id']}"
                 if chat["title"]:
-                    chatTitle = f"{CHAT_ICON} {chat['title']} ({chat["type"]})"
+                    chatTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
                 elif chat["username"]:
-                    chatTitle = f"{PRIVATE_ICON} {chat['username']} ({chat["type"]})"
+                    chatTitle = f"{constants.PRIVATE_ICON} {chat['username']} ({chat["type"]})"
 
                 keyboard.append(
                     [
@@ -2906,9 +2895,9 @@ class BotHandlers(CommandHandlerMixin):
         # ChatID Choosen
         chatTitle: str = f"#{chatInfo['chat_id']}"
         if chatInfo["title"]:
-            chatTitle = f"{CHAT_ICON} {chatInfo['title']} ({chatInfo['type']})"
+            chatTitle = f"{constants.CHAT_ICON} {chatInfo['title']} ({chatInfo['type']})"
         elif chatInfo["username"]:
-            chatTitle = f"{PRIVATE_ICON} {chatInfo['username']} ({chatInfo['type']})"
+            chatTitle = f"{constants.PRIVATE_ICON} {chatInfo['username']} ({chatInfo['type']})"
 
         topicId = data.get(ButtonDataKey.TopicId, None)
         # Choose TopicID if needed
@@ -4331,9 +4320,9 @@ class BotHandlers(CommandHandlerMixin):
                     if await self._isAdmin(user=user, chat=chatObj, allowBotOwners=True):
                         buttonTitle: str = f"#{chat['chat_id']}"
                         if chat["title"]:
-                            buttonTitle = f"{CHAT_ICON} {chat['title']} ({chat["type"]})"
+                            buttonTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
                         elif chat["username"]:
-                            buttonTitle = f"{PRIVATE_ICON} {chat['username']} ({chat["type"]})"
+                            buttonTitle = f"{constants.PRIVATE_ICON} {chat['username']} ({chat["type"]})"
 
                         keyboard.append(
                             [
@@ -4749,9 +4738,9 @@ class BotHandlers(CommandHandlerMixin):
         for chat in knownChats:
             chatTitle: str = f"#{chat['chat_id']}"
             if chat["title"]:
-                chatTitle = f"{CHAT_ICON} {chat['title']} ({chat["type"]})"
+                chatTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
             elif chat["username"]:
-                chatTitle = f"{PRIVATE_ICON} {chat['username']} ({chat["type"]})"
+                chatTitle = f"{constants.PRIVATE_ICON} {chat['username']} ({chat["type"]})"
             resp += f"* ID: #`{chat['chat_id']}`, Name: `{chatTitle}`\n"
 
         await self._sendMessage(ensuredMessage, resp, messageCategory=MessageCategory.BOT_COMMAND_REPLY)
