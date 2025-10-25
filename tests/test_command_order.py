@@ -47,7 +47,7 @@ class TestHandlers:
         shortDescription="Early command",
         helpMessage=": Should appear early",
         categories={CommandCategory.DEFAULT},
-        order=CommandHandlerOrder.EARLY,
+        order=CommandHandlerOrder.SECOND,
     )
     async def early_command(self):
         pass
