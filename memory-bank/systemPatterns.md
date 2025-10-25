@@ -91,3 +91,9 @@ internal/database/migrations/
 * ❌ Don't skip version numbers
 * ❌ Don't make migrations dependent on application code
 * **Memory Bank Update:** Task completion should trigger Memory Bank updates to reflect progress and decisions made
+[2025-10-25 12:35:00] - Migration Auto-Discovery Pattern
+- All migration files now implement a standardized getMigration() function that returns the migration object
+- The versions/__init__.py module automatically discovers and imports all migration modules in the directory
+- MigrationManager.loadMigrationsFromVersions() method dynamically loads all discovered migrations
+- DatabaseWrapper automatically uses auto-discovered migrations when no explicit migrations are provided
+- This pattern eliminates the need to manually register migrations in the main application code

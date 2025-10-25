@@ -138,11 +138,19 @@ class DatabaseWrapper:
             )
 
         # Import here to avoid circular dependency, dood!
-        from .migrations import MigrationManager, MIGRATIONS
+        from .migrations import MigrationManager
 
         # Run migrations, dood!
         migrationManager = MigrationManager(self)
-        migrationManager.registerMigrations(MIGRATIONS)
+
+        # Try auto-discovery first, fall back to manual registration
+        try:
+            migrationManager.loadMigrationsFromVersions()
+            logger.info("Using auto-discovered migrations, dood!")
+        except Exception as e:
+            logger.error(f"Migrations Auto-discovery failed: {e}")
+            raise e
+
         migrationManager.migrate()
 
         logger.info("Database initialization complete, dood!")

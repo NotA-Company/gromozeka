@@ -4,7 +4,7 @@ Initial schema migration - creates all base tables, dood!
 This migration extracts all table creation from the original _initDatabase() method.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Type
 from ..base import BaseMigration
 
 if TYPE_CHECKING:
@@ -341,3 +341,8 @@ class Migration001InitialSchema(BaseMigration):
             
             for cacheType in CacheType:
                 cursor.execute(f"DROP TABLE IF EXISTS cache_{cacheType}")
+
+
+def getMigration() -> Type[BaseMigration]:
+    """Return the migration class for this module, dood!"""
+    return Migration001InitialSchema
