@@ -5,7 +5,7 @@ Tests cover:
 - LRUCache functionality (get, set, eviction, thread safety)
 - CacheService singleton pattern
 - Namespace operations (chats, chatUsers, users)
-- Convenience methods (getChatSettings, setChatSettings, etc.)
+- Convenience methods (getChatSettings, setChatSetting, etc.)
 - Persistence and loading from database
 - Dirty key tracking
 - Statistics
@@ -201,38 +201,14 @@ class TestChatSettings(unittest.TestCase):
         self.mockDb.getChatSettings.assert_called_once_with(123)
         self.assertIn(ChatSettingsKey.BAYES_ENABLED, settings)
 
-    def testSetChatSettingsMerge(self):
-        """Test merging chat settings"""
-        existingSettings = {ChatSettingsKey.BAYES_ENABLED: ChatSettingsValue("true")}
-        self.cache.chats.set(123, {"settings": existingSettings})
-
-        newSettings = {ChatSettingsKey.ALLOW_SUMMARY: ChatSettingsValue("true")}
-        self.cache.setChatSettings(123, newSettings, rewrite=False)
-
-        finalSettings = self.cache.getChatSettings(123)
-        self.assertEqual(len(finalSettings), 2)
-        self.assertIn(ChatSettingsKey.BAYES_ENABLED, finalSettings)
-        self.assertIn(ChatSettingsKey.ALLOW_SUMMARY, finalSettings)
-
-    def testSetChatSettingsRewrite(self):
-        """Test rewriting chat settings"""
-        existingSettings = {ChatSettingsKey.BAYES_ENABLED: ChatSettingsValue("true")}
-        self.cache.chats.set(123, {"settings": existingSettings})
-
-        newSettings = {ChatSettingsKey.ALLOW_SUMMARY: ChatSettingsValue("true")}
-        self.cache.setChatSettings(123, newSettings, rewrite=True)
-
-        finalSettings = self.cache.getChatSettings(123)
-        self.assertEqual(len(finalSettings), 1)
-        self.assertNotIn(ChatSettingsKey.BAYES_ENABLED, finalSettings)
-        self.assertIn(ChatSettingsKey.ALLOW_SUMMARY, finalSettings)
-
-        self.mockDb.clearChatSettings.assert_called_once_with(123)
-
     def testSetChatSettingsPersistence(self):
         """Test that settings are persisted to database"""
-        settings = {ChatSettingsKey.BAYES_ENABLED: ChatSettingsValue("true")}
-        self.cache.setChatSettings(123, settings)
+        # Mock getChatSettings to return empty dict (no existing settings)
+        self.mockDb.getChatSettings.return_value = {}
+        
+        key = ChatSettingsKey.BAYES_ENABLED
+        value = ChatSettingsValue("true")
+        self.cache.setChatSetting(123, key, value)
 
         self.mockDb.setChatSetting.assert_called_once_with(123, ChatSettingsKey.BAYES_ENABLED, "true")
 
@@ -360,20 +336,20 @@ class TestUserState(unittest.TestCase):
         testState = {"step": 1, "data": "test"}
         self.cache.users.set(123, {"activeConfigureId": testState})
 
-        state = self.cache.getUserState(123, UserActiveActionEnum.configure)
+        state = self.cache.getUserState(123, UserActiveActionEnum.Configuration)
         self.assertEqual(state, testState)
 
     def testGetUserStateDefault(self):
         """Test getting nonexistent user state with default"""
-        state = self.cache.getUserState(999, UserActiveActionEnum.configure, {"default": True})
+        state = self.cache.getUserState(999, UserActiveActionEnum.Configuration, {"default": True})
         self.assertEqual(state, {"default": True})
 
     def testSetUserState(self):
         """Test setting user state"""
         testState = {"step": 1, "data": "test"}
-        self.cache.setUserState(123, UserActiveActionEnum.configure, testState)
+        self.cache.setUserState(123, UserActiveActionEnum.Configuration, testState)
 
-        state = self.cache.getUserState(123, UserActiveActionEnum.configure)
+        state = self.cache.getUserState(123, UserActiveActionEnum.Configuration)
         self.assertEqual(state, testState)
 
         # Check dirty tracking
@@ -389,13 +365,13 @@ class TestUserState(unittest.TestCase):
             },
         )
 
-        self.cache.clearUserState(123, UserActiveActionEnum.configure)
+        self.cache.clearUserState(123, UserActiveActionEnum.Configuration)
 
-        state = self.cache.getUserState(123, UserActiveActionEnum.configure)
+        state = self.cache.getUserState(123, UserActiveActionEnum.Configuration)
         self.assertIsNone(state)
 
         # Other state should remain
-        state2 = self.cache.getUserState(123, UserActiveActionEnum.summarize)
+        state2 = self.cache.getUserState(123, UserActiveActionEnum.Summarization)
         self.assertEqual(state2, {"step": 2})
 
     def testClearUserStateAll(self):
@@ -410,8 +386,8 @@ class TestUserState(unittest.TestCase):
 
         self.cache.clearUserState(123)
 
-        state1 = self.cache.getUserState(123, UserActiveActionEnum.configure)
-        state2 = self.cache.getUserState(123, UserActiveActionEnum.summarize)
+        state1 = self.cache.getUserState(123, UserActiveActionEnum.Configuration)
+        state2 = self.cache.getUserState(123, UserActiveActionEnum.Summarization)
         self.assertIsNone(state1)
         self.assertIsNone(state2)
 
@@ -632,17 +608,18 @@ class TestEdgeCases(unittest.TestCase):
         """Clean up after tests"""
         CacheService._instance = None
 
-    def testSetChatSettingsWithoutDb(self):
+    def testSetChatSettingWithoutDb(self):
         """Test setting chat settings without database"""
         self.cache.dbWrapper = None
-        settings = {ChatSettingsKey.BAYES_ENABLED: ChatSettingsValue("true")}
+        key = ChatSettingsKey.BAYES_ENABLED
+        value = ChatSettingsValue("true")
 
         # Should not raise exception
-        self.cache.setChatSettings(123, settings)
+        self.cache.setChatSetting(123, key, value)
 
         # Should still be in cache
         cachedSettings = self.cache.getChatSettings(123)
-        self.assertEqual(cachedSettings, settings)
+        self.assertEqual(cachedSettings, {key: value})
 
     def testSetChatUserDataWithoutDb(self):
         """Test setting user data without database"""

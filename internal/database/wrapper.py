@@ -18,7 +18,7 @@ from .models import (
     ChatInfoDict,
     ChatMessageDict,
     ChatSummarizationCacheDict,
-    ChatTopicDict,
+    ChatTopicInfoDict,
     ChatUserDict,
     DelayedTaskDict,
     MediaAttachmentDict,
@@ -288,7 +288,7 @@ class DatabaseWrapper:
             logger.error(f"Row data: {row_dict}")
             raise
 
-    def _validateDictIsChatTopicDict(self, row_dict: Dict[str, Any]) -> ChatTopicDict:
+    def _validateDictIsChatTopicDict(self, row_dict: Dict[str, Any]) -> ChatTopicInfoDict:
         """
         Validate and convert a database row dictionary to ChatTopicDict.
         This ensures the returned data matches the expected TypedDict structure.
@@ -1288,7 +1288,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to update chat topic {topicId} in chat {chatId}: {e}")
             return False
 
-    def getChatTopics(self, chatId: int) -> List[ChatTopicDict]:
+    def getChatTopics(self, chatId: int) -> List[ChatTopicInfoDict]:
         """Get chat topics."""
         try:
             with self.getCursor() as cursor:
