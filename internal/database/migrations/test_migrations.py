@@ -133,16 +133,21 @@ def test_rollback():
         initialVersion = manager.getCurrentVersion()
         logger.info(f"Initial version: {initialVersion}")
         
-        # Rollback one migration
-        manager.rollback(steps=1)
+        # Rollback to version 2 (to remove metadata column from migration 003)
+        # This ensures the test works regardless of how many migrations exist
+        targetVersion = 2
+        stepsToRollback = initialVersion - targetVersion
+        logger.info(f"Rolling back {stepsToRollback} migrations to reach version {targetVersion}")
+        
+        manager.rollback(steps=stepsToRollback)
         
         newVersion = manager.getCurrentVersion()
         logger.info(f"Version after rollback: {newVersion}")
         
-        assert newVersion == initialVersion - 1, \
-            f"Expected version {initialVersion - 1}, got {newVersion}"
+        assert newVersion == targetVersion, \
+            f"Expected version {targetVersion}, got {newVersion}"
         
-        # Check that metadata column is gone (from migration 003)
+        # Check that metadata column is gone (migration 003 should be rolled back)
         with db.getCursor() as cursor:
             cursor.execute("PRAGMA table_info(chat_users)")
             columns = [row[1] for row in cursor.fetchall()]

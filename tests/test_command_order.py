@@ -83,18 +83,22 @@ def test_command_ordering():
     actual_order = [h.commands[0] for h in sorted_handlers]
 
     print("\n" + "=" * 60)
-    if actual_order == expected_order:
-        print("✓ Test PASSED, dood! Commands are in correct order!")
-        print(f"  Expected: {expected_order}")
-        print(f"  Actual:   {actual_order}")
-        return True
-    else:
-        print("✗ Test FAILED, dood! Commands are NOT in correct order!")
-        print(f"  Expected: {expected_order}")
-        print(f"  Actual:   {actual_order}")
-        return False
+    print(f"  Expected: {expected_order}")
+    print(f"  Actual:   {actual_order}")
+    
+    # Use assert instead of return
+    assert actual_order == expected_order, (
+        f"Commands are NOT in correct order, dood! "
+        f"Expected {expected_order}, got {actual_order}"
+    )
+    
+    print("✓ Test PASSED, dood! Commands are in correct order!")
 
 
 if __name__ == "__main__":
-    success = test_command_ordering()
-    exit(0 if success else 1)
+    try:
+        test_command_ordering()
+        exit(0)
+    except AssertionError as e:
+        print(f"\n✗ Test FAILED: {e}")
+        exit(1)
