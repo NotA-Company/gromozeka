@@ -24,6 +24,7 @@ from .models import (
     MediaAttachmentDict,
     SpamMessageDict,
     CacheDict,
+    CacheStorageDict,
     CacheType,
     MediaStatus,
     MessageCategory,
@@ -495,6 +496,36 @@ class DatabaseWrapper:
 
         except Exception as e:
             logger.error(f"Failed to validate CacheDict: {e}")
+            logger.error(f"Row data: {rowDict}")
+            raise
+
+    def _validateDictIsCacheStorageDict(self, rowDict: Dict[str, Any]) -> CacheStorageDict:
+        """
+        Validate and convert a database row dictionary to CacheStorageDict.
+        This ensures the returned data matches the expected TypedDict structure.
+        """
+        try:
+            # Ensure required fields are present with proper types
+            required_fields = {
+                "namespace": str,
+                "key": str,
+                "value": str,
+                "updated_at": datetime.datetime,
+            }
+
+            for field, expected_type in required_fields.items():
+                if field not in rowDict:
+                    logger.error(f"Missing required field '{field}' in database row")
+                    raise ValueError(f"Missing required field: {field}")
+
+                if rowDict[field] is not None and not isinstance(rowDict[field], expected_type):
+                    logger.warning(f"Field '{field}' has type {type(rowDict[field])}, expected {expected_type}")
+
+            # Return the validated dictionary cast as CacheStorageDict
+            return rowDict  # type: ignore
+
+        except Exception as e:
+            logger.error(f"Failed to validate CacheStorageDict: {e}")
             logger.error(f"Row data: {rowDict}")
             raise
 
@@ -1672,6 +1703,47 @@ class DatabaseWrapper:
     ###
     # Cache manipulation functions
     ###
+    
+    def getCacheStorage(self) -> List[CacheStorageDict]:
+        """Get all cache storage entries"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT namespace, key, value, updated_at
+                    FROM cache_storage
+                    ORDER BY updated_at DESC
+                    """
+                )
+                return [self._validateDictIsCacheStorageDict(dict(row)) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get cache storage: {e}")
+            return []
+    
+    def setCacheStorage(self, namespace: str, key: str, value: str) -> bool:
+        """Store cache entry in cache_storage table"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO cache_storage
+                        (namespace, key, value, updated_at)
+                    VALUES
+                        (:namespace, :key, :value, CURRENT_TIMESTAMP)
+                    ON CONFLICT(namespace, key) DO UPDATE SET
+                        value = :value,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    {
+                        "namespace": namespace,
+                        "key": key,
+                        "value": value,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to set cache storage: {e}")
+            return False
 
     def getCacheEntry(self, key: str, cacheType: CacheType, ttl: Optional[int] = None) -> Optional[CacheDict]:
         """Get weather cache entry by key and type"""

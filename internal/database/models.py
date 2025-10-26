@@ -179,6 +179,15 @@ class CacheDict(TypedDict):
     updated_at: datetime.datetime
 
 
+class CacheStorageDict(TypedDict):
+    """Cache storage entry from cache_storage table"""
+
+    namespace: str
+    key: str
+    value: str
+    updated_at: datetime.datetime
+
+
 class CacheType(StrEnum):
     """Cache type enum"""
 
