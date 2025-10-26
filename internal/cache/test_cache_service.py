@@ -18,7 +18,7 @@ import unittest
 from unittest.mock import Mock
 
 # Add project root to path to avoid circular imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # Import directly to avoid circular dependencies
 from internal.cache.service import LRUCache, CacheService  # noqa: E402
@@ -234,9 +234,7 @@ class TestChatSettings(unittest.TestCase):
         settings = {ChatSettingsKey.BAYES_ENABLED: ChatSettingsValue("true")}
         self.cache.setChatSettings(123, settings)
 
-        self.mockDb.setChatSetting.assert_called_once_with(
-            123, ChatSettingsKey.BAYES_ENABLED, "true"
-        )
+        self.mockDb.setChatSetting.assert_called_once_with(123, ChatSettingsKey.BAYES_ENABLED, "true")
 
 
 class TestChatInfo(unittest.TestCase):
@@ -367,9 +365,7 @@ class TestUserState(unittest.TestCase):
 
     def testGetUserStateDefault(self):
         """Test getting nonexistent user state with default"""
-        state = self.cache.getUserState(
-            999, UserActiveActionEnum.configure, {"default": True}
-        )
+        state = self.cache.getUserState(999, UserActiveActionEnum.configure, {"default": True})
         self.assertEqual(state, {"default": True})
 
     def testSetUserState(self):
@@ -513,9 +509,7 @@ class TestPersistence(unittest.TestCase):
         self.cache.persistAll()
 
         # Empty data should trigger unset
-        self.mockDb.unsetCacheStorage.assert_called_once_with(
-            CacheNamespace.USERS, "123"
-        )
+        self.mockDb.unsetCacheStorage.assert_called_once_with(CacheNamespace.USERS, "123")
 
     def testLoadFromDatabase(self):
         """Test loading cache from database"""

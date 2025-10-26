@@ -168,6 +168,7 @@ class CacheService:
         """Get chat settings with cache"""
         # Preventing circullar dependencies
         from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
+
         chatCache = self.chats.get(chatId, {})
 
         if "settings" not in chatCache:
