@@ -6,7 +6,7 @@ from typing import Any, Dict, NotRequired, TypedDict
 
 from internal.database.models import ChatInfoDict
 
-from .chat_settings import ChatSettingsKey, ChatSettingsValue
+from ..bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
 
 
 class HCChatCacheDict(TypedDict):
@@ -44,7 +44,3 @@ class HandlersCacheDict(TypedDict):
     #         "activeSummarizationId": Dict[str, Any] = {...},
     #     },
     # },
-
-
-class UserMetadataDict(TypedDict):
-    notSpammer: NotRequired[bool]  # True if user defined as not spammer
