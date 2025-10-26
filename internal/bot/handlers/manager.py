@@ -85,16 +85,16 @@ class HandlersManager(CommandHandlerGetterInterface):
                     logger.debug(f"Handler {type(handler).__name__}# returned FINAL, stop processing")
                     return
                 case HandlerResultStatus.SKIPPED:
-                    # logger.debug(f"Handler {type(handler).__name__}# returned SKIPPED")
+                    logger.debug(f"Handler {type(handler).__name__}# returned SKIPPED")
                     continue
                 case HandlerResultStatus.NEXT:
-                    # logger.debug(f"Handler {type(handler).__name__}# returned NEXT")
+                    logger.debug(f"Handler {type(handler).__name__}# returned NEXT")
                     continue
                 case HandlerResultStatus.ERROR:
                     logger.error(f"Handler {type(handler).__name__}# returned ERROR")
                     continue
                 case HandlerResultStatus.FATAL:
-                    logger.error(f"Handler {type(handler).__name__}# returned FATAL")
+                    logger.error(f"Handler {type(handler).__name__}# returned FATAL, stop processing")
                     return
                 case _:
                     logger.error(f"Unknown handler result: {ret}")
