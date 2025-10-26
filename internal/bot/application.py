@@ -18,11 +18,13 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
+from internal.services.queue.service import QueueService
+
+from .handlers import HandlersManager
 from internal.bot.models import CommandCategory
 from lib.ai.manager import LLMManager
 from ..config.manager import ConfigManager
 from ..database.wrapper import DatabaseWrapper
-from .handlers import BotHandlers
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +87,8 @@ class BotApplication:
         self.database = database
         self.llmManager = llmManager
         self.application = None
-        self.handlers = BotHandlers(configManager, database, llmManager)
+        self.handlerManager = HandlersManager(configManager, database, llmManager)
+        self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
 
     def setupHandlers(self):
@@ -97,11 +100,11 @@ class BotApplication:
         # self.handlers.initDelayedScheduler(self.application.bot)
 
         # Command handlers
-        for commandInfo in self.handlers.getCommandHandlers():
+        for commandInfo in self.handlerManager.getCommandHandlers():
             self.application.add_handler(CommandHandler(commandInfo.commands, commandInfo.handler))
 
         # Buttons
-        self.application.add_handler(CallbackQueryHandler(self.handlers.handle_button))
+        self.application.add_handler(CallbackQueryHandler(self.handlerManager.handle_button))
 
         # Message handler for regular text messages
         # See
@@ -121,12 +124,12 @@ class BotApplication:
         # VIDEO      - https://docs.python-telegram-bot.org/en/stable/telegram.video.html#telegram.Video
         # VideoNote  - https://docs.python-telegram-bot.org/en/stable/telegram.videonote.html#telegram.VideoNote
         # VOICE      - https://docs.python-telegram-bot.org/en/stable/telegram.voice.html#telegram.Voice
-        self.application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, self.handlers.handle_message))
+        self.application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, self.handlerManager.handle_message))
 
         # self.application.add_handler(MessageHandler(filters.VIA_BOT, self.handlers.handle_bot))
 
         # Error handler
-        self.application.add_error_handler(self.handlers.error_handler)
+        self.application.add_error_handler(self.handlerManager.error_handler)
 
         logger.info("Bot handlers configured successfully")
 
@@ -135,7 +138,8 @@ class BotApplication:
         if self.application is None:
             raise RuntimeError("Application not initialized")
 
-        self._schedulerTask = asyncio.create_task(self.handlers.initDelayedScheduler(self.application.bot))
+        self.handlerManager.injectBot(application.bot)
+        self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # Configure Commands
         DefaultCommands = []
@@ -144,7 +148,7 @@ class BotApplication:
         PrivateCommands = []
 
         # Sort command handlers by order, then by command name
-        sortedHandlers = sorted(self.handlers.getCommandHandlers(), key=lambda h: (h.order, h.commands[0]))
+        sortedHandlers = sorted(self.handlerManager.getCommandHandlers(), key=lambda h: (h.order, h.commands[0]))
 
         for commandInfo in sortedHandlers:
             if CommandCategory.HIDDEN in commandInfo.categories:
@@ -200,7 +204,7 @@ class BotApplication:
         """  # noqa: E501
 
         logger.info("Application stopping, stopping Delayed Tasks Scheduler...")
-        await self.handlers.initExit()
+        await self.queueService.beginShutdown()
         logger.info("Step 1 of shutdown is done...")
         if self._schedulerTask is not None:
             await self._schedulerTask
