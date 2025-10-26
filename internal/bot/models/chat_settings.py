@@ -24,6 +24,8 @@ class ChatSettingsType(StrEnum):
 class ChatSettingsKey(StrEnum):
     """Enum for chat settings."""
 
+    UNKNOWN = "unknown"
+
     CHAT_MODEL = "chat-model"
     FALLBACK_MODEL = "fallback-model"
     SUMMARY_MODEL = "summary-model"

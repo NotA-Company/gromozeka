@@ -23,6 +23,7 @@ from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
 from telegram._utils.entities import parse_message_entity
 
+from internal.cache.types import UserActiveActionEnum, UserDataType, UserDataValueType
 from lib.ai.abstract import AbstractModel, LLMAbstractTool
 from lib.ai.models import (
     LLMFunctionParameter,
@@ -61,7 +62,6 @@ from ..models import (
     DelayedTask,
     DelayedTaskFunction,
     EnsuredMessage,
-    HandlersCacheDict,
     LLMMessageFormat,
     MessageType,
     MediaProcessingInfo,
@@ -70,6 +70,7 @@ from ..models import (
     getChatSettingsInfo,
 )
 from .. import constants
+from internal.cache import CacheService
 
 logger = logging.getLogger(__name__)
 
@@ -137,11 +138,14 @@ class BotHandlers(CommandHandlerMixin):
 
         # Init cache
         # TODO: Should I use something thread-safe? or just better
-        self.cache: HandlersCacheDict = {
-            "chats": {},
-            "chatUsers": {},
-            "users": {},
-        }
+        self.cache = CacheService.getInstance()
+        self.cache.injectDatabase(self.db)
+
+        # self._cache: HandlersCacheDict = {
+        #    "chats": {},
+        #    "chatUsers": {},
+        #   "users": {},
+        # }
 
         self.asyncTasksQueue = asyncio.Queue()
         self.queueLastUpdated = time.time()
@@ -168,96 +172,61 @@ class BotHandlers(CommandHandlerMixin):
         if chatId is None:
             return self.chatDefaults.copy()
 
-        if chatId not in self.cache["chats"]:
-            self.cache["chats"][chatId] = {}
-
-        if "settings" not in self.cache["chats"][chatId]:
-            self.cache["chats"][chatId]["settings"] = {
-                ChatSettingsKey(k): ChatSettingsValue(v) for k, v in self.db.getChatSettings(chatId).items()
-            }
-
-        if self.cache["chats"][chatId].get("settings", None) is None:
-            logger.error(f"getChatSettings({chatId}): {self.cache["chats"][chatId]}")
-            raise ValueError
+        chatSettings = self.cache.getChatSettings(chatId)
 
         if returnDefault:
-            return {**self.chatDefaults, **self.cache["chats"][chatId].get("settings", {})}
+            return {**self.chatDefaults, **chatSettings}
 
-        return self.cache["chats"][chatId].get("settings", {})
+        return chatSettings
 
-    def setChatSettings(self, chatId: int, settings: Dict[str, Any]) -> None:
+    def setChatSetting(self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue) -> None:
         """Set the chat settings for the given chat."""
-        if chatId not in self.cache["chats"]:
-            self.cache["chats"][chatId] = {}
+        # TODO: Should I add deprecation warning?
+        self.cache.setChatSetting(chatId, key, value)
 
-        for key, value in settings.items():
-            _value = str(value)
-            if isinstance(value, list):
-                _value = ",".join(value)
-
-            self.db.setChatSetting(chatId, key, _value)
-
-        if "settings" in self.cache["chats"][chatId]:
-            self.cache["chats"][chatId].pop("settings", None)
-
-    def unsetChatSetting(self, chatId: int, key: str) -> None:
+    def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:
         """Set the chat settings for the given chat."""
-        if chatId not in self.cache["chats"]:
-            self.cache["chats"][chatId] = {}
-
-        self.db.unsetChatSetting(chatId, key)
-
-        if "settings" in self.cache["chats"][chatId]:
-            self.cache["chats"][chatId].pop("settings", None)
 
     ###
     # User Data Management
     ###
 
-    def getUserData(self, chatId: int, userId: int) -> Dict[str, str | List[str] | Dict[str, Any]]:
+    def getUserData(self, chatId: int, userId: int) -> UserDataType:
         """Get the user data for the given chat."""
-        # TODO: Move to separate function
-        userKey = f"{chatId}:{userId}"
-
-        if userKey not in self.cache["chatUsers"]:
-            self.cache["chatUsers"][userKey] = {}
-        if "data" not in self.cache["chatUsers"][userKey]:
-            userData = {k: json.loads(v) for k, v in self.db.getUserData(userId=userId, chatId=chatId).items()}
-            self.cache["chatUsers"][userKey]["data"] = userData
-
-        return self.cache["chatUsers"][userKey]["data"]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+        return self.cache.getChatUserData(chatId=chatId, userId=userId)
 
     def setUserData(
-        self, chatId: int, userId: int, key: str, value: str | List[str] | Dict[str, Any], append: bool = False
-    ) -> str | List[str] | Dict[str, Any]:
+        self, chatId: int, userId: int, key: str, value: UserDataValueType, append: bool = False
+    ) -> UserDataValueType:
         """Set specific user data for the given chat."""
-        # TODO: Move to separate function
-        userKey = f"{chatId}:{userId}"
-
         userData = self.getUserData(chatId, userId)
 
+        newValue = value
         if key in userData and append:
+            # TODO: Properly work with dicts
             _data = userData[key]
-            if isinstance(value, list):
-                value = [str(v).strip() for v in value]
+            if isinstance(newValue, list):
+                newValue = [str(v).strip() for v in newValue]
             else:
-                value = [str(value).strip()]
+                newValue = [str(newValue).strip()]
 
             if isinstance(_data, list):
-                userData[key] = _data + value
+                userData[key] = _data + newValue
             else:
-                userData[key] = [str(_data)] + value
-        else:
-            userData[key] = value
+                userData[key] = [str(_data)] + newValue
 
-        if "data" not in self.cache["chatUsers"][userKey]:
-            self.cache["chatUsers"][userKey]["data"] = {}
+            newValue = userData[key]
 
-        self.cache["chatUsers"][userKey]["data"][key] = userData[  # pyright: ignore[reportTypedDictNotRequiredAccess]
-            key
-        ]
-        self.db.addUserData(userId=userId, chatId=chatId, key=key, data=utils.jsonDumps(userData[key]))
-        return userData[key]
+        self.cache.setChatUserData(chatId=chatId, userId=userId, key=key, value=newValue)
+        return newValue
+
+    def unsetUserData(self, chatId: int, userId: int, key: str) -> None:
+        """Unset specific user data for the given chat."""
+        self.cache.unsetChatUserData(chatId=chatId, userId=userId, key=key)
+
+    def clearUserData(self, chatId: int, userId: int) -> None:
+        """Clear all user data for the given chat."""
+        self.cache.clearChatUserData(chatId=chatId, userId=userId)
 
     def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
         ensuredMessage.setUserData(self.getUserData(ensuredMessage.chat.id, ensuredMessage.user.id))
@@ -922,56 +891,32 @@ class BotHandlers(CommandHandlerMixin):
 
     def _getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """Get Chat info from cache or DB"""
-
-        if chatId not in self.cache["chats"]:
-            self.cache["chats"][chatId] = {}
-        if "info" not in self.cache["chats"][chatId]:
-            chatInfo = self.db.getChatInfo(chatId)
-            if chatInfo is not None:
-                self.cache["chats"][chatId]["info"] = chatInfo
-
-        return self.cache["chats"][chatId].get("info", None)
+        return self.cache.getChatInfo(chatId)
 
     def _updateChatInfo(self, chat: Chat) -> None:
         """Update Chat info. Do not save it to DB if it is in cache and wasn't changed"""
-
         chatId = chat.id
+        storedChatInfo = self._getChatInfo(chatId=chatId)
 
-        if chatId not in self.cache["chats"]:
-            self.cache["chats"][chatId] = {}
-
-        cachedInfo: ChatInfoDict = self.cache["chats"][chatId].get(
-            "info",
-            {
-                "chat_id": 0,
-                "title": None,
-                "username": None,
-                "is_forum": False,
-                "type": "",
-                "created_at": datetime.datetime.now(),
-                "updated_at": datetime.datetime.now(),
-            },
-        )
-
-        if any(
-            [
-                chat.title != cachedInfo.get("title", None),
-                chat.username != cachedInfo.get("username", None),
-                chat.is_forum != cachedInfo.get("is_forum", None),
-                chat.type != cachedInfo.get("type", None),
-            ]
+        if (
+            storedChatInfo is None
+            or chat.title != storedChatInfo.get("title", None)
+            or chat.username != storedChatInfo.get("username", None)
+            or chat.is_forum != storedChatInfo.get("is_forum", None)
+            or chat.type != storedChatInfo.get("type", None)
         ):
-            cachedInfo = {
-                "chat_id": chat.id,
-                "title": chat.title,
-                "username": chat.username,
-                "is_forum": chat.is_forum or False,
-                "type": chat.type,
-                "created_at": datetime.datetime.now(),
-                "updated_at": datetime.datetime.now(),
-            }
-            self.cache["chats"][chatId]["info"] = cachedInfo
-            self.db.addChatInfo(chatId, type=chat.type, title=chat.title, username=chat.username, isForum=chat.is_forum)
+            self.cache.setChatInfo(
+                chat.id,
+                {
+                    "chat_id": chat.id,
+                    "title": chat.title,
+                    "username": chat.username,
+                    "is_forum": chat.is_forum or False,
+                    "type": chat.type,
+                    "created_at": datetime.datetime.now(),
+                    "updated_at": datetime.datetime.now(),
+                },
+            )
 
     def _updateTopicInfo(
         self,
@@ -980,57 +925,34 @@ class BotHandlers(CommandHandlerMixin):
         iconColor: Optional[int] = None,
         customEmojiId: Optional[str] = None,
         name: Optional[str] = None,
+        force: bool = False,
     ) -> None:
-        """Update Chat info. Do not save it to DB if it is in cache and wasn't changed"""
-        # logger.debug(
-        #    f"Updating topic info for chatId: {chatId}, "
-        #    f"topicId: {topicId}, iconColor: {iconColor}, "
-        #    f"customEmojiId: {customEmojiId}, name: {name}"
-        # )
+        """Update Chat Topic info. Do not save it to DB if it is in cache and wasn't changed"""
+        _topicId = topicId if topicId is not None else 0
+        storedTopicInfo = self.cache.getChatTopicInfo(chatId=chatId, topicId=_topicId)
 
-        if topicId is None:
-            topicId = 0
+        if not force and storedTopicInfo:
+            # No need to rewrite topic info
+            return
 
-        if chatId not in self.cache["chats"]:
-            self.cache["chats"][chatId] = {}
-        if "topics" not in self.cache["chats"][chatId]:
-            self.cache["chats"][chatId]["topics"] = {}
-        if topicId not in self.cache["chats"][chatId]["topics"]:  # pyright: ignore[reportTypedDictNotRequiredAccess]
-            self.cache["chats"][chatId]["topics"][topicId] = {}  # pyright: ignore[reportTypedDictNotRequiredAccess]
-
-        cachedInfo: Dict[str, Any] = self.cache["chats"][chatId][
-            "topics"
-        ][  # pyright: ignore[reportTypedDictNotRequiredAccess]
-            topicId
-        ]
-
-        if any(
-            [
-                not cachedInfo,
-                iconColor != cachedInfo.get("iconColor", None),
-                customEmojiId != cachedInfo.get("customEmojiId", None),
-                name != cachedInfo.get("name", None),
-            ]
+        if (
+            storedTopicInfo is None
+            or iconColor != storedTopicInfo["icon_color"]
+            or customEmojiId != storedTopicInfo["icon_custom_emoji_id"]
+            or name != storedTopicInfo["name"]
         ):
-            cachedInfo = {
-                "iconColor": iconColor,
-                "customEmojiId": customEmojiId,
-                "name": name,
-            }
-            self.cache["chats"][chatId]["topics"][  # pyright: ignore[reportTypedDictNotRequiredAccess]
-                topicId
-            ] = cachedInfo
-            logger.debug(
-                f"Saving topic info to DB for chatId: {chatId}, "
-                f"topicId: {topicId}, iconColor: {iconColor}, "
-                f"customEmojiId: {customEmojiId}, name: {name}"
-            )
-            self.db.updateChatTopicInfo(
+            self.cache.setChatTopicInfo(
                 chatId=chatId,
-                topicId=topicId,
-                iconColor=iconColor,
-                customEmojiId=customEmojiId,
-                topicName=name,
+                topicId=_topicId,
+                info={
+                    "chat_id": chatId,
+                    "topic_id": _topicId,
+                    "icon_color": iconColor,
+                    "icon_custom_emoji_id": customEmojiId,
+                    "name": name,
+                    "created_at": datetime.datetime.now(),
+                    "updated_at": datetime.datetime.now(),
+                },
             )
 
     def _saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
@@ -1809,7 +1731,9 @@ class BotHandlers(CommandHandlerMixin):
                     user = update.effective_user
                     userId = user.id
                     messageText = update.message.text
-                    activeConfigureId = self.cache["users"].get(userId, {}).get("activeConfigureId", None)
+                    activeConfigureId = self.cache.getUserState(
+                        userId=userId, stateKey=UserActiveActionEnum.Configuration
+                    )
                     if activeConfigureId is not None:
                         await self._handle_chat_configuration(
                             data={
@@ -1823,12 +1747,15 @@ class BotHandlers(CommandHandlerMixin):
                         )
                         return
 
-                    activeSummarizationId = self.cache["users"].get(userId, {}).get("activeSummarizationId", None)
+                    activeSummarizationId = self.cache.getUserState(
+                        userId=userId, stateKey=UserActiveActionEnum.Summarization
+                    )
                     if activeSummarizationId is not None:
                         data = activeSummarizationId.copy()
                         data.pop("message", None)
-                        k = data.pop(ButtonDataKey.UserAction, None)
-                        match k:
+                        # TODO: Make user action enum
+                        userAction = data.pop(ButtonDataKey.UserAction, None)
+                        match userAction:
                             case 1:
                                 try:
                                     data[ButtonDataKey.MaxMessages] = int(messageText.strip())
@@ -2825,9 +2752,7 @@ class BotHandlers(CommandHandlerMixin):
 
         chatSettings = self.getChatSettings(message.chat_id)
         userId = user.id
-        if userId not in self.cache["users"]:
-            self.cache["users"][userId] = {}
-        self.cache["users"][userId].pop("activeSummarizationId", None)
+        self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Summarization)
 
         exitButton = InlineKeyboardButton(
             "Отмена",
@@ -2908,7 +2833,7 @@ class BotHandlers(CommandHandlerMixin):
         # Choose TopicID if needed
         if isToticSummary and topicId is None:
             # await message.edit_text("Список топиков пока не поддержан")
-            topics = self.db.getChatTopics(chatId=chatId)
+            topics = list(self.cache.getChatTopicsInfo(chatId=chatId).values())
             if not topics:
                 topics.append(
                     {
@@ -2966,11 +2891,11 @@ class BotHandlers(CommandHandlerMixin):
         # TopicID Choosen
         topicTitle = ""
         if topicId is not None and isToticSummary:
-            topics = self.db.getChatTopics(chatId=chatId)
-            for topic in topics:
-                if topic["topic_id"] == topicId:
-                    topicTitle = f", топик **{topic["name"]}**"
-                    break
+            topics = self.cache.getChatTopicsInfo(chatId=chatId)
+            if topicId in topics:
+                topicTitle = f", топик **{topics[topicId]["name"]}**"
+            else:
+                logger.error(f"Topic with id #{topicId} is not found for chat #{chatId}. Found: ({topics.keys()})")
 
         dataTemplate: Dict[ButtonDataKey, str | int | None] = {
             ButtonDataKey.SummarizationAction: action,
@@ -2983,11 +2908,16 @@ class BotHandlers(CommandHandlerMixin):
         # Check If User need to Enter Messages/Prompt:
         userActionK = data.get(ButtonDataKey.UserAction, None)
         if userActionK is not None:
-            self.cache["users"][userId]["activeSummarizationId"] = {
+            userState = {
                 **dataTemplate,
                 ButtonDataKey.UserAction: userActionK,
                 "message": message,
             }
+            self.cache.setUserState(
+                userId=userId,
+                stateKey=UserActiveActionEnum.Summarization,
+                value=userState,
+            )
 
             keyboard: List[List[InlineKeyboardButton]] = [
                 [
@@ -3017,12 +2947,11 @@ class BotHandlers(CommandHandlerMixin):
                     )
                 case 2:
                     currentPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
-                    self.cache["users"][userId][
-                        "activeSummarizationId"
-                    ][  # pyright: ignore[reportTypedDictNotRequiredAccess]
-                        ButtonDataKey.SummarizationAction
-                    ] = (
-                        action + "+"
+                    userState[ButtonDataKey.SummarizationAction] = action + "+"
+                    self.cache.setUserState(
+                        userId=userId,
+                        stateKey=UserActiveActionEnum.Summarization,
+                        value=userState,
                     )
 
                     await message.edit_text(
@@ -3036,7 +2965,7 @@ class BotHandlers(CommandHandlerMixin):
                     )
                 case _:
                     logger.error(f"Wrong summarisation user action {userActionK} in data {data}")
-                    self.cache["users"][userId].pop("activeSummarizationId", None)
+                    self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Summarization)
                     await message.edit_text("Что-то пошло не так")
             return
 
@@ -3493,16 +3422,28 @@ class BotHandlers(CommandHandlerMixin):
             raise ValueError("No args provided")
 
         key = context.args[0]
+        _key = ChatSettingsKey.UNKNOWN
+        try:
+            _key = ChatSettingsKey(key)
+        except ValueError:
+            await self._sendMessage(
+                ensuredMessage,
+                messageText=f"Неизвестный ключ: `{key}`",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
         if isSet:
             value = " ".join(context.args[1:])
-            self.setChatSettings(chat.id, {key: value})
+
+            self.setChatSetting(chat.id, _key, ChatSettingsValue(value))
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{key}` = `{value}`",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
         else:
-            self.unsetChatSetting(chat.id, key)
+            self.unsetChatSetting(chat.id, _key)
             await self._sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{key}` сброшено в значение по умолчанию",
@@ -3610,18 +3551,18 @@ class BotHandlers(CommandHandlerMixin):
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
-            case "dumpCache":
+            case "cacheStats":
                 await self._sendMessage(
                     ensuredMessage,
-                    messageText=f"```json\n{utils.jsonDumps(self.cache, indent=2)}\n```",
+                    messageText=f"```json\n{utils.jsonDumps(self.cache.getStats(), indent=2)}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
             case "bayesStats":
-                for chatId, chatCache in self.cache["chats"].items():
+                for chatId in self.cache.chats.keys():
                     stats = await self.getBayesFilterStats(chatId=chatId)
                     chatName = f"#{chatId}"
-                    chatInfo = chatCache.get("info", None)
+                    chatInfo = self.cache.getChatInfo(chatId)
                     if chatInfo is not None:
                         chatName = chatInfo["title"] or chatInfo["username"] or chatInfo["chat_id"]
                     await self._sendMessage(
@@ -4139,10 +4080,7 @@ class BotHandlers(CommandHandlerMixin):
         chatId = ensuredMessage.chat.id
         userId = ensuredMessage.user.id
         key = context.args[0]
-        self.db.deleteUserData(userId=userId, chatId=chatId, key=key)
-        # It Do exist due to _updateEMessageUserData()
-        # TODO: Maybe move to proper method?
-        self.cache["chatUsers"][f"{chatId}:{userId}"].pop("data", None)
+        self.unsetUserData(chatId=chatId, userId=userId, key=key)
 
         await self._sendMessage(
             ensuredMessage,
@@ -4178,10 +4116,7 @@ class BotHandlers(CommandHandlerMixin):
         chatId = ensuredMessage.chat.id
         userId = ensuredMessage.user.id
 
-        self.db.clearUserData(userId=userId, chatId=chatId)
-        # It Do exist due to _updateEMessageUserData()
-        # TODO: Maybe move to proper method?
-        self.cache["chatUsers"][f"{chatId}:{userId}"].pop("data", None)
+        self.clearUserData(userId=userId, chatId=chatId)
 
         await self._sendMessage(
             ensuredMessage,
@@ -4472,13 +4407,15 @@ class BotHandlers(CommandHandlerMixin):
                     return False
 
                 userId = user.id
-                if userId not in self.cache["users"]:
-                    self.cache["users"][userId] = {}
-                self.cache["users"][userId]["activeConfigureId"] = {
-                    "chatId": chatId,
-                    "key": key,
-                    "message": message,
-                }
+                self.cache.setUserState(
+                    userId=userId,
+                    stateKey=UserActiveActionEnum.Configuration,
+                    value={
+                        "chatId": chatId,
+                        "key": key,
+                        "message": message,
+                    },
+                )
 
                 keyboard: List[List[InlineKeyboardButton]] = []
                 wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
@@ -4575,10 +4512,7 @@ class BotHandlers(CommandHandlerMixin):
                 _key = data.get(ButtonDataKey.Key, None)
 
                 userId = user.id
-                if userId not in self.cache["users"]:
-                    self.cache["users"][userId] = {}
-
-                self.cache["users"][userId].pop("activeConfigureId", None)
+                self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
 
                 if chatId is None or _key is None:
                     logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
@@ -4613,13 +4547,13 @@ class BotHandlers(CommandHandlerMixin):
                 resp = ""
 
                 if action == ButtonConfigureAction.SetTrue:
-                    self.setChatSettings(chatId, {key: True})
+                    self.setChatSetting(chatId, key, ChatSettingsValue(True))
                 elif action == "s-":
-                    self.setChatSettings(chatId, {key: False})
+                    self.setChatSetting(chatId, key, ChatSettingsValue(False))
                 elif action == "s#":
                     self.unsetChatSetting(chatId, key)
                 elif action == "sv":
-                    self.setChatSettings(chatId, {key: data.get(ButtonDataKey.Value, None)})
+                    self.setChatSetting(chatId, key, ChatSettingsValue(data.get(ButtonDataKey.Value, None)))
                 else:
                     logger.error(f"handle_chat_configuration: wrong action: {action}")
                     raise RuntimeError(f"handle_chat_configuration: wrong action: {action}")
