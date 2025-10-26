@@ -10,6 +10,10 @@ A minimal Telegram bot built with Python using the `python-telegram-bot` library
 - 📝 **Message Logging**: Stores user messages and statistics
 - 🎮 **Prinny Personality**: Responds with "dood!" like a Prinny from Disgaea
 
+## Requirements
+
+- Python 3.12 or higher (required for StrEnum and other modern features)
+
 ## Quick Start
 
 ### 1. Install Dependencies
