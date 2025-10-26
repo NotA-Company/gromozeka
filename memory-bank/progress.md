@@ -718,3 +718,17 @@ All requested tasks have been successfully implemented. Repository is now proper
   * Current test infrastructure status in [`activeContext.md`](memory-bank/activeContext.md)
   * Circular import decision in [`decisionLog.md`](memory-bank/decisionLog.md)
 - 📝 Clear documentation in Makefile output about known issues and workarounds
+[2025-10-26 14:04:00] - Python 3.12+ Requirement Update Completed
+
+## Completed Tasks
+
+* Updated [`pyproject.toml`](pyproject.toml) with Python 3.12 target version for black and pyright
+* Updated [`README.md`](README.md:30) prerequisites to specify Python 3.12+ requirement
+* Added requirements section to [`README_BOT.md`](README_BOT.md:13) with Python 3.12+ specification
+* Updated memory bank files (productContext.md, activeContext.md, decisionLog.md) with version requirement
+* Verified .flake8 does not need changes (no Python version specification)
+
+## Rationale
+
+* Project uses StrEnum and other Python 3.12+ features that require this minimum version
+* Ensures all documentation and tooling is aligned with actual code requirements

@@ -19,4 +19,11 @@ Gromozeka is a Telegram bot written in Python. The project aims to create a func
 * Python-based Telegram bot
 * Repository structure with docs/, memory-bank/, and .roo/ directories
 * Task-based development approach with reporting templates
+
+## Technical Requirements
+
+* Python 3.12+ required (uses StrEnum and other modern Python features)
+* SQLite3 database
+* libmagic library (5.46+)
 * Memory bank system for tracking project context and decisions
+[2025-10-26 14:04:00] - Updated Python version requirement to 3.12+

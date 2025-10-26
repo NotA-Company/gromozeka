@@ -27,7 +27,7 @@ Gromozeka is a powerful, AI-powered Telegram bot with extensive features includi
 
 ## 📋 Prerequisites
 
-- Python 3.10 or higher
+- Python 3.12 or higher
 - SQLite3
 - libmagic (tested on 5.46+)
 - Telegram Bot Token (from [@BotFather](https://t.me/botfather))
