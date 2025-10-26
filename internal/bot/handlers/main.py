@@ -137,7 +137,6 @@ class BotHandlers(CommandHandlerMixin):
         self.chatDefaults.update({k: v for k, v in botDefaults.items() if k in ChatSettingsKey})
 
         # Init cache
-        # TODO: Should I use something thread-safe? or just better
         self.cache = CacheService.getInstance()
         self.cache.injectDatabase(self.db)
 
@@ -186,6 +185,7 @@ class BotHandlers(CommandHandlerMixin):
 
     def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:
         """Set the chat settings for the given chat."""
+        self.cache.unsetChatSetting(chatId=chatId, key=key)
 
     ###
     # User Data Management
