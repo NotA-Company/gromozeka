@@ -28,6 +28,8 @@ exclude = [
     "**/.pytest_cache",
     ".git",
 ]
+venvPath = "."
+venv = "venv"
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 
