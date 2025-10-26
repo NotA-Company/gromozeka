@@ -10,8 +10,7 @@ import re
 
 import random
 import time
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
-import uuid
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import requests
 import magic
@@ -19,12 +18,10 @@ import magic
 from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update, Message, User
 from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ExtBot, ContextTypes
-from telegram._files._basemedium import _BaseMedium
-from telegram._utils.types import ReplyMarkup
 from telegram._utils.entities import parse_message_entity
 
-from internal.cache.types import UserActiveActionEnum, UserDataType, UserDataValueType
-from internal.services.queue.service import QueueService, makeEmptyAsyncTask
+from .base import BaseBotHandler
+from internal.cache.types import UserActiveActionEnum
 from lib.ai.abstract import AbstractModel, LLMAbstractTool
 from lib.ai.models import (
     LLMFunctionParameter,
@@ -52,7 +49,6 @@ from internal.database.models import (
     ChatInfoDict,
     ChatMessageDict,
     ChatUserDict,
-    MediaStatus,
     MessageCategory,
     SpamReason,
 )
@@ -64,37 +60,29 @@ from ..models import (
     ChatSettingsKey,
     ChatSettingsValue,
     CommandCategory,
-    CommandHandlerInfo,
-    CommandHandlerMixin,
     CommandHandlerOrder,
     DelayedTask,
     DelayedTaskFunction,
     EnsuredMessage,
     LLMMessageFormat,
     MessageType,
-    MediaProcessingInfo,
-    UserMetadataDict,
     commandHandler,
     getChatSettingsInfo,
 )
 from .. import constants
-from internal.cache import CacheService
 
 logger = logging.getLogger(__name__)
 
 
-class BotHandlers(CommandHandlerMixin):
+class BotHandlers(BaseBotHandler):
     """Contains all bot command and message handlers, dood!"""
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
         """Initialize handlers with database and LLM model."""
         # Initialize the mixin (discovers handlers)
-        super().__init__()
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
 
-        self.configManager = configManager
         self.config = configManager.getBotConfig()
-        self.db = database
-        self.llmManager = llmManager
 
         self._isExiting = False
 
@@ -126,24 +114,6 @@ class BotHandlers(CommandHandlerMixin):
                 defaultLanguage=openWeatherMapConfig.get("default-language", "ru"),
             )
 
-        # Init different defaults
-        self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
-
-        botDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: ChatSettingsValue(v) for k, v in self.config.get("defaults", {}).items() if k in ChatSettingsKey
-        }
-
-        self.chatDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: ChatSettingsValue("") for k in ChatSettingsKey
-        }
-
-        self.chatDefaults.update({k: v for k, v in botDefaults.items() if k in ChatSettingsKey})
-
-        # Init cache
-        self.cache = CacheService.getInstance()
-        self.cache.injectDatabase(self.db)
-
-        self.queueService = QueueService.getInstance()
         self.queueService.registerDelayedTaskHandler(
             DelayedTaskFunction.SEND_MESSAGE,
             self._dqSendMessageHandler,
@@ -157,109 +127,7 @@ class BotHandlers(CommandHandlerMixin):
 
     async def initExit(self) -> None:
         self._isExiting = True
-        await self._addDelayedTask(time.time(), DelayedTaskFunction.DO_EXIT, kwargs={}, skipDB=True)
-
-    def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
-        """Get all command handlers (auto-discovered via decorators), dood!"""
-        return super().getCommandHandlers()
-
-    ###
-    # Chat settings Managenent
-    ###
-
-    def getChatSettings(
-        self, chatId: Optional[int], returnDefault: bool = True
-    ) -> Dict[ChatSettingsKey, ChatSettingsValue]:
-        """Get the chat settings for the given chat."""
-        if chatId is None:
-            return self.chatDefaults.copy()
-
-        chatSettings = self.cache.getChatSettings(chatId)
-
-        if returnDefault:
-            return {**self.chatDefaults, **chatSettings}
-
-        return chatSettings
-
-    def setChatSetting(self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue) -> None:
-        """Set the chat settings for the given chat."""
-        # TODO: Should I add deprecation warning?
-        self.cache.setChatSetting(chatId, key, value)
-
-    def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:
-        """Set the chat settings for the given chat."""
-        self.cache.unsetChatSetting(chatId=chatId, key=key)
-
-    ###
-    # User Data Management
-    ###
-
-    def getUserData(self, chatId: int, userId: int) -> UserDataType:
-        """Get the user data for the given chat."""
-        return self.cache.getChatUserData(chatId=chatId, userId=userId)
-
-    def setUserData(
-        self, chatId: int, userId: int, key: str, value: UserDataValueType, append: bool = False
-    ) -> UserDataValueType:
-        """Set specific user data for the given chat."""
-        userData = self.getUserData(chatId, userId)
-
-        newValue = value
-        if key in userData and append:
-            # TODO: Properly work with dicts
-            _data = userData[key]
-            if isinstance(newValue, list):
-                newValue = [str(v).strip() for v in newValue]
-            else:
-                newValue = [str(newValue).strip()]
-
-            if isinstance(_data, list):
-                userData[key] = _data + newValue
-            else:
-                userData[key] = [str(_data)] + newValue
-
-            newValue = userData[key]
-
-        self.cache.setChatUserData(chatId=chatId, userId=userId, key=key, value=newValue)
-        return newValue
-
-    def unsetUserData(self, chatId: int, userId: int, key: str) -> None:
-        """Unset specific user data for the given chat."""
-        self.cache.unsetChatUserData(chatId=chatId, userId=userId, key=key)
-
-    def clearUserData(self, chatId: int, userId: int) -> None:
-        """Clear all user data for the given chat."""
-        self.cache.clearChatUserData(chatId=chatId, userId=userId)
-
-    def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
-        ensuredMessage.setUserData(self.getUserData(ensuredMessage.chat.id, ensuredMessage.user.id))
-
-    ###
-    # Different helpers
-    ###
-
-    async def _isAdmin(self, user: User, chat: Optional[Chat] = None, allowBotOwners: bool = True) -> bool:
-        """Check if the user is an admin (or bot owner)."""
-        # If chat is None, then we are checking if it's bot owner
-        username = user.username
-        if username is None:
-            return False
-        username = username.lower()
-
-        if allowBotOwners and username in self.botOwners:
-            return True
-
-        if chat is not None:
-            for admin in await chat.get_administrators():
-                # logger.debug(f"Got admin for chat {chat.id}: {admin}")
-                if admin.user.username and username == admin.user.username.lower():
-                    return True
-
-        return False
-
-    async def addTaskToAsyncedQueue(self, task: asyncio.Task) -> None:
-        """Add a task to the queue."""
-        await self.queueService.addBackgroundTask(task)
+        await self.queueService.addDelayedTask(time.time(), DelayedTaskFunction.DO_EXIT, kwargs={}, skipDB=True)
 
     async def initDelayedScheduler(self, bot: ExtBot) -> None:
         self._bot = bot
@@ -278,7 +146,7 @@ class BotHandlers(CommandHandlerMixin):
         )
         message.set_bot(self._bot)
         ensuredMessage = EnsuredMessage.fromMessage(message)
-        await self._sendMessage(
+        await self.sendMessage(
             replyToMessage=ensuredMessage,
             messageText=kwargs["messageText"],
             messageCategory=kwargs["messageCategory"],
@@ -292,173 +160,6 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(
                 "Bot is not initialized, can't delete message " f"{kwargs['messageId']} in chat {kwargs['chatId']}"
             )
-
-    async def _addDelayedTask(
-        self,
-        delayedUntil: float,
-        function: DelayedTaskFunction,
-        kwargs: Dict[str, Any],
-        taskId: Optional[str] = None,
-        skipDB: bool = False,
-    ) -> None:
-        """Add delayed task"""
-        await self.queueService.addDelayedTask(
-            delayedUntil=delayedUntil, function=function, kwargs=kwargs, taskId=taskId, skipDB=skipDB
-        )
-
-    async def _sendMessage(
-        self,
-        replyToMessage: EnsuredMessage,
-        messageText: Optional[str] = None,
-        addMessagePrefix: str = "",
-        photoData: Optional[bytes] = None,
-        photoCaption: Optional[str] = None,
-        sendMessageKWargs: Optional[Dict[str, Any]] = None,
-        tryMarkdownV2: bool = True,
-        tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
-        sendErrorIfAny: bool = True,
-        skipLogs: bool = False,
-        mediaPrompt: Optional[str] = None,
-        messageCategory: MessageCategory = MessageCategory.BOT,
-        replyMarkup: Optional[ReplyMarkup] = None,
-    ) -> Optional[Message]:
-        """Send a message to the chat or user."""
-
-        if photoData is None and messageText is None:
-            logger.error("No message text or photo data provided")
-            raise ValueError("No message text or photo data provided")
-
-        replyMessage: Optional[Message] = None
-        message = replyToMessage.getBaseMessage()
-        chatType = replyToMessage.chat.type
-        isPrivate = chatType == Chat.PRIVATE
-        isGroupChat = chatType in [Chat.GROUP, Chat.SUPERGROUP]
-
-        if not isPrivate and not isGroupChat:
-            logger.error("Cannot send message to chat type {}".format(chatType))
-            raise ValueError("Cannot send message to chat type {}".format(chatType))
-
-        if sendMessageKWargs is None:
-            sendMessageKWargs = {}
-
-        replyKwargs = sendMessageKWargs.copy()
-        replyKwargs.update(
-            {
-                "reply_to_message_id": replyToMessage.messageId,
-                "message_thread_id": replyToMessage.threadId,
-                "reply_markup": replyMarkup,
-            }
-        )
-
-        try:
-            if photoData is not None:
-                # Send photo
-                replyKwargs.update(
-                    {
-                        "photo": photoData,
-                    }
-                )
-
-                if tryMarkdownV2 and photoCaption is not None:
-                    try:
-                        messageTextParsed = markdown_to_markdownv2(addMessagePrefix + photoCaption)
-                        # logger.debug(f"Sending MarkdownV2: {replyText}")
-                        replyMessage = await message.reply_photo(
-                            caption=messageTextParsed,
-                            parse_mode="MarkdownV2",
-                            **replyKwargs,
-                        )
-                    except Exception as e:
-                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                        # Probably error in markdown formatting, fallback to raw text
-
-                if replyMessage is None:
-                    _photoCaption = photoCaption if photoCaption is not None else ""
-                    replyMessage = await message.reply_photo(caption=addMessagePrefix + _photoCaption, **replyKwargs)
-
-            elif messageText is not None:
-                # Send text
-
-                # If response is json, parse it
-                if tryParseInputJSON is None:
-                    tryParseInputJSON = re.match(r"^\s*`*\s*{", messageText) is not None
-                    if tryParseInputJSON:
-                        logger.debug(f"JSONPreParser: message '{messageText}' looks like JSON, tring parse it")
-
-                if tryParseInputJSON:
-                    try:
-                        jsonReply = json.loads(messageText.strip("` \n\r"))
-                        if "text" in jsonReply:
-                            messageText = str(jsonReply["text"]).strip()
-                        elif "message" in jsonReply:
-                            messageText = str(jsonReply["message"]).strip()
-                        elif "media_description" in jsonReply:
-                            messageText = str(jsonReply["media_description"]).strip()
-                        else:
-                            logger.warning(f"No text field found in json reply, fallback to text: {jsonReply}")
-                            raise ValueError("No text field found in json reply")
-                    except Exception as e:
-                        logger.debug(f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}")
-
-                if not skipLogs:
-                    logger.debug(f"Sending reply to {replyToMessage}")
-                # Try to send Message as MarkdownV2 first
-                if tryMarkdownV2:
-                    try:
-                        messageTextParsed = markdown_to_markdownv2(addMessagePrefix + messageText)
-                        # logger.debug(f"Sending MarkdownV2: {replyText}")
-                        replyMessage = await message.reply_text(
-                            text=messageTextParsed,
-                            parse_mode="MarkdownV2",
-                            **replyKwargs,
-                        )
-                    except Exception as e:
-                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                        # Probably error in markdown formatting, fallback to raw text
-
-                if replyMessage is None:
-                    replyMessage = await message.reply_text(text=addMessagePrefix + messageText, **replyKwargs)
-
-            try:
-                if replyMessage is None:
-                    raise ValueError("No reply message")
-
-                if not skipLogs:
-                    logger.debug(f"Sent message: {replyMessage}")
-
-                # Save message
-                ensuredReplyMessage = EnsuredMessage.fromMessage(replyMessage)
-                if addMessagePrefix:
-                    replyText = ensuredReplyMessage.messageText
-                    if replyText.startswith(addMessagePrefix):
-                        replyText = replyText[len(addMessagePrefix) :]
-                        ensuredReplyMessage.messageText = replyText
-                if replyMessage.photo:
-                    media = await self.processImage(ensuredReplyMessage, mediaPrompt)
-                    ensuredReplyMessage.setMediaProcessingInfo(media)
-
-                if isGroupChat or isPrivate:
-                    self._saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
-                else:
-                    raise ValueError("Unknown chat type")
-
-            except Exception as e:
-                logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-                logger.exception(e)
-                # Message was sent, so return True anyway
-                return replyMessage
-
-        except Exception as e:
-            logger.error(f"Error while sending message: {type(e).__name__}#{e}")
-            logger.exception(e)
-            if sendErrorIfAny:
-                await message.reply_text(
-                    f"Error while sending message: {type(e).__name__}#{e}",
-                    reply_to_message_id=replyToMessage.messageId,
-                )
-            return None
-
-        return replyMessage
 
     async def _delayedSendMessage(
         self,
@@ -480,7 +181,7 @@ class BotHandlers(CommandHandlerMixin):
             "chatType": ensuredMessage.chat.type,
         }
 
-        return await self._addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
+        return await self.queueService.addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
 
     async def _generateTextViaLLM(
         self,
@@ -508,7 +209,7 @@ class BotHandlers(CommandHandlerMixin):
                 f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
             )
             if mlRet.status != ModelResultStatus.FINAL:
-                ret = await self._sendMessage(
+                ret = await self.sendMessage(
                     ensuredMessage,
                     messageText=(
                         f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\n"
@@ -524,7 +225,7 @@ class BotHandlers(CommandHandlerMixin):
             imgAddPrefix = ""
             if mlRet.isFallback:
                 imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
-            ret = await self._sendMessage(
+            ret = await self.sendMessage(
                 ensuredMessage,
                 photoData=mlRet.mediaData,
                 photoCaption=image_description,
@@ -737,7 +438,7 @@ class BotHandlers(CommandHandlerMixin):
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 if ret.resultText and sendIntermediateMessages:
                     try:
-                        await self._sendMessage(ensuredMessage, ret.resultText, messageCategory=MessageCategory.BOT)
+                        await self.sendMessage(ensuredMessage, ret.resultText, messageCategory=MessageCategory.BOT)
                     except Exception as e:
                         logger.error(f"Failed to send intermediate message: {e}")
 
@@ -763,136 +464,6 @@ class BotHandlers(CommandHandlerMixin):
             ret.setToolsUsed(True)
 
         return ret
-
-    def _getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
-        """Get Chat info from cache or DB"""
-        return self.cache.getChatInfo(chatId)
-
-    def _updateChatInfo(self, chat: Chat) -> None:
-        """Update Chat info. Do not save it to DB if it is in cache and wasn't changed"""
-        chatId = chat.id
-        storedChatInfo = self._getChatInfo(chatId=chatId)
-
-        if (
-            storedChatInfo is None
-            or chat.title != storedChatInfo.get("title", None)
-            or chat.username != storedChatInfo.get("username", None)
-            or chat.is_forum != storedChatInfo.get("is_forum", None)
-            or chat.type != storedChatInfo.get("type", None)
-        ):
-            self.cache.setChatInfo(
-                chat.id,
-                {
-                    "chat_id": chat.id,
-                    "title": chat.title,
-                    "username": chat.username,
-                    "is_forum": chat.is_forum or False,
-                    "type": chat.type,
-                    "created_at": datetime.datetime.now(),
-                    "updated_at": datetime.datetime.now(),
-                },
-            )
-
-    def _updateTopicInfo(
-        self,
-        chatId: int,
-        topicId: Optional[int],
-        iconColor: Optional[int] = None,
-        customEmojiId: Optional[str] = None,
-        name: Optional[str] = None,
-        force: bool = False,
-    ) -> None:
-        """Update Chat Topic info. Do not save it to DB if it is in cache and wasn't changed"""
-        _topicId = topicId if topicId is not None else 0
-        storedTopicInfo = self.cache.getChatTopicInfo(chatId=chatId, topicId=_topicId)
-
-        if not force and storedTopicInfo:
-            # No need to rewrite topic info
-            return
-
-        if (
-            storedTopicInfo is None
-            or iconColor != storedTopicInfo["icon_color"]
-            or customEmojiId != storedTopicInfo["icon_custom_emoji_id"]
-            or name != storedTopicInfo["name"]
-        ):
-            self.cache.setChatTopicInfo(
-                chatId=chatId,
-                topicId=_topicId,
-                info={
-                    "chat_id": chatId,
-                    "topic_id": _topicId,
-                    "icon_color": iconColor,
-                    "icon_custom_emoji_id": customEmojiId,
-                    "name": name,
-                    "created_at": datetime.datetime.now(),
-                    "updated_at": datetime.datetime.now(),
-                },
-            )
-
-    def _saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
-        """Save a chat message to the database."""
-        chat = message.chat
-        sender = message.sender
-
-        if message.messageType == MessageType.UNKNOWN:
-            logger.error(f"Unsupported message type: {message.messageType}")
-            return False
-
-        messageText = message.messageText
-
-        replyId = message.replyId
-        rootMessageId = message.messageId
-        if message.isReply and replyId:
-            parentMsg = self.db.getChatMessageByMessageId(
-                chatId=chat.id,
-                messageId=replyId,
-            )
-            if parentMsg:
-                rootMessageId = parentMsg["root_message_id"]
-
-        self._updateChatInfo(chat)
-
-        # TODO: Actually topic name and emoji could be changed after that
-        # but currently we have no way to know it (except of see
-        # https://docs.python-telegram-bot.org/en/stable/telegram.forumtopicedited.html )
-        # Think about it later
-        if message.isTopicMessage:
-            repliedMessage = message.getBaseMessage().reply_to_message
-            if repliedMessage and repliedMessage.forum_topic_created:
-                self._updateTopicInfo(
-                    chatId=message.chat.id,
-                    topicId=message.threadId,
-                    iconColor=repliedMessage.forum_topic_created.icon_color,
-                    customEmojiId=repliedMessage.forum_topic_created.icon_custom_emoji_id,
-                    name=repliedMessage.forum_topic_created.name,
-                )
-        else:
-            self._updateTopicInfo(chatId=message.chat.id, topicId=message.threadId)
-
-        self.db.updateChatUser(
-            chatId=chat.id,
-            userId=sender.id,
-            username=sender.username,
-            fullName=sender.name,
-        )
-
-        self.db.saveChatMessage(
-            date=message.date,
-            chatId=chat.id,
-            userId=sender.id,
-            messageId=message.messageId,
-            replyId=replyId,
-            threadId=message.threadId,
-            messageText=messageText,
-            messageType=message.messageType,
-            messageCategory=messageCategory,
-            rootMessageId=rootMessageId,
-            quoteText=message.quoteText,
-            mediaId=message.mediaId,
-        )
-
-        return True
 
     async def _sendLLMChatMessage(
         self,
@@ -924,7 +495,7 @@ class BotHandlers(CommandHandlerMixin):
         except Exception as e:
             logger.error(f"Error while sending LLM request: {type(e).__name__}#{e}")
             logger.exception(e)
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Error while sending LLM request: {type(e).__name__}",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -970,7 +541,7 @@ class BotHandlers(CommandHandlerMixin):
                 if imgMLRet.isFallback:
                     imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
                 return (
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage,
                         photoData=imgMLRet.mediaData,
                         photoCaption=lmRetText,
@@ -984,7 +555,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Failed generating Image by prompt '{imagePrompt}': {imgMLRet}")
 
         return (
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=lmRetText,
                 addMessagePrefix=addPrefix,
@@ -1035,7 +606,7 @@ class BotHandlers(CommandHandlerMixin):
             if cache is not None:
                 resMessages = json.loads(cache["summary"])
                 for msg in resMessages:
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage,
                         messageText=msg,
                         messageCategory=MessageCategory.BOT_SUMMARY,
@@ -1157,7 +728,7 @@ class BotHandlers(CommandHandlerMixin):
             )
 
         for msg in resMessages:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=msg,
                 messageCategory=MessageCategory.BOT_SUMMARY,
@@ -1186,25 +757,6 @@ class BotHandlers(CommandHandlerMixin):
             f"**Восход**: _{sunriseTime}_\n"
             f"**Закат**: _{sunsetTime}_\n"
         )
-
-    def parseUserMetadata(self, userInfo: Optional[ChatUserDict]) -> UserMetadataDict:
-        """Get user metadata."""
-        if userInfo is None:
-            return {}
-
-        metadataStr = userInfo["metadata"]
-        if metadataStr:
-            return json.loads(metadataStr)
-        return {}
-
-    def setUserMetadata(self, chatId: int, userId: int, metadata: UserMetadataDict, isUpdate: bool = False) -> None:
-        """Set user metadata."""
-        if isUpdate:
-            userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
-            metadata = {**self.parseUserMetadata(userInfo), **metadata}
-
-        metadataStr = utils.jsonDumps(metadata)
-        self.db.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
 
     ###
     # SPAM Handling
@@ -1380,7 +932,7 @@ class BotHandlers(CommandHandlerMixin):
         if spamScore > banTreshold:
             logger.info(f"SPAM: spamScore: {spamScore} > {banTreshold} {ensuredMessage.getBaseMessage()}")
             userName = sender.name or sender.username
-            banMessage = await self._sendMessage(
+            banMessage = await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Пользователь [{userName}](tg://user?id={sender.id})"
                 " заблокирован за спам.\n"
@@ -1389,7 +941,7 @@ class BotHandlers(CommandHandlerMixin):
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
             if banMessage is not None:
-                await self._addDelayedTask(
+                await self.queueService.addDelayedTask(
                     time.time() + 60,
                     DelayedTaskFunction.DELETE_MESSAGE,
                     kwargs={"messageId": banMessage.message_id, "chatId": banMessage.chat_id},
@@ -1401,7 +953,7 @@ class BotHandlers(CommandHandlerMixin):
             return True
         elif spamScore >= warnTreshold:
             logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage}")
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Возможно спам (Вероятность: {spamScore}, порог: {warnTreshold})\n"
                 "(Когда-нибудь тут будут кнопки спам\\не спам)",
@@ -1428,10 +980,10 @@ class BotHandlers(CommandHandlerMixin):
         chatId = ensuredMessage.chat.id
         userId = ensuredMessage.sender.id
 
-        if await self._isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat):
+        if await self.isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat):
             # It is admin, do nothing
             logger.warning(f"Tried to mark Admin {ensuredMessage.sender} as SPAM")
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Алярм! Попытка представить администратора спаммером",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -1445,7 +997,7 @@ class BotHandlers(CommandHandlerMixin):
             maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
             if maxSpamMessages != 0 and userInfo and userInfo["messages_count"] > maxSpamMessages:
                 logger.warning(f"Tried to mark old user {ensuredMessage.sender} as SPAM")
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     messageText="Алярм! Попытка представить честного пользователя спаммером",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -1707,7 +1259,7 @@ class BotHandlers(CommandHandlerMixin):
                 logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
                 # return
 
-        if not self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
+        if not self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
             logger.error("Failed to save chat message")
 
         if message.is_automatic_forward:
@@ -1918,7 +1470,7 @@ class BotHandlers(CommandHandlerMixin):
 
             logger.debug(f"Found user for candidate of being '{userTitle}': {user}")
             return (
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     messageText=f"{user['username']} сегодня {userTitle}",
                 )
@@ -1966,7 +1518,7 @@ class BotHandlers(CommandHandlerMixin):
                         response = constants.DUNNO_EMOJI
 
                 return (
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage,
                         messageText=response,
                     )
@@ -2004,7 +1556,7 @@ class BotHandlers(CommandHandlerMixin):
             weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
             if weatherData is not None:
                 return (
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage,
                         await self._formatWeather(weatherData),
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -2142,7 +1694,7 @@ class BotHandlers(CommandHandlerMixin):
             return False
 
         answerToAdmin = chatSettings[ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN].toBool()
-        if (not answerToAdmin) and await self._isAdmin(ensuredMessage.user, ensuredMessage.chat, False):
+        if (not answerToAdmin) and await self.isAdmin(ensuredMessage.user, ensuredMessage.chat, False):
             # logger.debug(f"answerToAdmin is {answerToAdmin}, skipping")
             return False
 
@@ -2221,274 +1773,6 @@ class BotHandlers(CommandHandlerMixin):
         return True
 
     ###
-    # Processing media
-    ###
-
-    async def _parseImage(
-        self,
-        ensuredMessage: EnsuredMessage,
-        fileUniqueId: str,
-        messages: List[ModelMessage],
-    ) -> bool:
-        """
-        Parse image content using LLM
-        """
-
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-
-        try:
-            llmModel = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
-            logger.debug(f"Prompting Image {ensuredMessage.mediaId} LLM for image with prompt: {messages[:1]}")
-            llmRet = await llmModel.generateText(messages)
-            logger.debug(f"Image LLM Response: {llmRet}")
-
-            if llmRet.status != ModelResultStatus.FINAL:
-                raise RuntimeError(f"Image LLM Response status is not FINAL: {llmRet.status}")
-
-            description = llmRet.resultText
-            self.db.updateMediaAttachment(
-                fileUniqueId=fileUniqueId,
-                status=MediaStatus.DONE,
-                description=description,
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to parse image: {e}")
-            self.db.updateMediaAttachment(
-                fileUniqueId=fileUniqueId,
-                status=MediaStatus.FAILED,
-            )
-            return False
-
-        # ret['content'] = llmRet.resultText
-
-    async def _processMedia(
-        self,
-        ensuredMessage: EnsuredMessage,
-        media: _BaseMedium,
-        metadata: Dict[str, Any],
-        mediaForLLM: Optional[_BaseMedium] = None,
-        prompt: Optional[str] = None,
-    ) -> MediaProcessingInfo:
-        """
-        Process Media from message
-        """
-        # Currently we support only image/ media.
-        # If we'll want to support other types, then need to
-        # find all "image/" entries in this function and fix
-        mediaStatus = MediaStatus.NEW
-        localUrl: Optional[str] = None
-        mimeType: Optional[str] = None
-        mediaType = ensuredMessage.messageType
-        if mediaForLLM is None:
-            mediaForLLM = media
-
-        if mediaType in [MessageType.TEXT, MessageType.UNKNOWN]:
-            raise ValueError(f"Media type {mediaType} is not supported")
-
-        logger.debug(f"Processing media: {media}")
-        ret = MediaProcessingInfo(
-            id=media.file_unique_id,
-            task=None,
-            type=mediaType,
-        )
-
-        # First check if we have the photo in the database already
-        mediaAttachment = self.db.getMediaAttachment(ret.id)
-        hasMediaAttachment = mediaAttachment is not None
-        if mediaAttachment is not None:
-            logger.debug(f"Media#{ret.id} already in database")
-            if mediaAttachment["media_type"] != mediaType:
-                raise RuntimeError(
-                    f"Media#{ret.id} already present in database and it is not an "
-                    f"{mediaType} but {mediaAttachment['media_type']}"
-                )
-
-            # Only skip processing if Media in DB is in right status
-            match MediaStatus(mediaAttachment["status"]):
-                case MediaStatus.DONE:
-                    ret.task = makeEmptyAsyncTask()
-                    return ret
-
-                case MediaStatus.PENDING:
-                    try:
-                        mediaDate = mediaAttachment["updated_at"]
-                        if not isinstance(mediaDate, datetime.datetime):
-                            logger.error(
-                                f"{mediaType}#{ret.id} `updated_at` is not a datetime: "
-                                f"{type(mediaDate).__name__}({mediaDate})"
-                            )
-                            mediaDate = datetime.datetime.fromisoformat(mediaDate)
-
-                        if utils.getAgeInSecs(mediaDate) > constants.PROCESSING_TIMEOUT:
-                            logger.warning(
-                                f"{mediaType}#{ret.id} already in database but in status "
-                                f"{mediaAttachment['status']} and is too old ({mediaDate}), reprocessing it"
-                            )
-                        else:
-                            ret.task = makeEmptyAsyncTask()
-                            return ret
-                    except Exception as e:
-                        logger.error("{mediaType}#{ret.id} Error during checking age:")
-                        logger.exception(e)
-
-                case _:
-                    mimeType = str(mediaAttachment["mime_type"])
-                    if mimeType.lower().startswith("image/"):
-                        logger.debug(
-                            f"{mediaType}#{ret.id} in wrong status: {mediaAttachment['status']}. Reprocessing it"
-                        )
-                    else:
-                        logger.debug(f"{mediaType}#{ret.id} is {mimeType}, skipping it")
-                        ret.task = makeEmptyAsyncTask()
-                        return ret
-
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        mediaData: Optional[bytes] = None
-
-        if chatSettings[ChatSettingsKey.SAVE_IMAGES].toBool():
-            # TODO do
-            pass
-
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
-            mediaStatus = MediaStatus.PENDING
-        else:
-            mediaStatus = MediaStatus.DONE
-
-        if hasMediaAttachment:
-            self.db.updateMediaAttachment(
-                fileUniqueId=ret.id,
-                status=mediaStatus,
-                metadata=utils.jsonDumps(metadata),
-                mimeType=mimeType,
-                localUrl=localUrl,
-                prompt=prompt,
-            )
-        else:
-            self.db.addMediaAttachment(
-                fileUniqueId=ret.id,
-                fileId=media.file_id,
-                fileSize=media.file_size,
-                mediaType=mediaType,
-                mimeType=mimeType,
-                metadata=utils.jsonDumps(metadata),
-                status=mediaStatus,
-                localUrl=localUrl,
-                prompt=prompt,
-                description=None,
-            )
-
-        # Need to parse image content with LLM
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
-            # Do not redownload file if it was downloaded already
-            if mediaData is None or mediaForLLM != media:
-                if self._bot is None:
-                    raise RuntimeError("Bot is not initialized")
-                file = await self._bot.get_file(mediaForLLM.file_id)
-                logger.debug(f"{mediaType}#{ret.id} File info: {file}")
-                mediaData = bytes(await file.download_as_bytearray())
-
-            mimeType = magic.from_buffer(mediaData, mime=True)
-            logger.debug(f"{mediaType}#{ret.id} Mimetype: {mimeType}")
-
-            self.db.updateMediaAttachment(
-                fileUniqueId=ret.id,
-                mimeType=mimeType,
-            )
-
-            if mimeType.lower().startswith("image/"):
-                logger.debug(f"{mediaType}#{ret.id} is an image")
-            else:
-                logger.warning(f"{mediaType}#{ret.id} is not an image, skipping parsing")
-                ret.task = makeEmptyAsyncTask()
-                self.db.updateMediaAttachment(
-                    fileUniqueId=ret.id,
-                    status=MediaStatus.NEW,
-                )
-                return ret
-
-            imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
-            messages = [
-                ModelMessage(
-                    role="system",
-                    content=imagePrompt,
-                ),
-                ModelImageMessage(
-                    role="user",
-                    content=ensuredMessage.messageText,
-                    image=bytearray(mediaData),
-                ),
-            ]
-
-            logger.debug(f"{mediaType}#{ret.id}: Asynchronously parsing image")
-            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
-            # logger.debug(f"{mediaType}#{ret.id} After Start")
-            ret.task = parseTask
-            await self.addTaskToAsyncedQueue(parseTask)
-            # logger.debug(f"{mediaType}#{ret.id} After Queued")
-
-        if ret.task is None:
-            ret.task = makeEmptyAsyncTask()
-
-        return ret
-
-    async def processSticker(self, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
-        """
-        Process a sticker from message if needed
-        """
-        sticker = ensuredMessage.getBaseMessage().sticker
-        if sticker is None:
-            raise ValueError("Sticker not found")
-
-        # Sticker(..., emoji='😨', file_id='C...E', file_size=51444, file_unique_id='A...Q',
-        # height=512, is_animated=True, is_video=False, set_name='SharkBoss',
-        # thumbnail=PhotoSize(...), type=<StickerType.REGULAR>, width=512)
-
-        metadata = {
-            "width": sticker.width,
-            "height": sticker.height,
-            "emoji": sticker.emoji,
-            "set_name": sticker.set_name,
-            "is_animated": sticker.is_animated,
-            "is_video": sticker.is_video,
-            "is_premium": sticker.premium_animation is not None,
-        }
-
-        return await self._processMedia(ensuredMessage, media=sticker, metadata=metadata)
-
-    async def processImage(self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None) -> MediaProcessingInfo:
-        """
-        Process a photo from message if needed
-        """
-
-        bestPhotoSize = ensuredMessage.getBaseMessage().photo[-1]
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-
-        llmPhotoSize = bestPhotoSize
-        optimalImageSize = chatSettings[ChatSettingsKey.OPTIMAL_IMAGE_SIZE].toInt()
-        if optimalImageSize > 0:
-            # Iterate over all photo sizes and find the best one (i.e. smallest, but, larger than optimalImageSize)
-            for pSize in ensuredMessage.getBaseMessage().photo:
-                if pSize.width > optimalImageSize or pSize.height > optimalImageSize:
-                    llmPhotoSize = pSize
-                    break
-
-        metadata = {
-            # Store metadata for best size
-            "width": bestPhotoSize.width,
-            "height": bestPhotoSize.height,
-        }
-
-        return await self._processMedia(
-            ensuredMessage,
-            media=bestPhotoSize,
-            mediaForLLM=llmPhotoSize,
-            metadata=metadata,
-            prompt=prompt,
-        )
-
-    ###
     # COMMANDS Handlers
     ###
 
@@ -2529,7 +1813,7 @@ class BotHandlers(CommandHandlerMixin):
             return
 
         ensuredMessage = EnsuredMessage.fromMessage(update.message)
-        isBotOwner = await self._isAdmin(ensuredMessage.user, allowBotOwners=True)
+        isBotOwner = await self.isAdmin(ensuredMessage.user, allowBotOwners=True)
 
         commands: Dict[CommandHandlerOrder, List[str]] = {}
         for commandOrder in CommandHandlerOrder:
@@ -2577,9 +1861,9 @@ class BotHandlers(CommandHandlerMixin):
         if isBotOwner:
             help_text += "\n\n**Команды, доступные только владельцам бота:**\n" f"{"\n".join(botOwnerCommands)}\n"
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER)
         # logger.debug(f"Help text: {help_text}")
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             messageText=help_text,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -2599,17 +1883,17 @@ class BotHandlers(CommandHandlerMixin):
             return
         ensuredMessage = EnsuredMessage.fromMessage(update.message)
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         if context.args:
             echo_text = " ".join(context.args)
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=f"🔄 Echo: {echo_text}",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
         else:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Please provide a message to echo!\nUsage: /echo <your message>",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -2685,7 +1969,7 @@ class BotHandlers(CommandHandlerMixin):
             await message.edit_text(text="Выберите чат для суммаризации:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        chatFound = await self._isAdmin(user, None, True)
+        chatFound = await self.isAdmin(user, None, True)
         chatInfo: Optional[ChatInfoDict] = None
         for chat in userChats:
             if chat["chat_id"] == chatId:
@@ -2972,7 +2256,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         commandStr = ""
         for entity in message.entities:
@@ -2994,7 +2278,7 @@ class BotHandlers(CommandHandlerMixin):
 
         match chatType:
             case Chat.PRIVATE:
-                isBotOwner = await self._isAdmin(ensuredMessage.user, None, True)
+                isBotOwner = await self.isAdmin(ensuredMessage.user, None, True)
                 if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool() and not isBotOwner:
                     logger.info(
                         f"Unauthorized /{commandStr} command from {ensuredMessage.user} "
@@ -3022,7 +2306,7 @@ class BotHandlers(CommandHandlerMixin):
                     maxMessages = 0
 
                 if chatId is None:
-                    msg = await self._sendMessage(
+                    msg = await self.sendMessage(
                         ensuredMessage,
                         messageText="Загружаю список чатов....",
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3038,7 +2322,7 @@ class BotHandlers(CommandHandlerMixin):
                     return
 
                 if threadId is None and isTopicSummary:
-                    msg = await self._sendMessage(
+                    msg = await self.sendMessage(
                         ensuredMessage,
                         messageText="Загружаю список топиков....",
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3061,7 +2345,7 @@ class BotHandlers(CommandHandlerMixin):
                         break
 
                 if not chatFound:
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage, "Передан неверный ID чата", messageCategory=MessageCategory.BOT_ERROR
                     )
                     return
@@ -3133,12 +2417,12 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
+        if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/models` by not owner {ensuredMessage.user}")
             await self.handle_message(update=update, context=context)
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         replyText = "**Доступные модели:**\n\n"
 
@@ -3163,7 +2447,7 @@ class BotHandlers(CommandHandlerMixin):
             replyText += "```\n\n"
 
             if i % modelsPerMessage == (modelsPerMessage - 1):
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     messageText=replyText,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3172,7 +2456,7 @@ class BotHandlers(CommandHandlerMixin):
                 time.sleep(0.5)
 
         if replyText:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=replyText,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3200,12 +2484,12 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
+        if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/settings` by not owner {ensuredMessage.user}")
             await self.handle_message(update=update, context=context)
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
 
         # user = ensuredMessage.user
         chat = ensuredMessage.chat
@@ -3219,7 +2503,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.debug(resp)
             logger.debug(repr(resp))
 
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             messageText=resp,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3247,12 +2531,12 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
+        if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/[un]set` by not owner {ensuredMessage.user}")
             await self.handle_message(update=update, context=context)
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         commandStr = ""
         for entity in message.entities:
@@ -3278,14 +2562,14 @@ class BotHandlers(CommandHandlerMixin):
         #     return
 
         if isSet and (not context.args or len(context.args) < 2):
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="You need to specify a key and a value to change chat setting.",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
         if not isSet and (not context.args or len(context.args) < 1):
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="You need to specify a key to clear chat setting.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3301,7 +2585,7 @@ class BotHandlers(CommandHandlerMixin):
         try:
             _key = ChatSettingsKey(key)
         except ValueError:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Неизвестный ключ: `{key}`",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3312,14 +2596,14 @@ class BotHandlers(CommandHandlerMixin):
             value = " ".join(context.args[1:])
 
             self.setChatSetting(chat.id, _key, ChatSettingsValue(value))
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{key}` = `{value}`",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
         else:
             self.unsetChatSetting(chat.id, _key)
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{key}` сброшено в значение по умолчанию",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3348,15 +2632,15 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        if not await self._isAdmin(ensuredMessage.user, allowBotOwners=True):
+        if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/test` by not owner {ensuredMessage.user}")
             await self.handle_message(update=update, context=context)
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         if not context.args or len(context.args) < 1:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="You need to specify test suite.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3392,7 +2676,7 @@ class BotHandlers(CommandHandlerMixin):
                     try:
                         iterationsCount = int(context.args[1])
                     except ValueError as e:
-                        await self._sendMessage(
+                        await self.sendMessage(
                             ensuredMessage,
                             messageText=f"Invalid iterations count. {e}",
                             messageCategory=MessageCategory.BOT_ERROR,
@@ -3402,7 +2686,7 @@ class BotHandlers(CommandHandlerMixin):
                     try:
                         delay = int(context.args[2])
                     except ValueError as e:
-                        await self._sendMessage(
+                        await self.sendMessage(
                             ensuredMessage,
                             messageText=f"Invalid delay. {e}",
                             messageCategory=MessageCategory.BOT_ERROR,
@@ -3411,7 +2695,7 @@ class BotHandlers(CommandHandlerMixin):
 
                 for i in range(iterationsCount):
                     logger.debug(f"Iteration {i} of {iterationsCount} (delay is {delay}) {context.args[3:]}")
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage,
                         messageText=f"Iteration {i}",
                         skipLogs=True,  # Do not spam logs
@@ -3420,14 +2704,15 @@ class BotHandlers(CommandHandlerMixin):
                     await asyncio.sleep(delay)
 
             case "delayedQueue":
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
-                    messageText=f"```\n{self.queueService.delayedActionsQueue}\n\n{self.queueService.delayedActionsQueue.qsize()}\n```",
+                    messageText=f"```\n{self.queueService.delayedActionsQueue}\n\n"
+                    f"{self.queueService.delayedActionsQueue.qsize()}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
             case "cacheStats":
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     messageText=f"```json\n{utils.jsonDumps(self.cache.getStats(), indent=2)}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3440,7 +2725,7 @@ class BotHandlers(CommandHandlerMixin):
                     chatInfo = self.cache.getChatInfo(chatId)
                     if chatInfo is not None:
                         chatName = chatInfo["title"] or chatInfo["username"] or chatInfo["chat_id"]
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage,
                         messageText=f"Chat: **{chatName}**\n```json\n{utils.jsonDumps(stats, indent=2)}\n```\n",
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3448,7 +2733,7 @@ class BotHandlers(CommandHandlerMixin):
                     await asyncio.sleep(0.5)
             case "dumpEntities":
                 if message.reply_to_message is None:
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage,
                         messageText="`dumpEntities` should be retpy to message with entities",
                         messageCategory=MessageCategory.BOT_ERROR,
@@ -3456,7 +2741,7 @@ class BotHandlers(CommandHandlerMixin):
                     return
                 repliedMessage = message.reply_to_message
                 if not repliedMessage.entities:
-                    await self._sendMessage(
+                    await self.sendMessage(
                         ensuredMessage,
                         messageText="No entities found",
                         messageCategory=MessageCategory.BOT_ERROR,
@@ -3471,20 +2756,20 @@ class BotHandlers(CommandHandlerMixin):
                         f"{messageText[entity.offset:entity.offset + entity.length]}\n```\n"
                         f"```\n{entity}\n```\n"
                     )
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     messageText=ret,
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     messageText=f"```\n{repliedMessage.parse_entities()}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
             case _:
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     messageText=f"Unknown test suite: {suite}.",
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -3513,17 +2798,17 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_ANALYZE].toBool() and not await self._isAdmin(
+        if not chatSettings[ChatSettingsKey.ALLOW_ANALYZE].toBool() and not await self.isAdmin(
             ensuredMessage.user, None, True
         ):
             logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
             return
 
         if not ensuredMessage.isReply or not message.reply_to_message:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение с медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3544,7 +2829,7 @@ class BotHandlers(CommandHandlerMixin):
         logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
 
         if not prompt:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Необходимо указать запрос для анализа медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3568,7 +2853,7 @@ class BotHandlers(CommandHandlerMixin):
                 fileId = parentMessage.sticker.file_id
                 # Removed unused variable fileUniqueId
             case _:
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -3580,7 +2865,7 @@ class BotHandlers(CommandHandlerMixin):
         mediaData = await mediaInfo.download_as_bytearray()
 
         if not mediaData:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Не удалось получить данные медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3590,7 +2875,7 @@ class BotHandlers(CommandHandlerMixin):
         mimeType = magic.from_buffer(bytes(mediaData), mime=True)
         logger.debug(f"Mime type: {mimeType}")
         if not mimeType.startswith("image/"):
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3612,14 +2897,14 @@ class BotHandlers(CommandHandlerMixin):
         llmRet = await parserLLM.generateText(reqMessages)
         logger.debug(f"LLM result: {llmRet}")
         if llmRet.status != ModelResultStatus.FINAL:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
 
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             messageText=llmRet.resultText,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3648,10 +2933,10 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_DRAW].toBool() and not await self._isAdmin(
+        if not chatSettings[ChatSettingsKey.ALLOW_DRAW].toBool() and not await self.isAdmin(
             ensuredMessage.user, None, True
         ):
             logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
@@ -3677,7 +2962,7 @@ class BotHandlers(CommandHandlerMixin):
 
         if not prompt:
             # Fixed f-string missing placeholders
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=(
                     "Необходимо указать запрос для генерации изображение. "
@@ -3694,7 +2979,7 @@ class BotHandlers(CommandHandlerMixin):
         mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
         logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
         if mlRet.status != ModelResultStatus.FINAL:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=(
                     f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n"
@@ -3706,7 +2991,7 @@ class BotHandlers(CommandHandlerMixin):
 
         if mlRet.mediaData is None:
             logger.error(f"No image generated for {prompt}")
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Ошибка генерации изображения, попробуйте позже.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3718,7 +3003,7 @@ class BotHandlers(CommandHandlerMixin):
         imgAddPrefix = ""
         if mlRet.isFallback:
             imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             photoData=mlRet.mediaData,
             photoCaption=(
@@ -3754,10 +3039,10 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_WEATHER].toBool() and not await self._isAdmin(
+        if not chatSettings[ChatSettingsKey.ALLOW_WEATHER].toBool() and not await self.isAdmin(
             ensuredMessage.user, None, True
         ):
             logger.info(f"Unauthorized /weather command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
@@ -3771,7 +3056,7 @@ class BotHandlers(CommandHandlerMixin):
             if len(context.args) > 1:
                 countryCode = context.args[1]
         else:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Необходимо указать город для получения погоды.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3779,7 +3064,7 @@ class BotHandlers(CommandHandlerMixin):
             return
 
         if self.openWeatherMapClient is None:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Провайдер погоды не настроен.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3789,7 +3074,7 @@ class BotHandlers(CommandHandlerMixin):
         try:
             weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
             if weatherData is None:
-                await self._sendMessage(
+                await self.sendMessage(
                     ensuredMessage,
                     f"Не удалось получить погоду для города {city}",
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -3798,7 +3083,7 @@ class BotHandlers(CommandHandlerMixin):
 
             resp = await self._formatWeather(weatherData)
 
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 resp,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3806,7 +3091,7 @@ class BotHandlers(CommandHandlerMixin):
         except Exception as e:
             logger.error(f"Error while getting weather: {e}")
             logger.exception(e)
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="Ошибка при получении погоды.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3835,7 +3120,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
 
         delaySecs: int = 0
         try:
@@ -3844,7 +3129,7 @@ class BotHandlers(CommandHandlerMixin):
             delayStr = context.args[0]
             delaySecs = utils.parseDelay(delayStr)
         except Exception as e:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=(
                     "Для команды `/remind` нужно указать время, через которое отправить "
@@ -3882,7 +3167,7 @@ class BotHandlers(CommandHandlerMixin):
 
         delayedDT = datetime.datetime.fromtimestamp(delayedTime, tz=datetime.timezone.utc)
 
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             messageText=f"Напомню в {delayedDT.strftime('%Y-%m-%d %H:%M:%S%z')}",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3910,10 +3195,10 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
         self._updateEMessageUserData(ensuredMessage)
 
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             messageText=(f"```json\n{utils.jsonDumps(ensuredMessage.userData, indent=2)}\n```"),
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3941,11 +3226,11 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
         self._updateEMessageUserData(ensuredMessage)
 
         if not context.args:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 messageText=("Для команды `/delete_my_data` нужно указать ключ, который нужно удалить."),
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -3957,7 +3242,7 @@ class BotHandlers(CommandHandlerMixin):
         key = context.args[0]
         self.unsetUserData(chatId=chatId, userId=userId, key=key)
 
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             messageText=f"Готово, ключ {key} успешно удален.",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -3985,7 +3270,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
         self._updateEMessageUserData(ensuredMessage)
 
         chatId = ensuredMessage.chat.id
@@ -3993,7 +3278,7 @@ class BotHandlers(CommandHandlerMixin):
 
         self.clearUserData(userId=userId, chatId=chatId)
 
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             messageText="Готово, память о Вас очищена.",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -4021,7 +3306,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
         self._updateEMessageUserData(ensuredMessage)
 
         # chatId = ensuredMessage.chat.id
@@ -4030,7 +3315,7 @@ class BotHandlers(CommandHandlerMixin):
         # context.bot.delete_message()
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         allowUserSpamCommand = chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
-        isAdmin = await self._isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat)
+        isAdmin = await self.isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat)
 
         logger.debug(
             "Got /spam command \n"
@@ -4072,7 +3357,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
         self._updateEMessageUserData(ensuredMessage)
 
         chatId = ensuredMessage.chat.id
@@ -4087,8 +3372,8 @@ class BotHandlers(CommandHandlerMixin):
         targetChat = Chat(id=chatId, type=Chat.PRIVATE if chatId > 0 else Chat.SUPERGROUP)
         targetChat.set_bot(message.get_bot())
 
-        if not await self._isAdmin(user=ensuredMessage.user, chat=targetChat):
-            await self._sendMessage(
+        if not await self.isAdmin(user=ensuredMessage.user, chat=targetChat):
+            await self.sendMessage(
                 ensuredMessage,
                 messageText="У Вас нет прав для выполнения данной команды.",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -4098,7 +3383,7 @@ class BotHandlers(CommandHandlerMixin):
         await self.trainBayesFromHistory(chatId=chatId)
         stats = await self.getBayesFilterStats(chatId=chatId)
 
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             messageText=f"Готово:\n```json\n{utils.jsonDumps(stats, indent=2)}\n```\n",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -4136,7 +3421,7 @@ class BotHandlers(CommandHandlerMixin):
                     )
                     chatObj.set_bot(message.get_bot())
 
-                    if await self._isAdmin(user=user, chat=chatObj, allowBotOwners=True):
+                    if await self.isAdmin(user=user, chat=chatObj, allowBotOwners=True):
                         buttonTitle: str = f"#{chat['chat_id']}"
                         if chat["title"]:
                             buttonTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
@@ -4176,12 +3461,12 @@ class BotHandlers(CommandHandlerMixin):
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
                 chatObj.set_bot(message.get_bot())
 
-                if not await self._isAdmin(user=user, chat=chatObj):
+                if not await self.isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId}")
                     await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
-                chatInfo = self._getChatInfo(chatId)
+                chatInfo = self.getChatInfo(chatId)
                 if chatInfo is None:
                     logger.error(f"handle_chat_configuration: chatInfo is None in {chatId}")
                     return False
@@ -4253,7 +3538,7 @@ class BotHandlers(CommandHandlerMixin):
                     logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
                     return False
 
-                chatInfo = self._getChatInfo(chatId)
+                chatInfo = self.getChatInfo(chatId)
                 if chatInfo is None:
                     logger.error(f"handle_chat_configuration: chatInfo is None in {chatId}")
                     return False
@@ -4276,7 +3561,7 @@ class BotHandlers(CommandHandlerMixin):
 
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
                 chatObj.set_bot(message.get_bot())
-                if not await self._isAdmin(user=user, chat=chatObj):
+                if not await self.isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId} ({data})")
                     await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
@@ -4393,7 +3678,7 @@ class BotHandlers(CommandHandlerMixin):
                     logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
                     return False
 
-                chatInfo = self._getChatInfo(chatId)
+                chatInfo = self.getChatInfo(chatId)
                 if chatInfo is None:
                     logger.error(f"handle_chat_configuration: chatInfo is None for {chatId}")
                     return False
@@ -4412,7 +3697,7 @@ class BotHandlers(CommandHandlerMixin):
 
                 chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
                 chatObj.set_bot(message.get_bot())
-                if not await self._isAdmin(user=user, chat=chatObj):
+                if not await self.isAdmin(user=user, chat=chatObj):
                     logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId} ({data})")
                     await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
@@ -4499,9 +3784,9 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Error while ensuring message: {e}")
             return
 
-        self._saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
 
-        msg = await self._sendMessage(
+        msg = await self.sendMessage(
             ensuredMessage,
             messageText="Загружаю настройки....",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -4537,7 +3822,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         listAll = context.args and context.args[0].strip().lower() == "all"
 
@@ -4547,7 +3832,7 @@ class BotHandlers(CommandHandlerMixin):
             return
 
         if listAll:
-            listAll = await self._isAdmin(ensuredMessage.user, None, True)
+            listAll = await self.isAdmin(ensuredMessage.user, None, True)
 
         knownChats = self.db.getAllGroupChats() if listAll else self.db.getUserChats(ensuredMessage.user.id)
 
@@ -4561,7 +3846,7 @@ class BotHandlers(CommandHandlerMixin):
                 chatTitle = f"{constants.PRIVATE_ICON} {chat['username']} ({chat["type"]})"
             resp += f"* ID: #`{chat['chat_id']}`, Name: `{chatTitle}`\n"
 
-        await self._sendMessage(ensuredMessage, resp, messageCategory=MessageCategory.BOT_COMMAND_REPLY)
+        await self.sendMessage(ensuredMessage, resp, messageCategory=MessageCategory.BOT_COMMAND_REPLY)
 
     @commandHandler(
         commands=("learn_spam", "learn_ham"),
@@ -4584,7 +3869,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         commandStr = ""
         for entity in message.entities:
@@ -4597,7 +3882,7 @@ class BotHandlers(CommandHandlerMixin):
 
         repliedText = ensuredMessage.replyText or ensuredMessage.quoteText
         if not repliedText or len(repliedText) < 3:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 "Команда должна быть ответом на сообщение достаточной длинны",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -4616,10 +3901,10 @@ class BotHandlers(CommandHandlerMixin):
 
         chatObj = Chat(id=chatId, type=Chat.PRIVATE)
         chatObj.set_bot(context.bot)
-        isAdmin = await self._isAdmin(ensuredMessage.user, chatObj, allowBotOwners=True)
+        isAdmin = await self.isAdmin(ensuredMessage.user, chatObj, allowBotOwners=True)
 
         if not isAdmin:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 "Вы не являетесь администратором в указанном чате",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -4636,7 +3921,7 @@ class BotHandlers(CommandHandlerMixin):
                 spamReason=SpamReason.ADMIN,
                 score=100,
             )
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 f"Сообщение \n```\n{repliedText}\n```\n Запомнено как СПАМ для чата #`{chatId}`",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -4651,7 +3936,7 @@ class BotHandlers(CommandHandlerMixin):
                 spamReason=SpamReason.ADMIN,
                 score=100,
             )
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 f"Сообщение \n```\n{repliedText}\n```\n Запомнено как НЕ СПАМ для чата #`{chatId}`",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -4680,7 +3965,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         chatType = ensuredMessage.chat.type
         if chatType != Chat.PRIVATE:
@@ -4689,7 +3974,7 @@ class BotHandlers(CommandHandlerMixin):
 
         repliedText = ensuredMessage.replyText or ensuredMessage.quoteText
         if not repliedText or len(repliedText) < 3:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 "Команда должна быть ответом на сообщение достаточной длинны",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -4707,7 +3992,7 @@ class BotHandlers(CommandHandlerMixin):
                 logger.error(f"Failed to parse chatId ({context.args[0]}): {e}")
 
         spamScore = await self.bayesFilter.classify(repliedText, chatId=chatId)
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             f"Сообщение \n```\n{repliedText}\n```\n В чате #`{chatId}` воспринимается как: \n"
             f"```json\n{spamScore}\n```\n",
@@ -4736,7 +4021,7 @@ class BotHandlers(CommandHandlerMixin):
             logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
             return
 
-        self._saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         user: Optional[ChatUserDict] = None
         if context.args:
@@ -4749,17 +4034,17 @@ class BotHandlers(CommandHandlerMixin):
             user = self.db.getChatUser(chatId=ensuredMessage.chat.id, userId=message.reply_to_message.from_user.id)
 
         if user is None:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 "Пользователь не найден",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
 
-        isAdmin = await self._isAdmin(ensuredMessage.user, ensuredMessage.chat, allowBotOwners=True)
+        isAdmin = await self.isAdmin(ensuredMessage.user, ensuredMessage.chat, allowBotOwners=True)
 
         if not isAdmin:
-            await self._sendMessage(
+            await self.sendMessage(
                 ensuredMessage,
                 "Вы не являетесь администратором в этом чате",
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -4791,7 +4076,7 @@ class BotHandlers(CommandHandlerMixin):
         self.setUserMetadata(chatId=user["chat_id"], userId=user["user_id"], metadata=userMetadata)
 
         userName = user["full_name"] if user["full_name"] else user["username"]
-        await self._sendMessage(
+        await self.sendMessage(
             ensuredMessage,
             f"Пользователь [{userName}](tg://user?id={user['user_id']}) разбанен",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
