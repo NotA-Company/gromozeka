@@ -196,6 +196,7 @@ def main():
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Bot crashed: {e}")
+        logger.exception(e)
         sys.exit(1)
 
 
