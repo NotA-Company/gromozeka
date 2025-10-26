@@ -2,6 +2,7 @@
 Cache: TypedDict models for handlers cache
 """
 
+from enum import StrEnum
 from typing import Any, Dict, NotRequired, TypedDict
 
 from internal.database.models import ChatInfoDict
@@ -13,6 +14,20 @@ class HCChatCacheDict(TypedDict):
     settings: NotRequired[Dict[ChatSettingsKey, ChatSettingsValue]]
     info: NotRequired[ChatInfoDict]
     topics: NotRequired[Dict[int, Any]]
+
+
+class HCChatUserCacheDict(TypedDict):
+    data: NotRequired[Dict[str, str | list[str] | dict[str, str]]]
+
+
+class UserActiveActionEnum(StrEnum):
+    configure = "activeConfigureId"
+    summarize = "activeSummarizationId"
+
+
+class HCUserCacheDict(TypedDict):
+    activeConfigureId: NotRequired[Dict[str, Any]]
+    activeSummarizationId: NotRequired[Dict[str, Any]]
 
 
 class HandlersCacheDict(TypedDict):
@@ -31,13 +46,13 @@ class HandlersCacheDict(TypedDict):
     #         },
     #     },
     # },
-    chatUsers: Dict[str, Dict[str, Any]]
+    chatUsers: Dict[str, HCChatUserCacheDict]
     # "chatUsers": Dict[str, Any] = {
     #     "<chatId>:<userId>": Dict[str, Any] = {
     #         "data": Dict[str, str|List["str"]] = {...},
     #     },
     # },
-    users: Dict[int, Dict[str, Any]]
+    users: Dict[int, HCUserCacheDict]
     # "users": Dict[int, Any] = {
     #     <userId>: Dict[str, Any] = {
     #         "activeConfigureId": Dict[str, Any] = {...},

@@ -214,7 +214,7 @@ class BotHandlers(CommandHandlerMixin):
     # User Data Management
     ###
 
-    def getUserData(self, chatId: int, userId: int) -> Dict[str, str | List[str]]:
+    def getUserData(self, chatId: int, userId: int) -> Dict[str, str | List[str] | Dict[str, Any]]:
         """Get the user data for the given chat."""
         # TODO: Move to separate function
         userKey = f"{chatId}:{userId}"
@@ -225,11 +225,11 @@ class BotHandlers(CommandHandlerMixin):
             userData = {k: json.loads(v) for k, v in self.db.getUserData(userId=userId, chatId=chatId).items()}
             self.cache["chatUsers"][userKey]["data"] = userData
 
-        return self.cache["chatUsers"][userKey]["data"]
+        return self.cache["chatUsers"][userKey]["data"]  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
     def setUserData(
-        self, chatId: int, userId: int, key: str, value: str | List[str], append: bool = False
-    ) -> str | List[str]:
+        self, chatId: int, userId: int, key: str, value: str | List[str] | Dict[str, Any], append: bool = False
+    ) -> str | List[str] | Dict[str, Any]:
         """Set specific user data for the given chat."""
         # TODO: Move to separate function
         userKey = f"{chatId}:{userId}"
@@ -250,7 +250,12 @@ class BotHandlers(CommandHandlerMixin):
         else:
             userData[key] = value
 
-        self.cache["chatUsers"][userKey]["data"][key] = userData[key]
+        if "data" not in self.cache["chatUsers"][userKey]:
+            self.cache["chatUsers"][userKey]["data"] = {}
+
+        self.cache["chatUsers"][userKey]["data"][key] = userData[  # pyright: ignore[reportTypedDictNotRequiredAccess]
+            key
+        ]
         self.db.addUserData(userId=userId, chatId=chatId, key=key, data=utils.jsonDumps(userData[key]))
         return userData[key]
 
@@ -1336,8 +1341,8 @@ class BotHandlers(CommandHandlerMixin):
         tmpResMessages = []
         for msg in resMessages:
             while len(msg) > constants.TELEGRAM_MAX_MESSAGE_LENGTH:
-                head = msg[:constants.TELEGRAM_MAX_MESSAGE_LENGTH]
-                msg = msg[constants.TELEGRAM_MAX_MESSAGE_LENGTH:]
+                head = msg[: constants.TELEGRAM_MAX_MESSAGE_LENGTH]
+                msg = msg[constants.TELEGRAM_MAX_MESSAGE_LENGTH :]
                 tmpResMessages.append(head)
             if msg:
                 tmpResMessages.append(msg)
@@ -1835,7 +1840,7 @@ class BotHandlers(CommandHandlerMixin):
                             case _:
                                 logger.error(f"Wrong K in data {activeSummarizationId}")
                         await self._handle_summarization(
-                            data=data,
+                            data=data,  # pyright: ignore[reportArgumentType]
                             message=activeSummarizationId["message"],
                             user=user,
                         )
@@ -3012,7 +3017,11 @@ class BotHandlers(CommandHandlerMixin):
                     )
                 case 2:
                     currentPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
-                    self.cache["users"][userId]["activeSummarizationId"][ButtonDataKey.SummarizationAction] = (
+                    self.cache["users"][userId][
+                        "activeSummarizationId"
+                    ][  # pyright: ignore[reportTypedDictNotRequiredAccess]
+                        ButtonDataKey.SummarizationAction
+                    ] = (
                         action + "+"
                     )
 

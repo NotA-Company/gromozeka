@@ -1133,6 +1133,22 @@ class DatabaseWrapper:
             logger.error(f"Failed to unset setting {key} for chat {chatId}: {e}")
             return False
 
+    def clearChatSettings(self, chatId: int) -> bool:
+        """Clear all a settings for a chat."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM chat_settings
+                    WHERE chat_id = ?
+                """,
+                    (chatId,),
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to clear settings for chat {chatId}: {e}")
+            return False
+
     def getChatSetting(self, chatId: int, setting: str) -> Optional[str]:
         """Get a setting for a chat."""
         try:
@@ -1703,7 +1719,7 @@ class DatabaseWrapper:
     ###
     # Cache manipulation functions
     ###
-    
+
     def getCacheStorage(self) -> List[CacheStorageDict]:
         """Get all cache storage entries"""
         try:
@@ -1719,7 +1735,7 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get cache storage: {e}")
             return []
-    
+
     def setCacheStorage(self, namespace: str, key: str, value: str) -> bool:
         """Store cache entry in cache_storage table"""
         try:
@@ -1743,6 +1759,27 @@ class DatabaseWrapper:
                 return True
         except Exception as e:
             logger.error(f"Failed to set cache storage: {e}")
+            return False
+
+    def unsetCacheStorage(self, namespace: str, key: str) -> bool:
+        """Store cache entry in cache_storage table"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM cache_storage
+                    WHERE
+                        namespace = :namespace AND
+                        key = :key
+                    """,
+                    {
+                        "namespace": namespace,
+                        "key": key,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to unset cache storage: {e}")
             return False
 
     def getCacheEntry(self, key: str, cacheType: CacheType, ttl: Optional[int] = None) -> Optional[CacheDict]:
