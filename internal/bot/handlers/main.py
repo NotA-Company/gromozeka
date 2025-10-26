@@ -20,6 +20,8 @@ from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ExtBot, ContextTypes
 from telegram._utils.entities import parse_message_entity
 
+from internal.bot.handlers.base import HandlerResultStatus
+
 from .base import BaseBotHandler
 from internal.cache.types import UserActiveActionEnum
 from lib.ai.abstract import AbstractModel, LLMAbstractTool
@@ -82,9 +84,7 @@ class BotHandlers(BaseBotHandler):
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
 
-        self.config = configManager.getBotConfig()
-
-        self._isExiting = False
+        # self.config = configManager.getBotConfig()
 
         # Initialize Bayes spam filter
         bayesStorage = DatabaseBayesStorage(database)
@@ -124,10 +124,6 @@ class BotHandlers(BaseBotHandler):
         )
 
         self._bot: Optional[ExtBot] = None
-
-    async def initExit(self) -> None:
-        self._isExiting = True
-        await self.queueService.addDelayedTask(time.time(), DelayedTaskFunction.DO_EXIT, kwargs={}, skipDB=True)
 
     async def initDelayedScheduler(self, bot: ExtBot) -> None:
         self._bot = bot
@@ -1213,6 +1209,12 @@ class BotHandlers(BaseBotHandler):
                 logger.error(f"Unsupported chat type: {chatType}")
             case _:
                 logger.error(f"Unsupported chat type: {chatType}")
+
+    async def messageHandler(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    ) -> HandlerResultStatus:
+        await self.handle_message(update, context)
+        return HandlerResultStatus.FINAL
 
     async def handle_chat_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.debug(f"Handling group message #{update.update_id}")
@@ -4136,6 +4138,12 @@ class BotHandlers(BaseBotHandler):
 
         logger.error(f"handle_button: No known action in {data} found")
         raise ValueError("No known action found")
+
+    async def buttonHandler(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str | int, str | int | float | bool | None]
+    ) -> HandlerResultStatus:
+        await self.handle_button(update, context)
+        return HandlerResultStatus.FINAL
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
