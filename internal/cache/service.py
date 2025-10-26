@@ -8,10 +8,17 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from threading import RLock
 from collections import OrderedDict
 
-from internal.database.models import ChatInfoDict
+from internal.database.models import ChatInfoDict, ChatTopicInfoDict
 from lib import utils
 
-from .types import HCChatCacheDict, HCChatUserCacheDict, HCUserCacheDict, UserActiveActionEnum
+from .types import (
+    HCChatCacheDict,
+    HCChatUserCacheDict,
+    HCUserCacheDict,
+    UserActiveActionEnum,
+    UserDataType,
+    UserDataValueType,
+)
 from .models import CacheNamespace, CachePersistenceLevel
 
 if TYPE_CHECKING:
@@ -183,50 +190,58 @@ class CacheService:
 
         return chatCache.get("settings", {})
 
-    def setChatSettings(
-        self, chatId: int, settings: Dict["ChatSettingsKey", "ChatSettingsValue"], rewrite: bool = False
-    ) -> None:
-        """Update chat settings for a specific chat, dood!
+    def setChatSetting(self, chatId: int, key: "ChatSettingsKey", value: "ChatSettingsValue") -> None:
+        """Update a single chat setting for a specific chat, dood!
 
-        Updates the chat settings in cache and persists them to the database if available.
-        Can either merge with existing settings or completely rewrite them.
+        Updates one setting key-value pair in the cache and persists it to the database
+        if available. Existing settings are preserved and only the specified key is updated.
 
         Args:
             chatId: The unique identifier of the chat to update settings for
-            settings: Dictionary mapping setting keys to their values
-            rewrite: If True, replaces all existing settings with the provided ones.
-                    If False (default), merges the provided settings with existing ones,
-                    updating only the specified keys while preserving others.
+            key: The setting key to update
+            value: The new value for the setting
 
         Side Effects:
-            - Updates the in-memory cache for the specified chat
+            - Loads existing chat settings from database if not already in cache
+            - Updates the in-memory cache for the specified chat with the new key-value pair
             - If dbWrapper is available:
-                - Clears all existing settings in DB when rewrite=True
-                - Persists each setting key-value pair to the database
-            - Logs an error if dbWrapper is not available
+                - Persists the setting to the database (converted to string via value.toStr())
+            - If dbWrapper is not available:
+                - Logs an error message
             - Logs debug information about the update
 
         Note:
-            Settings are stored as strings in the database regardless of their original type.
+            Settings are stored as strings in the database using the value's toStr() method.
         """
+        # Populate chat settings from db if any
+        self.getChatSettings(chatId)
         chatCache = self.chats.get(chatId, {})
-        if rewrite or "settings" not in chatCache:
-            chatCache["settings"] = settings
-        else:
-            chatCache["settings"].update(settings)
-
+        if "settings" not in chatCache:
+            chatCache["settings"] = {}
+        chatCache["settings"][key] = value
         self.chats.set(chatId, chatCache)
 
         # For critical settings, persist in DB
         if self.dbWrapper:
-            if rewrite:
-                self.dbWrapper.clearChatSettings(chatId)
-            for key, value in settings.items():
-                self.dbWrapper.setChatSetting(chatId, key, str(value))
+            self.dbWrapper.setChatSetting(chatId, key, value.toStr())
         else:
             logger.error(f"No dbWrapper found, can't save chatSettings for {chatId}")
 
         logger.debug(f"Updated chat settings for {chatId}, dood!")
+
+    def unsetChatSetting(self, chatId: int, key: "ChatSettingsKey") -> None:
+        """Unset specified chat setting for a specific chat, dood!"""
+        # Populate chat settings from db if any
+        self.getChatSettings(chatId)
+        chatCache = self.chats.get(chatId, {})
+        if "settings" in chatCache:
+            del chatCache["settings"][key]
+            self.chats.set(chatId, chatCache)
+            if self.dbWrapper:
+                self.dbWrapper.unsetChatSetting(chatId, key)
+            else:
+                logger.error(f"No dbWrapper found, can't unset chatSettings for {chatId}")
+        logger.debug(f"Unset chat setting {key} for {chatId}, dood!")
 
     def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """Get chat info from cache"""
@@ -241,9 +256,59 @@ class CacheService:
         self.dirtyKeys[CacheNamespace.CHATS].add(chatId)
         logger.debug(f"Updated chat info for {chatId}, dood!")
 
-    def getChatUserData(self, chatId: int, userId: int) -> Dict[str, Any]:
+    def getChatTopicsInfo(self, chatId: int) -> Dict[int, ChatTopicInfoDict]:
+        """Get all known topics info from cache or DB"""
+        chatCache = self.chats.get(chatId, {})
+
+        if "topicInfo" not in chatCache:
+            chatCache["topicInfo"] = {}
+            if self.dbWrapper:
+                chatTopics = self.dbWrapper.getChatTopics(chatId)
+                for topicInfo in chatTopics:
+                    chatCache["topicInfo"][topicInfo["topic_id"]] = topicInfo
+                self.chats.set(chatId, chatCache)
+                logger.debug(f"Loaded topics info for {chatId} from DB, found {len(chatTopics)} topics, dood!")
+            else:
+                logger.error(f"No dbWrapper found, can't load topics info for {chatId}")
+                return {}
+
+        return chatCache["topicInfo"]
+
+    def getChatTopicInfo(self, chatId: int, topicId: int) -> Optional[ChatTopicInfoDict]:
+        """Get topic info from cache"""
+        # Populate given chat topics from DB if any
+        allTopicsInfo = self.getChatTopicsInfo(chatId)
+        return allTopicsInfo.get(topicId, None)
+
+    def setChatTopicInfo(self, chatId: int, topicId: int, info: ChatTopicInfoDict) -> None:
+        """Update topic info in cache"""
+        # Populate topics info from db if any
+        self.getChatTopicsInfo(chatId)
+        chatCache = self.chats.get(chatId, {})
+        if "topicInfo" not in chatCache:
+            chatCache["topicInfo"] = {}
+
+        chatCache["topicInfo"][topicId] = info
+        self.chats.set(chatId, chatCache)
+        if self.dbWrapper:
+            self.dbWrapper.updateChatTopicInfo(
+                chatId=chatId,
+                topicId=topicId,
+                iconColor=info["icon_color"],
+                customEmojiId=info["icon_custom_emoji_id"],
+                topicName=info["name"],
+            )
+        else:
+            logger.error(f"No dbWrapper found, can't save topic info for {chatId}:{topicId}")
+        logger.debug(f"Updated topic info for {chatId}:{topicId}, dood!")
+
+    def _getChatUserKey(self, chatId: int, userId: int) -> str:
+        """Get key for chat user data"""
+        return f"{chatId}:{userId}"
+
+    def getChatUserData(self, chatId: int, userId: int) -> UserDataType:
         """Get user data for a specific chat"""
-        userKey = f"{chatId}:{userId}"
+        userKey = self._getChatUserKey(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
 
         if "data" not in userCache:
@@ -262,9 +327,9 @@ class CacheService:
 
         return userCache.get("data", {})
 
-    def setChatUserData(self, chatId: int, userId: int, key: str, value: Any) -> None:
+    def setChatUserData(self, chatId: int, userId: int, key: str, value: UserDataValueType) -> None:
         """Set user data for a specific chat"""
-        userKey = f"{chatId}:{userId}"
+        userKey = self._getChatUserKey(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
         # load userData from DB or initialise as empty dict
         self.getChatUserData(chatId, userId)
@@ -285,6 +350,42 @@ class CacheService:
             logger.error(f"No dbWrapper found, can't save user data for {userKey} ({key}->{value})")
 
         logger.debug(f"Updated user data for {userKey}, key={key}, dood!")
+
+    def unsetChatUserData(self, chatId: int, userId: int, key: str) -> None:
+        """Unset user data for a specific chat"""
+        userKey = self._getChatUserKey(chatId, userId)
+        # Populate UserData from DB if any
+        self.getChatUserData(chatId, userId)
+        userCache = self.chatUsers.get(userKey, {})
+        if "data" not in userCache:
+            return
+
+        userData = userCache["data"]
+        userData.pop(key, None)
+        self.chatUsers.set(userKey, userCache)
+
+        if self.dbWrapper:
+            self.dbWrapper.deleteUserData(userId=userId, chatId=chatId, key=key)
+        else:
+            logger.error(f"No dbWrapper found, can't delete user data for {userKey} ({key})")
+        logger.debug(f"Unset user data for {userKey}, key={key}, dood!")
+
+    def clearChatUserData(self, chatId: int, userId: int) -> None:
+        """Clear user data for a specific chat"""
+        userKey = self._getChatUserKey(chatId, userId)
+
+        if self.dbWrapper:
+            self.dbWrapper.clearUserData(userId=userId, chatId=chatId)
+        else:
+            logger.error(f"No dbWrapper found, can't clear user data for {userKey}")
+
+        userCache = self.chatUsers.get(userKey, {})
+        if "data" not in userCache:
+            return
+
+        userCache.pop("data", None)
+        self.chatUsers.set(userKey, userCache)
+        logger.debug(f"Cleared user data for {userKey}, dood!")
 
     def getUserState(
         self, userId: int, stateKey: UserActiveActionEnum, default: Optional[Dict[str, Any]] = None

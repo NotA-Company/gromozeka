@@ -3,9 +3,9 @@ Cache: TypedDict models for handlers cache
 """
 
 from enum import StrEnum
-from typing import Any, Dict, NotRequired, TypedDict, TYPE_CHECKING
+from typing import Any, Dict, List, NotRequired, TypeAlias, TypedDict, TYPE_CHECKING
 
-from internal.database.models import ChatInfoDict
+from internal.database.models import ChatInfoDict, ChatTopicInfoDict
 
 if TYPE_CHECKING:
     from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
@@ -14,16 +14,20 @@ if TYPE_CHECKING:
 class HCChatCacheDict(TypedDict):
     settings: NotRequired[Dict["ChatSettingsKey", "ChatSettingsValue"]]
     info: NotRequired[ChatInfoDict]
-    topics: NotRequired[Dict[int, Any]]
+    topicInfo: NotRequired[Dict[int, ChatTopicInfoDict]]
+
+
+UserDataValueType: TypeAlias = str | List[str] | Dict[str, Any]
+UserDataType: TypeAlias = Dict[str, UserDataValueType]
 
 
 class HCChatUserCacheDict(TypedDict):
-    data: NotRequired[Dict[str, str | list[str] | dict[str, str]]]
+    data: NotRequired[UserDataType]
 
 
 class UserActiveActionEnum(StrEnum):
-    configure = "activeConfigureId"
-    summarize = "activeSummarizationId"
+    Configuration = "activeConfigureId"
+    Summarization = "activeSummarizationId"
 
 
 class HCUserCacheDict(TypedDict):

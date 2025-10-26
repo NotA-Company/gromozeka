@@ -108,7 +108,7 @@ class ChatInfoDict(TypedDict):
     updated_at: datetime.datetime
 
 
-class ChatTopicDict(TypedDict):
+class ChatTopicInfoDict(TypedDict):
     chat_id: int
     topic_id: int
 
