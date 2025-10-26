@@ -48,17 +48,17 @@ test:
 	@echo "=================================="
 	@echo ""
 	@echo "📝 Running Markdown Parser tests..."
-	$(PYTHON) lib/markdown/test/run_all_tests.py
+	$(PYTHON) -m pytest lib/markdown/test/ -v
 	@echo ""
 	@echo "🔍 Running Bayes Filter tests..."
-	$(PYTHON) lib/spam/test_bayes_filter.py
+	$(PYTHON) -m pytest lib/spam/test_bayes_filter.py -v
 	@echo ""
 	@echo "🌤️  Running OpenWeatherMap tests..."
-	$(PYTHON) lib/openweathermap/test_dict_cache.py
+	$(PYTHON) -m pytest lib/openweathermap/test_dict_cache.py -v
 	$(PYTHON) -m pytest lib/openweathermap/test_weather_client.py -v
 	@echo ""
 	@echo "🗄️  Running Database Migration tests..."
-	$(PYTHON) internal/database/migrations/test_migrations.py
+	$(PYTHON) -m pytest internal/database/migrations/test_migrations.py -v
 	@echo ""
 	@echo "🤖 Running Bot Command Handler tests..."
 	$(PYTHON) -m pytest tests/ -v

@@ -5,104 +5,92 @@ Comprehensive test for code block parsing fixes
 
 import sys
 import os
-from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-
-def test_case(name, text, expected_behavior):
-    print(f"\n==== {name} ====")
-    print(f"INPUT: {repr(text)}")
-    print(f"EXPECTED: {expected_behavior}")
-
-    try:
-        normalized = normalize_markdown(text)
-        markdownv2 = markdown_to_markdownv2(text)
-        html = markdown_to_html(text)
-
-        print(f"NORMALIZED: {repr(normalized)}")
-        print(f"MARKDOWNV2: {repr(markdownv2)}")
-        print(f"HTML: {repr(html)}")
-
-        # Basic validation
-        if "inline code" in expected_behavior.lower():
-            if "<code>" in html and "<pre>" not in html:
-                print("✅ PASS: Correctly parsed as inline code")
-            else:
-                print("❌ FAIL: Should be inline code but parsed as block")
-        elif "fenced code" in expected_behavior.lower():
-            if "<pre><code" in html:
-                print("✅ PASS: Correctly parsed as fenced code block")
-            else:
-                print("❌ FAIL: Should be fenced code block")
-        elif "paragraph" in expected_behavior.lower():
-            if "<p>" in html and "<code>" not in html and "<pre>" not in html:
-                print("✅ PASS: Correctly parsed as paragraph")
-            else:
-                print("❌ FAIL: Should be paragraph")
-
-    except Exception as e:
-        print(f"❌ ERROR: {e}")
+from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown
 
 
-# Test cases from the original issue
-test_case(
-    "Test 1 - Inline code fence",
-    "Test 1 ```test1 test2 test3```",
-    "Should be inline code span",
-)
+def test_inline_code_fence():
+    """Test inline code fence parsing, dood!"""
+    text = "Test 1 ```test1 test2 test3```"
+    html = markdown_to_html(text)
+    # Should be inline code span
+    assert "<code>" in html
+    assert "<pre>" not in html
 
-test_case(
-    "Test 2 - Malformed fence",
-    "Test 2\n```test1 test2 test3```",
-    "Should be fenced code block (malformed)",
-)
 
-test_case(
-    "Test 3 - Proper fence",
-    "Test 3\n```\ntest1 test2 test3\n```",
-    "Should be fenced code block",
-)
+def test_malformed_fence():
+    """Test malformed fence parsing, dood!"""
+    text = "Test 2\n```test1 test2 test3```"
+    html = markdown_to_html(text)
+    # Should be fenced code block (malformed)
+    assert "<pre><code" in html
 
-test_case(
-    "Test 4 - Fence with lang",
-    "Test 4\n```test0\ntest1 test2 test3\n```",
-    "Should be fenced code block",
-)
 
-# Additional edge cases
-test_case(
-    "Inline code with backticks",
-    "Use `code` in your text",
-    "Should be inline code span",
-)
+def test_proper_fence():
+    """Test proper fence parsing, dood!"""
+    text = "Test 3\n```\ntest1 test2 test3\n```"
+    html = markdown_to_html(text)
+    # Should be fenced code block
+    assert "<pre><code" in html
 
-test_case(
-    "Multiple inline code",
-    "Use `code1` and `code2` here",
-    "Should be inline code spans",
-)
 
-test_case(
-    "Mixed content",
-    "Text with `inline` and\n```\nblock code\n```",
-    "Should have both inline code and fenced code block",
-)
+def test_fence_with_lang():
+    """Test fence with language parsing, dood!"""
+    text = "Test 4\n```test0\ntest1 test2 test3\n```"
+    html = markdown_to_html(text)
+    # Should be fenced code block
+    assert "<pre><code" in html
 
-test_case(
-    "Unclosed fence",
-    "```\ncode without closing",
-    "Should be fenced code block (unclosed)",
-)
 
-test_case(
-    "Nested backticks in fence",
-    "```\ncode with ``` inside\n```",
-    "Should be fenced code block",
-)
+def test_inline_code_with_backticks():
+    """Test inline code with backticks, dood!"""
+    text = "Use `code` in your text"
+    html = markdown_to_html(text)
+    # Should be inline code span
+    assert "<code>" in html
+    assert "<pre>" not in html
 
-test_case("Empty fence", "```\n```", "Should be fenced code block (empty)")
 
-print("\n" + "=" * 50)
-print("COMPREHENSIVE TEST COMPLETED")
-print("=" * 50)
+def test_multiple_inline_code():
+    """Test multiple inline code spans, dood!"""
+    text = "Use `code1` and `code2` here"
+    html = markdown_to_html(text)
+    # Should be inline code spans
+    assert html.count("<code>") == 2
+    assert "<pre>" not in html
+
+
+def test_mixed_content():
+    """Test mixed inline and block code, dood!"""
+    text = "Text with `inline` and\n```\nblock code\n```"
+    html = markdown_to_html(text)
+    # Should have both inline code and fenced code block
+    assert "<code>" in html
+    assert "<pre><code" in html
+
+
+def test_unclosed_fence():
+    """Test unclosed fence parsing, dood!"""
+    text = "```\ncode without closing"
+    html = markdown_to_html(text)
+    # Should be fenced code block (unclosed)
+    assert "<pre><code" in html or "<code>" in html
+
+
+def test_nested_backticks_in_fence():
+    """Test nested backticks in fence, dood!"""
+    text = "```\ncode with ``` inside\n```"
+    html = markdown_to_html(text)
+    # Should be fenced code block
+    assert "<pre><code" in html
+
+
+def test_empty_fence():
+    """Test empty fence parsing, dood!"""
+    text = "```\n```"
+    html = markdown_to_html(text)
+    # Should be fenced code block (empty)
+    assert "<pre><code" in html
