@@ -10,6 +10,7 @@ cryptography==46.0.3
 Deprecated==1.2.18
 distro==1.9.0
 flake8==7.3.0
+Flake8-pyproject==1.2.3
 get-annotations==0.1.2
 googleapis-common-protos==1.71.0
 grpcio==1.76.0
