@@ -9,10 +9,12 @@ This script tests:
 - Rollback functionality
 """
 
+import logging
 import os
 import sys
 import tempfile
-import logging
+
+import pytest
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
@@ -77,7 +79,6 @@ def test_fresh_database():
                 assert table in tables, f"Table {table} not found"
         
         logger.info("✅ Fresh database test PASSED, dood!")
-        return True
         
     finally:
         # Cleanup
@@ -108,7 +109,6 @@ def test_migration_status():
             "Should have no pending migrations"
         
         logger.info("✅ Migration status test PASSED, dood!")
-        return True
         
     finally:
         if os.path.exists(dbPath):
@@ -154,7 +154,6 @@ def test_rollback():
             assert "metadata" not in columns, "metadata column should be dropped"
         
         logger.info("✅ Rollback test PASSED, dood!")
-        return True
         
     finally:
         if os.path.exists(dbPath):
@@ -206,7 +205,6 @@ def test_existing_database():
             f"Expected version {len(MIGRATIONS)}, got {finalVersion}"
         
         logger.info("✅ Existing database upgrade test PASSED, dood!")
-        return True
         
     finally:
         if os.path.exists(dbPath):
@@ -219,33 +217,26 @@ def test_auto_discovery():
     logger.info("TEST: Migration Auto-Discovery")
     logger.info("=" * 60)
     
-    try:
-        # Test that DISCOVERED_MIGRATIONS is populated
-        assert len(DISCOVERED_MIGRATIONS) > 0, "DISCOVERED_MIGRATIONS should not be empty"
-        logger.info(f"Found {len(DISCOVERED_MIGRATIONS)} discovered migrations")
-        
-        # Test that discovered migrations match manual migrations
-        assert len(DISCOVERED_MIGRATIONS) == len(MIGRATIONS), \
-            f"Discovered {len(DISCOVERED_MIGRATIONS)} migrations, expected {len(MIGRATIONS)}"
-        
-        # Test that versions are correct
-        discoveredVersions = [m.version for m in DISCOVERED_MIGRATIONS]
-        manualVersions = [m.version for m in MIGRATIONS]
-        assert discoveredVersions == manualVersions, \
-            f"Discovered versions {discoveredVersions} don't match manual {manualVersions}"
-        
-        # Test that descriptions match
-        for discovered, manual in zip(DISCOVERED_MIGRATIONS, MIGRATIONS):
-            assert discovered.description == manual.description, \
-                f"Description mismatch: {discovered.description} vs {manual.description}"
-        
-        logger.info("✅ Auto-discovery test PASSED, dood!")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Auto-discovery test FAILED: {e}")
-        logger.exception(e)
-        return False
+    # Test that DISCOVERED_MIGRATIONS is populated
+    assert len(DISCOVERED_MIGRATIONS) > 0, "DISCOVERED_MIGRATIONS should not be empty"
+    logger.info(f"Found {len(DISCOVERED_MIGRATIONS)} discovered migrations")
+    
+    # Test that discovered migrations match manual migrations
+    assert len(DISCOVERED_MIGRATIONS) == len(MIGRATIONS), \
+        f"Discovered {len(DISCOVERED_MIGRATIONS)} migrations, expected {len(MIGRATIONS)}"
+    
+    # Test that versions are correct
+    discoveredVersions = [m.version for m in DISCOVERED_MIGRATIONS]
+    manualVersions = [m.version for m in MIGRATIONS]
+    assert discoveredVersions == manualVersions, \
+        f"Discovered versions {discoveredVersions} don't match manual {manualVersions}"
+    
+    # Test that descriptions match
+    for discovered, manual in zip(DISCOVERED_MIGRATIONS, MIGRATIONS):
+        assert discovered.description == manual.description, \
+            f"Description mismatch: {discovered.description} vs {manual.description}"
+    
+    logger.info("✅ Auto-discovery test PASSED, dood!")
 
 
 def test_getMigration_functions():
@@ -254,42 +245,35 @@ def test_getMigration_functions():
     logger.info("TEST: getMigration() Functions")
     logger.info("=" * 60)
     
-    try:
-        # Known migration modules and their classes
-        expectedModules = {
-            1: ("migration_001_initial_schema", "Migration001InitialSchema"),
-            2: ("migration_002_add_is_spammer_to_chat_users", "Migration002AddIsSpammerToChatUsers"),
-            3: ("migration_003_add_metadata_to_chat_users", "Migration003AddMetadataToChatUsers"),
-        }
+    # Known migration modules and their classes
+    expectedModules = {
+        1: ("migration_001_initial_schema", "Migration001InitialSchema"),
+        2: ("migration_002_add_is_spammer_to_chat_users", "Migration002AddIsSpammerToChatUsers"),
+        3: ("migration_003_add_metadata_to_chat_users", "Migration003AddMetadataToChatUsers"),
+    }
+    
+    # Test each expected migration module
+    for version, (moduleName, expectedClassName) in expectedModules.items():
+        # Import the module
+        module = __import__(f"internal.database.migrations.versions.{moduleName}",
+                          fromlist=[moduleName])
         
-        # Test each expected migration module
-        for version, (moduleName, expectedClassName) in expectedModules.items():
-            # Import the module
-            module = __import__(f"internal.database.migrations.versions.{moduleName}",
-                              fromlist=[moduleName])
-            
-            # Check getMigration function exists
-            assert hasattr(module, "getMigration"), \
-                f"Module {moduleName} missing getMigration() function"
-            
-            # Test that getMigration() returns the correct class
-            returnedClass = module.getMigration()
-            assert returnedClass.__name__ == expectedClassName, \
-                f"getMigration() in {moduleName} returned {returnedClass.__name__}, expected {expectedClassName}"
-            
-            # Test that the returned class has the correct version
-            assert returnedClass.version == version, \
-                f"getMigration() in {moduleName} returned class with version {returnedClass.version}, expected {version}"
-            
-            logger.debug(f"✅ {moduleName}.getMigration() works correctly")
+        # Check getMigration function exists
+        assert hasattr(module, "getMigration"), \
+            f"Module {moduleName} missing getMigration() function"
         
-        logger.info("✅ getMigration() functions test PASSED, dood!")
-        return True
+        # Test that getMigration() returns the correct class
+        returnedClass = module.getMigration()
+        assert returnedClass.__name__ == expectedClassName, \
+            f"getMigration() in {moduleName} returned {returnedClass.__name__}, expected {expectedClassName}"
         
-    except Exception as e:
-        logger.error(f"❌ getMigration() functions test FAILED: {e}")
-        logger.exception(e)
-        return False
+        # Test that the returned class has the correct version
+        assert returnedClass.version == version, \
+            f"getMigration() in {moduleName} returned class with version {returnedClass.version}, expected {version}"
+        
+        logger.debug(f"✅ {moduleName}.getMigration() works correctly")
+    
+    logger.info("✅ getMigration() functions test PASSED, dood!")
 
 
 def test_loadMigrationsFromVersions():
@@ -320,7 +304,6 @@ def test_loadMigrationsFromVersions():
             f"Loaded versions {loadedVersions} don't match discovered {discoveredVersions}"
         
         logger.info("✅ loadMigrationsFromVersions() test PASSED, dood!")
-        return True
         
     finally:
         if os.path.exists(dbPath):
@@ -367,47 +350,8 @@ def test_database_wrapper_auto_discovery():
                 assert table in tables, f"Table {table} not found"
         
         logger.info("✅ DatabaseWrapper auto-discovery test PASSED, dood!")
-        return True
         
     finally:
         if os.path.exists(dbPath):
             os.unlink(dbPath)
 
-
-def main():
-    """Run all tests, dood!"""
-    logger.info("Starting migration tests, dood!")
-    
-    tests = [
-        test_fresh_database,
-        test_migration_status,
-        test_rollback,
-        test_existing_database,
-        test_auto_discovery,
-        test_getMigration_functions,
-        test_loadMigrationsFromVersions,
-        test_database_wrapper_auto_discovery,
-    ]
-    
-    passed = 0
-    failed = 0
-    
-    for test in tests:
-        try:
-            if test():
-                passed += 1
-        except Exception as e:
-            logger.error(f"❌ Test {test.__name__} FAILED: {e}")
-            logger.exception(e)
-            failed += 1
-    
-    logger.info("=" * 60)
-    logger.info(f"Test Results: {passed} passed, {failed} failed")
-    logger.info("=" * 60)
-    
-    return failed == 0
-
-
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)

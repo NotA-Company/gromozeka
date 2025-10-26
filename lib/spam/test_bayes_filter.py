@@ -5,12 +5,13 @@ Simple test for Bayes spam filter, dood!
 This test verifies that the basic functionality of the Bayes filter works correctly.
 """
 
-import asyncio
 import logging
 import os
 import sys
 import tempfile
 from typing import Optional
+
+import pytest
 
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -24,6 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.asyncio
 async def test_bayes_filter():
     """Test basic Bayes filter functionality, dood!"""
 
@@ -162,6 +164,7 @@ async def test_bayes_filter():
             pass
 
 
+@pytest.mark.asyncio
 async def test_tokenizer():
     """Test tokenizer functionality, dood!"""
     from lib.spam.tokenizer import MessageTokenizer, TokenizerConfig
@@ -171,34 +174,19 @@ async def test_tokenizer():
     # Test basic tokenization
     tokenizer = MessageTokenizer()
 
-    test_text = "Buy cheap products now! Visit https://example.com @user123"
-    tokens = tokenizer.tokenize(test_text)
-    logger.info(f"Original: {test_text}")
+    testText = "Buy cheap products now! Visit https://example.com @user123"
+    tokens = tokenizer.tokenize(testText)
+    logger.info(f"Original: {testText}")
     logger.info(f"Tokens: {tokens}")
 
     # Test with different config
     config = TokenizerConfig(remove_urls=False, remove_mentions=False, use_bigrams=False)
     tokenizer2 = MessageTokenizer(config)
-    tokens2 = tokenizer2.tokenize(test_text)
+    tokens2 = tokenizer2.tokenize(testText)
     logger.info(f"With URLs/mentions: {tokens2}")
 
     # Test spam indicators
-    indicators = tokenizer.estimate_spam_indicators(test_text)
+    indicators = tokenizer.estimate_spam_indicators(testText)
     logger.info(f"Spam indicators: {indicators}")
 
     logger.info("=== Tokenizer tests passed, dood! ===")
-
-
-async def main():
-    """Run all tests, dood!"""
-    try:
-        await test_tokenizer()
-        await test_bayes_filter()
-        logger.info("🎉 All tests completed successfully, dood!")
-    except Exception as e:
-        logger.error(f"Test failed: {e}")
-        raise
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
