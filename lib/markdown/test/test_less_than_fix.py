@@ -46,7 +46,7 @@ def test_less_than_greater_than_symbols():
     all_passed = success1 and success2 and success3
     print(f"\n{'🎉 ALL TESTS PASSED!' if all_passed else '❌ SOME TESTS FAILED!'}")
 
-    return all_passed
+    assert all_passed, "Some tests failed"
 
 
 if __name__ == "__main__":

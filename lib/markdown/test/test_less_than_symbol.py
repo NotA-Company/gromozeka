@@ -42,7 +42,7 @@ def test_less_than_symbol():
     else:
         print("❌ FAILURE: > symbol is missing!")
 
-    return "<" in result and ">" in result
+    assert "<" in result and ">" in result, "< or > symbols are missing"
 
 
 if __name__ == "__main__":

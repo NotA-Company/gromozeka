@@ -5,11 +5,10 @@ Comprehensive test for code block parsing fixes
 
 import sys
 import os
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown
+from lib.markdown import markdown_to_html  # noqa: E402
 
 
 def test_inline_code_fence():

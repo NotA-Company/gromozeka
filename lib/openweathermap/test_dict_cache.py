@@ -136,6 +136,7 @@ async def test_dict_cache():
     print("\n3. Testing TTL expiration...")
     print("Waiting 3 seconds for TTL expiration...")
     import asyncio
+
     await asyncio.sleep(3)
 
     # Data should be expired now
