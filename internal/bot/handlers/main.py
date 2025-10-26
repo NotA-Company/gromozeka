@@ -381,6 +381,8 @@ class BotHandlers(CommandHandlerMixin):
                     case DelayedTaskFunction.DO_EXIT:
                         logger.info("got doExit function, processing backgroundTask if any...")
                         await self._processBackgroundTasks(True)
+                        logger.info("Persisting cache to database...")
+                        self.cache.persistAll()
 
                     case DelayedTaskFunction.PROCESS_BACKGROUND_TASKS:
                         await self._processBackgroundTasks()
