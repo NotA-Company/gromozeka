@@ -5,9 +5,10 @@ Test script for DictWeatherCache implementation
 This script tests the basic functionality of the dictionary-based cache.
 """
 
-import asyncio
-import sys
 import os
+import sys
+
+import pytest
 
 # Add project root to path  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))  # noqa: E402
@@ -16,6 +17,7 @@ from lib.openweathermap.dict_cache import DictWeatherCache  # noqa: E402
 from lib.openweathermap.models import GeocodingResult, WeatherData  # noqa: E402
 
 
+@pytest.mark.asyncio
 async def test_dict_cache():
     """Test DictWeatherCache functionality"""
     print("Testing DictWeatherCache implementation...")
@@ -133,6 +135,7 @@ async def test_dict_cache():
     # Test TTL expiration
     print("\n3. Testing TTL expiration...")
     print("Waiting 3 seconds for TTL expiration...")
+    import asyncio
     await asyncio.sleep(3)
 
     # Data should be expired now
@@ -171,7 +174,3 @@ async def test_dict_cache():
     print("✓ Cache clear works correctly")
 
     print("\n✅ All tests passed! DictWeatherCache implementation is working correctly, dood!")
-
-
-if __name__ == "__main__":
-    asyncio.run(test_dict_cache())
