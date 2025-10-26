@@ -42,12 +42,19 @@ from lib.markdown import markdown_to_markdownv2
 from lib.spam.tokenizer import TokenizerConfig
 import lib.utils as utils
 
-from ...config.manager import ConfigManager
+from internal.config.manager import ConfigManager
 
-from ...database.wrapper import DatabaseWrapper
-from ...database.bayes_storage import DatabaseBayesStorage
-from ...database.openweathermap_cache import DatabaseWeatherCache
-from ...database.models import ChatInfoDict, ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory, SpamReason
+from internal.database.wrapper import DatabaseWrapper
+from internal.database.bayes_storage import DatabaseBayesStorage
+from internal.database.openweathermap_cache import DatabaseWeatherCache
+from internal.database.models import (
+    ChatInfoDict,
+    ChatMessageDict,
+    ChatUserDict,
+    MediaStatus,
+    MessageCategory,
+    SpamReason,
+)
 
 from ..models import (
     ButtonConfigureAction,
