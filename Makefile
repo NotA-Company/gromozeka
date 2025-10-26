@@ -6,6 +6,7 @@ PIP = $(VENV_PATH)/bin/pip
 PYTHON = $(VENV_PATH)/bin/python
 FLAKE8 = $(VENV_PATH)/bin/flake8
 BLACK = $(VENV_PATH)/bin/black
+PYRIGHT = $(VENV_PATH)/bin/pyright
 
 # Targets
 
@@ -35,6 +36,7 @@ run:
 lint:
 #	$(FLAKE8) --exclude=$(VENV_PATH) .
 	$(FLAKE8) .
+	$(PYRIGHT)
 
 # Format Python files using black
 format:
