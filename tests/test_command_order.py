@@ -85,13 +85,13 @@ def test_command_ordering():
     print("\n" + "=" * 60)
     print(f"  Expected: {expected_order}")
     print(f"  Actual:   {actual_order}")
-    
+
     # Use assert instead of return
     assert actual_order == expected_order, (
         f"Commands are NOT in correct order, dood! "
         f"Expected {expected_order}, got {actual_order}"
     )
-    
+
     print("✓ Test PASSED, dood! Commands are in correct order!")
 
 
