@@ -19,3 +19,14 @@ extend-exclude = '''
   | migrations
 )/
 '''
+
+[tool.pyright]
+exclude = [
+    "venv",
+    ".venv",
+    "**/__pycache__",
+    "**/.pytest_cache",
+    ".git",
+]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
