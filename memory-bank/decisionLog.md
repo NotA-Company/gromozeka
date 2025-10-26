@@ -1378,3 +1378,26 @@ Move [`MessageType`](internal/bot/models/enums.py) and other enums to a separate
 - 31 tests pass successfully (17 markdown + 1 dict_cache + 8 command_handler + 6 utility + 5 migration tests)
 - 3 test files skipped due to circular import
 - All skipped tests are documented in Makefile output
+[2025-10-26 14:04:00] - Updated Python Version Requirement to 3.12+
+
+## Decision
+
+* Updated all project documentation and configuration files to require Python 3.12 or higher
+* Modified pyproject.toml (black target-version and pyright pythonVersion)
+* Updated README.md and README_BOT.md with Python 3.12+ requirement
+* Updated memory bank files to reflect the new requirement
+
+## Rationale
+
+* The project uses Python 3.12+ features like StrEnum that are not available in earlier versions
+* Explicitly documenting this requirement prevents runtime errors for users with older Python versions
+* Ensures linter and formatter tools target the correct Python version
+* Maintains consistency across all project documentation
+
+## Implementation Details
+
+* Changed [`pyproject.toml`](pyproject.toml:3) black target-version from 'py310' to 'py312'
+* Changed [`pyproject.toml`](pyproject.toml:31) pyright pythonVersion from "3.10" to "3.12"
+* Updated [`README.md`](README.md:30) prerequisites section to specify Python 3.12+ with explanation
+* Added requirements section to [`README_BOT.md`](README_BOT.md:13) specifying Python 3.12+
+* Updated memory bank files with timestamp and technical requirements
