@@ -205,7 +205,7 @@ class TestChatSettings(unittest.TestCase):
         """Test that settings are persisted to database"""
         # Mock getChatSettings to return empty dict (no existing settings)
         self.mockDb.getChatSettings.return_value = {}
-        
+
         key = ChatSettingsKey.BAYES_ENABLED
         value = ChatSettingsValue("true")
         self.cache.setChatSetting(123, key, value)
