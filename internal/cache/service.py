@@ -9,7 +9,9 @@ from threading import RLock
 from collections import OrderedDict
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
+from internal.services.queue.types import DelayedTask, DelayedTaskFunction
 from lib import utils
+from internal.services.queue.service import QueueService
 
 from .types import (
     HCChatCacheDict,
@@ -139,6 +141,8 @@ class CacheService:
                 CacheNamespace.USERS: set(),
             }
 
+            # Register on shutdown handler
+            QueueService.getInstance().registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
             self.initialized = True
             logger.info("CacheService initialized, dood!")
 
@@ -169,7 +173,15 @@ class CacheService:
         self.loadFromDatabase()
         logger.info("Database injected into CacheService, dood!")
 
-    # Convenience methods for backward compatibility
+    async def _doExitHandler(self, task: DelayedTask) -> None:
+        """Handle delayed exit task"""
+        logger.info("doExit: persisting cache to database")
+        if self.dbWrapper:
+            self.persistAll()
+        else:
+            logger.error("doExit: database wrapper not injected, dood!")
+
+    # Convenience methods
 
     def getChatSettings(self, chatId: int) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
         """Get chat settings with cache"""

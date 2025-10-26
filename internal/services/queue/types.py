@@ -1,0 +1,49 @@
+"""
+Delayed Tasks: Models for delayed task execution
+"""
+
+from enum import StrEnum
+from typing import Any, Awaitable, Callable, Dict, TypeAlias
+
+
+class DelayedTaskFunction(StrEnum):
+    SEND_MESSAGE = "sendMessage"
+    DELETE_MESSAGE = "deleteMessage"
+    PROCESS_BACKGROUND_TASKS = "processBackgroundTasks"
+    DO_EXIT = "doExit"
+
+
+class DelayedTask:
+
+    def __init__(self, taskId: str, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]):
+        self.taskId = taskId
+        self.delayedUntil = delayedUntil
+        self.function = function
+        self.kwargs = kwargs
+
+    def __lt__(self, other: "DelayedTask") -> bool:
+        return self.delayedUntil < other.delayedUntil
+
+    def __gt__(self, other: "DelayedTask") -> bool:
+        return self.delayedUntil > other.delayedUntil
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, DelayedTask):
+            return False
+
+        return self.delayedUntil == other.delayedUntil
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __repr__(self) -> str:
+        return (
+            f"DelayedTask(taskId={self.taskId}, delayedUntil={self.delayedUntil}, "
+            f"function={self.function}, kwargs={self.kwargs})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+DelayedTaskHandler: TypeAlias = Callable[[DelayedTask], Awaitable[None]]
