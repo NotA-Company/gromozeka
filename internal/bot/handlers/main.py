@@ -2585,9 +2585,9 @@ class BotHandlers(CommandHandlerMixin):
                     raise RuntimeError("Bot is not initialized")
                 file = await self._bot.get_file(mediaForLLM.file_id)
                 logger.debug(f"{mediaType}#{ret.id} File info: {file}")
-                mediaData = await file.download_as_bytearray()
+                mediaData = bytes(await file.download_as_bytearray())
 
-            mimeType = magic.from_buffer(bytes(mediaData), mime=True)
+            mimeType = magic.from_buffer(mediaData, mime=True)
             logger.debug(f"{mediaType}#{ret.id} Mimetype: {mimeType}")
 
             self.db.updateMediaAttachment(
@@ -2615,7 +2615,7 @@ class BotHandlers(CommandHandlerMixin):
                 ModelImageMessage(
                     role="user",
                     content=ensuredMessage.messageText,
-                    image=mediaData,
+                    image=bytearray(mediaData),
                 ),
             ]
 
