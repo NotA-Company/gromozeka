@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from internal.bot.models import CommandCategory, CommandHandlerMixin, commandHandler  # noqa: E402
 
 
-class TestHandlers(CommandHandlerMixin):
+class _TestHandlers(CommandHandlerMixin):
     """Test handler class, dood!"""
 
     def __init__(self):
@@ -48,7 +48,7 @@ def test_decorator_discovery():
     """Test that decorator properly discovers handlers, dood!"""
     print("Testing command handler decorator discovery, dood!")
 
-    handlers = TestHandlers()
+    handlers = _TestHandlers()
     commandHandlers = handlers.getCommandHandlers()
 
     print(f"\nDiscovered {len(commandHandlers)} handlers, dood!")
