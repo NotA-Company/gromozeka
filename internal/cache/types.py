@@ -3,15 +3,16 @@ Cache: TypedDict models for handlers cache
 """
 
 from enum import StrEnum
-from typing import Any, Dict, NotRequired, TypedDict
+from typing import Any, Dict, NotRequired, TypedDict, TYPE_CHECKING
 
 from internal.database.models import ChatInfoDict
 
-from ..bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
+if TYPE_CHECKING:
+    from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
 
 
 class HCChatCacheDict(TypedDict):
-    settings: NotRequired[Dict[ChatSettingsKey, ChatSettingsValue]]
+    settings: NotRequired[Dict["ChatSettingsKey", "ChatSettingsValue"]]
     info: NotRequired[ChatInfoDict]
     topics: NotRequired[Dict[int, Any]]
 
