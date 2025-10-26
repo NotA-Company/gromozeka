@@ -64,6 +64,9 @@ test:
 	@echo "🛠️  Running Utility tests..."
 	$(PYTHON) -m pytest lib/tests/ -v
 	@echo ""
+	@echo "💾 Running Cache Service tests..."
+	$(PYTHON) -m pytest internal/cache/test_cache_service.py -v
+	@echo ""
 	@echo "✅ All tests completed, dood!"
 
 # Check code quality (lint + format check)

@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from threading import RLock
 from collections import OrderedDict
 
-from internal.bot.models import ChatSettingsKey, ChatSettingsValue
 from internal.database.models import ChatInfoDict
 from lib import utils
 
@@ -17,6 +16,7 @@ from .models import CacheNamespace, CachePersistenceLevel
 
 if TYPE_CHECKING:
     from ..database.wrapper import DatabaseWrapper
+    from ..bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +164,10 @@ class CacheService:
 
     # Convenience methods for backward compatibility
 
-    def getChatSettings(self, chatId: int) -> Dict[ChatSettingsKey, ChatSettingsValue]:
+    def getChatSettings(self, chatId: int) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
         """Get chat settings with cache"""
+        # Preventing circullar dependencies
+        from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
         chatCache = self.chats.get(chatId, {})
 
         if "settings" not in chatCache:
@@ -181,7 +183,7 @@ class CacheService:
         return chatCache.get("settings", {})
 
     def setChatSettings(
-        self, chatId: int, settings: Dict[ChatSettingsKey, ChatSettingsValue], rewrite: bool = False
+        self, chatId: int, settings: Dict["ChatSettingsKey", "ChatSettingsValue"], rewrite: bool = False
     ) -> None:
         """Update chat settings for a specific chat, dood!
 
