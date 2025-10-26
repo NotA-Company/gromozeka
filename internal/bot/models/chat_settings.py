@@ -95,7 +95,7 @@ class ChatSettingsValue:
         self.value = str(value).strip()
 
     def __str__(self) -> str:
-        return str(self.value)
+        return self.toStr()
 
     def toStr(self) -> str:
         return str(self.value)
@@ -115,7 +115,7 @@ class ChatSettingsValue:
             return 0.0
 
     def toBool(self) -> bool:
-        return self.value.lower().strip() == "true"
+        return self.value.lower().strip() in ("true", "1")
 
     def toList(self, separator: str = ",", dropEmpty: bool = True) -> List[str]:
         return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]

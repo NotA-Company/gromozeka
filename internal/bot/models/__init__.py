@@ -20,8 +20,11 @@ from .delayed_tasks import DelayedTask, DelayedTaskFunction
 # Media
 from .media import MediaProcessingInfo
 
+# User Metadata
+from .user_metadata import UserMetadataDict
+
 # Cache
-from .cache import HCChatCacheDict, HandlersCacheDict, UserMetadataDict
+from ...cache.types import HCChatCacheDict, HandlersCacheDict
 
 # Command Handlers
 from .command_handlers import (
@@ -52,9 +55,10 @@ __all__ = [
     "DelayedTaskFunction",
     # Media
     "MediaProcessingInfo",
-    # Cache
+    # Cache (Reexport)
     "HCChatCacheDict",
     "HandlersCacheDict",
+    # User Metadata
     "UserMetadataDict",
     # Command Handlers
     "CommandHandlerInfo",
