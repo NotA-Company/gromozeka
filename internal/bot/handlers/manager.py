@@ -19,11 +19,13 @@ from lib.ai.manager import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
 from .main import BotHandlers
+from .spam import SpamHandlers
+from .help_command import CommandHandlerGetterInterface, HelpHandler
 
 logger = logging.getLogger(__name__)
 
 
-class HandlersManager:
+class HandlersManager(CommandHandlerGetterInterface):
     """
     Bot handlers manager
     """
@@ -38,7 +40,13 @@ class HandlersManager:
 
         self.queueService = QueueService.getInstance()
 
-        self.handlers: list[BaseBotHandler] = [BotHandlers(configManager, database, llmManager)]
+        self.handlers: list[BaseBotHandler] = [
+            SpamHandlers(configManager, database, llmManager),
+            BotHandlers(configManager, database, llmManager),
+            HelpHandler(
+                configManager, database, llmManager, self
+            ),  # Special case - help command require all command handlers information
+        ]
 
     def injectBot(self, bot: ExtBot) -> None:
         for handler in self.handlers:
