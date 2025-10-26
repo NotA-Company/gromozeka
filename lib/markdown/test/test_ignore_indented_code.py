@@ -59,10 +59,10 @@ Another paragraph after the indented text."""
         print("✅ SUCCESS: Option works correctly, dood!")
         print("   - Default ignores indented code blocks (no <pre><code>)")
         print("   - When disabled, indented code blocks are parsed (<pre><code> present)")
-        return True
     else:
         print("❌ FAILURE: Option not working as expected, dood!")
-        return False
+
+    assert not has_code_default and has_code_enabled, "Option not working as expected"
 
 
 def test_fenced_code_still_works():
@@ -100,10 +100,10 @@ Another paragraph."""
 
     if has_code_default and has_code_enabled:
         print("✅ SUCCESS: Fenced code blocks work in both modes, dood!")
-        return True
     else:
         print("❌ FAILURE: Fenced code blocks broken, dood!")
-        return False
+
+    assert has_code_default and has_code_enabled, "Fenced code blocks broken"
 
 
 if __name__ == "__main__":
