@@ -5,11 +5,10 @@ Test file for code block parsing fixes
 
 import sys
 import os
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown
+from lib.markdown import markdown_to_markdownv2, markdown_to_html, normalize_markdown  # noqa: E402
 
 
 def test_inline_code_fence_fix():
@@ -18,7 +17,7 @@ def test_inline_code_fence_fix():
     normalized = normalize_markdown(text)
     markdownv2 = markdown_to_markdownv2(text)
     html = markdown_to_html(text)
-    
+
     assert normalized is not None
     assert markdownv2 is not None
     assert html is not None
@@ -30,7 +29,7 @@ def test_malformed_fence_fix():
     normalized = normalize_markdown(text)
     markdownv2 = markdown_to_markdownv2(text)
     html = markdown_to_html(text)
-    
+
     assert normalized is not None
     assert markdownv2 is not None
     assert html is not None
@@ -42,7 +41,7 @@ def test_proper_fence_fix():
     normalized = normalize_markdown(text)
     markdownv2 = markdown_to_markdownv2(text)
     html = markdown_to_html(text)
-    
+
     assert normalized is not None
     assert markdownv2 is not None
     assert html is not None
@@ -54,7 +53,7 @@ def test_fence_with_lang_fix():
     normalized = normalize_markdown(text)
     markdownv2 = markdown_to_markdownv2(text)
     html = markdown_to_html(text)
-    
+
     assert normalized is not None
     assert markdownv2 is not None
     assert html is not None
@@ -66,7 +65,7 @@ def test_unclosed_fence_fix():
     normalized = normalize_markdown(text)
     markdownv2 = markdown_to_markdownv2(text)
     html = markdown_to_html(text)
-    
+
     assert normalized is not None
     assert markdownv2 is not None
     assert html is not None
@@ -78,7 +77,7 @@ def test_multiple_fences_fix():
     normalized = normalize_markdown(text)
     markdownv2 = markdown_to_markdownv2(text)
     html = markdown_to_html(text)
-    
+
     assert normalized is not None
     assert markdownv2 is not None
     assert html is not None
@@ -91,7 +90,7 @@ def test_nested_backticks_fix():
     normalized = normalize_markdown(text)
     markdownv2 = markdown_to_markdownv2(text)
     html = markdown_to_html(text)
-    
+
     assert normalized is not None
     assert markdownv2 is not None
     assert html is not None
@@ -103,7 +102,7 @@ def test_mixed_fence_types_fix():
     normalized = normalize_markdown(text)
     markdownv2 = markdown_to_markdownv2(text)
     html = markdown_to_html(text)
-    
+
     assert normalized is not None
     assert markdownv2 is not None
     assert html is not None
