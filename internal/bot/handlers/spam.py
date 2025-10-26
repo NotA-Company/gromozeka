@@ -248,7 +248,7 @@ class SpamHandlers(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Пользователь [{userName}](tg://user?id={sender.id})"
                 " заблокирован за спам.\n"
-                f"(Вероятность: {spamScore}, порог: {banTreshold})\n"
+                f"(Вероятность: {spamScore:.3f}, порог: {banTreshold})\n"
                 "(Данное сообщение будет удалено в течение минуты)",
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
@@ -267,7 +267,7 @@ class SpamHandlers(BaseBotHandler):
             logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage}")
             await self.sendMessage(
                 ensuredMessage,
-                messageText=f"Возможно спам (Вероятность: {spamScore}, порог: {warnTreshold})\n"
+                messageText=f"Возможно спам (Вероятность: {spamScore:.3f}, порог: {warnTreshold})\n"
                 "(Когда-нибудь тут будут кнопки спам\\не спам)",
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
