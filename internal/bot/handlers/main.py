@@ -24,6 +24,7 @@ from telegram._utils.types import ReplyMarkup
 from telegram._utils.entities import parse_message_entity
 
 from internal.cache.types import UserActiveActionEnum, UserDataType, UserDataValueType
+from internal.services.queue.service import QueueService, makeEmptyAsyncTask
 from lib.ai.abstract import AbstractModel, LLMAbstractTool
 from lib.ai.models import (
     LLMFunctionParameter,
@@ -80,11 +81,6 @@ from .. import constants
 from internal.cache import CacheService
 
 logger = logging.getLogger(__name__)
-
-
-def makeEmptyAsyncTask() -> asyncio.Task:
-    """Create an empty async task."""
-    return asyncio.create_task(asyncio.sleep(0))
 
 
 class BotHandlers(CommandHandlerMixin):
@@ -147,16 +143,16 @@ class BotHandlers(CommandHandlerMixin):
         self.cache = CacheService.getInstance()
         self.cache.injectDatabase(self.db)
 
-        # self._cache: HandlersCacheDict = {
-        #    "chats": {},
-        #    "chatUsers": {},
-        #   "users": {},
-        # }
+        self.queueService = QueueService.getInstance()
+        self.queueService.registerDelayedTaskHandler(
+            DelayedTaskFunction.SEND_MESSAGE,
+            self._dqSendMessageHandler,
+        )
+        self.queueService.registerDelayedTaskHandler(
+            DelayedTaskFunction.DELETE_MESSAGE,
+            self._dqDeleteMessageHandler,
+        )
 
-        self.asyncTasksQueue = asyncio.Queue()
-        self.queueLastUpdated = time.time()
-
-        self.delayedActionsQueue = asyncio.PriorityQueue()
         self._bot: Optional[ExtBot] = None
 
     async def initExit(self) -> None:
@@ -263,157 +259,39 @@ class BotHandlers(CommandHandlerMixin):
 
     async def addTaskToAsyncedQueue(self, task: asyncio.Task) -> None:
         """Add a task to the queue."""
-        if self.asyncTasksQueue.qsize() > constants.MAX_QUEUE_LENGTH:
-            logger.info("Queue is full, processing oldest task")
-            oldTask = await self.asyncTasksQueue.get()
-            if not isinstance(oldTask, asyncio.Task):
-                logger.error(f"Task {oldTask} is not a task, but a {type(oldTask)}")
-            else:
-                await oldTask
-            self.asyncTasksQueue.task_done()
-
-        await self.asyncTasksQueue.put(task)
-        self.queueLastUpdated = time.time()
-
-    async def _processBackgroundTasks(self, forceProcessAll: bool = False) -> None:
-        """Process background tasks."""
-
-        if self.asyncTasksQueue.empty():
-            return
-
-        if (not forceProcessAll) and (self.queueLastUpdated + constants.MAX_QUEUE_AGE > time.time()):
-            return
-
-        if forceProcessAll:
-            logger.info("Processing background tasks queue due to forceProcessAll=True")
-        else:
-            logger.info(f"Processing queue due to age ({constants.MAX_QUEUE_AGE})")
-
-        # TODO: Do it properly
-        # Little hack to avoid concurency in processing queue
-        self.queueLastUpdated = time.time()
-        # TODO: Process only existing elements to avoid endless processing new ones
-
-        try:
-            while True:
-                task = await self.asyncTasksQueue.get_nowait()
-                if not isinstance(task, asyncio.Task):
-                    logger.error(f"Task {task} is not a task, but a {type(task)}")
-                else:
-                    try:
-                        logger.debug(f"Awaiting task {task}...")
-                        await task
-                    except Exception as e:
-                        logger.error(f"Error in background task: {e}")
-                        logger.exception(e)
-
-                self.asyncTasksQueue.task_done()
-        except asyncio.QueueEmpty:
-            logger.info("All background tasks were processed")
-        except Exception as e:
-            logger.error(f"Error in background task processing: {e}")
-            logger.exception(e)
+        await self.queueService.addBackgroundTask(task)
 
     async def initDelayedScheduler(self, bot: ExtBot) -> None:
         self._bot = bot
 
-        tasks = self.db.getPendingDelayedTasks()
-        for task in tasks:
-            await self._addDelayedTask(
-                delayedUntil=float(task["delayed_ts"]),
-                function=DelayedTaskFunction(task["function"]),
-                kwargs=json.loads(task["kwargs"]),
-                taskId=task["id"],
-                skipDB=True,
-            )
-            logger.info(f"Restored delayed task: {task}")
+        await self.queueService.startDelayedScheduler(self.db)
 
-        # Add background tasks processing
-        await self._addDelayedTask(
-            time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True
+    async def _dqSendMessageHandler(self, delayedTask: DelayedTask) -> None:
+        kwargs = delayedTask.kwargs
+        message = Message(
+            message_id=kwargs["messageId"],
+            date=datetime.datetime.now(),
+            chat=Chat(id=kwargs["chatId"], type=kwargs["chatType"]),
+            from_user=User(id=kwargs["userId"], first_name="", is_bot=False),
+            text=kwargs["messageText"],
+            message_thread_id=kwargs["threadId"],
+        )
+        message.set_bot(self._bot)
+        ensuredMessage = EnsuredMessage.fromMessage(message)
+        await self._sendMessage(
+            replyToMessage=ensuredMessage,
+            messageText=kwargs["messageText"],
+            messageCategory=kwargs["messageCategory"],
         )
 
-        await self._processDelayedQueue()
-
-    async def _processDelayedQueue(self) -> None:
-        while True:
-            try:
-                # logger.debug("_pDQ(): Iteration...")
-                delayedTask = await self.delayedActionsQueue.get()
-
-                if not isinstance(delayedTask, DelayedTask):
-                    self.delayedActionsQueue.task_done()
-                    logger.error(
-                        f"Got wrong element from delayedActionsQueue: {type(delayedTask).__name__}#{repr(delayedTask)}"
-                    )
-                    continue
-
-                if delayedTask.delayedUntil > time.time():
-                    self.delayedActionsQueue.task_done()
-                    await self.delayedActionsQueue.put(delayedTask)
-                    # TODO: Add some configured delay, maybe
-                    await asyncio.sleep(min(10, delayedTask.delayedUntil - time.time()))
-                    continue
-
-                logger.debug(f"_pDQ(): Got {delayedTask}...")
-
-                match delayedTask.function:
-                    case DelayedTaskFunction.SEND_MESSAGE:
-                        kwargs = delayedTask.kwargs
-                        message = Message(
-                            message_id=kwargs["messageId"],
-                            date=datetime.datetime.now(),
-                            chat=Chat(id=kwargs["chatId"], type=kwargs["chatType"]),
-                            from_user=User(id=kwargs["userId"], first_name="", is_bot=False),
-                            text=kwargs["messageText"],
-                            message_thread_id=kwargs["threadId"],
-                        )
-                        message.set_bot(self._bot)
-                        ensuredMessage = EnsuredMessage.fromMessage(message)
-                        await self._sendMessage(
-                            replyToMessage=ensuredMessage,
-                            messageText=kwargs["messageText"],
-                            messageCategory=kwargs["messageCategory"],
-                        )
-                        pass
-                    case DelayedTaskFunction.DELETE_MESSAGE:
-                        kwargs = delayedTask.kwargs
-                        if self._bot is not None:
-                            await self._bot.delete_message(chat_id=kwargs["chatId"], message_id=kwargs["messageId"])
-                        else:
-                            logger.error(
-                                "Bot is not initialized, can't delete message "
-                                f"{kwargs['messageId']} in chat {kwargs['chatId']}"
-                            )
-                    case DelayedTaskFunction.DO_EXIT:
-                        logger.info("got doExit function, processing backgroundTask if any...")
-                        await self._processBackgroundTasks(True)
-                        logger.info("Persisting cache to database...")
-                        self.cache.persistAll()
-
-                    case DelayedTaskFunction.PROCESS_BACKGROUND_TASKS:
-                        await self._processBackgroundTasks()
-                        await self._addDelayedTask(
-                            time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True
-                        )
-
-                    case _:
-                        logger.error(f"Unsupported function type: {delayedTask.function} in delayed task {delayedTask}")
-
-                self.db.updateDelayedTask(delayedTask.taskId, True)
-                self.delayedActionsQueue.task_done()
-                if delayedTask.function == DelayedTaskFunction.DO_EXIT or self._isExiting:
-                    logger.debug("doExit(), exiting...")
-                    return
-
-            except RuntimeError as e:
-                logger.error(f"Error in delayed task processor: {e}")
-                if str(e) == "Event loop is closed":
-                    break
-
-            except Exception as e:
-                logger.error(f"Error in delayed task processor: {e}")
-                logger.exception(e)
+    async def _dqDeleteMessageHandler(self, delayedTask: DelayedTask) -> None:
+        kwargs = delayedTask.kwargs
+        if self._bot is not None:
+            await self._bot.delete_message(chat_id=kwargs["chatId"], message_id=kwargs["messageId"])
+        else:
+            logger.error(
+                "Bot is not initialized, can't delete message " f"{kwargs['messageId']} in chat {kwargs['chatId']}"
+            )
 
     async def _addDelayedTask(
         self,
@@ -424,21 +302,9 @@ class BotHandlers(CommandHandlerMixin):
         skipDB: bool = False,
     ) -> None:
         """Add delayed task"""
-        if taskId is None:
-            taskId = str(uuid.uuid4())
-
-        task = DelayedTask(taskId, delayedUntil, function, kwargs)
-        # logger.debug(f"Adding delayed task: {task}")
-        await self.delayedActionsQueue.put(task)
-        if not skipDB:
-            self.db.addDelayedTask(
-                taskId=taskId,
-                function=function,
-                kwargs=utils.jsonDumps(kwargs, ensure_ascii=False, default=str),
-                delayedTS=int(delayedUntil),
-            )
-
-        logger.debug(f"Added delayed task: {task}, skipDB={skipDB}")
+        await self.queueService.addDelayedTask(
+            delayedUntil=delayedUntil, function=function, kwargs=kwargs, taskId=taskId, skipDB=skipDB
+        )
 
     async def _sendMessage(
         self,
@@ -3556,7 +3422,7 @@ class BotHandlers(CommandHandlerMixin):
             case "delayedQueue":
                 await self._sendMessage(
                     ensuredMessage,
-                    messageText=f"```\n{self.delayedActionsQueue}\n\n{self.delayedActionsQueue.qsize()}\n```",
+                    messageText=f"```\n{self.queueService.delayedActionsQueue}\n\n{self.queueService.delayedActionsQueue.qsize()}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 

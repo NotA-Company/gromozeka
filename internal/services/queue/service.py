@@ -40,6 +40,11 @@ import lib.utils as utils
 logger = logging.getLogger(__name__)
 
 
+def makeEmptyAsyncTask() -> asyncio.Task:
+    """Create an empty async task."""
+    return asyncio.create_task(asyncio.sleep(0))
+
+
 class QueueService:
     """
     Singleton service for managing asynchronous and delayed task execution, dood!
@@ -299,9 +304,11 @@ class QueueService:
             ... )
         """
         if function in self.tasksHandlers:
-            self.tasksHandlers[function] = [handler]
-        else:
             self.tasksHandlers[function].append(handler)
+        else:
+            self.tasksHandlers[function] = [handler]
+
+        logger.debug(f"Registered handler for {function}: {handler}")
 
     async def startDelayedScheduler(self, db: "DatabaseWrapper") -> None:
         """
