@@ -34,6 +34,9 @@ venv/
 ehthumbs.db
 Thumbs.db
 
+# Coverage
+.coverage
+
 # Editor directories and files
 *.swp
 *.swo
