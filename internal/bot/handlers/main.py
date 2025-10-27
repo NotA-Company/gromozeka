@@ -103,47 +103,6 @@ class BotHandlers(BaseBotHandler):
             ],
             handler=self._llmToolGenerateAndSendImage,
         )
-        self.llmService.registerTool(
-            name="add_user_data",
-            description=(
-                "Add some data/knowledge about user, sent last message. "
-                "Use it in following cases:\n"
-                "1. User asked to learn/remember something about him/her.\n"
-                "2. You learned new information about user "
-                "(e.g., real name, birth dare, what he like, etc).\n"
-                "3. You want to remember something relating to user.\n"
-                "4. When you needs to store information related to the user "
-                "to improve interaction quality (e.g., remembering formatting preferences, "
-                "command usage frequency, communication style).\n"
-                "\n"
-                "Will return new data for given key."
-            ),
-            parameters=[
-                LLMFunctionParameter(
-                    name="key",
-                    description="Key for data (for structured data usage)",
-                    type=LLMParameterType.STRING,
-                    required=True,
-                ),
-                LLMFunctionParameter(
-                    name="data",
-                    description="Data/knowledbe you want to remember",
-                    type=LLMParameterType.STRING,
-                    required=True,
-                ),
-                LLMFunctionParameter(
-                    name="append",
-                    description=(
-                        "True: Append data to existing data, "
-                        "False: replace existing data for given key. "
-                        "Default: False"
-                    ),
-                    type=LLMParameterType.BOOLEAN,
-                    required=False,
-                ),
-            ],
-            handler=self._llmToolSetUserData,
-        )
 
         self.llmService.registerTool(
             name="get_current_datetime",
@@ -250,22 +209,6 @@ class BotHandlers(BaseBotHandler):
         except Exception as e:
             logger.error(f"Error getting content from {url}: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
-
-    async def _llmToolSetUserData(
-        self, extraData: Optional[Dict[str, Any]], key: str, data: str, append: bool = False, **kwargs
-    ) -> str:
-        if extraData is None:
-            raise RuntimeError("extraData should be provided")
-        if "ensuredMessage" not in extraData:
-            raise RuntimeError("ensuredMessage should be provided")
-        ensuredMessage = extraData["ensuredMessage"]
-        if not isinstance(ensuredMessage, EnsuredMessage):
-            raise RuntimeError("ensuredMessage should be EnsuredMessage")
-
-        newData = self.setUserData(
-            chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, key=key, value=data, append=append
-        )
-        return utils.jsonDumps({"done": True, "key": key, "data": newData})
 
     async def _llmToolGetCurrentDateTime(self, extraData: Optional[Dict[str, Any]], **kwargs) -> str:
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -1633,117 +1576,6 @@ class BotHandlers(BaseBotHandler):
         await self.sendMessage(
             ensuredMessage,
             messageText=f"Напомню в {delayedDT.strftime('%Y-%m-%d %H:%M:%S%z')}",
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-        )
-
-    @commandHandler(
-        commands=("get_my_data",),
-        shortDescription="Dump data, bot knows about you in this chat",
-        helpMessage=": Показать запомненную информацию о Вас в текущем чате.",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.TECHNICAL,
-    )
-    async def get_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /get_my_data command."""
-
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
-        self._updateEMessageUserData(ensuredMessage)
-
-        await self.sendMessage(
-            ensuredMessage,
-            messageText=(f"```json\n{utils.jsonDumps(ensuredMessage.userData, indent=2)}\n```"),
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-        )
-
-    @commandHandler(
-        commands=("delete_my_data",),
-        shortDescription="<key> - Delete user data for given key",
-        helpMessage=" `<key>`: Удалить информацию о Вас по указанному ключу.",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.TECHNICAL,
-    )
-    async def delete_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /delete_my_data <key> command."""
-
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
-        self._updateEMessageUserData(ensuredMessage)
-
-        if not context.args:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=("Для команды `/delete_my_data` нужно указать ключ, который нужно удалить."),
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        chatId = ensuredMessage.chat.id
-        userId = ensuredMessage.user.id
-        key = context.args[0]
-        self.unsetUserData(chatId=chatId, userId=userId, key=key)
-
-        await self.sendMessage(
-            ensuredMessage,
-            messageText=f"Готово, ключ {key} успешно удален.",
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-        )
-
-    @commandHandler(
-        commands=("clear_my_data",),
-        shortDescription="Clear all user data",
-        helpMessage=": Очистить все сзнания о Вас в этом чате.",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.TECHNICAL,
-    )
-    async def clear_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /clear_my_data command."""
-
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
-        self._updateEMessageUserData(ensuredMessage)
-
-        chatId = ensuredMessage.chat.id
-        userId = ensuredMessage.user.id
-
-        self.clearUserData(userId=userId, chatId=chatId)
-
-        await self.sendMessage(
-            ensuredMessage,
-            messageText="Готово, память о Вас очищена.",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 

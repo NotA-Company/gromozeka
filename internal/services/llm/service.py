@@ -93,6 +93,7 @@ class LLMService:
             parameters=parameters,
             function=handler,
         )
+        logger.info(f"Tool {name} registered, dood!")
 
     async def generateTextViaLLM(
         self,

@@ -150,7 +150,6 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # Init cache
         self.cache = CacheService.getInstance()
-        self.cache.injectDatabase(self.db)
 
         self.queueService = QueueService.getInstance()
 

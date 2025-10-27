@@ -307,7 +307,7 @@ class QueueService:
         else:
             self.tasksHandlers[function] = [handler]
 
-        logger.debug(f"Registered handler for {function}: {handler}")
+        logger.info(f"Registered handler for {function}: {handler}")
 
     async def startDelayedScheduler(self, db: "DatabaseWrapper") -> None:
         """
