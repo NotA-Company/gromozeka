@@ -10,9 +10,9 @@ from telegram.ext import ExtBot, ContextTypes
 
 from internal.bot.models import CommandHandlerInfo, EnsuredMessage
 
-from internal.cache.service import CacheService
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
+from internal.services.cache.service import CacheService
 from internal.services.queue.service import QueueService
 from lib import utils
 from lib.ai.manager import LLMManager
