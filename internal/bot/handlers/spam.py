@@ -1,5 +1,15 @@
 """
-Gromozeka SPAM Handlers.
+Gromozeka SPAM Handlers Module, dood!
+
+This module provides comprehensive spam detection and management functionality for the Gromozeka bot.
+It implements multiple spam detection strategies including:
+- Rule-based detection (URLs, mentions, duplicate messages)
+- Naive Bayes machine learning classification
+- User behavior analysis
+- Manual spam reporting by admins and users
+
+The module integrates with the bot's database for persistent storage and learning,
+and provides commands for training, testing, and managing the spam filter, dood!
 """
 
 import asyncio
@@ -48,11 +58,46 @@ logger = logging.getLogger(__name__)
 
 class SpamHandlers(BaseBotHandler):
     """
-    Handle spam-related commands and events
+    Comprehensive spam detection and management handler, dood!
+
+    This class provides multi-layered spam protection combining rule-based detection
+    with machine learning (Naive Bayes) classification. It handles automatic spam
+    detection, user banning, message deletion, and provides administrative commands
+    for spam management and filter training.
+
+    Attributes:
+        bayesFilter (NaiveBayesFilter): Machine learning spam classifier using Naive Bayes algorithm.
+
+    Features:
+        - Automatic spam detection with configurable thresholds
+        - Rule-based detection (URLs, mentions, duplicate messages)
+        - Naive Bayes machine learning classification
+        - Per-chat learning and statistics
+        - Manual spam reporting by admins and users
+        - Spam filter training from message history
+        - User unbanning with automatic ham learning
     """
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
-        """Initialize handlers with database and LLM model."""
+        """
+        Initialize spam handlers with database and LLM model, dood!
+
+        Sets up the Naive Bayes spam filter with per-chat statistics and configurable
+        parameters for spam detection and learning.
+
+        Args:
+            configManager (ConfigManager): Configuration manager for bot settings.
+            database (DatabaseWrapper): Database wrapper for persistent storage.
+            llmManager (LLMManager): LLM manager for AI-powered features.
+
+        Note:
+            The Bayes filter is initialized with:
+            - Per-chat statistics enabled
+            - Laplace smoothing (alpha=1.0)
+            - Minimum token count of 2
+            - Default spam threshold of 50.0
+            - Trigram tokenization enabled
+        """
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
 
@@ -75,7 +120,32 @@ class SpamHandlers(BaseBotHandler):
         logger.info("Initialized Bayes spam filter, dood!")
 
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
-        """Check if message is spam."""
+        """
+        Perform comprehensive spam check on a message, dood!
+
+        This method implements multi-layered spam detection combining:
+        1. Automatic forward detection (not spam)
+        2. Anonymous admin detection (not spam)
+        3. User message count threshold check
+        4. Explicit non-spammer marking check
+        5. Previous spammer status check
+        6. Duplicate message detection
+        7. Known spam message matching
+        8. URL and mention analysis
+        9. Naive Bayes classification (if enabled)
+
+        Args:
+            ensuredMessage (EnsuredMessage): The message to check for spam.
+
+        Returns:
+            bool: True if message is spam and was handled (banned/deleted), False otherwise.
+
+        Note:
+            - Messages without text are currently not checked (TODO)
+            - Users with message count >= maxCheckMessages are trusted
+            - Spam score is accumulated from multiple detection methods
+            - Bayes filter is only used if score is below ban threshold (for performance)
+        """
 
         message = ensuredMessage.getBaseMessage()
         if message.is_automatic_forward:
@@ -278,7 +348,30 @@ class SpamHandlers(BaseBotHandler):
         return False
 
     async def markAsSpam(self, message: Message, reason: SpamReason, score: Optional[float] = None):
-        """Delete spam message, ban user and save message to spamDB"""
+        """
+        Mark message as spam, ban user, and delete message, dood!
+
+        This method performs the following actions:
+        1. Validates that target is not an admin
+        2. Checks if user is old enough to be marked as spam (unless admin override)
+        3. Learns the message as spam in Bayes filter (if enabled)
+        4. Saves spam message to database
+        5. Deletes the spam message
+        6. Bans the user (and sender chat if applicable)
+        7. Optionally deletes all recent user messages
+
+        Args:
+            message (Message): The spam message to handle.
+            reason (SpamReason): Reason for marking as spam (AUTO, ADMIN, USER).
+            score (Optional[float]): Spam confidence score (0-100+). Defaults to 0.
+
+        Note:
+            - Admins cannot be marked as spam
+            - Old users (messages_count > maxSpamMessages) cannot be auto-marked
+            - Admin-marked spam can override old user protection
+            - Bayes filter learns from spam if auto-learning is enabled
+            - Up to 10 recent user messages can be deleted if configured
+        """
         ensuredMessage = EnsuredMessage.fromMessage(message)
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         bot = message.get_bot()
@@ -365,7 +458,22 @@ class SpamHandlers(BaseBotHandler):
                 logger.exception(e)
 
     async def markAsHam(self, message: Message) -> bool:
-        """Mark message as ham (not spam) for Bayes filter learning, dood!"""
+        """
+        Mark message as ham (not spam) for Bayes filter learning, dood!
+
+        Teaches the Bayes filter that this message is legitimate (ham), improving
+        future spam detection accuracy.
+
+        Args:
+            message (Message): The legitimate message to learn from.
+
+        Returns:
+            bool: True if learning succeeded, False otherwise.
+
+        Note:
+            - Only messages with text can be learned
+            - Failures are logged but don't raise exceptions
+        """
         if not message.text:
             return False
 
@@ -378,7 +486,28 @@ class SpamHandlers(BaseBotHandler):
             return False
 
     async def getBayesFilterStats(self, chatId: Optional[int] = None) -> Dict[str, Any]:
-        """Get Bayes filter statistics for debugging, dood!"""
+        """
+        Get Bayes filter statistics for debugging and monitoring, dood!
+
+        Retrieves comprehensive statistics about the Bayes filter's training state
+        and performance for a specific chat or globally.
+
+        Args:
+            chatId (Optional[int]): Chat ID to get stats for. None for global stats.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing:
+                - total_spam_messages: Number of spam messages learned
+                - total_ham_messages: Number of ham messages learned
+                - total_messages: Total messages in training set
+                - vocabulary_size: Number of unique tokens
+                - spam_ratio: Proportion of spam messages
+                - ham_ratio: Proportion of ham messages
+                - chat_id: The chat ID (or None for global)
+
+        Note:
+            Returns empty dict on error (logged but not raised).
+        """
         try:
             model_stats = await self.bayesFilter.getModelInfo(chatId)
             return {
@@ -395,7 +524,21 @@ class SpamHandlers(BaseBotHandler):
             return {}
 
     async def resetBayesFilter(self, chat_id: Optional[int] = None) -> bool:
-        """Reset Bayes filter statistics, dood!"""
+        """
+        Reset Bayes filter statistics and training data, dood!
+
+        Clears all learned spam/ham data for a specific chat or globally.
+        Use with caution as this removes all training progress!
+
+        Args:
+            chat_id (Optional[int]): Chat ID to reset. None resets global filter.
+
+        Returns:
+            bool: True if reset succeeded, False otherwise.
+
+        Warning:
+            This operation cannot be undone! All training data will be lost.
+        """
         try:
             success = await self.bayesFilter.reset(chat_id)
             if success:
@@ -407,7 +550,33 @@ class SpamHandlers(BaseBotHandler):
             return False
 
     async def trainBayesFromHistory(self, chatId: int, limit: int = 1000) -> Dict[str, int]:
-        """Train Bayes filter from existing spam messages and chat history, dood!"""
+        """
+        Train Bayes filter from existing spam messages and chat history, dood!
+
+        Performs initial or supplemental training by learning from:
+        1. Previously identified spam messages in the database
+        2. Regular user messages as ham (excluding spam users)
+
+        This is useful for:
+        - Initial filter setup in existing chats
+        - Retraining after filter reset
+        - Improving accuracy with historical data
+
+        Args:
+            chatId (int): Chat ID to train filter for.
+            limit (int): Maximum number of messages to process. Defaults to 1000.
+
+        Returns:
+            Dict[str, int]: Training statistics containing:
+                - spam_learned: Number of spam messages successfully learned
+                - ham_learned: Number of ham messages successfully learned
+                - failed: Number of messages that failed to process
+
+        Note:
+            - Only processes messages from the specified chat
+            - Skips messages from users already marked as spammers
+            - Processes up to `limit` messages of each type (spam and ham)
+        """
         stats = {"spam_learned": 0, "ham_learned": 0, "failed": 0}
 
         try:
@@ -458,7 +627,27 @@ class SpamHandlers(BaseBotHandler):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
     ) -> HandlerResultStatus:
         """
-        Check Message in chat for SPAM if needed
+        Main message handler for automatic spam detection, dood!
+
+        This handler is called for every message and performs spam checking
+        in group and supergroup chats if spam detection is enabled.
+
+        Args:
+            update (Update): Telegram update object containing the message.
+            context (ContextTypes.DEFAULT_TYPE): Bot context for the update.
+            ensuredMessage (Optional[EnsuredMessage]): Pre-processed message wrapper.
+
+        Returns:
+            HandlerResultStatus: Handler execution status:
+                - SKIPPED: Private chat (no spam check needed)
+                - FATAL: Message was spam and handled (stop processing)
+                - NEXT: Message is not spam (continue processing)
+                - ERROR: Error occurred during spam check
+
+        Note:
+            - Private messages are not checked for spam
+            - Spam detection must be enabled in chat settings
+            - If spam is detected, message is deleted and user is banned
         """
 
         chat = update.effective_chat
@@ -500,7 +689,26 @@ class SpamHandlers(BaseBotHandler):
         order=CommandHandlerOrder.TEST,
     )
     async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /test_spam <suite> [<args>] command."""
+        """
+        Handle /test_spam <suite> [<args>] command for testing spam features, dood!
+
+        Provides various test suites for debugging and monitoring spam detection.
+
+        Args:
+            update (Update): Telegram update object containing the command.
+            context (ContextTypes.DEFAULT_TYPE): Bot context with command arguments.
+
+        Command Format:
+            /test_spam <suite> [<args>]
+
+        Available Test Suites:
+            - bayesStats: Display Bayes filter statistics for all known chats
+
+        Note:
+            - This command is restricted to bot owners only
+            - Used for debugging and monitoring spam filter performance
+            - Results are sent as formatted JSON messages
+        """
         logger.debug(f"Got test command: {update}")
 
         message = update.message
@@ -560,7 +768,31 @@ class SpamHandlers(BaseBotHandler):
         order=CommandHandlerOrder.SPAM,
     )
     async def spam_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /spam command."""
+        """
+        Handle /spam command to manually mark messages as spam, dood!
+
+        Allows admins (and optionally regular users) to report spam messages
+        by replying to them with the /spam command.
+
+        Args:
+            update (Update): Telegram update object containing the command.
+            context (ContextTypes.DEFAULT_TYPE): Bot context for the command.
+
+        Command Format:
+            /spam (as reply to spam message)
+
+        Behavior:
+            - Must be used as a reply to the spam message
+            - Admins can always use this command
+            - Regular users can use it if ALLOW_USER_SPAM_COMMAND is enabled
+            - Marks message as spam with reason ADMIN or USER
+            - Deletes the spam message and bans the user
+            - Command message is automatically deleted to reduce clutter
+
+        Note:
+            - Admin reports have higher confidence score (100 vs 50)
+            - User reports require explicit permission in chat settings
+        """
 
         message = update.message
         if not message:
@@ -612,7 +844,36 @@ class SpamHandlers(BaseBotHandler):
         order=CommandHandlerOrder.SPAM,
     )
     async def pretrain_bayes_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /pretrain_bayes [<chatId>] command."""
+        """
+        Handle /pretrain_bayes [<chatId>] command for initial filter training, dood!
+
+        Trains the Bayes spam filter using up to 1000 historical messages from
+        the specified chat. This is useful for setting up spam detection in
+        existing chats with message history.
+
+        Args:
+            update (Update): Telegram update object containing the command.
+            context (ContextTypes.DEFAULT_TYPE): Bot context with optional chatId argument.
+
+        Command Format:
+            /pretrain_bayes [<chatId>]
+
+        Arguments:
+            chatId (optional): Target chat ID. Defaults to current chat.
+
+        Returns:
+            Sends a message with training statistics including:
+            - Number of spam messages learned
+            - Number of ham messages learned
+            - Total vocabulary size
+            - Spam/ham ratios
+
+        Note:
+            - Requires admin permissions in target chat
+            - Processes up to 1000 messages of each type
+            - Can be run multiple times to improve accuracy
+            - Only available in private chats with the bot
+        """
         message = update.message
         if not message:
             logger.error("Message undefined")
@@ -665,7 +926,37 @@ class SpamHandlers(BaseBotHandler):
         order=CommandHandlerOrder.SPAM,
     )
     async def learn_spam_ham_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /learn_<spam|ham> [<chatId>] command."""
+        """
+        Handle /learn_spam and /learn_ham commands for manual filter training, dood!
+
+        Allows admins to manually teach the Bayes filter by marking specific
+        messages as spam or ham (not spam). Useful for correcting filter mistakes
+        or training on edge cases.
+
+        Args:
+            update (Update): Telegram update object containing the command.
+            context (ContextTypes.DEFAULT_TYPE): Bot context with optional chatId argument.
+
+        Command Format:
+            /learn_spam [<chatId>] (as reply or quote)
+            /learn_ham [<chatId>] (as reply or quote)
+
+        Arguments:
+            chatId (optional): Target chat ID. Defaults to current chat or quoted message's chat.
+
+        Behavior:
+            - Must be used as reply to a message or with a quote
+            - Message text must be at least 3 characters long
+            - Learns the message for the specified chat's filter
+            - Saves to spam/ham database for future reference
+            - Requires admin permissions in target chat
+
+        Note:
+            - Works with both replies and external quotes
+            - External quotes automatically use the source chat ID
+            - Only available in private chats with the bot
+            - Useful for training on messages from other chats
+        """
         message = update.message
         if not message:
             logger.error("Message undefined")
@@ -759,7 +1050,41 @@ class SpamHandlers(BaseBotHandler):
         order=CommandHandlerOrder.SPAM,
     )
     async def get_spam_score_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /get_spam_score [<chatId>] command."""
+        """
+        Handle /get_spam_score command to analyze messages for spam, dood!
+
+        Analyzes a message using the Bayes filter and returns detailed spam
+        classification results without taking any action. Useful for testing
+        and debugging spam detection.
+
+        Args:
+            update (Update): Telegram update object containing the command.
+            context (ContextTypes.DEFAULT_TYPE): Bot context with optional chatId argument.
+
+        Command Format:
+            /get_spam_score [<chatId>] (as reply or quote)
+
+        Arguments:
+            chatId (optional): Target chat ID for classification context.
+                             Defaults to current chat or quoted message's chat.
+
+        Returns:
+            Sends a message with classification results including:
+            - Spam probability score
+            - Classification confidence
+            - Whether message would be flagged as spam
+
+        Behavior:
+            - Must be used as reply to a message or with a quote
+            - Message text must be at least 3 characters long
+            - Only analyzes, does not mark as spam or take action
+            - Uses the specified chat's trained filter
+
+        Note:
+            - Only available in private chats with the bot
+            - Works with both replies and external quotes
+            - Useful for testing filter accuracy before deployment
+        """
         message = update.message
         if not message:
             logger.error("Message undefined")
@@ -817,7 +1142,40 @@ class SpamHandlers(BaseBotHandler):
         order=CommandHandlerOrder.SPAM,
     )
     async def unban_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /unban [<@username>] command."""
+        """
+        Handle /unban command to unban users and correct false positives, dood!
+
+        Unbans a user from the chat and performs cleanup actions:
+        1. Unbans user from Telegram chat
+        2. Marks user as not spammer in database
+        3. Moves user's spam messages to ham database
+        4. Sets user metadata to skip future spam checks
+        5. Optionally retrains Bayes filter with corrected data
+
+        Args:
+            update (Update): Telegram update object containing the command.
+            context (ContextTypes.DEFAULT_TYPE): Bot context with optional username argument.
+
+        Command Format:
+            /unban [@username] (or as reply to user's message)
+
+        Arguments:
+            username (optional): Username of user to unban (with or without @).
+                               Can also be used as reply to banned user's message.
+
+        Behavior:
+            - Requires admin permissions in the chat
+            - User must exist in chat database
+            - Removes ban from Telegram
+            - Corrects spam/ham classification in database
+            - Marks user as trusted (notSpammer=True) to prevent future false positives
+
+        Note:
+            - Can be used with username argument or as reply
+            - Automatically retrains filter with corrected classifications
+            - User will not be checked for spam in future (until metadata is cleared)
+            - Useful for correcting false positives and improving filter accuracy
+        """
         message = update.message
         if not message:
             logger.error("Message undefined")
