@@ -89,7 +89,7 @@ def commandHandler(
             pass
     """
     if categories is None:
-        categories = {CommandCategory.DEFAULT}
+        categories = {CommandCategory.HIDDEN}
 
     def decorator(func: Callable) -> Callable:
         # Store metadata as an attribute on the function

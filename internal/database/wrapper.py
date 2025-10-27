@@ -809,6 +809,34 @@ class DatabaseWrapper:
             logger.error(f"Failed to get chat messages for chat {chatId}, user {userId}: {e}")
             return []
 
+    def updateChatMessageCategory(
+        self,
+        chatId: int,
+        messageId: int,
+        messageCategory: MessageCategory,
+    ) -> bool:
+        """Update the category of a chat message."""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE chat_messages
+                    SET category = :category
+                    WHERE
+                        chat_id = :chatId
+                        AND message_id = :messageId
+                """,
+                    {
+                        "chatId": chatId,
+                        "messageId": messageId,
+                        "category": messageCategory,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update category for message {messageId} in chat {chatId}: {e}")
+            return False
+
     ###
     # Chat Users manipulation functions
     ###

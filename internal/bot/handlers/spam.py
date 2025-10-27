@@ -331,7 +331,7 @@ class SpamHandlers(BaseBotHandler):
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Возможно спам (Вероятность: {spamScore:.3f}, порог: {warnTreshold})\n"
-                "(Когда-нибудь тут будут кнопки спам\\не спам)",
+                "(Когда-нибудь тут будут кнопки спам/не спам)",
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
             # TODO: Add SPAM/Not-SPAM buttons
@@ -403,7 +403,8 @@ class SpamHandlers(BaseBotHandler):
                 return
 
         # Learn from spam message using Bayes filter, dood!
-        if ensuredMessage.messageText and chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool():
+        doBayesLearn = chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool()
+        if ensuredMessage.messageText and doBayesLearn:
             try:
                 await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
                 logger.debug(f"Bayes filter learned spam message: {ensuredMessage.messageId}, dood!")
@@ -432,16 +433,44 @@ class SpamHandlers(BaseBotHandler):
         self.db.markUserIsSpammer(chatId=chatId, userId=userId, isSpammer=True)
         logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.chat}")
         if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
+            maxMessagesToDelete = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
+            # Cap max messages to delete by some saint number
+            maxMessagesToDelete = min(max(maxMessagesToDelete, 1), 32)
             userMessages = self.db.getChatMessagesByUser(
                 chatId=chatId,
                 userId=userId,
-                limit=10,  # Do not delete more that 10 messages
+                limit=maxMessagesToDelete,
             )
             logger.debug(f"Trying to delete more user messages: {userMessages}")
             messageIds: List[int] = []
             for msg in userMessages:
                 if msg["message_id"] != ensuredMessage.messageId:
                     messageIds.append(msg["message_id"])
+
+                    # Auto learn user messages as SPAM
+                    if msg["message_text"] and doBayesLearn:
+                        try:
+                            await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
+                            logger.debug(f"Bayes filter learned spam message: {ensuredMessage.messageId}, dood!")
+                        except Exception as e:
+                            logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
+                    # And add message to spam-base
+                    if msg["message_text"]:
+                        self.db.addSpamMessage(
+                            chatId=msg["chat_id"],
+                            userId=msg["user_id"],
+                            messageId=msg["message_id"],
+                            messageText=msg["message_text"],
+                            spamReason=reason,
+                            score=score if score is not None else 0,
+                        )
+                # Update message category to USER_SPAM
+                # TODO: We can do bulk upgrade, but i don't care, actually
+                self.db.updateChatMessageCategory(
+                    chatId=msg["chat_id"],
+                    messageId=msg["message_id"],
+                    messageCategory=MessageCategory.USER_SPAM,
+                )
 
             try:
                 if messageIds:
