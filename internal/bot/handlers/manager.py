@@ -27,6 +27,7 @@ from .weather import WeatherHandler
 from .message_preprocessor import MessagePreprocessorHandler
 from .user_data import UserDataHandler
 from .dev_commands import DevCommandsHandler
+from .media import MediaHandler
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             #
             UserDataHandler(configManager, database, llmManager),
             DevCommandsHandler(configManager, database, llmManager),
+            MediaHandler(configManager, database, llmManager),
             # Special case - help command require all command handlers information
             HelpHandler(configManager, database, llmManager, self),
         ]

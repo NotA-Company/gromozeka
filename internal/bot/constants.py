@@ -6,6 +6,7 @@ import telegram.constants
 
 # Emoji constants
 DUNNO_EMOJI = "🤷‍♂️"
+ROBOT_EMOJI = "🤖"
 CHAT_ICON = "👥"
 PRIVATE_ICON = "👤"
 
