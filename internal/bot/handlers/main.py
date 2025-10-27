@@ -7,42 +7,29 @@ import logging
 import re
 
 import random
-import time
 from typing import Any, Dict, List, Optional
 
-import requests
-
-from telegram import Chat, Update, Message, User
+from telegram import Chat, Update
 from telegram.ext import ContextTypes
 
+from internal.config.manager import ConfigManager
+from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm.service import LLMService
-
 from lib.ai.abstract import AbstractModel
+from lib.ai.manager import LLMManager
 from lib.ai.models import (
-    LLMFunctionParameter,
-    LLMParameterType,
     ModelMessage,
     ModelRunResult,
     ModelResultStatus,
 )
-from lib.ai.manager import LLMManager
-import lib.utils as utils
 
-from internal.config.manager import ConfigManager
-
-from internal.database.wrapper import DatabaseWrapper
 from internal.database.models import ChatMessageDict, MessageCategory
 
 from ..models import (
     ChatSettingsKey,
-    CommandCategory,
-    CommandHandlerOrder,
-    DelayedTask,
-    DelayedTaskFunction,
     EnsuredMessage,
     LLMMessageFormat,
     MessageType,
-    commandHandler,
 )
 from .. import constants
 from .base import BaseBotHandler, HandlerResultStatus
@@ -54,90 +41,12 @@ class BotHandlers(BaseBotHandler):
     """Contains all bot command and message handlers, dood!"""
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
-        """Initialize handlers with database and LLM model."""
-        # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
 
         self.llmService = LLMService.getInstance()
 
-        self.llmService.registerTool(
-            name="get_url_content",
-            description="Get the content of a URL",
-            parameters=[
-                LLMFunctionParameter(
-                    name="url",
-                    description="The URL to get the content from",
-                    type=LLMParameterType.STRING,
-                    required=True,
-                ),
-            ],
-            handler=self._llmToolGetUrlContent,
-        )
-
-        self.llmService.registerTool(
-            name="get_current_datetime",
-            description="Get current date and time",
-            parameters=[],
-            handler=self._llmToolGetCurrentDateTime,
-        )
-
-        self.queueService.registerDelayedTaskHandler(
-            DelayedTaskFunction.SEND_MESSAGE,
-            self._dqSendMessageHandler,
-        )
-        self.queueService.registerDelayedTaskHandler(
-            DelayedTaskFunction.DELETE_MESSAGE,
-            self._dqDeleteMessageHandler,
-        )
-
     ###
-    # Delayed Queue Handlers
-    ###
-    async def _dqSendMessageHandler(self, delayedTask: DelayedTask) -> None:
-        kwargs = delayedTask.kwargs
-        message = Message(
-            message_id=kwargs["messageId"],
-            date=datetime.datetime.now(),
-            chat=Chat(id=kwargs["chatId"], type=kwargs["chatType"]),
-            from_user=User(id=kwargs["userId"], first_name="", is_bot=False),
-            text=kwargs["messageText"],
-            message_thread_id=kwargs["threadId"],
-        )
-        message.set_bot(self._bot)
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-        await self.sendMessage(
-            replyToMessage=ensuredMessage,
-            messageText=kwargs["messageText"],
-            messageCategory=kwargs["messageCategory"],
-        )
-
-    async def _dqDeleteMessageHandler(self, delayedTask: DelayedTask) -> None:
-        kwargs = delayedTask.kwargs
-        if self._bot is not None:
-            await self._bot.delete_message(chat_id=kwargs["chatId"], message_id=kwargs["messageId"])
-        else:
-            logger.error(
-                "Bot is not initialized, can't delete message " f"{kwargs['messageId']} in chat {kwargs['chatId']}"
-            )
-
-    ###
-    # LLM Tool-Calling handlers
-    ###
-
-    async def _llmToolGetUrlContent(self, extraData: Optional[Dict[str, Any]], url: str, **kwargs) -> str:
-        # TODO: Check if content is text content
-        try:
-            return str(requests.get(url).content)
-        except Exception as e:
-            logger.error(f"Error getting content from {url}: {e}")
-            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
-
-    async def _llmToolGetCurrentDateTime(self, extraData: Optional[Dict[str, Any]], **kwargs) -> str:
-        now = datetime.datetime.now(datetime.timezone.utc)
-        return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
-
-    ###
-    # Some message helpers
+    # Some LLM helpers
     ###
 
     async def _generateTextViaLLM(
@@ -269,28 +178,6 @@ class BotHandlers(BaseBotHandler):
             )
             is not None
         )
-
-    async def _sendDelayedMessage(
-        self,
-        ensuredMessage: EnsuredMessage,
-        delayedUntil: float,
-        messageText: str,
-        messageCategory: MessageCategory = MessageCategory.BOT,
-    ) -> None:
-        """Send a message after a delay."""
-
-        functionName = DelayedTaskFunction.SEND_MESSAGE
-        kwargs = {
-            "messageText": messageText,
-            "messageCategory": messageCategory,
-            "messageId": ensuredMessage.messageId,
-            "threadId": ensuredMessage.threadId,
-            "chatId": ensuredMessage.chat.id,
-            "userId": ensuredMessage.user.id,
-            "chatType": ensuredMessage.chat.type,
-        }
-
-        return await self.queueService.addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
 
     ###
     # Handling messages
@@ -702,152 +589,3 @@ class BotHandlers(BaseBotHandler):
             return False
 
         return True
-
-    ###
-    # COMMANDS Handlers
-    ###
-
-    @commandHandler(
-        commands=("start",),
-        shortDescription="Start bot interaction",
-        helpMessage=": Начать работу с ботом.",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.FIRST,
-    )
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /start command."""
-        user = update.effective_user
-        if not user or not update.message:
-            logger.error("User or message undefined")
-            return
-
-        welcome_message = (
-            f"Привет! {user.first_name}! 👋\n\n"
-            "Я Громозека: лучший бот для Телеграма, что когда либо был, есть или будет.\n\n"
-            "Что бы узнать, что я умею, можешь отправить команду /help"
-        )
-
-        await update.message.reply_text(welcome_message)
-        logger.info(f"User {user.id} ({user.username}) started the bot")
-
-    @commandHandler(
-        commands=("remind",),
-        shortDescription="<delay> [<message>] - Remind me after given delay with message or replied message/quote",
-        helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через указанное время "
-        "(можно использовать цитирование или ответ на сообщение).",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
-    )
-    async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /remind <time> [<message>] command."""
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
-
-        delaySecs: int = 0
-        try:
-            if not context.args:
-                raise ValueError("No time specified")
-            delayStr = context.args[0]
-            delaySecs = utils.parseDelay(delayStr)
-        except Exception as e:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=(
-                    "Для команды `/remind` нужно указать время, через которое отправить "
-                    "напоминание в одном из форматов:\n"
-                    "1. `DDdHHhMMmSSs`\n"
-                    "2. `HH:MM[:SS]`\n"
-                ),
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            logger.error(f"Error while handling /remind command: {type(e).__name__}{e}")
-            # TODO: comment later after debug
-            logger.exception(e)
-            return
-
-        reminderText: Optional[str] = None
-        if len(context.args) > 1:
-            reminderText = " ".join(context.args[1:])
-
-        if reminderText is None and ensuredMessage.quoteText:
-            reminderText = ensuredMessage.quoteText
-
-        if reminderText is None and ensuredMessage.replyText:
-            reminderText = ensuredMessage.replyText
-
-        if reminderText is None:
-            reminderText = "⏰ Напоминание"
-
-        delayedTime = time.time() + delaySecs
-        await self._sendDelayedMessage(
-            ensuredMessage,
-            delayedUntil=delayedTime,
-            messageText=reminderText,
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-        )
-
-        delayedDT = datetime.datetime.fromtimestamp(delayedTime, tz=datetime.timezone.utc)
-
-        await self.sendMessage(
-            ensuredMessage,
-            messageText=f"Напомню в {delayedDT.strftime('%Y-%m-%d %H:%M:%S%z')}",
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-        )
-
-    @commandHandler(
-        commands=("list_chats",),
-        shortDescription="[all] - List chats, where bot seen you",
-        helpMessage=": Вывести список чатов, где бот вас видел.",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.TECHNICAL,
-    )
-    async def list_chats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the /list_chats [all] command."""
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
-        listAll = context.args and context.args[0].strip().lower() == "all"
-
-        chatType = ensuredMessage.chat.type
-        if chatType != Chat.PRIVATE:
-            logger.error(f"Unsupported chat type for /list_chats command: {chatType}")
-            return
-
-        if listAll:
-            listAll = await self.isAdmin(ensuredMessage.user, None, True)
-
-        knownChats = self.db.getAllGroupChats() if listAll else self.db.getUserChats(ensuredMessage.user.id)
-
-        resp = "Список доступных чатов:\n\n"
-
-        for chat in knownChats:
-            chatTitle: str = f"#{chat['chat_id']}"
-            if chat["title"]:
-                chatTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
-            elif chat["username"]:
-                chatTitle = f"{constants.PRIVATE_ICON} {chat['username']} ({chat["type"]})"
-            resp += f"* ID: #`{chat['chat_id']}`, Name: `{chatTitle}`\n"
-
-        await self.sendMessage(ensuredMessage, resp, messageCategory=MessageCategory.BOT_COMMAND_REPLY)
