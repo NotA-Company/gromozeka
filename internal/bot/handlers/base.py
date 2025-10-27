@@ -18,6 +18,7 @@ from telegram.ext import ExtBot, ContextTypes
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
 
+from internal.bot.models.command_handlers import CallbackDataDict
 from internal.services.cache import CacheService
 from internal.services.cache.types import UserDataType, UserDataValueType
 from internal.services.queue.service import QueueService, makeEmptyAsyncTask
@@ -74,6 +75,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self.db = database
         self.llmManager = llmManager
 
+        # TODO: Put all botOwners and chatDefaults to some service to not duplicate it for each handler class
         # Init different defaults
         self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
 
@@ -780,7 +782,10 @@ class BaseBotHandler(CommandHandlerMixin):
         return HandlerResultStatus.SKIPPED
 
     async def buttonHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str | int, str | int | float | bool | None]
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        data: CallbackDataDict,
     ) -> HandlerResultStatus:
         """Parses the CallbackQuery and updates the message text."""
         # By default, skip processing

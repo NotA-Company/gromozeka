@@ -17,9 +17,9 @@ from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update, M
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
-from internal.bot.handlers.base import HandlerResultStatus
+from internal.bot.models import CallbackDataDict
 
-from .base import BaseBotHandler
+from .base import BaseBotHandler, HandlerResultStatus
 from internal.services.cache.types import UserActiveActionEnum
 from lib.ai.models import (
     ModelMessage,
@@ -882,7 +882,10 @@ class SummarizationHandler(BaseBotHandler):
                 logger.error(f"Unsupported chat type for Summarization: {chatType}")
 
     async def buttonHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str | int, str | int | float | bool | None]
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        data: CallbackDataDict,
     ) -> HandlerResultStatus:
         """
         Handle button callbacks for summarization wizard, dood!
