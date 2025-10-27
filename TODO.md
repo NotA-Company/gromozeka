@@ -10,4 +10,4 @@
 - [x] Add Bayes filtering into spam-detection
 - [x] Add some AI support via YandexCloud
 - [x] Add Summarization caching support (chatId+prompt+dates)
-- [ ] On /spam change message_category in DB as well (probably for all messages?)
+- [x] On /spam change message_category in DB as well (probably for all messages?)
