@@ -30,6 +30,7 @@ from .command_handlers import (
     commandHandler,
     CommandCategory,
     CommandHandlerOrder,
+    CallbackDataDict,
 )
 
 
@@ -60,6 +61,7 @@ __all__ = [
     "commandHandler",
     "CommandCategory",
     "CommandHandlerOrder",
+    "CallbackDataDict",
     # Chat Settings
     "ChatSettingsKey",
     "ChatSettingsValue",

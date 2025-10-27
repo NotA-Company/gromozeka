@@ -18,9 +18,9 @@ from typing import Any, Dict, List, Optional
 from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update, Message, User
 from telegram.ext import ContextTypes
 
-from internal.bot.handlers.base import HandlerResultStatus
+from internal.bot.models.command_handlers import CallbackDataDict
 
-from .base import BaseBotHandler
+from .base import BaseBotHandler, HandlerResultStatus
 from internal.services.cache.types import UserActiveActionEnum
 
 from lib.markdown import markdown_to_markdownv2
@@ -590,7 +590,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
     async def buttonHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str | int, str | int | float | bool | None]
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: CallbackDataDict
     ) -> HandlerResultStatus:
         """
         Handle inline keyboard button callbacks for configuration, dood!
