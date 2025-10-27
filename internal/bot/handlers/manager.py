@@ -26,6 +26,7 @@ from .summarization import SummarizationHandler
 from .weather import WeatherHandler
 from .message_preprocessor import MessagePreprocessorHandler
 from .user_data import UserDataHandler
+from .dev_commands import DevCommandsHandler
 
 logger = logging.getLogger(__name__)
 
@@ -53,22 +54,21 @@ class HandlersManager(CommandHandlerGetterInterface):
             SummarizationHandler(configManager, database, llmManager),
             # Should be before other handlers to ensure message saving + media processing
             MessagePreprocessorHandler(configManager, database, llmManager),
+            #
             UserDataHandler(configManager, database, llmManager),
+            DevCommandsHandler(configManager, database, llmManager),
+            # Special case - help command require all command handlers information
+            HelpHandler(configManager, database, llmManager, self),
         ]
 
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
         openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
         if openWeatherMapConfig.get("enabled", False):
             self.handlers.append(WeatherHandler(configManager, database, llmManager))
-        self.handlers.extend(
-            [
-                BotHandlers(
-                    configManager, database, llmManager
-                ),  # Should be last messageHandler as it can handle any message
-                HelpHandler(
-                    configManager, database, llmManager, self
-                ),  # Special case - help command require all command handlers information
-            ]
+
+        self.handlers.append(
+            # Should be last messageHandler as it can handle any message
+            BotHandlers(configManager, database, llmManager)
         )
 
     def injectBot(self, bot: ExtBot) -> None:
