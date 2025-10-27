@@ -27,6 +27,7 @@ import json
 import logging
 import time
 import uuid
+import inspect
 from threading import RLock
 from typing import Any, Dict, List, Optional
 
@@ -162,12 +163,13 @@ class QueueService:
         if self.asyncTasksQueue.qsize() > constants.MAX_QUEUE_LENGTH:
             logger.info("Queue is full, processing oldest task")
             oldTask = await self.asyncTasksQueue.get()
-            if not isinstance(oldTask, asyncio.Task):
-                logger.error(f"Task {oldTask} is not a task, but a {type(oldTask)}")
+            if not inspect.isawaitable(oldTask):
+                logger.info(f"Task {oldTask} is not awaitable, but a {type(oldTask)}")
             else:
                 await oldTask
             self.asyncTasksQueue.task_done()
 
+        # logger.info(f"Adding task {type(task)}({task}) to background tasks queue")
         await self.asyncTasksQueue.put(task)
         self.queueLastUpdated = time.time()
 
@@ -212,12 +214,14 @@ class QueueService:
         try:
             while True:
                 task = await self.asyncTasksQueue.get_nowait()
-                if not isinstance(task, asyncio.Task):
-                    logger.error(f"Task {task} is not a task, but a {type(task)}")
+                if not inspect.isawaitable(task):
+                    # By some reason all finished tasks magically converts to it's results 
+                    logger.warning(f"Task {task} is not awaitable, but a {type(task)}")
                 else:
                     try:
                         logger.debug(f"Awaiting task {task}...")
-                        await task
+                        ret = await task
+                        logger.debug(f"Task {task} returned {ret}")
                     except Exception as e:
                         logger.error(f"Error in background task: {e}")
                         logger.exception(e)
