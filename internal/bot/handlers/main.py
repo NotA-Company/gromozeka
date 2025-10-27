@@ -32,14 +32,11 @@ from lib.ai.models import (
     ModelResultStatus,
 )
 from lib.ai.manager import LLMManager
-from lib.openweathermap.client import OpenWeatherMapClient
-from lib.openweathermap.models import CombinedWeatherResult
 import lib.utils as utils
 
 from internal.config.manager import ConfigManager
 
 from internal.database.wrapper import DatabaseWrapper
-from internal.database.openweathermap_cache import DatabaseWeatherCache
 from internal.database.models import (
     ChatMessageDict,
     MessageCategory,
@@ -69,18 +66,6 @@ class BotHandlers(BaseBotHandler):
         """Initialize handlers with database and LLM model."""
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
-
-        openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
-        self.openWeatherMapClient: Optional[OpenWeatherMapClient] = None
-        if openWeatherMapConfig.get("enabled", False):
-            self.openWeatherMapClient = OpenWeatherMapClient(
-                apiKey=openWeatherMapConfig["api-key"],
-                cache=DatabaseWeatherCache(self.db),
-                geocodingTTL=openWeatherMapConfig.get("geocoding-cache-ttl", None),
-                weatherTTL=openWeatherMapConfig.get("weather-cache-ttl", None),
-                requestTimeout=openWeatherMapConfig.get("request-timeout", 10),
-                defaultLanguage=openWeatherMapConfig.get("default-language", "ru"),
-            )
 
         self.llmService = LLMService.getInstance()
 
@@ -159,53 +144,6 @@ class BotHandlers(BaseBotHandler):
             ],
             handler=self._llmToolSetUserData,
         )
-        if self.openWeatherMapClient is not None:
-            self.llmService.registerTool(
-                name="get_weather_by_city",
-                description=(
-                    "Get weather and forecast for given city. Return JSON of current weather "
-                    "and weather forecast for next following days. "
-                    "Temperature returned in Celsius."
-                ),
-                parameters=[
-                    LLMFunctionParameter(
-                        name="city",
-                        description="City to get weather in",
-                        type=LLMParameterType.STRING,
-                        required=True,
-                    ),
-                    LLMFunctionParameter(
-                        name="countryCode",
-                        description="ISO 3166 country code of city",
-                        type=LLMParameterType.STRING,
-                        required=False,
-                    ),
-                ],
-                handler=self._llmToolGetWeatherByCity,
-            )
-            self.llmService.registerTool(
-                name="get_weather_by_coords",
-                description=(
-                    "Get weather and forecast for given location. Return JSON of current weather "
-                    "and weather forecast for next following days. "
-                    "Temperature returned in Celsius."
-                ),
-                parameters=[
-                    LLMFunctionParameter(
-                        name="lat",
-                        description="Latitude of location",
-                        type=LLMParameterType.NUMBER,
-                        required=True,
-                    ),
-                    LLMFunctionParameter(
-                        name="lon",
-                        description="Longitude of location",
-                        type=LLMParameterType.NUMBER,
-                        required=True,
-                    ),
-                ],
-                handler=self._llmToolGetWeatherByCoords,
-            )
 
         self.llmService.registerTool(
             name="get_current_datetime",
@@ -344,43 +282,6 @@ class BotHandlers(BaseBotHandler):
         )
         return utils.jsonDumps({"done": True, "key": key, "data": newData})
 
-    async def _llmToolGetWeatherByCity(
-        self, extraData: Optional[Dict[str, Any]], city: str, countryCode: Optional[str] = None, **kwargs
-    ) -> str:
-        try:
-            if self.openWeatherMapClient is None:
-                return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
-
-            ret = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
-            if ret is None:
-                return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
-
-            # Drop useless local_names to decrease context
-            for lang in list(ret["location"]["local_names"].keys()):
-                if lang not in constants.GEOCODER_LOCATION_LANGS:
-                    ret["location"]["local_names"].pop(lang, None)
-
-            return utils.jsonDumps({**ret, "done": True})
-        except Exception as e:
-            logger.error(f"Error getting weather: {e}")
-            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
-
-    async def _llmToolGetWeatherByCoords(
-        self, extraData: Optional[Dict[str, Any]], lat: float, lon: float, **kwargs
-    ) -> str:
-        try:
-            if self.openWeatherMapClient is None:
-                return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
-
-            ret = await self.openWeatherMapClient.getWeather(lat, lon)
-            if ret is None:
-                return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
-
-            return utils.jsonDumps({**ret, "done": True})
-        except Exception as e:
-            logger.error(f"Error getting weather: {e}")
-            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
-
     async def _llmToolGetCurrentDateTime(self, extraData: Optional[Dict[str, Any]], **kwargs) -> str:
         now = datetime.datetime.now(datetime.timezone.utc)
         return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
@@ -512,29 +413,6 @@ class BotHandlers(BaseBotHandler):
                 tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON,
             )
             is not None
-        )
-
-    async def _formatWeather(self, weatherData: CombinedWeatherResult) -> str:
-        """Format weather data."""
-        cityName = weatherData["location"]["local_names"].get("ru", weatherData["location"]["name"])
-        country = weatherData["location"]["country"]
-        # TODO: add convertation from code to name
-        weatherCurrent = weatherData["weather"]["current"]
-        weatherTime = str(datetime.datetime.fromtimestamp(weatherCurrent["dt"], tz=datetime.timezone.utc))
-        pressureMmHg = int(weatherCurrent["pressure"] * constants.HPA_TO_MMHG)
-        sunriseTime = datetime.datetime.fromtimestamp(weatherCurrent["sunrise"], tz=datetime.timezone.utc).timetz()
-        sunsetTime = datetime.datetime.fromtimestamp(weatherCurrent["sunset"], tz=datetime.timezone.utc).timetz()
-        return (
-            f"Погода в городе **{cityName}**, {country} на **{weatherTime}**:\n\n"
-            f"{weatherCurrent['weather_description'].capitalize()}, облачность {weatherCurrent['clouds']}%\n"
-            f"**Температура**: _{weatherCurrent['temp']} °C_\n"
-            f"**Ощущается как**: _{weatherCurrent['feels_like']} °C_\n"
-            f"**Давление**: _{pressureMmHg} мм рт. ст._\n"
-            f"**Влажность**: _{weatherCurrent['humidity']}%_\n"
-            f"**УФ-Индекс**: _{weatherCurrent['uvi']}_\n"
-            f"**Ветер**: _{weatherCurrent['wind_deg']}°, {weatherCurrent['wind_speed']} м/с_\n"
-            f"**Восход**: _{sunriseTime}_\n"
-            f"**Закат**: _{sunsetTime}_\n"
         )
 
     ###
@@ -879,54 +757,6 @@ class BotHandlers(BaseBotHandler):
                 )
 
         # End of What There
-
-        # Weather
-        weatherRequestList = [
-            "какая погода в городе ",
-            "какая погода в ",
-            "погода в городе ",
-            "погода в ",
-        ]
-        isWeatherRequest = False
-        reqContent = ""
-        for weatherReq in weatherRequestList:
-            if messageTextLower.startswith(weatherReq):
-                reqContent = messageText[len(weatherReq) :].strip().rstrip(" ?")
-                if reqContent:
-                    isWeatherRequest = True
-                    break
-
-        if isWeatherRequest and self.openWeatherMapClient is not None:
-            weatherLocation = reqContent.split(",")
-            city = weatherLocation[0].strip()
-            countryCode = None
-            if len(weatherLocation) > 1:
-                countryCode = weatherLocation[1].strip()
-
-            # TODO: Try to convert city to initial form (Москве -> Москва)
-            # TODO: Try to convert country to country code (Россия -> RU)
-
-            weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
-            if weatherData is not None:
-                return (
-                    await self.sendMessage(
-                        ensuredMessage,
-                        await self._formatWeather(weatherData),
-                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    )
-                    is not None
-                )
-
-            #  else:
-            #     #  Do not return. Let LLM to make better request
-            #     return (
-            #         await self._sendMessage(
-            #             ensuredMessage,
-            #             f"Не удалось получить погоду для города {city}",
-            #             messageCategory=MessageCategory.BOT_ERROR,
-            #         )
-            #         is not None
-            #     )
 
         # Handle LLM Action
         reqMessages = [
@@ -1788,88 +1618,6 @@ class BotHandlers(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             addMessagePrefix=imgAddPrefix,
         )
-
-    @commandHandler(
-        commands=("weather",),
-        shortDescription="<city> [<countryCode>] - Get weather for given city",
-        helpMessage=" `<city>` `[<countryCode>]`: Показать погоду в указанном городе "
-        "(можно добавить 2х-буквенный код страны для уточнения).",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
-    )
-    async def weather_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /weather <city> [<country>] command."""
-        # Get Weather for given city (and country)
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_WEATHER].toBool() and not await self.isAdmin(
-            ensuredMessage.user, None, True
-        ):
-            logger.info(f"Unauthorized /weather command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
-            return
-
-        city = ""
-        countryCode: Optional[str] = None
-
-        if context.args:
-            city = context.args[0]
-            if len(context.args) > 1:
-                countryCode = context.args[1]
-        else:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Необходимо указать город для получения погоды.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        if self.openWeatherMapClient is None:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Провайдер погоды не настроен.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        try:
-            weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
-            if weatherData is None:
-                await self.sendMessage(
-                    ensuredMessage,
-                    f"Не удалось получить погоду для города {city}",
-                    messageCategory=MessageCategory.BOT_ERROR,
-                )
-                return
-
-            resp = await self._formatWeather(weatherData)
-
-            await self.sendMessage(
-                ensuredMessage,
-                resp,
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-            )
-        except Exception as e:
-            logger.error(f"Error while getting weather: {e}")
-            logger.exception(e)
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Ошибка при получении погоды.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
 
     @commandHandler(
         commands=("remind",),

@@ -3,11 +3,12 @@ EnsuredMessage: wrapper around telegram.Message
 """
 
 import asyncio
+from dataclasses import dataclass
 import datetime
 import logging
 
 import time
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 from telegram import Chat, Message, User
 import telegram.constants
@@ -49,6 +50,14 @@ class MessageSender:
     @classmethod
     def fromChat(cls, chat: Chat) -> "MessageSender":
         return cls(chat.id, chat.effective_name or "", f"@{chat.username}" if chat.username else "")
+
+
+@dataclass
+class MentionCheckResult:
+    byNick: Optional[Tuple[int, int]] = None
+    byName: Optional[Tuple[int, int]] = None
+
+    restText: Optional[str] = None
 
 
 """
@@ -119,6 +128,8 @@ class EnsuredMessage:
         "mediaId",
         "_mediaProcessingInfo",
         "userData",
+        "_rawMessageText",
+        "_mentionCheckResult",
     )
 
     def __init__(
@@ -140,6 +151,7 @@ class EnsuredMessage:
         self.messageId: int = messageId
         self.date: datetime.datetime = date
         self.messageText: str = messageText
+        self._rawMessageText: str = messageText  # Message text without any formating
         self.messageType: MessageType = messageType
 
         # If this is reply, then set replyId and replyText
@@ -158,6 +170,7 @@ class EnsuredMessage:
         self._mediaProcessingInfo: Optional[MediaProcessingInfo] = None
 
         self.userData: Optional[Dict[str, Any]] = None
+        self._mentionCheckResult: Optional[MentionCheckResult] = None
 
     @classmethod
     def fromMessage(cls, message: Message) -> "EnsuredMessage":
@@ -170,13 +183,16 @@ class EnsuredMessage:
 
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
+        rawMessageText: str = ""  # Message text without any formating
         if message.text:
             # TODO: think about parsing Entities to Markdown, but without escaping
             # messageText = message.text_markdown_v2
             messageText = message.text
+            rawMessageText = message.text
         elif message.caption:
             # messageText = message.caption_markdown_v2
             messageText = message.caption
+            rawMessageText = message.caption
 
         # If there are photo in message, set proper type + handle caption (if any) as messageText
         if message.photo:
@@ -259,6 +275,7 @@ class EnsuredMessage:
             messageType=messageType,
         )
         ensuredMessage.setBaseMessage(message)
+        ensuredMessage.setRawMessageText(rawMessageText)
 
         # If this is reply, then set replyId and replyText
         if message.reply_to_message:
@@ -339,6 +356,9 @@ class EnsuredMessage:
 
     def setBaseMessage(self, message: Message):
         self._message = message
+
+    def setRawMessageText(self, rawMessageText: str):
+        self._rawMessageText = rawMessageText
 
     def setMediaId(self, mediaId: str):
         self.mediaId = mediaId
@@ -515,3 +535,78 @@ class EnsuredMessage:
             self.sender = sender.copy()
         else:
             raise ValueError(f"Invalid sender type: {type(sender)}")
+
+    def clearMentionCheckResult(self) -> None:
+        self._mentionCheckResult = None
+
+    def checkHasMention(self, username: Optional[str], customMentions: Sequence[str]) -> MentionCheckResult:
+        if self._mentionCheckResult is not None:
+            # We suppose, that we'll check for mentions for the same
+            # username and customMentions. If not - call clearMentionCheckResult() before (and after)
+            return self._mentionCheckResult
+        ret = MentionCheckResult()
+
+        customMentions = [v.strip().lower() for v in customMentions if v]
+        if not customMentions:
+            logger.error("No custom mentions found")
+
+        messageText = self._rawMessageText
+        messageTextLower = messageText.lower()
+        offset = 0
+
+        # Check if bot has been mentioned in the message by username
+        if username is not None:
+            username = username.strip().lower()
+
+            # In theory we can use built-it entities parser, but:
+            #  1. messageText can be either text or caption
+            #  2. Because of UTF-8 variable chars length, it is possible,
+            #       that etity position differs from it's position in utf-8 string.
+            # # If there is base message, use built-in mention parser:
+            # if self._message is not None:
+            #     message = self._message
+            #     for entity in message.entities:
+            #         if entity.type == telegram.constants.MessageEntityType.MENTION:
+            #             mentionText = message.parse_entity(entity)
+            #             if mentionText.lower() == username:
+            #                 ret.byName = (entity.offset, entity.offset + entity.length)
+            #                 break
+            # else:
+            if username in messageTextLower:
+                try:
+                    startPos = messageTextLower.index(username)
+                    ret.byName = (startPos, startPos + len(username))
+                except ValueError as e:
+                    logger.error(f"Username {username} found in message {messageText}, but exception was raised: {e}")
+                ret.byName = (messageTextLower.index(username), len(username))
+
+            # If username is on begin of message, strip it before checking for custom mentions
+            if messageTextLower.lstrip().startswith(username):
+                origLen = len(messageText)
+                messageText = messageText[len(username) :].lstrip()
+                messageTextLower = messageText.lower()
+                # We need to save offset to set proper offset for custom mentions
+                offset += origLen - len(messageText)
+
+        for mention in customMentions:
+            if not mention:
+                logger.error(f"Empty custom mention: {mention}")
+                continue
+            mentionLen = len(mention)
+            if messageTextLower.startswith(mention) and (
+                len(messageTextLower) <= mentionLen or messageTextLower[mentionLen] in [" ", ",", "." ":", "\n"]
+            ):
+                ret.byNick = (offset, offset + mentionLen)
+                # origLen = len(messageText)
+                messageText = messageText[len(mention) :].lstrip()
+                # messageTextLower = messageText.lower()
+                # # We need to save offset to set proper offset for ...
+                # offset += origLen - len(messageText)
+                break
+
+        if ret.byName or ret.byNick:
+            ret.restText = messageText
+            logger.debug(f"Mention found: {ret}")
+
+        self._mentionCheckResult = ret
+        return ret

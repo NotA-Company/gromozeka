@@ -18,7 +18,6 @@ from telegram.ext import ExtBot, ContextTypes
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
 
-from internal.bot.models.command_handlers import CallbackDataDict
 from internal.services.cache import CacheService
 from internal.services.cache.types import UserDataType, UserDataValueType
 from internal.services.queue.service import QueueService, makeEmptyAsyncTask
@@ -41,7 +40,9 @@ from ..models import (
     ChatSettingsValue,
     CommandHandlerInfo,
     CommandHandlerMixin,
+    CallbackDataDict,
     EnsuredMessage,
+    MentionCheckResult,
     MessageType,
     MediaProcessingInfo,
     UserMetadataDict,
@@ -175,6 +176,19 @@ class BaseBotHandler(CommandHandlerMixin):
 
     def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
         ensuredMessage.setUserData(self.getUserData(ensuredMessage.chat.id, ensuredMessage.user.id))
+
+    def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
+        """Check if the ensuredMessage mentions the bot."""
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+
+        username: Optional[str] = None
+        if self._bot:
+            username = "@" + self._bot.username
+
+        return ensuredMessage.checkHasMention(
+            username=username,
+            customMentions=chatSettings[ChatSettingsKey.BOT_NICKNAMES].toList(),
+        )
 
     ###
     # Different helpers
