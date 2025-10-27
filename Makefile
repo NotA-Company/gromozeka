@@ -6,6 +6,7 @@ PIP = $(VENV_PATH)/bin/pip
 PYTHON = $(VENV_PATH)/bin/python
 FLAKE8 = $(VENV_PATH)/bin/flake8
 BLACK = $(VENV_PATH)/bin/black
+ISORT = $(VENV_PATH)/bin/isort
 PYRIGHT = $(VENV_PATH)/bin/pyright
 
 # Targets
@@ -36,11 +37,13 @@ run:
 lint:
 #	$(FLAKE8) --exclude=$(VENV_PATH) .
 	$(FLAKE8) .
+	$(ISORT) --check-only --diff .
 	$(PYRIGHT)
 
-# Format Python files using black
+# Format Python files using black and isort
 format:
-	$(BLACK) --exclude venv .
+	$(ISORT) .
+	$(BLACK) .
 
 # Run all tests
 test:
