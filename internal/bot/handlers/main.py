@@ -9,7 +9,7 @@ import re
 
 import random
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 import magic
@@ -23,11 +23,10 @@ from internal.services.llm.service import LLMService
 
 from .base import BaseBotHandler
 
-from lib.ai.abstract import AbstractModel, LLMAbstractTool
+from lib.ai.abstract import AbstractModel
 from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
-    LLMToolFunction,
     ModelImageMessage,
     ModelMessage,
     ModelRunResult,
@@ -87,23 +86,22 @@ class BotHandlers(BaseBotHandler):
         self.llmService = LLMService.getInstance()
 
         self.llmService.registerTool(
-                name="get_url_content",
-                description="Get the content of a URL",
-                parameters=[
-                    LLMFunctionParameter(
-                        name="url",
-                        description="The URL to get the content from",
-                        type=LLMParameterType.STRING,
-                        required=True,
-                    ),
-                ],
-                handler=self._llmToolGetUrlContent,
-            )
+            name="get_url_content",
+            description="Get the content of a URL",
+            parameters=[
+                LLMFunctionParameter(
+                    name="url",
+                    description="The URL to get the content from",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+            ],
+            handler=self._llmToolGetUrlContent,
+        )
         self.llmService.registerTool(
             name="generate_and_send_image",
             description=(
-                "Generate and send an image. ALWAYS use it if user ask to "
-                "generate/paint/draw an image/picture/photo"
+                "Generate and send an image. ALWAYS use it if user ask to " "generate/paint/draw an image/picture/photo"
             ),
             parameters=[
                 LLMFunctionParameter(
@@ -275,7 +273,9 @@ class BotHandlers(BaseBotHandler):
 
         return await self.queueService.addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
 
-    async def _llmToolGenerateAndSendImage(self, extraData: Optional[Dict[str, Any]], image_prompt: str, image_description: Optional[str] = None, **kwargs) -> str:
+    async def _llmToolGenerateAndSendImage(
+        self, extraData: Optional[Dict[str, Any]], image_prompt: str, image_description: Optional[str] = None, **kwargs
+    ) -> str:
         if extraData is None:
             raise RuntimeError("extraData should be provided")
         if "ensuredMessage" not in extraData:
@@ -286,16 +286,14 @@ class BotHandlers(BaseBotHandler):
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         logger.debug(
-                f"Generating image: {image_prompt}. Image description: {image_description}, "
-                f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
-            )
+            f"Generating image: {image_prompt}. Image description: {image_description}, "
+            f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+        )
         imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
         fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
 
         mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=image_prompt)], fallbackImageLLM)
-        logger.debug(
-            f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
-        )
+        logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
         if mlRet.status != ModelResultStatus.FINAL:
             ret = await self.sendMessage(
                 ensuredMessage,
@@ -331,7 +329,9 @@ class BotHandlers(BaseBotHandler):
             logger.error(f"Error getting content from {url}: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
-    async def _llmToolSetUserData(self, extraData: Optional[Dict[str, Any]], key: str, data: str, append: bool = False, **kwargs) -> str:
+    async def _llmToolSetUserData(
+        self, extraData: Optional[Dict[str, Any]], key: str, data: str, append: bool = False, **kwargs
+    ) -> str:
         if extraData is None:
             raise RuntimeError("extraData should be provided")
         if "ensuredMessage" not in extraData:
@@ -345,7 +345,9 @@ class BotHandlers(BaseBotHandler):
         )
         return utils.jsonDumps({"done": True, "key": key, "data": newData})
 
-    async def _llmToolGetWeatherByCity(self, extraData: Optional[Dict[str, Any]],city: str, countryCode: Optional[str] = None, **kwargs) -> str:
+    async def _llmToolGetWeatherByCity(
+        self, extraData: Optional[Dict[str, Any]], city: str, countryCode: Optional[str] = None, **kwargs
+    ) -> str:
         try:
             if self.openWeatherMapClient is None:
                 return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
@@ -364,7 +366,9 @@ class BotHandlers(BaseBotHandler):
             logger.error(f"Error getting weather: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
-    async def _llmToolGetWeatherByCoords(self, extraData: Optional[Dict[str, Any]],lat: float, lon: float, **kwargs) -> str:
+    async def _llmToolGetWeatherByCoords(
+        self, extraData: Optional[Dict[str, Any]], lat: float, lon: float, **kwargs
+    ) -> str:
         try:
             if self.openWeatherMapClient is None:
                 return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
@@ -393,7 +397,6 @@ class BotHandlers(BaseBotHandler):
         sendIntermediateMessages: bool = True,
     ) -> ModelRunResult:
         """Call the LLM with the given messages."""
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
         async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
             if mRet.resultText and sendIntermediateMessages:
