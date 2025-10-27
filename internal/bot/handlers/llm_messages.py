@@ -1,5 +1,19 @@
 """
-Telegram bot command handlers for Gromozeka.
+LLM message handlers for the Gromozeka Telegram bot, dood!
+
+This module contains handlers for processing messages that interact with Large Language Models (LLMs).
+It handles various message types including replies, mentions, private messages, and random responses
+in group chats. The handlers manage conversation context, message history, and integrate with
+image generation capabilities when needed, dood!
+
+Key Features:
+    - Reply handling with conversation thread tracking
+    - Bot mention detection and response
+    - Private chat message processing with context
+    - Random message responses in group chats
+    - Image generation from LLM descriptions
+    - Tool usage support for LLM interactions
+    - Fallback model support for reliability
 """
 
 import datetime
@@ -37,10 +51,28 @@ from .base import BaseBotHandler, HandlerResultStatus
 logger = logging.getLogger(__name__)
 
 
-class BotHandlers(BaseBotHandler):
-    """Contains all bot command and message handlers, dood!"""
+class LLMMessageHandler(BaseBotHandler):
+    """
+    Handler for LLM-based message processing in Telegram bot, dood!
+
+    This class manages all interactions between user messages and Large Language Models,
+    including conversation threading, context management, and response generation.
+    It supports multiple chat types (private, group, supergroup) and various response
+    triggers (replies, mentions, random responses), dood!
+
+    Attributes:
+        llmService (LLMService): Singleton service for LLM operations
+    """
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+        """
+        Initialize the LLM message handler, dood!
+
+        Args:
+            configManager (ConfigManager): Configuration manager for bot settings
+            database (DatabaseWrapper): Database wrapper for message storage and retrieval
+            llmManager (LLMManager): Manager for LLM model instances and operations
+        """
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
 
         self.llmService = LLMService.getInstance()
@@ -59,7 +91,26 @@ class BotHandlers(BaseBotHandler):
         useTools: bool = False,
         sendIntermediateMessages: bool = True,
     ) -> ModelRunResult:
-        """Call the LLM with the given messages."""
+        """
+        Generate text response using LLM with fallback support, dood!
+
+        This method calls the LLM service to generate a text response based on the provided
+        messages. It supports tool usage, fallback models, and can send intermediate messages
+        during generation. The method handles streaming responses and error recovery, dood!
+
+        Args:
+            model (AbstractModel): Primary LLM model to use for generation
+            messages (List[ModelMessage]): List of messages forming the conversation context
+            fallbackModel (AbstractModel): Fallback model to use if primary fails
+            ensuredMessage (EnsuredMessage): The message being responded to
+            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            useTools (bool, optional): Whether to enable tool usage for the LLM. Defaults to False.
+            sendIntermediateMessages (bool, optional): Whether to send streaming intermediate
+                responses. Defaults to True.
+
+        Returns:
+            ModelRunResult: Result containing generated text, status, and metadata
+        """
 
         async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
             if mRet.resultText and sendIntermediateMessages:
@@ -85,7 +136,30 @@ class BotHandlers(BaseBotHandler):
         messagesHistory: List[ModelMessage],
         context: ContextTypes.DEFAULT_TYPE,
     ) -> bool:
-        """Send a chat message to the LLM model."""
+        """
+        Send a chat message to the LLM and handle the response, dood!
+
+        This method orchestrates the complete flow of sending a message to the LLM,
+        processing the response, handling image generation if requested, and sending
+        the final response to the user. It manages chat settings, message formatting,
+        and error handling, dood!
+
+        The method supports:
+        - Multiple message formats (text, JSON)
+        - Image generation from <media-description> tags
+        - Tool usage indicators
+        - Fallback model indicators
+        - Error recovery and user notification
+
+        Args:
+            ensuredMessage (EnsuredMessage): The message to respond to
+            messagesHistory (List[ModelMessage]): Complete conversation history including
+                system prompt and user messages
+            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+
+        Returns:
+            bool: True if message was sent successfully, False otherwise
+        """
         # For logging purposes
         messageHistoryStr = ""
         for msg in messagesHistory:
@@ -186,6 +260,34 @@ class BotHandlers(BaseBotHandler):
     async def messageHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
     ) -> HandlerResultStatus:
+        """
+        Main entry point for processing incoming messages, dood!
+
+        This handler routes messages to appropriate sub-handlers based on message type
+        and chat context. It handles different chat types (private, group, supergroup)
+        and delegates to specific handlers for replies, mentions, private messages,
+        and random responses, dood!
+
+        Processing order:
+        1. Validate message and chat type
+        2. Check for automatic forwards (skip)
+        3. Handle replies to bot messages
+        4. Handle bot mentions
+        5. Handle private chat messages
+        6. Handle random responses in groups
+
+        Args:
+            update (Update): Telegram update object containing the message
+            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            ensuredMessage (Optional[EnsuredMessage]): Validated and enriched message object,
+                None if message should be skipped
+
+        Returns:
+            HandlerResultStatus: Status indicating how the message was processed:
+                - SKIPPED: Message was not processed
+                - FINAL: Message was successfully processed
+                - ERROR: An error occurred during processing
+        """
         if ensuredMessage is None:
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
@@ -215,8 +317,8 @@ class BotHandlers(BaseBotHandler):
             # Automatic forward from licked Channel
             # TODO: Somehow process automatic forwards
             # TODO: Think about handleRandomMessage here
-            # return HandlerResultStatus.SKIPPED
-            return HandlerResultStatus.FINAL
+            # return HandlerResultStatus.FINAL
+            return HandlerResultStatus.NEXT
 
         # Check if message is a reply to our message
         # TODO: Move to separate handler?
@@ -229,16 +331,17 @@ class BotHandlers(BaseBotHandler):
             return HandlerResultStatus.FINAL
 
         if ensuredMessage.chat.type == Chat.PRIVATE:
+            # Private chat - always answer
             # TODO: Move to separate handler?
             if await self.handlePrivateMessage(update, context, ensuredMessage):
                 return HandlerResultStatus.FINAL
         else:
+            # Randomly answer message
             # TODO: Move to separate handler?
             if await self.handleRandomMessage(update, context, ensuredMessage):
                 return HandlerResultStatus.FINAL
 
-        # return HandlerResultStatus.NEXT
-        return HandlerResultStatus.FINAL
+        return HandlerResultStatus.NEXT
 
     async def handleReply(
         self,
@@ -247,7 +350,28 @@ class BotHandlers(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
     ) -> bool:
         """
-        Check if message is a reply to our message and handle it
+        Handle messages that are replies to bot's previous messages, dood!
+
+        This method processes replies to the bot's messages by reconstructing the
+        conversation thread from the database. It retrieves all messages in the thread
+        (using root_message_id) and sends them to the LLM to generate a contextually
+        appropriate response, dood!
+
+        The method:
+        1. Verifies the reply is to a bot message
+        2. Retrieves the complete conversation thread from database
+        3. Reconstructs message history with proper roles (user/assistant)
+        4. Generates LLM response with full context
+        5. Waits for media processing if needed
+
+        Args:
+            update (Update): Telegram update object
+            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            ensuredMessage (EnsuredMessage): The reply message to process
+
+        Returns:
+            bool: True if reply was handled successfully, False if not a reply to bot
+                or if reply handling is disabled in chat settings
         """
         if not ensuredMessage.isReply or ensuredMessage.replyId is None:
             return False
@@ -343,7 +467,27 @@ class BotHandlers(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
     ) -> bool:
         """
-        Check if bot has been mentioned in the message
+        Handle messages where the bot is mentioned by name or username, dood!
+
+        This method processes messages that mention the bot, either by display name
+        or username. It includes special handling for "кто сегодня" (who today)
+        queries that randomly select an active user, and general LLM responses
+        for other mentions, dood!
+
+        Special features:
+        - "кто сегодня [role]" - Randomly selects an active user for a role
+        - Includes parent message context if replying to another message
+        - Handles both text and media messages in context
+        - Generates LLM response with appropriate context
+
+        Args:
+            update (Update): Telegram update object
+            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            ensuredMessage (EnsuredMessage): The message containing the mention
+
+        Returns:
+            bool: True if mention was handled successfully, False if bot was not mentioned
+                or if mention handling is disabled in chat settings
         """
 
         message = ensuredMessage.getBaseMessage()
@@ -458,7 +602,27 @@ class BotHandlers(BaseBotHandler):
         context: ContextTypes.DEFAULT_TYPE,
         ensuredMessage: EnsuredMessage,
     ) -> bool:
-        """Process message in private chat"""
+        """
+        Process messages in private (one-on-one) chats with the bot, dood!
+
+        This method handles all messages in private chats that weren't caught by
+        other handlers (replies, mentions). It retrieves recent message history
+        to provide context and generates an LLM response, dood!
+
+        The method:
+        1. Retrieves last N messages from chat (PRIVATE_CHAT_CONTEXT_LENGTH)
+        2. Converts messages to LLM format with proper roles
+        3. Includes system prompt from chat settings
+        4. Generates contextual response using LLM
+
+        Args:
+            update (Update): Telegram update object
+            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            ensuredMessage (EnsuredMessage): The message to respond to
+
+        Returns:
+            bool: True if message was processed successfully, False on error
+        """
         # If it message in private chat and no other methods catched message,
         # then just do LLM answer with context of last constants.PRIVATE_CHAT_CONTEXT_LENGTH messages
 
@@ -500,7 +664,34 @@ class BotHandlers(BaseBotHandler):
         context: ContextTypes.DEFAULT_TYPE,
         ensuredMessage: EnsuredMessage,
     ) -> bool:
-        """Randomly answer message with probability RANDOM_ANSWER_PROBABILITY"""
+        """
+        Randomly respond to messages in group chats based on probability, dood!
+
+        This method implements probabilistic responses in group chats, allowing the bot
+        to occasionally participate in conversations without being explicitly mentioned.
+        The probability is configurable per chat, and admin messages can be excluded, dood!
+
+        The method:
+        1. Checks if random responses are enabled (probability > 0)
+        2. Optionally skips admin messages based on settings
+        3. Rolls random number against configured probability
+        4. Retrieves conversation context (thread or recent messages)
+        5. Generates LLM response with full context
+
+        Context retrieval:
+        - If message is a reply: Gets entire thread from root message
+        - If not a reply: Gets last N messages for context
+
+        Args:
+            update (Update): Telegram update object
+            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            ensuredMessage (EnsuredMessage): The message that might trigger a response
+
+        Returns:
+            bool: True if bot responded to the message, False if probability check failed,
+                random responses are disabled, or message is from admin (when configured
+                to skip admins)
+        """
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()

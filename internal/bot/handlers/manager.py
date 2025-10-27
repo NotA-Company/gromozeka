@@ -18,7 +18,7 @@ from lib import utils
 from lib.ai.manager import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
-from .main import BotHandlers
+from .llm_messages import LLMMessageHandler
 from .spam import SpamHandlers
 from .help_command import CommandHandlerGetterInterface, HelpHandler
 from .configure import ConfigureCommandHandler
@@ -72,7 +72,7 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self.handlers.append(
             # Should be last messageHandler as it can handle any message
-            BotHandlers(configManager, database, llmManager)
+            LLMMessageHandler(configManager, database, llmManager)
         )
 
     def injectBot(self, bot: ExtBot) -> None:

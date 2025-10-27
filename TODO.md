@@ -1,6 +1,6 @@
 # Our TODO list
 - [x] Add support of reading and saving all messages from chat
-- [ ] Add plugins support
+- [x] Add plugins support (not plugins, but extensible handlers support)
 - [x] Add support for direct mesages
 - [x] Add Summarisation plugin. Summarisation only possible in chats. Summarisation will be displayed on command or in some time if configured
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
