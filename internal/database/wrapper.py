@@ -1785,7 +1785,9 @@ class DatabaseWrapper:
     def getCacheEntry(self, key: str, cacheType: CacheType, ttl: Optional[int] = None) -> Optional[CacheDict]:
         """Get weather cache entry by key and type"""
         try:
-            minimalUpdatedAt = datetime.datetime.now() - datetime.timedelta(seconds=ttl) if ttl else None
+            minimalUpdatedAt = datetime.datetime.utcnow() - datetime.timedelta(seconds=ttl) if ttl else None
+            # logger.debug(f"getCacheEntry({key}, {cacheType}, {ttl})")
+            # logger.debug(f"ttl is {ttl}, minimal updated_at is {minimalUpdatedAt}")
             with self.getCursor() as cursor:
                 cursor.execute(
                     f"""
