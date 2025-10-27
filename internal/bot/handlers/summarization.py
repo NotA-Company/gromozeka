@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 class SummarizationHandler(BaseBotHandler):
     """
     Handler for chat summarization functionality, dood!
-    
+
     This handler provides comprehensive chat summarization features including:
     - Interactive wizard for selecting chats and topics
     - Configurable time ranges and message counts
@@ -66,15 +66,15 @@ class SummarizationHandler(BaseBotHandler):
     ) -> HandlerResultStatus:
         """
         Handle incoming messages for active summarization sessions, dood!
-        
+
         Processes user input when they're in an active summarization workflow,
         such as entering custom message counts or prompts.
-        
+
         Args:
             update: Telegram update object containing the message
             context: Telegram context for the handler
             ensuredMessage: Validated message object with user and chat info
-            
+
         Returns:
             HandlerResultStatus indicating if the message was handled:
             - FINAL: Message was processed as part of summarization workflow
@@ -142,11 +142,11 @@ class SummarizationHandler(BaseBotHandler):
     ) -> None:
         """
         Perform chat summarization and send results, dood!
-        
+
         Retrieves messages from the database, processes them in batches through
         an LLM, and sends the summarized results. Handles token limits by
         splitting large message sets into manageable batches.
-        
+
         Args:
             ensuredMessage: Message to reply to with the summary
             chatId: ID of the chat to summarize
@@ -157,10 +157,10 @@ class SummarizationHandler(BaseBotHandler):
             maxMessages: Maximum number of recent messages to summarize
             summarizationPrompt: Custom prompt for the LLM (uses chat setting if None)
             useCache: Whether to check for and store cached summaries
-            
+
         Raises:
             ValueError: If neither sinceDT nor maxMessages is provided
-            
+
         Note:
             Either sinceDT or maxMessages must be provided, but not both.
             Messages are processed in batches to respect token limits.
@@ -327,11 +327,11 @@ class SummarizationHandler(BaseBotHandler):
     async def _handle_summarization(self, data: Dict[str | int, Any], message: Message, user: User):
         """
         Handle summarization wizard interactions, dood!
-        
+
         Manages the multi-step interactive wizard for configuring and executing
         chat summarization. Handles chat selection, topic selection, time range
         configuration, and custom prompt input.
-        
+
         Args:
             data: Dictionary containing wizard state and user selections:
                 - ButtonDataKey.SummarizationAction: Current wizard action/step
@@ -342,7 +342,7 @@ class SummarizationHandler(BaseBotHandler):
                 - ButtonDataKey.Prompt: Custom summarization prompt (optional)
             message: Telegram message to edit with wizard UI
             user: User initiating the summarization
-            
+
         Note:
             The wizard progresses through these steps:
             1. Select chat (if not in group/supergroup)
@@ -350,7 +350,7 @@ class SummarizationHandler(BaseBotHandler):
             3. Configure time range or message count
             4. Optionally set custom prompt
             5. Execute summarization
-            
+
             User state is tracked in cache during multi-message interactions.
         """
 
@@ -697,34 +697,34 @@ class SummarizationHandler(BaseBotHandler):
     async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
         Handle /summary and /topic_summary commands, dood!
-        
+
         Provides chat summarization functionality with two modes:
         - /summary: Summarizes entire chat or specified message range
         - /topic_summary: Summarizes specific topic/thread in supergroups
-        
+
         In private chats, launches an interactive wizard if no arguments provided.
         In group chats, directly summarizes based on provided arguments.
-        
+
         Args:
             update: Telegram update containing the command message
             context: Telegram context with command arguments:
                 - args[0]: maxMessages (optional) - number of messages to summarize
                 - args[1]: chatId (optional, private only) - target chat ID
                 - args[2]: topicId (optional, private only) - target topic ID
-                
+
         Command Formats:
             Private chat:
                 /summary - Start wizard
                 /summary <maxMessages> - Summarize with wizard for chat selection
                 /summary <maxMessages> <chatId> - Summarize specific chat
                 /summary <maxMessages> <chatId> <topicId> - Summarize specific topic
-                
+
             Group/Supergroup:
                 /summary - Summarize today's messages
                 /summary <maxMessages> - Summarize last N messages
                 /topic_summary - Summarize current topic today
                 /topic_summary <maxMessages> - Summarize last N messages in topic
-                
+
         Note:
             Requires ALLOW_SUMMARY setting to be enabled in chat settings.
             Bot owner can bypass this restriction in private chats.
@@ -886,21 +886,21 @@ class SummarizationHandler(BaseBotHandler):
     ) -> HandlerResultStatus:
         """
         Handle button callbacks for summarization wizard, dood!
-        
+
         Processes inline keyboard button presses during the summarization
         wizard workflow, delegating to _handle_summarization for state management.
-        
+
         Args:
             update: Telegram update containing the callback query
             context: Telegram context for the handler
             data: Parsed callback data dictionary containing wizard state
-            
+
         Returns:
             HandlerResultStatus indicating handling result:
             - FINAL: Button was for summarization and was processed
             - SKIPPED: Button was not for summarization
             - FATAL: Missing required data in callback
-            
+
         Note:
             Checks for ButtonDataKey.SummarizationAction in data to determine
             if this button is part of the summarization workflow.
