@@ -78,7 +78,7 @@ def adapt_datetime(val: datetime.datetime) -> str:
     """Adapt datetime.datetime to SQLite format string for sqlite3, dood!"""
     # Use SQLite's datetime format (YYYY-MM-DD HH:MM:SS) for consistency with CURRENT_TIMESTAMP
     # Strip microseconds to match SQLite's CURRENT_TIMESTAMP format exactly
-    return val.replace(microsecond=0).strftime('%Y-%m-%d %H:%M:%S')
+    return val.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
 
 
 # Register converters for reading from database
