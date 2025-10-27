@@ -18,8 +18,8 @@ from telegram.ext import ExtBot, ContextTypes
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
 
-from internal.cache import CacheService
-from internal.cache.types import UserDataType, UserDataValueType
+from internal.services.cache import CacheService
+from internal.services.cache.types import UserDataType, UserDataValueType
 from internal.services.queue.service import QueueService, makeEmptyAsyncTask
 from lib.ai.models import (
     ModelImageMessage,

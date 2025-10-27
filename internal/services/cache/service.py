@@ -24,8 +24,8 @@ from .types import (
 from .models import CacheNamespace, CachePersistenceLevel
 
 if TYPE_CHECKING:
-    from ..database.wrapper import DatabaseWrapper
-    from ..bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
+    from ...database.wrapper import DatabaseWrapper
+    from ...bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
 
 logger = logging.getLogger(__name__)
 

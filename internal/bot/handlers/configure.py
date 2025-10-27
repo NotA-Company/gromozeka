@@ -21,7 +21,7 @@ from telegram.ext import ContextTypes
 from internal.bot.handlers.base import HandlerResultStatus
 
 from .base import BaseBotHandler
-from internal.cache.types import UserActiveActionEnum
+from internal.services.cache.types import UserActiveActionEnum
 
 from lib.markdown import markdown_to_markdownv2
 import lib.utils as utils
