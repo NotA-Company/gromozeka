@@ -1,5 +1,21 @@
 """
-Telegram bot command handlers for Gromozeka.
+Base handler module for Gromozeka Telegram bot, dood!
+
+This module provides the foundational [`BaseBotHandler`](internal/bot/handlers/base.py:66) class that all bot handlers
+inherit from. It includes core functionality for message handling, chat settings management,
+user data management, media processing, and database operations, dood!
+
+The module defines:
+- [`HandlerResultStatus`](internal/bot/handlers/base.py:56): Enum for handler processing results
+- [`BaseBotHandler`](internal/bot/handlers/base.py:66): Base class with common handler functionality
+
+Key Features:
+- Chat settings and user data management with caching
+- Media processing (images, stickers) with LLM integration
+- Message sending with MarkdownV2 support
+- Database operations for chats, users, and messages
+- Admin permission checking
+- Command handler discovery via decorators
 """
 
 import asyncio
@@ -54,7 +70,19 @@ logger = logging.getLogger(__name__)
 
 
 class HandlerResultStatus(Enum):
-    """Enum for handler result status."""
+    """
+    Enum representing the result status of handler processing, dood!
+    
+    This enum is used to control the flow of message processing through
+    multiple handlers in the handler chain.
+    
+    Attributes:
+        FINAL: Processing completed successfully, no further handlers needed
+        SKIPPED: Handler skipped processing (not applicable to this message)
+        NEXT: Processing completed, continue to next handler in chain
+        ERROR: Processing error occurred but can continue to next handler
+        FATAL: Fatal error occurred, stop all processing immediately
+    """
 
     FINAL = "final"  # Processed and no need further processing
     SKIPPED = "skipped"  # Skipped processing
@@ -64,10 +92,40 @@ class HandlerResultStatus(Enum):
 
 
 class BaseBotHandler(CommandHandlerMixin):
-    """Base class for bot handlers."""
+    """
+    Base handler class providing core functionality for all bot handlers, dood!
+    
+    This class serves as the foundation for all specialized bot handlers, providing
+    common functionality for message handling, chat management, user data storage,
+    media processing, and database operations.
+    
+    The class integrates with:
+    - [`ConfigManager`](internal/config/manager.py): For bot configuration
+    - [`DatabaseWrapper`](internal/database/wrapper.py): For data persistence
+    - [`LLMManager`](lib/ai/manager.py): For AI model interactions
+    - [`CacheService`](internal/services/cache/service.py): For performance optimization
+    - [`QueueService`](internal/services/queue/service.py): For background task management
+    
+    Attributes:
+        configManager: Configuration manager instance
+        config: Bot configuration dictionary
+        db: Database wrapper for data operations
+        llmManager: LLM manager for AI model access
+        botOwners: List of bot owner usernames (lowercase)
+        chatDefaults: Default settings for all chats
+        cache: Cache service instance
+        queueService: Queue service for background tasks
+    """
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
-        """Initialize handlers with database and LLM model."""
+        """
+        Initialize the base handler with required services, dood!
+        
+        Args:
+            configManager: Configuration manager providing bot settings
+            database: Database wrapper for data persistence
+            llmManager: LLM manager for AI model operations
+        """
         # Initialize the mixin (discovers handlers)
         super().__init__()
 
@@ -99,11 +157,25 @@ class BaseBotHandler(CommandHandlerMixin):
         self._bot: Optional[ExtBot] = None
 
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
-        """Get all command handlers (auto-discovered via decorators), dood!"""
+        """
+        Get all command handlers auto-discovered via decorators, dood!
+        
+        Returns:
+            Sequence of [`CommandHandlerInfo`](internal/bot/models/command_handlers.py) objects containing
+            handler metadata (command names, descriptions, handler functions)
+        """
         return super().getCommandHandlers()
 
     def injectBot(self, bot: ExtBot) -> None:
-        """Inject the bot instance."""
+        """
+        Inject the bot instance for use in handlers, dood!
+        
+        This method must be called before handlers can send messages or
+        perform bot-specific operations.
+        
+        Args:
+            bot: Telegram bot instance from python-telegram-bot library
+        """
         self._bot = bot
 
     ###
@@ -113,7 +185,19 @@ class BaseBotHandler(CommandHandlerMixin):
     def getChatSettings(
         self, chatId: Optional[int], returnDefault: bool = True
     ) -> Dict[ChatSettingsKey, ChatSettingsValue]:
-        """Get the chat settings for the given chat."""
+        """
+        Get chat settings with optional default fallback, dood!
+        
+        Retrieves settings from cache, merging with defaults if requested.
+        If chatId is None, returns only default settings.
+        
+        Args:
+            chatId: Telegram chat ID, or None for defaults only
+            returnDefault: If True, merge with default settings; if False, return only custom settings
+            
+        Returns:
+            Dictionary mapping [`ChatSettingsKey`](internal/bot/models/chat_settings.py) to [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
+        """
         if chatId is None:
             return self.chatDefaults.copy()
 
@@ -125,12 +209,27 @@ class BaseBotHandler(CommandHandlerMixin):
         return chatSettings
 
     def setChatSetting(self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue) -> None:
-        """Set the chat settings for the given chat."""
+        """
+        Set a specific chat setting, dood!
+        
+        Updates the setting in cache, which will be persisted to database.
+        
+        Args:
+            chatId: Telegram chat ID
+            key: Setting key from [`ChatSettingsKey`](internal/bot/models/chat_settings.py) enum
+            value: Setting value as [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
+        """
         # TODO: Should I add deprecation warning?
         self.cache.setChatSetting(chatId, key, value)
 
     def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:
-        """Unset the chat settings for the given chat."""
+        """
+        Remove a specific chat setting, reverting to default, dood!
+        
+        Args:
+            chatId: Telegram chat ID
+            key: Setting key from [`ChatSettingsKey`](internal/bot/models/chat_settings.py) enum to remove
+        """
         self.cache.unsetChatSetting(chatId=chatId, key=key)
 
     ###
@@ -138,13 +237,39 @@ class BaseBotHandler(CommandHandlerMixin):
     ###
 
     def getUserData(self, chatId: int, userId: int) -> UserDataType:
-        """Get the user data for the given chat."""
+        """
+        Get user-specific data for a chat, dood!
+        
+        Retrieves temporary user data stored in cache (not persisted to database).
+        
+        Args:
+            chatId: Telegram chat ID
+            userId: Telegram user ID
+            
+        Returns:
+            Dictionary of user data as [`UserDataType`](internal/services/cache/types.py)
+        """
         return self.cache.getChatUserData(chatId=chatId, userId=userId)
 
     def setUserData(
         self, chatId: int, userId: int, key: str, value: UserDataValueType, append: bool = False
     ) -> UserDataValueType:
-        """Set specific user data for the given chat."""
+        """
+        Set or append user-specific data for a chat, dood!
+        
+        If append is True and existing value is a list, appends to it.
+        Otherwise, replaces the value.
+        
+        Args:
+            chatId: Telegram chat ID
+            userId: Telegram user ID
+            key: Data key (string identifier)
+            value: Data value (string, list, or dict)
+            append: If True, append to existing list value instead of replacing
+            
+        Returns:
+            The final value stored (after append if applicable)
+        """
         userData = self.getUserData(chatId, userId)
 
         newValue = value
@@ -167,18 +292,49 @@ class BaseBotHandler(CommandHandlerMixin):
         return newValue
 
     def unsetUserData(self, chatId: int, userId: int, key: str) -> None:
-        """Unset specific user data for the given chat."""
+        """
+        Remove a specific user data key, dood!
+        
+        Args:
+            chatId: Telegram chat ID
+            userId: Telegram user ID
+            key: Data key to remove
+        """
         self.cache.unsetChatUserData(chatId=chatId, userId=userId, key=key)
 
     def clearUserData(self, chatId: int, userId: int) -> None:
-        """Clear all user data for the given chat."""
+        """
+        Clear all user data for a specific user in a chat, dood!
+        
+        Args:
+            chatId: Telegram chat ID
+            userId: Telegram user ID
+        """
         self.cache.clearChatUserData(chatId=chatId, userId=userId)
 
     def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
+        """
+        Update an [`EnsuredMessage`](internal/bot/models/ensured_message.py) with current user data, dood!
+        
+        Internal helper method to inject user data into message objects.
+        
+        Args:
+            ensuredMessage: Message object to update with user data
+        """
         ensuredMessage.setUserData(self.getUserData(ensuredMessage.chat.id, ensuredMessage.user.id))
 
     def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
-        """Check if the ensuredMessage mentions the bot."""
+        """
+        Check if a message mentions the bot, dood!
+        
+        Checks for bot username mention or custom nicknames configured in chat settings.
+        
+        Args:
+            ensuredMessage: Message to check for mentions
+            
+        Returns:
+            [`MentionCheckResult`](internal/bot/models/ensured_message.py) indicating if bot was mentioned
+        """
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
         username: Optional[str] = None
@@ -195,7 +351,20 @@ class BaseBotHandler(CommandHandlerMixin):
     ###
 
     async def isAdmin(self, user: User, chat: Optional[Chat] = None, allowBotOwners: bool = True) -> bool:
-        """Check if the user is an admin (or bot owner)."""
+        """
+        Check if a user is an admin or bot owner, dood!
+        
+        If chat is None, only checks bot owner status.
+        If chat is provided, checks both bot owners and chat administrators.
+        
+        Args:
+            user: Telegram user to check
+            chat: Optional chat to check admin status in
+            allowBotOwners: If True, bot owners are always considered admins
+            
+        Returns:
+            True if user is admin/owner, False otherwise
+        """
         # If chat is None, then we are checking if it's bot owner
         username = user.username
         if username is None:
@@ -229,7 +398,33 @@ class BaseBotHandler(CommandHandlerMixin):
         messageCategory: MessageCategory = MessageCategory.BOT,
         replyMarkup: Optional[ReplyMarkup] = None,
     ) -> Optional[Message]:
-        """Send a message to the chat or user."""
+        """
+        Send a text or photo message as a reply, dood!
+        
+        Handles message formatting (MarkdownV2), JSON parsing, photo sending,
+        and automatic message saving to database. Supports both text and photo messages.
+        
+        Args:
+            replyToMessage: Message to reply to
+            messageText: Text content (required if photoData is None)
+            addMessagePrefix: Prefix to add before message text
+            photoData: Photo bytes (required if messageText is None)
+            photoCaption: Caption for photo messages
+            sendMessageKWargs: Additional kwargs for telegram send methods
+            tryMarkdownV2: If True, attempt to parse and send as MarkdownV2
+            tryParseInputJSON: Whether to parse JSON responses (None=auto-detect)
+            sendErrorIfAny: If True, send error message on failure
+            skipLogs: If True, skip debug logging
+            mediaPrompt: Optional prompt for media processing
+            messageCategory: Category for database storage (from [`MessageCategory`](internal/database/models.py))
+            replyMarkup: Optional reply markup (keyboard/buttons)
+            
+        Returns:
+            Sent Message object, or None if sending failed
+            
+        Raises:
+            ValueError: If neither messageText nor photoData provided, or invalid chat type
+        """
 
         if photoData is None and messageText is None:
             logger.error("No message text or photo data provided")
@@ -368,11 +563,27 @@ class BaseBotHandler(CommandHandlerMixin):
         return replyMessage
 
     def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
-        """Get Chat info from cache or DB"""
+        """
+        Get chat information from cache or database, dood!
+        
+        Args:
+            chatId: Telegram chat ID
+            
+        Returns:
+            Chat info dictionary as [`ChatInfoDict`](internal/database/models.py), or None if not found
+        """
         return self.cache.getChatInfo(chatId)
 
     def updateChatInfo(self, chat: Chat) -> None:
-        """Update Chat info. Do not save it to DB if it is in cache and wasn't changed"""
+        """
+        Update chat information in cache and database, dood!
+        
+        Only updates if chat info has changed (title, username, forum status, or type).
+        Uses cache to avoid unnecessary database writes.
+        
+        Args:
+            chat: Telegram Chat object with current information
+        """
         chatId = chat.id
         storedChatInfo = self.getChatInfo(chatId=chatId)
 
@@ -405,7 +616,20 @@ class BaseBotHandler(CommandHandlerMixin):
         name: Optional[str] = None,
         force: bool = False,
     ) -> None:
-        """Update Chat Topic info. Do not save it to DB if it is in cache and wasn't changed"""
+        """
+        Update forum topic information in cache and database, dood!
+        
+        Only updates if topic info has changed or force is True.
+        Uses cache to avoid unnecessary database writes.
+        
+        Args:
+            chatId: Telegram chat ID
+            topicId: Forum topic ID (None or 0 for general topic)
+            iconColor: Topic icon color code
+            customEmojiId: Custom emoji ID for topic icon
+            name: Topic name
+            force: If True, update even if already in cache
+        """
         _topicId = topicId if topicId is not None else 0
         storedTopicInfo = self.cache.getChatTopicInfo(chatId=chatId, topicId=_topicId)
 
@@ -434,7 +658,20 @@ class BaseBotHandler(CommandHandlerMixin):
             )
 
     def saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
-        """Save a chat message to the database."""
+        """
+        Save a chat message to the database with full context, dood!
+        
+        Handles message threading, reply chains, chat/topic info updates,
+        and user information updates. Automatically determines root message
+        for reply chains.
+        
+        Args:
+            message: Message to save as [`EnsuredMessage`](internal/bot/models/ensured_message.py)
+            messageCategory: Message category from [`MessageCategory`](internal/database/models.py) enum
+            
+        Returns:
+            True if saved successfully, False if message type unsupported
+        """
         chat = message.chat
         sender = message.sender
 
@@ -498,7 +735,15 @@ class BaseBotHandler(CommandHandlerMixin):
         return True
 
     def parseUserMetadata(self, userInfo: Optional[ChatUserDict]) -> UserMetadataDict:
-        """Get user metadata."""
+        """
+        Parse user metadata from database record, dood!
+        
+        Args:
+            userInfo: User info dictionary from database as [`ChatUserDict`](internal/database/models.py)
+            
+        Returns:
+            Parsed metadata dictionary as [`UserMetadataDict`](internal/bot/models/user_metadata.py)
+        """
         if userInfo is None:
             return {}
 
@@ -508,7 +753,15 @@ class BaseBotHandler(CommandHandlerMixin):
         return {}
 
     def setUserMetadata(self, chatId: int, userId: int, metadata: UserMetadataDict, isUpdate: bool = False) -> None:
-        """Set user metadata."""
+        """
+        Set or update user metadata in database, dood!
+        
+        Args:
+            chatId: Telegram chat ID
+            userId: Telegram user ID
+            metadata: Metadata dictionary as [`UserMetadataDict`](internal/bot/models/user_metadata.py)
+            isUpdate: If True, merge with existing metadata; if False, replace completely
+        """
         if isUpdate:
             userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
             metadata = {**self.parseUserMetadata(userInfo), **metadata}
@@ -527,7 +780,18 @@ class BaseBotHandler(CommandHandlerMixin):
         messages: List[ModelMessage],
     ) -> bool:
         """
-        Parse image content using LLM
+        Parse image content using LLM to generate description, dood!
+        
+        Internal method that sends image to configured LLM model for analysis.
+        Updates database with generated description or failure status.
+        
+        Args:
+            ensuredMessage: Message containing the image
+            fileUniqueId: Unique file identifier for database lookup
+            messages: List of [`ModelMessage`](lib/ai/models.py) objects for LLM (system prompt + image)
+            
+        Returns:
+            True if parsing succeeded, False if failed
         """
 
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
@@ -568,7 +832,27 @@ class BaseBotHandler(CommandHandlerMixin):
         prompt: Optional[str] = None,
     ) -> MediaProcessingInfo:
         """
-        Process Media from message
+        Process media attachment from message (image/sticker), dood!
+        
+        Handles media download, database storage, MIME type detection,
+        and optional LLM-based image parsing. Creates background task
+        for async image analysis.
+        
+        Currently supports only image/* MIME types for LLM parsing.
+        
+        Args:
+            ensuredMessage: Message containing the media
+            media: Media object to process (best quality)
+            metadata: Media metadata dictionary (dimensions, etc.)
+            mediaForLLM: Optional different media size for LLM (e.g., smaller)
+            prompt: Optional custom prompt for image parsing
+            
+        Returns:
+            [`MediaProcessingInfo`](internal/bot/models/media.py) with processing task and metadata
+            
+        Raises:
+            ValueError: If media type is TEXT or UNKNOWN
+            RuntimeError: If bot not initialized or media type mismatch in database
         """
         # Currently we support only image/ media.
         # If we'll want to support other types, then need to
@@ -731,7 +1015,19 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def processSticker(self, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
         """
-        Process a sticker from message if needed
+        Process a sticker attachment from message, dood!
+        
+        Extracts sticker metadata (dimensions, emoji, animation status)
+        and processes it through the media pipeline.
+        
+        Args:
+            ensuredMessage: Message containing the sticker
+            
+        Returns:
+            [`MediaProcessingInfo`](internal/bot/models/media.py) with processing task and metadata
+            
+        Raises:
+            ValueError: If message doesn't contain a sticker
         """
         sticker = ensuredMessage.getBaseMessage().sticker
         if sticker is None:
@@ -755,7 +1051,17 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def processImage(self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None) -> MediaProcessingInfo:
         """
-        Process a photo from message if needed
+        Process a photo attachment from message, dood!
+        
+        Selects optimal photo size based on chat settings and processes
+        through the media pipeline. May use smaller size for LLM to reduce costs.
+        
+        Args:
+            ensuredMessage: Message containing the photo
+            prompt: Optional custom prompt for image parsing
+            
+        Returns:
+            [`MediaProcessingInfo`](internal/bot/models/media.py) with processing task and metadata
         """
 
         bestPhotoSize = ensuredMessage.getBaseMessage().photo[-1]
@@ -791,7 +1097,20 @@ class BaseBotHandler(CommandHandlerMixin):
     async def messageHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
     ) -> HandlerResultStatus:
-        """Handle regular text messages."""
+        """
+        Handle regular text messages, dood!
+        
+        Base implementation that skips processing. Override in subclasses
+        to implement specific message handling logic.
+        
+        Args:
+            update: Telegram update object
+            context: Handler context from python-telegram-bot
+            ensuredMessage: Wrapped message object, or None if not applicable
+            
+        Returns:
+            [`HandlerResultStatus`](internal/bot/handlers/base.py:56) indicating processing result
+        """
         # By default, skip processing
         return HandlerResultStatus.SKIPPED
 
@@ -801,6 +1120,19 @@ class BaseBotHandler(CommandHandlerMixin):
         context: ContextTypes.DEFAULT_TYPE,
         data: CallbackDataDict,
     ) -> HandlerResultStatus:
-        """Parses the CallbackQuery and updates the message text."""
+        """
+        Handle inline button callbacks, dood!
+        
+        Base implementation that skips processing. Override in subclasses
+        to implement specific button handling logic.
+        
+        Args:
+            update: Telegram update object
+            context: Handler context from python-telegram-bot
+            data: Parsed callback data as [`CallbackDataDict`](internal/bot/models/command_handlers.py)
+            
+        Returns:
+            [`HandlerResultStatus`](internal/bot/handlers/base.py:56) indicating processing result
+        """
         # By default, skip processing
         return HandlerResultStatus.SKIPPED
