@@ -2,10 +2,10 @@
 Abstract base class for LLM models, dood!
 """
 
-from abc import ABC, abstractmethod
 import json
 import logging
-from typing import Dict, Iterable, List, Any, Optional
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Iterable, List, Optional
 
 from .models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
 

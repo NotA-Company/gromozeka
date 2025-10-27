@@ -5,7 +5,8 @@ Configuration management for Gromozeka bot.
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
 import tomli
 
 logger = logging.getLogger(__name__)

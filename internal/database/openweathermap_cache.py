@@ -9,12 +9,12 @@ import json
 import logging
 from typing import Optional
 
-from .wrapper import DatabaseWrapper
-from .models import CacheType
-
-from lib.openweathermap.models import GeocodingResult, WeatherData
-from lib.openweathermap.cache_interface import WeatherCacheInterface
 import lib.utils as utils
+from lib.openweathermap.cache_interface import WeatherCacheInterface
+from lib.openweathermap.models import GeocodingResult, WeatherData
+
+from .models import CacheType
+from .wrapper import DatabaseWrapper
 
 logger = logging.getLogger(__name__)
 

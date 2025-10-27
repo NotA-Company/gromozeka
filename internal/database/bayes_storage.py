@@ -6,11 +6,11 @@ using the existing DatabaseWrapper from the Gromozeka project.
 """
 
 import logging
-from typing import Iterable, List, Optional, Dict, Any
+from typing import Any, Dict, Iterable, List, Optional
 
 from internal.database.wrapper import DatabaseWrapper
+from lib.spam.models import BayesModelStats, ClassStats, TokenStats
 from lib.spam.storage_interface import BayesStorageInterface
-from lib.spam.models import TokenStats, ClassStats, BayesModelStats
 
 logger = logging.getLogger(__name__)
 

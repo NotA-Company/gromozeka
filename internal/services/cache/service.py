@@ -4,15 +4,16 @@ Cache service: Singleton cache service with LRU eviction and selective persisten
 
 import json
 import logging
-from typing import Any, Dict, Optional, TYPE_CHECKING
-from threading import RLock
 from collections import OrderedDict
+from threading import RLock
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
+from internal.services.queue.service import QueueService
 from internal.services.queue.types import DelayedTask, DelayedTaskFunction
 from lib import utils
-from internal.services.queue.service import QueueService
 
+from .models import CacheNamespace, CachePersistenceLevel
 from .types import (
     HCChatCacheDict,
     HCChatUserCacheDict,
@@ -21,11 +22,10 @@ from .types import (
     UserDataType,
     UserDataValueType,
 )
-from .models import CacheNamespace, CachePersistenceLevel
 
 if TYPE_CHECKING:
-    from ...database.wrapper import DatabaseWrapper
     from ...bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
+    from ...database.wrapper import DatabaseWrapper
 
 logger = logging.getLogger(__name__)
 

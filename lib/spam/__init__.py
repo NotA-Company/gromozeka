@@ -28,10 +28,10 @@ Usage:
     await bayes_filter.learn_ham("Hey, how are you doing?")
 """
 
-from .bayes_filter import NaiveBayesFilter, BayesConfig, SpamScore
-from .tokenizer import MessageTokenizer, TokenizerConfig
+from .bayes_filter import BayesConfig, NaiveBayesFilter, SpamScore
+from .models import ClassStats, TokenStats
 from .storage_interface import BayesStorageInterface
-from .models import TokenStats, ClassStats
+from .tokenizer import MessageTokenizer, TokenizerConfig
 
 __version__ = "1.0.0"
 __author__ = "Gromozeka Bot Team (Prinny style, dood!)"

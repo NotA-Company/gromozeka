@@ -5,9 +5,8 @@ Command Handlers: Decorator and mixin for command handler registration
 import inspect
 import logging
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Sequence, Set, TypeAlias
 from enum import Enum, IntEnum, auto
-
+from typing import Callable, Dict, Optional, Sequence, Set, TypeAlias
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@ Cache: TypedDict models for handlers cache
 """
 
 from enum import StrEnum
-from typing import Any, Dict, List, NotRequired, TypeAlias, TypedDict, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, TypeAlias, TypedDict
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
 

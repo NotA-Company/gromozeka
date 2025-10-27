@@ -18,34 +18,32 @@ Key Features:
 
 import datetime
 import logging
-import re
-
 import random
+import re
 from typing import Any, Dict, List, Optional
 
 from telegram import Chat, Update
 from telegram.ext import ContextTypes
 
 from internal.config.manager import ConfigManager
+from internal.database.models import ChatMessageDict, MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm.service import LLMService
 from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager
 from lib.ai.models import (
     ModelMessage,
-    ModelRunResult,
     ModelResultStatus,
+    ModelRunResult,
 )
 
-from internal.database.models import ChatMessageDict, MessageCategory
-
+from .. import constants
 from ..models import (
     ChatSettingsKey,
     EnsuredMessage,
     LLMMessageFormat,
     MessageType,
 )
-from .. import constants
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)

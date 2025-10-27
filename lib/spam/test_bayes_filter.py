@@ -16,9 +16,9 @@ import pytest
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from internal.database.wrapper import DatabaseWrapper  # noqa:E402
-from lib.spam import NaiveBayesFilter, BayesConfig  # noqa:E402
 from internal.database.bayes_storage import DatabaseBayesStorage  # noqa:E402
+from internal.database.wrapper import DatabaseWrapper  # noqa:E402
+from lib.spam import BayesConfig, NaiveBayesFilter  # noqa:E402
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

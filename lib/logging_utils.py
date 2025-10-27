@@ -5,7 +5,7 @@ Logging utilities for Gromozeka bot.
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 

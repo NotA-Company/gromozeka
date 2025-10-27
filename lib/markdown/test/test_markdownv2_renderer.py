@@ -5,16 +5,17 @@ Test suite for MarkdownV2 renderer functionality.
 This module tests the MarkdownV2Renderer class and integration with the main parser.
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 import unittest  # noqa: E402
+
 from lib.markdown import (  # noqa: E402
     MarkdownParser,
-    markdown_to_markdownv2,
     MarkdownV2Renderer,
+    markdown_to_markdownv2,
 )
 
 
