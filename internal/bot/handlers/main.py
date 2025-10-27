@@ -182,6 +182,7 @@ class BotHandlers(BaseBotHandler):
         for msg in messagesHistory:
             messageHistoryStr += f"\t{repr(msg)}\n"
         logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
+
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
@@ -269,7 +270,7 @@ class BotHandlers(BaseBotHandler):
             is not None
         )
 
-    async def _delayedSendMessage(
+    async def _sendDelayedMessage(
         self,
         ensuredMessage: EnsuredMessage,
         delayedUntil: float,
@@ -411,7 +412,7 @@ class BotHandlers(BaseBotHandler):
                 return False
 
             if storedMsg["root_message_id"] is None:
-                logger.error(f"root_message_id in {storedMsg}")
+                logger.error(f"No root_message_id in {storedMsg}")
                 return False
 
             _storedMessages = self.db.getChatMessagesByRootId(
@@ -460,27 +461,14 @@ class BotHandlers(BaseBotHandler):
 
         message = ensuredMessage.getBaseMessage()
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
-
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
 
-        _mentionedMe = self.checkEMMentionsMe(ensuredMessage)
-        messageText = _mentionedMe.restText or ""
-        mentionedAtBegin = _mentionedMe.byName is not None and _mentionedMe.byName[0] == 0
-        mentionedMe = _mentionedMe.byName is not None
-        mentionedByNick = _mentionedMe.byNick is not None
-
-        messageTextLower = messageText.lower()
-
-        if not mentionedByNick and not mentionedAtBegin and not mentionedMe:
+        mentionedMe = self.checkEMMentionsMe(ensuredMessage)
+        if mentionedMe.byName is None and mentionedMe.byNick is None:
             return False
 
-        logger.debug(
-            f"Mention found, processing... (mentionByNick={mentionedByNick}, "
-            f"mentionAtBegin={mentionedAtBegin}, mentionedMe={mentionedMe})"
-        )
-
+        messageText = mentionedMe.restText or ""
         messageTextLower = messageText.lower()
 
         ###
@@ -517,6 +505,8 @@ class BotHandlers(BaseBotHandler):
         # End of Who Today
 
         # Handle LLM Action
+        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+
         reqMessages = [
             ModelMessage(
                 role="system",
@@ -800,7 +790,7 @@ class BotHandlers(BaseBotHandler):
             reminderText = "⏰ Напоминание"
 
         delayedTime = time.time() + delaySecs
-        await self._delayedSendMessage(
+        await self._sendDelayedMessage(
             ensuredMessage,
             delayedUntil=delayedTime,
             messageText=reminderText,
