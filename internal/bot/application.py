@@ -7,24 +7,25 @@ import logging
 import random
 import sys
 from typing import Awaitable, Dict, List, Optional
-from telegram import Update
+
 import telegram
+from telegram import Update
 from telegram.ext import (
     Application,
+    BaseUpdateProcessor,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
-    BaseUpdateProcessor,
-    CallbackQueryHandler,
 )
 
-from internal.services.queue.service import QueueService
-
-from .handlers import HandlersManager
 from internal.bot.models import CommandCategory
+from internal.services.queue.service import QueueService
 from lib.ai.manager import LLMManager
+
 from ..config.manager import ConfigManager
 from ..database.wrapper import DatabaseWrapper
+from .handlers import HandlersManager
 
 logger = logging.getLogger(__name__)
 

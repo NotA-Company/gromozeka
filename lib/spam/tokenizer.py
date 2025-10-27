@@ -7,8 +7,8 @@ both Russian and English text.
 """
 
 import re
-from typing import List, Set, Dict, Optional
 from dataclasses import dataclass
+from typing import Dict, List, Optional, Set
 
 
 @dataclass

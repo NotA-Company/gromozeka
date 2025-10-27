@@ -5,12 +5,13 @@ This module provides the main MarkdownParser class that orchestrates
 tokenization, block parsing, inline parsing, and rendering.
 """
 
-from typing import Dict, Any, Optional
-from .ast_nodes import MDDocument, MDNode, MDParagraph, MDText, MDHeader
-from .tokenizer import Tokenizer
+from typing import Any, Dict, Optional
+
+from .ast_nodes import MDDocument, MDHeader, MDNode, MDParagraph, MDText
 from .block_parser import BlockParser
 from .inline_parser import InlineParser
 from .renderer import HTMLRenderer, MarkdownRenderer, MarkdownV2Renderer
+from .tokenizer import Tokenizer
 
 
 class MarkdownParser:

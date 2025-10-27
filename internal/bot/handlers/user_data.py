@@ -15,27 +15,21 @@ All user data is scoped to specific chat and user combinations, dood!
 """
 
 import logging
-
 from typing import Any, Dict, Optional
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
+import lib.utils as utils
+from internal.config.manager import ConfigManager
+from internal.database.models import MessageCategory
+from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm.service import LLMService
-
-from .base import BaseBotHandler
-
+from lib.ai.manager import LLMManager
 from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
 )
-from lib.ai.manager import LLMManager
-import lib.utils as utils
-
-from internal.config.manager import ConfigManager
-
-from internal.database.wrapper import DatabaseWrapper
-from internal.database.models import MessageCategory
 
 from ..models import (
     CommandCategory,
@@ -43,6 +37,7 @@ from ..models import (
     EnsuredMessage,
     commandHandler,
 )
+from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
 

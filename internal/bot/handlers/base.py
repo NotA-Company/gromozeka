@@ -20,51 +20,46 @@ Key Features:
 
 import asyncio
 import datetime
-from enum import Enum
 import json
 import logging
 import re
-
+from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence
 
 import magic
-
-from telegram import Chat, Message, User, Update
-from telegram.ext import ExtBot, ContextTypes
+from telegram import Chat, Message, Update, User
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
+from telegram.ext import ContextTypes, ExtBot
 
+import lib.utils as utils
 from internal.services.cache import CacheService
 from internal.services.cache.types import UserDataType, UserDataValueType
 from internal.services.queue.service import QueueService, makeEmptyAsyncTask
+from lib.ai.manager import LLMManager
 from lib.ai.models import (
     ModelImageMessage,
     ModelMessage,
     ModelResultStatus,
 )
-from lib.ai.manager import LLMManager
 from lib.markdown import markdown_to_markdownv2
-import lib.utils as utils
 
 from ...config.manager import ConfigManager
-
-from ...database.wrapper import DatabaseWrapper
 from ...database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
-
+from ...database.wrapper import DatabaseWrapper
+from .. import constants
 from ..models import (
+    CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
     CommandHandlerInfo,
     CommandHandlerMixin,
-    CallbackDataDict,
     EnsuredMessage,
+    MediaProcessingInfo,
     MentionCheckResult,
     MessageType,
-    MediaProcessingInfo,
     UserMetadataDict,
 )
-from .. import constants
-
 
 logger = logging.getLogger(__name__)
 

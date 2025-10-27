@@ -2,9 +2,9 @@
 Different DB-related models
 """
 
+import datetime
 from enum import StrEnum
 from typing import Optional, TypedDict, Union
-import datetime
 
 
 class MediaStatus(StrEnum):

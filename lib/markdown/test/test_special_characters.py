@@ -7,14 +7,14 @@ preserved when they don't form valid markdown syntax, and properly escaped
 in MarkdownV2 output.
 """
 
-import sys
 import os
+import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from lib.markdown import (  # noqa: E402
-    markdown_to_markdownv2,
     markdown_to_html,
+    markdown_to_markdownv2,
     normalize_markdown,
 )
 

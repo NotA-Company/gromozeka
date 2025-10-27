@@ -3,6 +3,7 @@ Unit tests for command handler decorator implementation, dood!
 """
 
 import unittest
+
 from internal.bot.models import (
     CommandCategory,
     CommandHandlerInfo,

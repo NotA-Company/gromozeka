@@ -15,19 +15,16 @@ The configuration system supports:
 import logging
 from typing import Any, Dict, List, Optional
 
-from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update, Message, User
+from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, User
 from telegram.ext import ContextTypes
 
-from internal.bot.models.command_handlers import CallbackDataDict
-
-from .base import BaseBotHandler, HandlerResultStatus
-from internal.services.cache.types import UserActiveActionEnum
-
-from lib.markdown import markdown_to_markdownv2
 import lib.utils as utils
-
+from internal.bot.models.command_handlers import CallbackDataDict
 from internal.database.models import MessageCategory
+from internal.services.cache.types import UserActiveActionEnum
+from lib.markdown import markdown_to_markdownv2
 
+from .. import constants
 from ..models import (
     ButtonConfigureAction,
     ButtonDataKey,
@@ -39,7 +36,7 @@ from ..models import (
     commandHandler,
     getChatSettingsInfo,
 )
-from .. import constants
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 

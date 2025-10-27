@@ -5,8 +5,8 @@ This module defines the core data structures used throughout the spam detection 
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional
 from enum import Enum
+from typing import Dict, Optional
 
 
 class SpamClassification(Enum):

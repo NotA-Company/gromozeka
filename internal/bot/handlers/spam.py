@@ -15,32 +15,26 @@ and provides commands for training, testing, and managing the spam filter, dood!
 import asyncio
 import datetime
 import logging
-
 import time
 from typing import Any, Dict, List, Optional, Set
 
-
-from telegram import Chat, Update, Message
+from telegram import Chat, Message, Update
+from telegram._utils.entities import parse_message_entity
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
-from telegram._utils.entities import parse_message_entity
 
-from .base import BaseBotHandler, HandlerResultStatus
-
-from lib.ai.manager import LLMManager
-from lib.spam import NaiveBayesFilter, BayesConfig
-from lib.spam.tokenizer import TokenizerConfig
 import lib.utils as utils
-
 from internal.config.manager import ConfigManager
-
-from internal.database.wrapper import DatabaseWrapper
 from internal.database.bayes_storage import DatabaseBayesStorage
 from internal.database.models import (
     ChatUserDict,
     MessageCategory,
     SpamReason,
 )
+from internal.database.wrapper import DatabaseWrapper
+from lib.ai.manager import LLMManager
+from lib.spam import BayesConfig, NaiveBayesFilter
+from lib.spam.tokenizer import TokenizerConfig
 
 from ..models import (
     ChatSettingsKey,
@@ -50,6 +44,7 @@ from ..models import (
     EnsuredMessage,
     commandHandler,
 )
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 
