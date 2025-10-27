@@ -870,7 +870,7 @@ class EnsuredMessage:
                 break
 
         if ret.byName or ret.byNick:
-            ret.restText = messageText
+            ret.restText = messageText.lstrip(".,:").strip()
             logger.debug(f"Mention found: {ret}")
 
         self._mentionCheckResult = ret
