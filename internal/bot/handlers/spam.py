@@ -805,7 +805,6 @@ class SpamHandlers(BaseBotHandler):
             return
 
         self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
-        self._updateEMessageUserData(ensuredMessage)
 
         # chatId = ensuredMessage.chat.id
         # userId = ensuredMessage.user.id
@@ -885,8 +884,6 @@ class SpamHandlers(BaseBotHandler):
             return
 
         self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
-        self._updateEMessageUserData(ensuredMessage)
-
         chatId = ensuredMessage.chat.id
         # userId = ensuredMessage.user.id
 

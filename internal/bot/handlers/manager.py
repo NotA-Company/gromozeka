@@ -24,6 +24,7 @@ from .help_command import CommandHandlerGetterInterface, HelpHandler
 from .configure import ConfigureCommandHandler
 from .summarization import SummarizationHandler
 from .weather import WeatherHandler
+from .message_preprocessor import MessagePreprocessorHandler
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,13 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.queueService = QueueService.getInstance()
 
         self.handlers: List[BaseBotHandler] = [
-            SpamHandlers(
-                configManager, database, llmManager
-            ),  # Should be first to check for spam before other handlers
+            # Should be first to check for spam before other handlers
+            SpamHandlers(configManager, database, llmManager),
+            # Should be before MessagePreprocessorHandler to not save configuration answers
             ConfigureCommandHandler(configManager, database, llmManager),
             SummarizationHandler(configManager, database, llmManager),
+            # Should be before other handlers to ensure message saving + media processing
+            MessagePreprocessorHandler(configManager, database, llmManager),
         ]
 
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
