@@ -423,8 +423,8 @@ class BotHandlers(BaseBotHandler):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
     ) -> HandlerResultStatus:
         if ensuredMessage is None:
-            logger.error("Ensured message undefined")
-            return HandlerResultStatus.ERROR
+            # Not new message, Skip
+            return HandlerResultStatus.SKIPPED
 
         chat = ensuredMessage.chat
         chatType = chat.type
@@ -445,38 +445,36 @@ class BotHandlers(BaseBotHandler):
                 logger.error(f"Unsupported chat type: {chatType}")
                 return HandlerResultStatus.ERROR
 
-        await self.handle_chat_message(update, context, ensuredMessage)
-
-        return HandlerResultStatus.FINAL
-
-    async def handle_chat_message(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage
-    ) -> None:
-        logger.debug(f"Handling group message #{update.update_id}")
-
         message = ensuredMessage.getBaseMessage()
-        user = ensuredMessage.user
 
         if message.is_automatic_forward:
             # Automatic forward from licked Channel
             # TODO: Somehow process automatic forwards
             # TODO: Think about handleRandomMessage here
-            return
+            # return HandlerResultStatus.SKIPPED
+            return HandlerResultStatus.FINAL
 
         # Check if message is a reply to our message
+        # TODO: Move to separate handler?
         if await self.handleReply(update, context, ensuredMessage):
-            return
+            return HandlerResultStatus.FINAL
 
         # Check if bot was mentioned
+        # TODO: Move to separate handler?
         if await self.handleMention(update, context, ensuredMessage):
-            return
+            return HandlerResultStatus.FINAL
 
         if ensuredMessage.chat.type == Chat.PRIVATE:
-            await self.handlePrivateMessage(update, context, ensuredMessage)
+            # TODO: Move to separate handler?
+            if await self.handlePrivateMessage(update, context, ensuredMessage):
+                return HandlerResultStatus.FINAL
         else:
-            await self.handleRandomMessage(update, context, ensuredMessage)
+            # TODO: Move to separate handler?
+            if await self.handleRandomMessage(update, context, ensuredMessage):
+                return HandlerResultStatus.FINAL
 
-        logger.info(f"Handled message from {user.id}: {ensuredMessage.messageText[:50]}...")
+        # return HandlerResultStatus.NEXT
+        return HandlerResultStatus.FINAL
 
     async def handleReply(
         self,

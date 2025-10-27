@@ -97,12 +97,13 @@ class HandlersManager(CommandHandlerGetterInterface):
                     self.cache.getChatUserData(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id)
                 )
             except Exception as e:
-                logger.error(f"Error while ensuring message: {e}")
+                logger.error(f"Error while ensuring message {message}")
+                logger.exception(e)
 
-        retSet: Set[HandlerResultStatus] = set()
+        resultSet: Set[HandlerResultStatus] = set()
         for handler in self.handlers:
             ret = await handler.messageHandler(update, context, ensuredMessage)
-            retSet.add(ret)
+            resultSet.add(ret)
             match ret:
                 case HandlerResultStatus.FINAL:
                     logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
@@ -123,9 +124,16 @@ class HandlersManager(CommandHandlerGetterInterface):
                     logger.error(f"Unknown handler result: {ret}")
 
         possibleFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
-        if not possibleFinalResults.intersection(retSet):
+        if ensuredMessage:
+            logger.debug(
+                f"Handled message from {ensuredMessage.sender}: {ensuredMessage.messageText[:50]}... "
+                f"(resultSet: {resultSet})"
+            )
+        else:
+            logger.debug(f"Handled not-a-message: #{update.update_id}, resultSet: {resultSet})")
+        if not possibleFinalResults.intersection(resultSet):
             logger.error(
-                f"No handler returned any of ({possibleFinalResults}), but only ({retSet}), something went wrong"
+                f"No handler returned any of ({possibleFinalResults}), but only ({resultSet}), something went wrong"
             )
             return
 
