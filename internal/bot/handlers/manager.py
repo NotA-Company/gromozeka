@@ -3,7 +3,7 @@ Bot handlers manager
 """
 
 import logging
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Set
 
 from telegram import Message, Update
 from telegram.ext import ExtBot, ContextTypes
@@ -21,6 +21,7 @@ from .base import BaseBotHandler, HandlerResultStatus
 from .main import BotHandlers
 from .spam import SpamHandlers
 from .help_command import CommandHandlerGetterInterface, HelpHandler
+from .configure import ConfigureCommandHandler
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,11 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.queueService = QueueService.getInstance()
 
         self.handlers: list[BaseBotHandler] = [
-            SpamHandlers(configManager, database, llmManager),
-            BotHandlers(configManager, database, llmManager),
+            SpamHandlers(configManager, database, llmManager), # Should be first to check for spam before other handlers
+
+            ConfigureCommandHandler(configManager, database, llmManager),
+            
+            BotHandlers(configManager, database, llmManager),  # Should be last messageHandler as it can handle any message
             HelpHandler(
                 configManager, database, llmManager, self
             ),  # Special case - help command require all command handlers information
@@ -78,12 +82,14 @@ class HandlersManager(CommandHandlerGetterInterface):
             except Exception as e:
                 logger.error(f"Error while ensuring message: {e}")
 
+        retSet: Set[HandlerResultStatus] = set()
         for handler in self.handlers:
             ret = await handler.messageHandler(update, context, ensuredMessage)
+            retSet.add(ret)
             match ret:
                 case HandlerResultStatus.FINAL:
                     logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
-                    return
+                    break
                 case HandlerResultStatus.SKIPPED:
                     logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
                     continue
@@ -95,9 +101,14 @@ class HandlersManager(CommandHandlerGetterInterface):
                     continue
                 case HandlerResultStatus.FATAL:
                     logger.error(f"Handler {type(handler).__name__} returned FATAL, stop processing")
-                    return
+                    break
                 case _:
                     logger.error(f"Unknown handler result: {ret}")
+
+        possibleFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
+        if not possibleFinalResults.intersection(retSet):
+            logger.error(f"No handler returned any of ({possibleFinalResults}), but only ({retSet}), something went wrong")
+            return
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle button presses."""
@@ -128,12 +139,14 @@ class HandlersManager(CommandHandlerGetterInterface):
             logger.error(f"handle_button: message is not a Message in {query}")
             return
 
+        retSet: Set[HandlerResultStatus] = set()
         for handler in self.handlers:
             ret = await handler.buttonHandler(update, context, data)
+            retSet.add(ret)
             match ret:
                 case HandlerResultStatus.FINAL:
                     logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
-                    return
+                    break
                 case HandlerResultStatus.SKIPPED:
                     logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
                     continue
@@ -145,10 +158,15 @@ class HandlersManager(CommandHandlerGetterInterface):
                     continue
                 case HandlerResultStatus.FATAL:
                     logger.error(f"Handler {type(handler).__name__} returned FATAL")
-                    return
+                    break
                 case _:
                     logger.error(f"Unknown handler result: {ret}")
                     continue
+        
+        possibleFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
+        if not possibleFinalResults.intersection(retSet):
+            logger.error(f"No handler returned any of ({possibleFinalResults}), but only ({retSet}), something went wrong")
+            return
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors."""
