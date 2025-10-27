@@ -115,9 +115,9 @@ class QueueService:
             self.queueLastUpdated = time.time()
 
             self.delayedActionsQueue = asyncio.PriorityQueue()
-            self.initialized = True
-            self._isExiting = False
             self.tasksHandlers: Dict[DelayedTaskFunction, List[DelayedTaskHandler]] = {}
+
+            self.initialized = True
             logger.info("QueueService initialized, dood!")
 
     @classmethod
@@ -140,7 +140,6 @@ class QueueService:
             The actual shutdown happens when the DO_EXIT task is processed
             by the delayed queue processor.
         """
-        self._isExiting = True
         await self.addDelayedTask(time.time(), DelayedTaskFunction.DO_EXIT, kwargs={}, skipDB=True)
 
     async def addBackgroundTask(self, task: asyncio.Task) -> None:
