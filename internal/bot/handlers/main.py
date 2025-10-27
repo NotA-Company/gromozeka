@@ -9,7 +9,7 @@ import re
 
 import random
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 import magic
@@ -19,6 +19,7 @@ from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ContextTypes
 
 from internal.bot.handlers.base import HandlerResultStatus
+from internal.services.llm.service import LLMService
 
 from .base import BaseBotHandler
 
@@ -83,6 +84,139 @@ class BotHandlers(BaseBotHandler):
                 defaultLanguage=openWeatherMapConfig.get("default-language", "ru"),
             )
 
+        self.llmService = LLMService.getInstance()
+
+        self.llmService.registerTool(
+                name="get_url_content",
+                description="Get the content of a URL",
+                parameters=[
+                    LLMFunctionParameter(
+                        name="url",
+                        description="The URL to get the content from",
+                        type=LLMParameterType.STRING,
+                        required=True,
+                    ),
+                ],
+                handler=self._llmToolGetUrlContent,
+            )
+        self.llmService.registerTool(
+            name="generate_and_send_image",
+            description=(
+                "Generate and send an image. ALWAYS use it if user ask to "
+                "generate/paint/draw an image/picture/photo"
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="image_prompt",
+                    description="Detailed prompt to generate the image from",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+                LLMFunctionParameter(
+                    name="image_description",
+                    description="The description of the image if any",
+                    type=LLMParameterType.STRING,
+                    required=False,
+                ),
+            ],
+            handler=self._llmToolGenerateAndSendImage,
+        )
+        self.llmService.registerTool(
+            name="add_user_data",
+            description=(
+                "Add some data/knowledge about user, sent last message. "
+                "Use it in following cases:\n"
+                "1. User asked to learn/remember something about him/her.\n"
+                "2. You learned new information about user "
+                "(e.g., real name, birth dare, what he like, etc).\n"
+                "3. You want to remember something relating to user.\n"
+                "4. When you needs to store information related to the user "
+                "to improve interaction quality (e.g., remembering formatting preferences, "
+                "command usage frequency, communication style).\n"
+                "\n"
+                "Will return new data for given key."
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="key",
+                    description="Key for data (for structured data usage)",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+                LLMFunctionParameter(
+                    name="data",
+                    description="Data/knowledbe you want to remember",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+                LLMFunctionParameter(
+                    name="append",
+                    description=(
+                        "True: Append data to existing data, "
+                        "False: replace existing data for given key. "
+                        "Default: False"
+                    ),
+                    type=LLMParameterType.BOOLEAN,
+                    required=False,
+                ),
+            ],
+            handler=self._llmToolSetUserData,
+        )
+        if self.openWeatherMapClient is not None:
+            self.llmService.registerTool(
+                name="get_weather_by_city",
+                description=(
+                    "Get weather and forecast for given city. Return JSON of current weather "
+                    "and weather forecast for next following days. "
+                    "Temperature returned in Celsius."
+                ),
+                parameters=[
+                    LLMFunctionParameter(
+                        name="city",
+                        description="City to get weather in",
+                        type=LLMParameterType.STRING,
+                        required=True,
+                    ),
+                    LLMFunctionParameter(
+                        name="countryCode",
+                        description="ISO 3166 country code of city",
+                        type=LLMParameterType.STRING,
+                        required=False,
+                    ),
+                ],
+                handler=self._llmToolGetWeatherByCity,
+            )
+            self.llmService.registerTool(
+                name="get_weather_by_coords",
+                description=(
+                    "Get weather and forecast for given location. Return JSON of current weather "
+                    "and weather forecast for next following days. "
+                    "Temperature returned in Celsius."
+                ),
+                parameters=[
+                    LLMFunctionParameter(
+                        name="lat",
+                        description="Latitude of location",
+                        type=LLMParameterType.NUMBER,
+                        required=True,
+                    ),
+                    LLMFunctionParameter(
+                        name="lon",
+                        description="Longitude of location",
+                        type=LLMParameterType.NUMBER,
+                        required=True,
+                    ),
+                ],
+                handler=self._llmToolGetWeatherByCoords,
+            )
+
+        self.llmService.registerTool(
+            name="get_current_datetime",
+            description="Get current date and time",
+            parameters=[],
+            handler=self._llmToolGetCurrentDateTime,
+        )
+
         self.queueService.registerDelayedTaskHandler(
             DelayedTaskFunction.SEND_MESSAGE,
             self._dqSendMessageHandler,
@@ -141,6 +275,113 @@ class BotHandlers(BaseBotHandler):
 
         return await self.queueService.addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
 
+    async def _llmToolGenerateAndSendImage(self, extraData: Optional[Dict[str, Any]], image_prompt: str, image_description: Optional[str] = None, **kwargs) -> str:
+        if extraData is None:
+            raise RuntimeError("extraData should be provided")
+        if "ensuredMessage" not in extraData:
+            raise RuntimeError("ensuredMessage should be provided")
+        ensuredMessage = extraData["ensuredMessage"]
+        if not isinstance(ensuredMessage, EnsuredMessage):
+            raise RuntimeError("ensuredMessage should be EnsuredMessage")
+
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        logger.debug(
+                f"Generating image: {image_prompt}. Image description: {image_description}, "
+                f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+            )
+        imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
+        fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
+
+        mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=image_prompt)], fallbackImageLLM)
+        logger.debug(
+            f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+        )
+        if mlRet.status != ModelResultStatus.FINAL:
+            ret = await self.sendMessage(
+                ensuredMessage,
+                messageText=(
+                    f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\n"
+                    f"Prompt:\n```\n{image_prompt}\n```"
+                ),
+            )
+            return utils.jsonDumps({"done": False, "errorMessage": mlRet.resultText})
+
+        if mlRet.mediaData is None:
+            logger.error(f"No image generated for {image_prompt}")
+            return '{"done": false}'
+
+        imgAddPrefix = ""
+        if mlRet.isFallback:
+            imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
+        ret = await self.sendMessage(
+            ensuredMessage,
+            photoData=mlRet.mediaData,
+            photoCaption=image_description,
+            mediaPrompt=image_prompt,
+            addMessagePrefix=imgAddPrefix,
+        )
+
+        return utils.jsonDumps({"done": ret is not None})
+
+    async def _llmToolGetUrlContent(self, extraData: Optional[Dict[str, Any]], url: str, **kwargs) -> str:
+        # TODO: Check if content is text content
+        try:
+            return str(requests.get(url).content)
+        except Exception as e:
+            logger.error(f"Error getting content from {url}: {e}")
+            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+
+    async def _llmToolSetUserData(self, extraData: Optional[Dict[str, Any]], key: str, data: str, append: bool = False, **kwargs) -> str:
+        if extraData is None:
+            raise RuntimeError("extraData should be provided")
+        if "ensuredMessage" not in extraData:
+            raise RuntimeError("ensuredMessage should be provided")
+        ensuredMessage = extraData["ensuredMessage"]
+        if not isinstance(ensuredMessage, EnsuredMessage):
+            raise RuntimeError("ensuredMessage should be EnsuredMessage")
+
+        newData = self.setUserData(
+            chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, key=key, value=data, append=append
+        )
+        return utils.jsonDumps({"done": True, "key": key, "data": newData})
+
+    async def _llmToolGetWeatherByCity(self, extraData: Optional[Dict[str, Any]],city: str, countryCode: Optional[str] = None, **kwargs) -> str:
+        try:
+            if self.openWeatherMapClient is None:
+                return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
+
+            ret = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
+            if ret is None:
+                return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
+
+            # Drop useless local_names to decrease context
+            for lang in list(ret["location"]["local_names"].keys()):
+                if lang not in constants.GEOCODER_LOCATION_LANGS:
+                    ret["location"]["local_names"].pop(lang, None)
+
+            return utils.jsonDumps({**ret, "done": True})
+        except Exception as e:
+            logger.error(f"Error getting weather: {e}")
+            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+
+    async def _llmToolGetWeatherByCoords(self, extraData: Optional[Dict[str, Any]],lat: float, lon: float, **kwargs) -> str:
+        try:
+            if self.openWeatherMapClient is None:
+                return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
+
+            ret = await self.openWeatherMapClient.getWeather(lat, lon)
+            if ret is None:
+                return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
+
+            return utils.jsonDumps({**ret, "done": True})
+        except Exception as e:
+            logger.error(f"Error getting weather: {e}")
+            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+
+    async def _llmToolGetCurrentDateTime(self, extraData: Optional[Dict[str, Any]], **kwargs) -> str:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
+
     async def _generateTextViaLLM(
         self,
         model: AbstractModel,
@@ -154,273 +395,22 @@ class BotHandlers(BaseBotHandler):
         """Call the LLM with the given messages."""
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
-        async def generateAndSendImage(image_prompt: str, image_description: Optional[str] = None, **kwargs) -> str:
-            logger.debug(
-                f"Generating image: {image_prompt}. Image description: {image_description}, "
-                f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
-            )
-            imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
-            fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
+        async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
+            if mRet.resultText and sendIntermediateMessages:
+                try:
+                    await self.sendMessage(ensuredMessage, mRet.resultText, messageCategory=MessageCategory.BOT)
+                except Exception as e:
+                    logger.error(f"Failed to send intermediate message: {e}")
 
-            mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=image_prompt)], fallbackImageLLM)
-            logger.debug(
-                f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
-            )
-            if mlRet.status != ModelResultStatus.FINAL:
-                ret = await self.sendMessage(
-                    ensuredMessage,
-                    messageText=(
-                        f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\n"
-                        f"Prompt:\n```\n{image_prompt}\n```"
-                    ),
-                )
-                return utils.jsonDumps({"done": False, "errorMessage": mlRet.resultText})
-
-            if mlRet.mediaData is None:
-                logger.error(f"No image generated for {image_prompt}")
-                return '{"done": false}'
-
-            imgAddPrefix = ""
-            if mlRet.isFallback:
-                imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
-            ret = await self.sendMessage(
-                ensuredMessage,
-                photoData=mlRet.mediaData,
-                photoCaption=image_description,
-                mediaPrompt=image_prompt,
-                addMessagePrefix=imgAddPrefix,
-            )
-
-            return utils.jsonDumps({"done": ret is not None})
-
-        async def getUrlContent(url: str, **kwargs) -> str:
-            # TODO: Check if content is text content
-            try:
-                return str(requests.get(url).content)
-            except Exception as e:
-                logger.error(f"Error getting content from {url}: {e}")
-                return utils.jsonDumps({"done": False, "errorMessage": str(e)})
-
-        async def setUserData(key: str, data: str, append: bool = False, **kwargs) -> str:
-            newData = self.setUserData(
-                chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, key=key, value=data, append=append
-            )
-            return utils.jsonDumps({"done": True, "key": key, "data": newData})
-
-        async def getWeatherByCity(city: str, countryCode: Optional[str] = None, **kwargs) -> str:
-            try:
-                if self.openWeatherMapClient is None:
-                    return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
-
-                ret = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
-                if ret is None:
-                    return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
-
-                # Drop useless local_names to decrease context
-                for lang in list(ret["location"]["local_names"].keys()):
-                    if lang not in constants.GEOCODER_LOCATION_LANGS:
-                        ret["location"]["local_names"].pop(lang, None)
-
-                return utils.jsonDumps({**ret, "done": True})
-            except Exception as e:
-                logger.error(f"Error getting weather: {e}")
-                return utils.jsonDumps({"done": False, "errorMessage": str(e)})
-
-        async def getWeatherByCoords(lat: float, lon: float, **kwargs) -> str:
-            try:
-                if self.openWeatherMapClient is None:
-                    return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
-
-                ret = await self.openWeatherMapClient.getWeather(lat, lon)
-                if ret is None:
-                    return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
-
-                return utils.jsonDumps({**ret, "done": True})
-            except Exception as e:
-                logger.error(f"Error getting weather: {e}")
-                return utils.jsonDumps({"done": False, "errorMessage": str(e)})
-
-        async def getCurrentDateTime(**kwargs) -> str:
-            now = datetime.datetime.now(datetime.timezone.utc)
-            return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
-
-        tools: Dict[str, LLMAbstractTool] = {}
-        functions: Dict[str, Callable] = {
-            "get_url_content": getUrlContent,
-            "generate_and_send_image": generateAndSendImage,
-            "add_user_data": setUserData,
-            "get_weather_by_city": getWeatherByCity,
-            "get_weather_by_coords": getWeatherByCoords,
-            "get_current_datetime": getCurrentDateTime,
-        }
-
-        if useTools:
-            tools["get_url_content"] = LLMToolFunction(
-                name="get_url_content",
-                description="Get the content of a URL",
-                parameters=[
-                    LLMFunctionParameter(
-                        name="url",
-                        description="The URL to get the content from",
-                        type=LLMParameterType.STRING,
-                        required=True,
-                    ),
-                ],
-                function=functions["get_url_content"],
-            )
-            tools["generate_and_send_image"] = LLMToolFunction(
-                name="generate_and_send_image",
-                description=(
-                    "Generate and send an image. ALWAYS use it if user ask to "
-                    "generate/paint/draw an image/picture/photo"
-                ),
-                parameters=[
-                    LLMFunctionParameter(
-                        name="image_prompt",
-                        description="Detailed prompt to generate the image from",
-                        type=LLMParameterType.STRING,
-                        required=True,
-                    ),
-                    LLMFunctionParameter(
-                        name="image_description",
-                        description="The description of the image if any",
-                        type=LLMParameterType.STRING,
-                        required=False,
-                    ),
-                ],
-                function=functions["generate_and_send_image"],
-            )
-            tools["add_user_data"] = LLMToolFunction(
-                name="add_user_data",
-                description=(
-                    "Add some data/knowledge about user, sent last message. "
-                    "Use it in following cases:\n"
-                    "1. User asked to learn/remember something about him/her.\n"
-                    "2. You learned new information about user "
-                    "(e.g., real name, birth dare, what he like, etc).\n"
-                    "3. You want to remember something relating to user.\n"
-                    "4. When you needs to store information related to the user "
-                    "to improve interaction quality (e.g., remembering formatting preferences, "
-                    "command usage frequency, communication style).\n"
-                    "\n"
-                    "Will return new data for given key."
-                ),
-                parameters=[
-                    LLMFunctionParameter(
-                        name="key",
-                        description="Key for data (for structured data usage)",
-                        type=LLMParameterType.STRING,
-                        required=True,
-                    ),
-                    LLMFunctionParameter(
-                        name="data",
-                        description="Data/knowledbe you want to remember",
-                        type=LLMParameterType.STRING,
-                        required=True,
-                    ),
-                    LLMFunctionParameter(
-                        name="append",
-                        description=(
-                            "True: Append data to existing data, "
-                            "False: replace existing data for given key. "
-                            "Default: False"
-                        ),
-                        type=LLMParameterType.BOOLEAN,
-                        required=False,
-                    ),
-                ],
-                function=functions["add_user_data"],
-            )
-            if self.openWeatherMapClient is not None:
-                tools["get_weather_by_city"] = LLMToolFunction(
-                    name="get_weather_by_city",
-                    description=(
-                        "Get weather and forecast for given city. Return JSON of current weather "
-                        "and weather forecast for next following days. "
-                        "Temperature returned in Celsius."
-                    ),
-                    parameters=[
-                        LLMFunctionParameter(
-                            name="city",
-                            description="City to get weather in",
-                            type=LLMParameterType.STRING,
-                            required=True,
-                        ),
-                        LLMFunctionParameter(
-                            name="countryCode",
-                            description="ISO 3166 country code of city",
-                            type=LLMParameterType.STRING,
-                            required=False,
-                        ),
-                    ],
-                    function=functions["get_weather_by_city"],
-                )
-                tools["get_weather_by_coords"] = LLMToolFunction(
-                    name="get_weather_by_coords",
-                    description=(
-                        "Get weather and forecast for given location. Return JSON of current weather "
-                        "and weather forecast for next following days. "
-                        "Temperature returned in Celsius."
-                    ),
-                    parameters=[
-                        LLMFunctionParameter(
-                            name="lat",
-                            description="Latitude of location",
-                            type=LLMParameterType.NUMBER,
-                            required=True,
-                        ),
-                        LLMFunctionParameter(
-                            name="lon",
-                            description="Longitude of location",
-                            type=LLMParameterType.NUMBER,
-                            required=True,
-                        ),
-                    ],
-                    function=functions["get_weather_by_coords"],
-                )
-
-            tools["get_time"] = LLMToolFunction(
-                name="get_current_datetime",
-                description="Get current date and time",
-                parameters=[],
-                function=functions["get_current_datetime"],
-            )
-
-        ret: Optional[ModelRunResult] = None
-        toolsUsed = False
-        while True:
-            ret = await model.generateTextWithFallBack(
-                messages, fallbackModel=fallbackModel, tools=list(tools.values())
-            )
-            logger.debug(f"LLM returned: {ret} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
-            if ret.status == ModelResultStatus.TOOL_CALLS:
-                if ret.resultText and sendIntermediateMessages:
-                    try:
-                        await self.sendMessage(ensuredMessage, ret.resultText, messageCategory=MessageCategory.BOT)
-                    except Exception as e:
-                        logger.error(f"Failed to send intermediate message: {e}")
-
-                toolsUsed = True
-                newMessages = [ret.toModelMessage()]
-
-                for toolCall in ret.toolCalls:
-                    newMessages.append(
-                        ModelMessage(
-                            role="tool",
-                            content=utils.jsonDumps(
-                                await functions[toolCall.name](**toolCall.parameters),
-                            ),
-                            toolCallId=toolCall.id,
-                        )
-                    )
-                messages = messages + newMessages
-                logger.debug(f"Tools used: {newMessages} for mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}")
-            else:
-                break
-
-        if toolsUsed:
-            ret.setToolsUsed(True)
-
+        ret = await self.llmService.generateTextViaLLM(
+            model=model,
+            fallbackModel=fallbackModel,
+            messages=messages,
+            useTools=useTools,
+            callId=f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}",
+            callback=processIntermediateMessages,
+            extraData={"ensuredMessage": ensuredMessage},
+        )
         return ret
 
     async def _sendLLMChatMessage(

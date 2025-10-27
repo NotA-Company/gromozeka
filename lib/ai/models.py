@@ -7,7 +7,7 @@ import base64
 from enum import Enum, StrEnum
 import json
 import logging
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Sequence
 import magic
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class LLMToolFunction(LLMAbstractTool):
         self,
         name: str,
         description: str,
-        parameters: List[LLMFunctionParameter],
+        parameters: Sequence[LLMFunctionParameter],
         function: Optional[Callable] = None,
     ):
         self.name = name
@@ -73,9 +73,9 @@ class LLMToolFunction(LLMAbstractTool):
         self.parameters = parameters
         self.function = function
 
-    def call(self, **kwargs) -> Any:
+    def call(self, *args, **kwargs) -> Any:
         if self.function:
-            return self.function(**kwargs)
+            return self.function(*args, **kwargs)
         raise ValueError("No function provided")
 
     def toJson(self) -> Dict[str, Any]:
