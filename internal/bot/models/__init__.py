@@ -38,7 +38,7 @@ from .command_handlers import (
 from .chat_settings import ChatSettingsKey, ChatSettingsValue, getChatSettingsInfo
 
 # Ensured Message (already exists)
-from .ensured_message import EnsuredMessage
+from .ensured_message import EnsuredMessage, MentionCheckResult, MessageSender
 
 
 __all__ = [
@@ -68,4 +68,6 @@ __all__ = [
     "getChatSettingsInfo",
     # Ensured Message
     "EnsuredMessage",
+    "MentionCheckResult",
+    "MessageSender",
 ]
