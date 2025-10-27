@@ -114,7 +114,7 @@ class HandlersManager(CommandHandlerGetterInterface):
                     logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
                     break
                 case HandlerResultStatus.SKIPPED:
-                    logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
+                    # logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
                     continue
                 case HandlerResultStatus.NEXT:
                     logger.debug(f"Handler {type(handler).__name__} returned NEXT")
@@ -128,7 +128,7 @@ class HandlersManager(CommandHandlerGetterInterface):
                 case _:
                     logger.error(f"Unknown handler result: {ret}")
 
-        possibleFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
+        expectedFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
         if ensuredMessage:
             logger.debug(
                 f"Handled message from {ensuredMessage.sender}: {ensuredMessage.messageText[:50]}... "
@@ -136,9 +136,9 @@ class HandlersManager(CommandHandlerGetterInterface):
             )
         else:
             logger.debug(f"Handled not-a-message: #{update.update_id}, resultSet: {resultSet})")
-        if not possibleFinalResults.intersection(resultSet):
+        if not expectedFinalResults.intersection(resultSet):
             logger.error(
-                f"No handler returned any of ({possibleFinalResults}), but only ({resultSet}), something went wrong"
+                f"No handler returned any of ({expectedFinalResults}), but only ({resultSet}), something went wrong"
             )
             return
 
@@ -180,7 +180,7 @@ class HandlersManager(CommandHandlerGetterInterface):
                     logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
                     break
                 case HandlerResultStatus.SKIPPED:
-                    logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
+                    # logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
                     continue
                 case HandlerResultStatus.NEXT:
                     logger.debug(f"Handler {type(handler).__name__} returned NEXT")
@@ -195,10 +195,10 @@ class HandlersManager(CommandHandlerGetterInterface):
                     logger.error(f"Unknown handler result: {ret}")
                     continue
 
-        possibleFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
-        if not possibleFinalResults.intersection(retSet):
+        expectedFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
+        if not expectedFinalResults.intersection(retSet):
             logger.error(
-                f"No handler returned any of ({possibleFinalResults}), but only ({retSet}), something went wrong"
+                f"No handler returned any of ({expectedFinalResults}), but only ({retSet}), something went wrong"
             )
             return
 
