@@ -549,10 +549,13 @@ class BaseBotHandler(CommandHandlerMixin):
             logger.error(f"Error while sending message: {type(e).__name__}#{e}")
             logger.exception(e)
             if sendErrorIfAny:
-                await message.reply_text(
-                    f"Error while sending message: {type(e).__name__}#{e}",
-                    reply_to_message_id=replyToMessage.messageId,
-                )
+                try:
+                    await message.reply_text(
+                        f"Error while sending message: {type(e).__name__}#{e}",
+                        reply_to_message_id=replyToMessage.messageId,
+                    )
+                except Exception as error_e:
+                    logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
             return None
 
         return replyMessage
@@ -632,25 +635,19 @@ class BaseBotHandler(CommandHandlerMixin):
             # No need to rewrite topic info
             return
 
-        if (
-            storedTopicInfo is None
-            or iconColor != storedTopicInfo["icon_color"]
-            or customEmojiId != storedTopicInfo["icon_custom_emoji_id"]
-            or name != storedTopicInfo["name"]
-        ):
-            self.cache.setChatTopicInfo(
-                chatId=chatId,
-                topicId=_topicId,
-                info={
-                    "chat_id": chatId,
-                    "topic_id": _topicId,
-                    "icon_color": iconColor,
-                    "icon_custom_emoji_id": customEmojiId,
-                    "name": name,
-                    "created_at": datetime.datetime.now(),
-                    "updated_at": datetime.datetime.now(),
-                },
-            )
+        self.cache.setChatTopicInfo(
+            chatId=chatId,
+            topicId=_topicId,
+            info={
+                "chat_id": chatId,
+                "topic_id": _topicId,
+                "icon_color": iconColor,
+                "icon_custom_emoji_id": customEmojiId,
+                "name": name,
+                "created_at": datetime.datetime.now(),
+                "updated_at": datetime.datetime.now(),
+            },
+        )
 
     def saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
         """
