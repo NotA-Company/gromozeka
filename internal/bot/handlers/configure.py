@@ -1,5 +1,15 @@
 """
-Telegram bot command handlers for Gromozeka.
+Chat configuration handler for Gromozeka Telegram bot.
+
+This module provides interactive chat configuration functionality through a wizard-style
+interface. Users can configure bot behavior for chats where they have admin privileges
+using inline keyboard buttons and text input.
+
+The configuration system supports:
+- Multi-step navigation through chat selection and settings
+- Dynamic keyboard generation based on user permissions
+- Type-safe setting updates with validation
+- State management for active configuration sessions
 """
 
 import logging
@@ -35,11 +45,48 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigureCommandHandler(BaseBotHandler):
-    """Contains all bot command and message handlers, dood!"""
+    """
+    Handler for chat configuration commands and interactions, dood!
+    
+    This handler manages the complete configuration workflow including:
+    - Initiating configuration via /configure command
+    - Handling button callbacks for navigation and value updates
+    - Processing text input for setting values
+    - Managing user state during configuration sessions
+    
+    The handler uses a state machine approach with the following actions:
+    - Init: Display list of configurable chats
+    - ConfigureChat: Show settings for selected chat
+    - ConfigureKey: Display options for specific setting
+    - SetTrue/SetFalse/ResetValue/SetValue: Update setting values
+    - Cancel: Exit configuration wizard
+    """
 
     async def messageHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
     ) -> HandlerResultStatus:
+        """
+        Handle text messages during active configuration sessions, dood!
+        
+        This handler processes user text input when they are in an active configuration
+        state (setting a value for a chat setting). It only operates in private chats
+        and when the user has an active configuration session stored in cache.
+        
+        Args:
+            update: Telegram update object containing the message
+            context: Telegram context for the handler
+            ensuredMessage: Validated message object with user and chat info, or None
+            
+        Returns:
+            HandlerResultStatus indicating the result:
+            - FINAL: Successfully processed configuration input
+            - SKIPPED: Not a private chat or no active configuration
+            - ERROR: Missing required data (chat, message, or ensured message)
+            
+        Note:
+            The active configuration state is stored in cache with the key
+            UserActiveActionEnum.Configuration and contains chatId, key, and message.
+        """
         chat = update.effective_chat
         if not chat:
             logger.error("Chat undefined")
@@ -78,7 +125,38 @@ class ConfigureCommandHandler(BaseBotHandler):
         return HandlerResultStatus.FINAL
 
     async def _handle_chat_configuration(self, data: Dict[str | int, Any], message: Message, user: User) -> bool:
-        """Parses the CallbackQuery and updates the message text."""
+        """
+        Process chat configuration actions and update the interface, dood!
+        
+        This is the core configuration handler that processes all configuration actions
+        using a match/case statement. It handles navigation, value updates, and UI
+        generation for the configuration wizard.
+        
+        Args:
+            data: Dictionary containing action data with keys:
+                - ConfigureAction (ButtonDataKey.ConfigureAction): The action to perform
+                - ChatId (ButtonDataKey.ChatId): Target chat ID (optional, action-dependent)
+                - Key (ButtonDataKey.Key): Setting key ID (optional, action-dependent)
+                - Value (ButtonDataKey.Value): New value (optional, for SetValue action)
+            message: Telegram message object to edit with new content
+            user: User performing the configuration
+            
+        Returns:
+            bool: True if action was processed successfully, False on error
+            
+        Actions:
+            - Init: Display list of chats where user is admin
+            - ConfigureChat: Show all settings for selected chat
+            - ConfigureKey: Display options for specific setting with current/default values
+            - SetTrue/SetFalse: Set boolean setting to True/False
+            - ResetValue: Reset setting to default value
+            - SetValue: Set setting to custom value from text input
+            - Cancel: Exit configuration wizard
+            
+        Note:
+            This method performs admin permission checks before allowing configuration
+            changes. It also clears user state after value updates.
+        """
 
         # Used keys:
         # a: Action
@@ -458,7 +536,29 @@ class ConfigureCommandHandler(BaseBotHandler):
         order=CommandHandlerOrder.NORMAL,
     )
     async def configure_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /configure command."""
+        """
+        Handle the /configure command to start configuration wizard, dood!
+        
+        This command initiates the chat configuration process by displaying a loading
+        message and then calling the configuration handler with the Init action.
+        The command is only available in private chats.
+        
+        Args:
+            update: Telegram update object containing the command message
+            context: Telegram context for the handler
+            
+        Returns:
+            None
+            
+        Side Effects:
+            - Saves the command message to database
+            - Sends a loading message to user
+            - Initiates configuration wizard with chat selection
+            
+        Note:
+            The command is decorated with @commandHandler which restricts it to
+            private chats (CommandCategory.PRIVATE) and sets its help text.
+        """
 
         message = update.message
         if not message:
@@ -492,7 +592,28 @@ class ConfigureCommandHandler(BaseBotHandler):
     async def buttonHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str | int, str | int | float | bool | None]
     ) -> HandlerResultStatus:
-        """Parses the CallbackQuery and updates the message text."""
+        """
+        Handle inline keyboard button callbacks for configuration, dood!
+        
+        This handler processes button presses from the configuration wizard's inline
+        keyboards. It extracts the callback data, validates the query, and delegates
+        to _handle_chat_configuration for actual processing.
+        
+        Args:
+            update: Telegram update object containing the callback query
+            context: Telegram context for the handler
+            data: Unpacked callback data dictionary containing action and parameters
+            
+        Returns:
+            HandlerResultStatus indicating the result:
+            - FINAL: Successfully processed configuration button
+            - SKIPPED: Button is not a configuration action
+            - FATAL: Missing or invalid query/message data
+            
+        Note:
+            The handler checks for the presence of ButtonDataKey.ConfigureAction in
+            the data dictionary to determine if this is a configuration button.
+        """
 
         query = update.callback_query
         if query is None:
