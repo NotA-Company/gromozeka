@@ -23,11 +23,11 @@ Example:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import time
 import uuid
-import inspect
 from threading import RLock
 from typing import Any, Dict, List, Optional
 
@@ -215,7 +215,7 @@ class QueueService:
             while True:
                 task = await self.asyncTasksQueue.get_nowait()
                 if not inspect.isawaitable(task):
-                    # By some reason all finished tasks magically converts to it's results 
+                    # By some reason all finished tasks magically converts to it's results
                     logger.warning(f"Task {task} is not awaitable, but a {type(task)}")
                 else:
                     try:
