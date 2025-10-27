@@ -2,8 +2,8 @@
 Telegram bot chat settings.
 """
 
-from enum import StrEnum
 import logging
+from enum import StrEnum
 from typing import Any, Dict, List, TypedDict
 
 from lib.ai.abstract import AbstractModel

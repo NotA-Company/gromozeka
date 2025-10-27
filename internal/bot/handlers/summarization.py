@@ -9,30 +9,27 @@ as well as direct command-based summarization.
 import datetime
 import json
 import logging
-
 import time
 from typing import Any, Dict, List, Optional
 
-from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update, Message, User
+from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, User
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
+import lib.utils as utils
 from internal.bot.models import CallbackDataDict
-
-from .base import BaseBotHandler, HandlerResultStatus
+from internal.database.models import (
+    ChatInfoDict,
+    MessageCategory,
+)
 from internal.services.cache.types import UserActiveActionEnum
 from lib.ai.models import (
     ModelMessage,
     ModelRunResult,
 )
 from lib.markdown import markdown_to_markdownv2
-import lib.utils as utils
 
-from internal.database.models import (
-    ChatInfoDict,
-    MessageCategory,
-)
-
+from .. import constants
 from ..models import (
     ButtonDataKey,
     ButtonSummarizationAction,
@@ -44,7 +41,7 @@ from ..models import (
     LLMMessageFormat,
     commandHandler,
 )
-from .. import constants
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 

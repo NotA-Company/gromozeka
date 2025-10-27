@@ -5,16 +5,22 @@ with other database backends in the future.
 """
 
 import datetime
-import dateutil
-import sqlite3
 import logging
+import sqlite3
 import threading
-from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
+from typing import Any, Dict, List, Optional
 
+import dateutil
 from telegram import Chat
 
+# Import from shared_enums to avoid circular dependency
+from internal.models import MessageType
+
 from .models import (
+    CacheDict,
+    CacheStorageDict,
+    CacheType,
     ChatInfoDict,
     ChatMessageDict,
     ChatSummarizationCacheDict,
@@ -22,17 +28,11 @@ from .models import (
     ChatUserDict,
     DelayedTaskDict,
     MediaAttachmentDict,
-    SpamMessageDict,
-    CacheDict,
-    CacheStorageDict,
-    CacheType,
     MediaStatus,
     MessageCategory,
+    SpamMessageDict,
     SpamReason,
 )
-
-# Import from shared_enums to avoid circular dependency
-from internal.models import MessageType
 
 logger = logging.getLogger(__name__)
 

@@ -20,11 +20,12 @@ from unittest.mock import Mock
 # Add project root to path to avoid circular imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-# Import directly to avoid circular dependencies
-from internal.services.cache.service import LRUCache, CacheService  # noqa: E402
-from internal.services.cache.models import CacheNamespace  # noqa: E402
-from internal.services.cache.types import UserActiveActionEnum  # noqa: E402
 from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue  # noqa: E402
+from internal.services.cache.models import CacheNamespace  # noqa: E402
+
+# Import directly to avoid circular dependencies
+from internal.services.cache.service import CacheService, LRUCache  # noqa: E402
+from internal.services.cache.types import UserActiveActionEnum  # noqa: E402
 
 
 class TestLRUCache(unittest.TestCase):

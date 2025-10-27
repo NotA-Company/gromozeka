@@ -5,19 +5,20 @@ This module contains comprehensive tests for the OpenWeatherMap client library,
 including unit tests for the client, cache, and integration scenarios.
 """
 
-import pytest
 import json
-from unittest.mock import Mock, AsyncMock, patch
+import os
 
 # Add project root to path for imports
 import sys
-import os
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from lib.openweathermap.client import OpenWeatherMapClient  # noqa: E402
 from internal.database.openweathermap_cache import DatabaseWeatherCache  # noqa: E402
 from lib.openweathermap.cache_interface import WeatherCacheInterface  # noqa: E402
+from lib.openweathermap.client import OpenWeatherMapClient  # noqa: E402
 
 
 class TestOpenWeatherMapClient:

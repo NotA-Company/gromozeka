@@ -15,12 +15,12 @@ from telegram.ext import ContextTypes
 
 from internal.database.models import MessageCategory
 
-from .base import BaseBotHandler, HandlerResultStatus
 from ..models import (
     ChatSettingsKey,
     EnsuredMessage,
     MessageType,
 )
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 

@@ -6,19 +6,20 @@ code blocks, lists, block quotes, and horizontal rules.
 """
 
 import re
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from .ast_nodes import (
-    MDNode,
-    MDDocument,
-    MDParagraph,
-    MDHeader,
-    MDCodeBlock,
+    ListType,
     MDBlockQuote,
+    MDCodeBlock,
+    MDDocument,
+    MDHeader,
+    MDHorizontalRule,
     MDList,
     MDListItem,
-    MDHorizontalRule,
+    MDNode,
+    MDParagraph,
     MDText,
-    ListType,
 )
 from .tokenizer import Token, TokenType
 

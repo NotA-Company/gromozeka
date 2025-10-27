@@ -7,15 +7,15 @@ in the Gromozeka project.
 
 import asyncio
 import logging
+import os
 
 # Add project root to path for imports
 import sys
-import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from lib.openweathermap import OpenWeatherMapClient, DictWeatherCache  # noqa: E402
 from internal.config.manager import ConfigManager  # noqa: E402
+from lib.openweathermap import DictWeatherCache, OpenWeatherMapClient  # noqa: E402
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

@@ -17,7 +17,6 @@ to regular users, dood!
 
 import asyncio
 import logging
-
 import time
 from typing import Optional
 
@@ -25,9 +24,7 @@ from telegram import Update
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
-from .base import BaseBotHandler
 import lib.utils as utils
-
 from internal.database.models import MessageCategory
 
 from ..models import (
@@ -38,6 +35,7 @@ from ..models import (
     EnsuredMessage,
     commandHandler,
 )
+from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
 

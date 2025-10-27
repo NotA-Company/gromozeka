@@ -2,13 +2,13 @@
 """
 Test to debug list parsing with blank lines - with detailed tracing, dood!
 """
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown.tokenizer import Tokenizer  # noqa: E402
 from lib.markdown.block_parser import BlockParser  # noqa: E402
+from lib.markdown.tokenizer import Tokenizer  # noqa: E402
 
 # Monkey-patch to add debug output
 original_parse_list = BlockParser._parse_list

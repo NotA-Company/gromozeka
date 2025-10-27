@@ -19,25 +19,23 @@ Constants:
 """
 
 import asyncio
-from dataclasses import dataclass
 import datetime
 import logging
-
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
-from telegram import Chat, Message, User
 import telegram.constants
+from telegram import Chat, Message, User
 
-from lib.ai.models import ModelMessage
 import lib.utils as utils
-
-from .enums import LLMMessageFormat
-from ...models import MessageType
-from .media import MediaProcessingInfo
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.database.wrapper import DatabaseWrapper
+from lib.ai.models import ModelMessage
 
+from ...models import MessageType
+from .enums import LLMMessageFormat
+from .media import MediaProcessingInfo
 
 logger = logging.getLogger(__name__)
 

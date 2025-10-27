@@ -12,17 +12,19 @@ generation and analysis capabilities with fallback support.
 """
 
 import logging
-
 from typing import Any, Dict, Optional
 
 import magic
-
 from telegram import Chat, Update
 from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ContextTypes
 
+import lib.utils as utils
+from internal.config.manager import ConfigManager
+from internal.database.models import MessageCategory
+from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm.service import LLMService
-
+from lib.ai.manager import LLMManager
 from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
@@ -30,14 +32,8 @@ from lib.ai.models import (
     ModelMessage,
     ModelResultStatus,
 )
-from lib.ai.manager import LLMManager
-import lib.utils as utils
 
-from internal.config.manager import ConfigManager
-
-from internal.database.wrapper import DatabaseWrapper
-from internal.database.models import MessageCategory
-
+from .. import constants
 from ..models import (
     ChatSettingsKey,
     CommandCategory,
@@ -46,7 +42,6 @@ from ..models import (
     MessageType,
     commandHandler,
 )
-from .. import constants
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)

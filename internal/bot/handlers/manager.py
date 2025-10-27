@@ -6,10 +6,9 @@ import logging
 from typing import List, Optional, Sequence, Set
 
 from telegram import Message, Update
-from telegram.ext import ExtBot, ContextTypes
+from telegram.ext import ContextTypes, ExtBot
 
 from internal.bot.models import CommandHandlerInfo, EnsuredMessage
-
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache.service import CacheService
@@ -18,17 +17,17 @@ from lib import utils
 from lib.ai.manager import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
-from .llm_messages import LLMMessageHandler
-from .spam import SpamHandlers
-from .help_command import CommandHandlerGetterInterface, HelpHandler
-from .configure import ConfigureCommandHandler
-from .summarization import SummarizationHandler
-from .weather import WeatherHandler
-from .message_preprocessor import MessagePreprocessorHandler
-from .user_data import UserDataHandler
-from .dev_commands import DevCommandsHandler
-from .media import MediaHandler
 from .common import CommonHandler
+from .configure import ConfigureCommandHandler
+from .dev_commands import DevCommandsHandler
+from .help_command import CommandHandlerGetterInterface, HelpHandler
+from .llm_messages import LLMMessageHandler
+from .media import MediaHandler
+from .message_preprocessor import MessagePreprocessorHandler
+from .spam import SpamHandlers
+from .summarization import SummarizationHandler
+from .user_data import UserDataHandler
+from .weather import WeatherHandler
 
 logger = logging.getLogger(__name__)
 

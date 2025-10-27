@@ -2,12 +2,13 @@
 Different Data models for AI
 """
 
-from abc import ABC, abstractmethod
 import base64
-from enum import Enum, StrEnum
 import json
 import logging
-from typing import Dict, List, Any, Optional, Callable, Sequence
+from abc import ABC, abstractmethod
+from enum import Enum, StrEnum
+from typing import Any, Callable, Dict, List, Optional, Sequence
+
 import magic
 
 logger = logging.getLogger(__name__)

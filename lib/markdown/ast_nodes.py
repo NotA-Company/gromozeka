@@ -6,8 +6,8 @@ the structure of a parsed Markdown document.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Any, Dict
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 
 class NodeType(Enum):

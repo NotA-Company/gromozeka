@@ -5,7 +5,7 @@ This module defines TypedDict classes for API responses and cache entries.
 All models follow the OpenWeatherMap API v3.0 specification.
 """
 
-from typing import Dict, Optional, TypedDict, List
+from typing import Dict, List, Optional, TypedDict
 
 # API Response Models
 

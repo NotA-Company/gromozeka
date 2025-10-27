@@ -6,14 +6,13 @@ The service supports fallback models and provides a unified interface for LLM op
 """
 
 import logging
+import uuid
 from threading import RLock
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, TypeAlias
-import uuid
 
 from lib import utils
 from lib.ai.abstract import AbstractModel
-from lib.ai.models import LLMToolFunction, LLMFunctionParameter, ModelMessage, ModelResultStatus, ModelRunResult
-
+from lib.ai.models import LLMFunctionParameter, LLMToolFunction, ModelMessage, ModelResultStatus, ModelRunResult
 
 logger = logging.getLogger(__name__)
 

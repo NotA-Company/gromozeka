@@ -3,7 +3,8 @@ Yandex Cloud OpenAI-compatible provider for LLM models, dood!
 """
 
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
+
 from openai import AsyncOpenAI
 
 from ..abstract import AbstractModel

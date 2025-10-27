@@ -6,25 +6,26 @@ Markdown AST into various output formats including HTML and MarkdownV2.
 """
 
 import html
-from typing import Dict, Any
+from typing import Any, Dict
+
 from .ast_nodes import (
-    MDNode,
-    MDDocument,
-    MDParagraph,
-    MDHeader,
-    MDCodeBlock,
-    MDBlockQuote,
-    MDList,
-    MDListItem,
-    MDHorizontalRule,
-    MDEmphasis,
-    MDLink,
-    MDImage,
-    MDCodeSpan,
-    MDText,
-    MDAutolink,
     EmphasisType,
     ListType,
+    MDAutolink,
+    MDBlockQuote,
+    MDCodeBlock,
+    MDCodeSpan,
+    MDDocument,
+    MDEmphasis,
+    MDHeader,
+    MDHorizontalRule,
+    MDImage,
+    MDLink,
+    MDList,
+    MDListItem,
+    MDNode,
+    MDParagraph,
+    MDText,
     Optional,
 )
 

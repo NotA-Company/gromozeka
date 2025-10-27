@@ -18,33 +18,28 @@ Dependencies:
 
 import datetime
 import logging
-
 from typing import Any, Dict, Optional
 
 from telegram import Chat, Update
 from telegram.ext import ContextTypes
 
+import lib.utils as utils
+from internal.config.manager import ConfigManager
+from internal.database.models import (
+    MessageCategory,
+)
+from internal.database.openweathermap_cache import DatabaseWeatherCache
+from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm.service import LLMService
-
-from .base import BaseBotHandler, HandlerResultStatus
-
+from lib.ai.manager import LLMManager
 from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
 )
-from lib.ai.manager import LLMManager
 from lib.openweathermap.client import OpenWeatherMapClient
 from lib.openweathermap.models import CombinedWeatherResult
-import lib.utils as utils
 
-from internal.config.manager import ConfigManager
-
-from internal.database.wrapper import DatabaseWrapper
-from internal.database.openweathermap_cache import DatabaseWeatherCache
-from internal.database.models import (
-    MessageCategory,
-)
-
+from .. import constants
 from ..models import (
     ChatSettingsKey,
     CommandCategory,
@@ -52,7 +47,7 @@ from ..models import (
     EnsuredMessage,
     commandHandler,
 )
-from .. import constants
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 

@@ -5,37 +5,37 @@ This module contains tests for all components of the Markdown parser
 following the Gromozeka Markdown Specification v1.0.
 """
 
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 # Add the lib directory to the path so we can import the markdown module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from lib.markdown import (  # noqa: E402
+    HTMLRenderer,
     MarkdownParser,
-    parse_markdown,
+    Tokenizer,
     markdown_to_html,
     normalize_markdown,
+    parse_markdown,
     validate_markdown,
-    Tokenizer,
-    HTMLRenderer,
 )
 from lib.markdown.ast_nodes import (  # noqa: E402
-    MDDocument,
-    MDParagraph,
-    MDHeader,
-    MDCodeBlock,
-    MDBlockQuote,
-    MDList,
-    MDHorizontalRule,
-    MDEmphasis,
-    MDLink,
-    MDImage,
-    MDCodeSpan,
-    MDAutolink,
     EmphasisType,
     ListType,
+    MDAutolink,
+    MDBlockQuote,
+    MDCodeBlock,
+    MDCodeSpan,
+    MDDocument,
+    MDEmphasis,
+    MDHeader,
+    MDHorizontalRule,
+    MDImage,
+    MDLink,
+    MDList,
+    MDParagraph,
 )
 from lib.markdown.tokenizer import TokenType  # noqa: E402
 

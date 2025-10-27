@@ -6,8 +6,8 @@ into a stream of tokens for parsing.
 """
 
 import re
-from typing import List, NamedTuple, Iterator
 from enum import Enum
+from typing import Iterator, List, NamedTuple
 
 
 class TokenType(Enum):

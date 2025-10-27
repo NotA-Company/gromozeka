@@ -13,29 +13,25 @@ across different chat contexts (private, group, supergroup).
 
 import datetime
 import logging
-
 import time
 from typing import Any, Dict, Optional
 
 import requests
-
-from telegram import Chat, Update, Message, User
+from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
+import lib.utils as utils
+from internal.config.manager import ConfigManager
+from internal.database.models import MessageCategory
+from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm.service import LLMService
-
+from lib.ai.manager import LLMManager
 from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
 )
-from lib.ai.manager import LLMManager
-import lib.utils as utils
 
-from internal.config.manager import ConfigManager
-
-from internal.database.wrapper import DatabaseWrapper
-from internal.database.models import MessageCategory
-
+from .. import constants
 from ..models import (
     CommandCategory,
     CommandHandlerOrder,
@@ -44,7 +40,6 @@ from ..models import (
     EnsuredMessage,
     commandHandler,
 )
-from .. import constants
 from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)

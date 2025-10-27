@@ -25,17 +25,16 @@ Example:
 import asyncio
 import json
 import logging
-from threading import RLock
 import time
-from typing import Any, Dict, List, Optional
 import uuid
+from threading import RLock
+from typing import Any, Dict, List, Optional
 
+import lib.utils as utils
 from internal.database.wrapper import DatabaseWrapper
 
 from . import constants
-from .types import DelayedTaskFunction, DelayedTask, DelayedTaskHandler
-
-import lib.utils as utils
+from .types import DelayedTask, DelayedTaskFunction, DelayedTaskHandler
 
 logger = logging.getLogger(__name__)
 

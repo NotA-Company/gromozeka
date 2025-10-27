@@ -5,11 +5,12 @@ Basic OpenAI provider and model base classes for shared functionality, dood!
 import base64
 import json
 import logging
-from typing import Dict, Iterable, List, Any, Optional
+from typing import Any, Dict, Iterable, List, Optional
+
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 
-from ..abstract import AbstractModel, AbstractLLMProvider
+from ..abstract import AbstractLLMProvider, AbstractModel
 from ..models import (
     LLMAbstractTool,
     LLMToolCall,

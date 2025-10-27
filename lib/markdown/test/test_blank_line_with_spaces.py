@@ -2,12 +2,12 @@
 """
 Test blank lines with spaces between list items, dood!
 """
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_markdownv2, markdown_to_html  # noqa: E402
+from lib.markdown import markdown_to_html, markdown_to_markdownv2  # noqa: E402
 
 # Test 1: Normal blank line (no spaces)
 text1 = """

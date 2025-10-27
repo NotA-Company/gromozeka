@@ -7,7 +7,8 @@ This allows for easy testing and future storage backend changes.
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterable, List, Optional
-from .models import TokenStats, ClassStats, BayesModelStats
+
+from .models import BayesModelStats, ClassStats, TokenStats
 
 
 class BayesStorageInterface(ABC):

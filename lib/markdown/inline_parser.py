@@ -6,17 +6,18 @@ code spans, and autolinks within block elements.
 """
 
 import re
-from typing import Optional, Tuple, Dict
+from typing import Dict, Optional, Tuple
+
 from .ast_nodes import (
-    MDNode,
-    MDText,
-    MDCodeSpan,
-    MDAutolink,
-    MDImage,
-    MDLink,
-    MDEmphasis,
     EmphasisType,
     List,
+    MDAutolink,
+    MDCodeSpan,
+    MDEmphasis,
+    MDImage,
+    MDLink,
+    MDNode,
+    MDText,
 )
 
 

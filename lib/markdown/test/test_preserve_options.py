@@ -3,8 +3,8 @@
 Test script for preserve_leading_spaces and preserve_soft_line_breaks options
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 

@@ -6,8 +6,8 @@ This test ensures that list markers inside fenced code blocks are treated as lit
 and not parsed as actual markdown lists.
 """
 
-import sys
 import os
+import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))

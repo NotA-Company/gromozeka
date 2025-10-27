@@ -5,7 +5,7 @@ Common utilities for Gromozeka bot.
 import datetime
 import json
 import logging
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from telegram import Message

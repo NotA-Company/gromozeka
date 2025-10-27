@@ -5,12 +5,14 @@ This module provides the main OpenWeatherMapClient class for interacting with
 the OpenWeatherMap API with database-backed caching support.
 """
 
-import httpx
 import json
 import logging
-from typing import Optional, List
-from .models import CurrentWeather, DailyWeather, GeocodingResult, WeatherData, CombinedWeatherResult
+from typing import List, Optional
+
+import httpx
+
 from .cache_interface import WeatherCacheInterface
+from .models import CombinedWeatherResult, CurrentWeather, DailyWeather, GeocodingResult, WeatherData
 
 logger = logging.getLogger(__name__)
 

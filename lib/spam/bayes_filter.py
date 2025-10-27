@@ -5,14 +5,14 @@ This module contains the main spam classification logic using the multinomial
 Naive Bayes algorithm with Laplace smoothing.
 """
 
-import math
 import logging
-from typing import Callable, List, Optional, Dict, Sequence, Tuple
+import math
 from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from .models import BayesModelStats, SpamScore
 from .storage_interface import BayesStorageInterface
 from .tokenizer import MessageTokenizer, TokenizerConfig
-from .models import SpamScore, BayesModelStats
 
 logger = logging.getLogger(__name__)
 
