@@ -18,10 +18,9 @@ from telegram import Chat, Update, Message, User
 from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ContextTypes
 
-from internal.bot.handlers.base import HandlerResultStatus
 from internal.services.llm.service import LLMService
 
-from .base import BaseBotHandler
+from .base import BaseBotHandler, HandlerResultStatus
 
 from lib.ai.abstract import AbstractModel
 from lib.ai.models import (

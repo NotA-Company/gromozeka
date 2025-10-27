@@ -25,9 +25,7 @@ from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 from telegram._utils.entities import parse_message_entity
 
-from internal.bot.handlers.base import HandlerResultStatus
-
-from .base import BaseBotHandler
+from .base import BaseBotHandler, HandlerResultStatus
 
 from lib.ai.manager import LLMManager
 from lib.spam import NaiveBayesFilter, BayesConfig
