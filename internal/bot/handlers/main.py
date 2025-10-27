@@ -632,40 +632,13 @@ class BotHandlers(BaseBotHandler):
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
 
-        myUserName = "@" + context.bot.username.lower()
-        messageText = ensuredMessage.messageText
-        mentionedAtBegin = False
-        mentionedMe = False
-        mentionedByNick = False
-
-        for entity in message.entities:
-            if entity.type == MessageEntityType.MENTION:
-                mentionText = messageText[entity.offset : entity.offset + entity.length]
-
-                # Проверяем, совпадает ли упоминание с именем бота
-                if mentionText.lower() == f"{myUserName}":
-                    mentionedMe = True
-                    break
-
-        # Remove leading @username from messageText if any
-        if messageText.lower().startswith(myUserName):
-            messageText = messageText[len(myUserName) :].lstrip()
-            mentionedAtBegin = True
+        _mentionedMe = self.checkEMMentionsMe(ensuredMessage)
+        messageText = _mentionedMe.restText or ""
+        mentionedAtBegin = _mentionedMe.byName is not None and _mentionedMe.byName[0] == 0
+        mentionedMe = _mentionedMe.byName is not None
+        mentionedByNick = _mentionedMe.byNick is not None
 
         messageTextLower = messageText.lower()
-        for mention in customMentions:
-            if messageTextLower.startswith(mention):
-                # If we found a mention, remove it from the messageText
-                # also remove leading spaces, and punctiation if any
-                logger.debug(f"Found mention: '{mention}' in message {messageText}")
-                mentionLen = len(mention)
-                if len(messageText) > mentionLen:
-                    if messageText[mentionLen] not in "\t\n\r ,.:":
-                        # If this mention is just part of word, skip it
-                        continue
-                messageText = messageText[len(mention) :].lstrip("\t\n\r ,.:")
-                mentionedByNick = True
-                break
 
         if not mentionedByNick and not mentionedAtBegin and not mentionedMe:
             return False

@@ -323,7 +323,7 @@ class WeatherHandler(BaseBotHandler):
         # Proceed only if there is restText
         #  + mentioned at begin of message (byNick is always at begin of message, so not separate check needed)
 
-        restText = mentionedMe.restText.lstrip(".,:").strip()
+        restText = mentionedMe.restText
         restTextLower = restText.lower()
 
         # Weather
