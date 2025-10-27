@@ -11,10 +11,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 import requests
-import magic
 
 from telegram import Chat, Update, Message, User
-from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ContextTypes
 
 from internal.services.llm.service import LLMService
@@ -23,7 +21,6 @@ from lib.ai.abstract import AbstractModel
 from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
-    ModelImageMessage,
     ModelMessage,
     ModelRunResult,
     ModelResultStatus,
@@ -76,27 +73,6 @@ class BotHandlers(BaseBotHandler):
             ],
             handler=self._llmToolGetUrlContent,
         )
-        self.llmService.registerTool(
-            name="generate_and_send_image",
-            description=(
-                "Generate and send an image. ALWAYS use it if user ask to " "generate/paint/draw an image/picture/photo"
-            ),
-            parameters=[
-                LLMFunctionParameter(
-                    name="image_prompt",
-                    description="Detailed prompt to generate the image from",
-                    type=LLMParameterType.STRING,
-                    required=True,
-                ),
-                LLMFunctionParameter(
-                    name="image_description",
-                    description="The description of the image if any",
-                    type=LLMParameterType.STRING,
-                    required=False,
-                ),
-            ],
-            handler=self._llmToolGenerateAndSendImage,
-        )
 
         self.llmService.registerTool(
             name="get_current_datetime",
@@ -147,54 +123,6 @@ class BotHandlers(BaseBotHandler):
     ###
     # LLM Tool-Calling handlers
     ###
-
-    async def _llmToolGenerateAndSendImage(
-        self, extraData: Optional[Dict[str, Any]], image_prompt: str, image_description: Optional[str] = None, **kwargs
-    ) -> str:
-        if extraData is None:
-            raise RuntimeError("extraData should be provided")
-        if "ensuredMessage" not in extraData:
-            raise RuntimeError("ensuredMessage should be provided")
-        ensuredMessage = extraData["ensuredMessage"]
-        if not isinstance(ensuredMessage, EnsuredMessage):
-            raise RuntimeError("ensuredMessage should be EnsuredMessage")
-
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        logger.debug(
-            f"Generating image: {image_prompt}. Image description: {image_description}, "
-            f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
-        )
-        imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
-        fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
-
-        mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=image_prompt)], fallbackImageLLM)
-        logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
-        if mlRet.status != ModelResultStatus.FINAL:
-            ret = await self.sendMessage(
-                ensuredMessage,
-                messageText=(
-                    f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n{str(mlRet.resultText)}\n```\n"
-                    f"Prompt:\n```\n{image_prompt}\n```"
-                ),
-            )
-            return utils.jsonDumps({"done": False, "errorMessage": mlRet.resultText})
-
-        if mlRet.mediaData is None:
-            logger.error(f"No image generated for {image_prompt}")
-            return '{"done": false}'
-
-        imgAddPrefix = ""
-        if mlRet.isFallback:
-            imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
-        ret = await self.sendMessage(
-            ensuredMessage,
-            photoData=mlRet.mediaData,
-            photoCaption=image_description,
-            mediaPrompt=image_prompt,
-            addMessagePrefix=imgAddPrefix,
-        )
-
-        return utils.jsonDumps({"done": ret is not None})
 
     async def _llmToolGetUrlContent(self, extraData: Optional[Dict[str, Any]], url: str, **kwargs) -> str:
         # TODO: Check if content is text content
@@ -533,11 +461,6 @@ class BotHandlers(BaseBotHandler):
         message = ensuredMessage.getBaseMessage()
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
-        customMentions = chatSettings[ChatSettingsKey.BOT_NICKNAMES].toList()
-        customMentions = [v.lower() for v in customMentions if v]
-        if not customMentions:
-            logger.error("No custom mentions found")
-            return False
 
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
@@ -592,54 +515,6 @@ class BotHandlers(BaseBotHandler):
             )
 
         # End of Who Today
-
-        ###
-        # what there? Return parsed media content of replied message (if any)
-        ###
-        whatThereList = ["что там"]
-
-        isWhatThere = False
-        for whatThere in whatThereList:
-            if messageTextLower.startswith(whatThere):
-                tail = messageText[len(whatThere) :].strip()
-
-                # Match only whole message
-                if not tail.rstrip("?.").strip():
-                    isWhatThere = True
-                    break
-
-        if isWhatThere and ensuredMessage.isReply and message.reply_to_message:
-            # TODO: Move getting parent message to separate function
-            ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
-            response = constants.DUNNO_EMOJI
-            if ensuredReply.messageType != MessageType.TEXT:
-                # Not text message, try to get it content from DB
-
-                storedReply = self.db.getChatMessageByMessageId(
-                    chatId=ensuredReply.chat.id,
-                    messageId=ensuredReply.messageId,
-                )
-                if storedReply is None:
-                    logger.error(
-                        f"Failed to get parent message (ChatId: {ensuredReply.chat.id}, "
-                        f"MessageId: {ensuredReply.messageId})"
-                    )
-                else:
-                    eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply)
-                    await eStoredMsg.updateMediaContent(self.db)
-                    response = eStoredMsg.mediaContent
-                    if response is None or response == "":
-                        response = constants.DUNNO_EMOJI
-
-                return (
-                    await self.sendMessage(
-                        ensuredMessage,
-                        messageText=response,
-                    )
-                    is not None
-                )
-
-        # End of What There
 
         # Handle LLM Action
         reqMessages = [
@@ -864,247 +739,6 @@ class BotHandlers(BaseBotHandler):
 
         await update.message.reply_text(welcome_message)
         logger.info(f"User {user.id} ({user.username}) started the bot")
-
-    @commandHandler(
-        commands=("analyze",),
-        shortDescription="<prompt> - Analyse answered media with given prompt",
-        helpMessage=" `<prompt>`: Проанализировать медиа используя указанный промпт "
-        "(на данный момент доступен только анализ картинок и статических стикеров).",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
-    )
-    async def analyze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /analyze <prompt> command."""
-        # Analyse media with given prompt. Should be reply to message with media.
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
-
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_ANALYZE].toBool() and not await self.isAdmin(
-            ensuredMessage.user, None, True
-        ):
-            logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
-            return
-
-        if not ensuredMessage.isReply or not message.reply_to_message:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Команда должна быть ответом на сообщение с медиа.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        parentMessage = message.reply_to_message
-        parentEnsuredMessage = ensuredMessage.fromMessage(parentMessage)
-
-        commandStr = ""
-        prompt = ensuredMessage.messageText
-        for entity in message.entities:
-            if entity.type == MessageEntityType.BOT_COMMAND:
-                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
-                prompt = ensuredMessage.messageText[entity.offset + entity.length :].strip()
-                break
-
-        logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
-
-        if not prompt:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Необходимо указать запрос для анализа медиа.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
-
-        mediaData: Optional[bytearray] = None
-        fileId: Optional[str] = None
-
-        match parentEnsuredMessage.messageType:
-            case MessageType.IMAGE:
-                if parentMessage.photo is None:
-                    raise ValueError("Photo is None")
-                # TODO: Should I try to get optimal image size like in processImage()?
-                fileId = parentMessage.photo[-1].file_id
-            case MessageType.STICKER:
-                if parentMessage.sticker is None:
-                    raise ValueError("Sticker is None")
-                fileId = parentMessage.sticker.file_id
-                # Removed unused variable fileUniqueId
-            case _:
-                await self.sendMessage(
-                    ensuredMessage,
-                    messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
-                    messageCategory=MessageCategory.BOT_ERROR,
-                )
-                return
-
-        mediaInfo = await context.bot.get_file(fileId)
-        logger.debug(f"Media info: {mediaInfo}")
-        mediaData = await mediaInfo.download_as_bytearray()
-
-        if not mediaData:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Не удалось получить данные медиа.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        mimeType = magic.from_buffer(bytes(mediaData), mime=True)
-        logger.debug(f"Mime type: {mimeType}")
-        if not mimeType.startswith("image/"):
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        reqMessages = [
-            ModelMessage(
-                role="system",
-                content=prompt,
-            ),
-            ModelImageMessage(
-                role="user",
-                # content="",
-                image=mediaData,
-            ),
-        ]
-
-        llmRet = await parserLLM.generateText(reqMessages)
-        logger.debug(f"LLM result: {llmRet}")
-        if llmRet.status != ModelResultStatus.FINAL:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        await self.sendMessage(
-            ensuredMessage,
-            messageText=llmRet.resultText,
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-        )
-
-    @commandHandler(
-        commands=("draw",),
-        shortDescription="[<prompt>] - Draw image with given prompt " "(use qoute or replied message as prompt if any)",
-        helpMessage=" `[<prompt>]`: Сгенерировать изображение, используя указанный промпт. "
-        "Так же может быть ответом на сообщение или цитированием.",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
-    )
-    async def draw_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /draw <prompt> command."""
-        # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_DRAW].toBool() and not await self.isAdmin(
-            ensuredMessage.user, None, True
-        ):
-            logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
-            return
-
-        commandStr = ""
-        prompt = ensuredMessage.messageText
-
-        if ensuredMessage.isQuote and ensuredMessage.quoteText:
-            prompt = ensuredMessage.quoteText
-
-        elif ensuredMessage.isReply and ensuredMessage.replyText:
-            prompt = ensuredMessage.replyText
-
-        else:
-            for entity in message.entities:
-                if entity.type == MessageEntityType.BOT_COMMAND:
-                    commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
-                    prompt = ensuredMessage.messageText[entity.offset + entity.length :].strip()
-                    break
-
-        logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
-
-        if not prompt:
-            # Fixed f-string missing placeholders
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=(
-                    "Необходимо указать запрос для генерации изображение. "
-                    "Или послать команду ответом на сообщение с текстом "
-                    "(можно цитировать при необходимости)."
-                ),
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
-        fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
-
-        mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
-        logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
-        if mlRet.status != ModelResultStatus.FINAL:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=(
-                    f"Не удалось сгенерировать изображение.\n```\n{mlRet.status}\n"
-                    f"{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```"
-                ),
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        if mlRet.mediaData is None:
-            logger.error(f"No image generated for {prompt}")
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Ошибка генерации изображения, попробуйте позже.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
-
-        logger.debug(f"Media data len: {len(mlRet.mediaData)}")
-
-        imgAddPrefix = ""
-        if mlRet.isFallback:
-            imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
-        await self.sendMessage(
-            ensuredMessage,
-            photoData=mlRet.mediaData,
-            photoCaption=(
-                "Сгенерировал изображение по Вашему запросу:\n```\n"
-                f"{prompt[:MessageLimit.CAPTION_LENGTH - 60]}"
-                "\n```"
-            ),
-            mediaPrompt=prompt,
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-            addMessagePrefix=imgAddPrefix,
-        )
 
     @commandHandler(
         commands=("remind",),
