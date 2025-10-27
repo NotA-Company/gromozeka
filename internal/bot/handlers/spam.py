@@ -450,8 +450,8 @@ class SpamHandlers(BaseBotHandler):
                     # Auto learn user messages as SPAM
                     if msg["message_text"] and doBayesLearn:
                         try:
-                            await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
-                            logger.debug(f"Bayes filter learned spam message: {ensuredMessage.messageId}, dood!")
+                            await self.bayesFilter.learnSpam(messageText=msg["message_text"], chatId=msg["chat_id"])
+                            logger.debug(f"Bayes filter learned spam message: {msg['message_id']}, dood!")
                         except Exception as e:
                             logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
                     # And add message to spam-base
