@@ -87,27 +87,20 @@ class ConfigureCommandHandler(BaseBotHandler):
             The active configuration state is stored in cache with the key
             UserActiveActionEnum.Configuration and contains chatId, key, and message.
         """
-        chat = update.effective_chat
-        if not chat:
-            logger.error("Chat undefined")
-            return HandlerResultStatus.ERROR
+
+        if ensuredMessage is None:
+            # Not new message, Skip
+            return HandlerResultStatus.SKIPPED
+
+        chat = ensuredMessage.chat
         chatType = chat.type
 
         if chatType != Chat.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
-        if ensuredMessage is None:
-            logger.error("Ensured message undefined")
-            return HandlerResultStatus.ERROR
-
-        message = update.message
-        if not message or not message.text:
-            logger.error("message.text is udefined")
-            return HandlerResultStatus.ERROR
-
         user = ensuredMessage.user
         userId = user.id
-        messageText = message.text
+        messageText = ensuredMessage.getRawMessageText()
         activeConfigureId = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
         if activeConfigureId is None:
             return HandlerResultStatus.SKIPPED

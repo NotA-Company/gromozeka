@@ -65,7 +65,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
         """
 
         if not ensuredMessage:
-            logger.warning("Ensured message undefined")
+            # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
         chat = ensuredMessage.chat

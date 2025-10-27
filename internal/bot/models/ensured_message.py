@@ -517,6 +517,15 @@ class EnsuredMessage:
         """
         self._rawMessageText = rawMessageText
 
+    def getRawMessageText(self) -> str:
+        """
+        Get the raw message text without any formatting, dood!
+
+        Returns:
+            The unformatted message text
+        """
+        return self._rawMessageText
+
     def setMediaId(self, mediaId: str):
         """
         Set the media identifier for this message, dood!
