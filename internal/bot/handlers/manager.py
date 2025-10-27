@@ -25,6 +25,7 @@ from .configure import ConfigureCommandHandler
 from .summarization import SummarizationHandler
 from .weather import WeatherHandler
 from .message_preprocessor import MessagePreprocessorHandler
+from .user_data import UserDataHandler
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             SummarizationHandler(configManager, database, llmManager),
             # Should be before other handlers to ensure message saving + media processing
             MessagePreprocessorHandler(configManager, database, llmManager),
+            UserDataHandler(configManager, database, llmManager),
         ]
 
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
