@@ -171,9 +171,12 @@ class EnsuredMessage:
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
         if message.text:
-            messageText = message.text_markdown_v2
+            # TODO: think about parsing Entities to Markdown, but without escaping
+            # messageText = message.text_markdown_v2
+            messageText = message.text
         elif message.caption:
-            messageText = message.caption_markdown_v2
+            # messageText = message.caption_markdown_v2
+            messageText = message.caption
 
         # If there are photo in message, set proper type + handle caption (if any) as messageText
         if message.photo:
