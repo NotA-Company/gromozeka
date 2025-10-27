@@ -648,10 +648,11 @@ class SpamHandlers(BaseBotHandler):
             - If spam is detected, message is deleted and user is banned
         """
 
-        chat = update.effective_chat
-        if not chat:
-            logger.error("Chat undefined")
-            return HandlerResultStatus.ERROR
+        if ensuredMessage is None:
+            # Not new message, Skip
+            return HandlerResultStatus.SKIPPED
+
+        chat = ensuredMessage.chat
         chatType = chat.type
 
         match chatType:
@@ -659,16 +660,13 @@ class SpamHandlers(BaseBotHandler):
                 # No need to check spam in private messages
                 return HandlerResultStatus.SKIPPED
             case Chat.GROUP | Chat.SUPERGROUP:
-                if ensuredMessage is None:
-                    logger.error("ensuredMessage undefined")
-                    return HandlerResultStatus.ERROR
                 try:
                     chatSettings = self.getChatSettings(ensuredMessage.chat.id)
 
                     if chatSettings[ChatSettingsKey.DETECT_SPAM].toBool():
                         if await self.checkSpam(ensuredMessage):
                             # It's spam, no further processing needed
-                            return HandlerResultStatus.FATAL
+                            return HandlerResultStatus.FINAL
 
                     return HandlerResultStatus.NEXT
                 except Exception as e:
@@ -676,7 +674,7 @@ class SpamHandlers(BaseBotHandler):
                     return HandlerResultStatus.ERROR
 
             case _:
-                logger.warning(f"Unsupported chat type: {chatType}")
+                # logger.warning(f"Unsupported chat type: {chatType}")
                 return HandlerResultStatus.SKIPPED
 
     @commandHandler(

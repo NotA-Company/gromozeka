@@ -308,7 +308,8 @@ class WeatherHandler(BaseBotHandler):
             - Logs warning if weather data cannot be retrieved
         """
         if ensuredMessage is None:
-            return HandlerResultStatus.ERROR
+            # Not new message, Skip
+            return HandlerResultStatus.SKIPPED
 
         chatType = ensuredMessage.chat.type
 

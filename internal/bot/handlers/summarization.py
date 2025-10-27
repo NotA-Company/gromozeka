@@ -81,31 +81,24 @@ class SummarizationHandler(BaseBotHandler):
             - SKIPPED: Not a private chat or no active summarization session
             - ERROR: Missing required data
         """
-        chat = update.effective_chat
-        if not chat:
-            logger.error("Chat undefined")
-            return HandlerResultStatus.ERROR
+        if ensuredMessage is None:
+            # Not new message, Skip
+            return HandlerResultStatus.SKIPPED
+
+        chat = ensuredMessage.chat
         chatType = chat.type
 
         if chatType != Chat.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
-        if ensuredMessage is None:
-            logger.error("Ensured message undefined")
-            return HandlerResultStatus.ERROR
-
-        message = update.message
-        if not message or not message.text:
-            logger.error("message.text is udefined")
-            return HandlerResultStatus.ERROR
-
         user = ensuredMessage.user
         userId = user.id
-        messageText = message.text
+        messageText = ensuredMessage.getRawMessageText()
 
         activeSummarizationId = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Summarization)
         if activeSummarizationId is None:
             return HandlerResultStatus.SKIPPED
+
         data = activeSummarizationId.copy()
         data.pop("message", None)
         # TODO: Make user action enum
