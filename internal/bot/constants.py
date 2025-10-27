@@ -2,17 +2,16 @@
 Constants for Telegram bot handlers.
 """
 
+import telegram.constants
+
 # Emoji constants
 DUNNO_EMOJI = "🤷‍♂️"
 CHAT_ICON = "👥"
 PRIVATE_ICON = "👤"
 
 # Telegram limits
-TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-
-# Queue settings
-MAX_QUEUE_LENGTH = 32
-MAX_QUEUE_AGE = 30 * 60  # 30 minutes
+# TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+TELEGRAM_MAX_MESSAGE_LENGTH = telegram.constants.MessageLimit.MAX_TEXT_LENGTH
 
 # Processing settings
 PROCESSING_TIMEOUT = 30 * 60  # 30 minutes

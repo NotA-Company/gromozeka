@@ -23,6 +23,7 @@ from .spam import SpamHandlers
 from .help_command import CommandHandlerGetterInterface, HelpHandler
 from .configure import ConfigureCommandHandler
 from .summarization import SummarizationHandler
+from .weather import WeatherHandler
 
 logger = logging.getLogger(__name__)
 
@@ -42,19 +43,28 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self.queueService = QueueService.getInstance()
 
-        self.handlers: list[BaseBotHandler] = [
+        self.handlers: List[BaseBotHandler] = [
             SpamHandlers(
                 configManager, database, llmManager
             ),  # Should be first to check for spam before other handlers
             ConfigureCommandHandler(configManager, database, llmManager),
             SummarizationHandler(configManager, database, llmManager),
-            BotHandlers(
-                configManager, database, llmManager
-            ),  # Should be last messageHandler as it can handle any message
-            HelpHandler(
-                configManager, database, llmManager, self
-            ),  # Special case - help command require all command handlers information
         ]
+
+        # Add WeatherHandler only if OpenWeatherMap integration is enabled
+        openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
+        if openWeatherMapConfig.get("enabled", False):
+            self.handlers.append(WeatherHandler(configManager, database, llmManager))
+        self.handlers.extend(
+            [
+                BotHandlers(
+                    configManager, database, llmManager
+                ),  # Should be last messageHandler as it can handle any message
+                HelpHandler(
+                    configManager, database, llmManager, self
+                ),  # Special case - help command require all command handlers information
+            ]
+        )
 
     def injectBot(self, bot: ExtBot) -> None:
         for handler in self.handlers:
