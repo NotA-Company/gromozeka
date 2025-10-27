@@ -161,6 +161,9 @@ class BotHandlers(BaseBotHandler):
             self._dqDeleteMessageHandler,
         )
 
+    ###
+    # Delayed Queue Handlers
+    ###
     async def _dqSendMessageHandler(self, delayedTask: DelayedTask) -> None:
         kwargs = delayedTask.kwargs
         message = Message(
@@ -188,27 +191,9 @@ class BotHandlers(BaseBotHandler):
                 "Bot is not initialized, can't delete message " f"{kwargs['messageId']} in chat {kwargs['chatId']}"
             )
 
-    async def _delayedSendMessage(
-        self,
-        ensuredMessage: EnsuredMessage,
-        delayedUntil: float,
-        messageText: str,
-        messageCategory: MessageCategory = MessageCategory.BOT,
-    ) -> None:
-        """Send a message after a delay."""
-
-        functionName = DelayedTaskFunction.SEND_MESSAGE
-        kwargs = {
-            "messageText": messageText,
-            "messageCategory": messageCategory,
-            "messageId": ensuredMessage.messageId,
-            "threadId": ensuredMessage.threadId,
-            "chatId": ensuredMessage.chat.id,
-            "userId": ensuredMessage.user.id,
-            "chatType": ensuredMessage.chat.type,
-        }
-
-        return await self.queueService.addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
+    ###
+    # LLM Tool-Calling handlers
+    ###
 
     async def _llmToolGenerateAndSendImage(
         self, extraData: Optional[Dict[str, Any]], image_prompt: str, image_description: Optional[str] = None, **kwargs
@@ -285,6 +270,10 @@ class BotHandlers(BaseBotHandler):
     async def _llmToolGetCurrentDateTime(self, extraData: Optional[Dict[str, Any]], **kwargs) -> str:
         now = datetime.datetime.now(datetime.timezone.utc)
         return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
+
+    ###
+    # Some message helpers
+    ###
 
     async def _generateTextViaLLM(
         self,
@@ -414,6 +403,28 @@ class BotHandlers(BaseBotHandler):
             )
             is not None
         )
+
+    async def _delayedSendMessage(
+        self,
+        ensuredMessage: EnsuredMessage,
+        delayedUntil: float,
+        messageText: str,
+        messageCategory: MessageCategory = MessageCategory.BOT,
+    ) -> None:
+        """Send a message after a delay."""
+
+        functionName = DelayedTaskFunction.SEND_MESSAGE
+        kwargs = {
+            "messageText": messageText,
+            "messageCategory": messageCategory,
+            "messageId": ensuredMessage.messageId,
+            "threadId": ensuredMessage.threadId,
+            "chatId": ensuredMessage.chat.id,
+            "userId": ensuredMessage.user.id,
+            "chatType": ensuredMessage.chat.type,
+        }
+
+        return await self.queueService.addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
 
     ###
     # Handling messages
