@@ -59,16 +59,16 @@ logger = logging.getLogger(__name__)
 
 class WeatherHandler(BaseBotHandler):
     """Handler for weather-related bot functionality, dood!
-    
+
     This class manages all weather-related operations including:
     - Processing /weather commands
     - Handling natural language weather requests in messages
     - Registering and managing LLM tools for weather queries
     - Formatting and presenting weather data to users
-    
+
     The handler integrates with OpenWeatherMap API and provides caching
     through the database layer for improved performance.
-    
+
     Attributes:
         openWeatherMapClient: Client for OpenWeatherMap API interactions
         llmService: Service for LLM tool registration and management
@@ -76,15 +76,15 @@ class WeatherHandler(BaseBotHandler):
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
         """Initialize weather handler with required dependencies, dood!
-        
+
         Sets up OpenWeatherMap client with configuration and caching,
         and registers LLM tools for weather data retrieval.
-        
+
         Args:
             configManager: Configuration manager for accessing OpenWeatherMap settings
             database: Database wrapper for caching and data persistence
             llmManager: LLM manager for model interactions
-            
+
         Raises:
             RuntimeError: If OpenWeatherMap integration is not enabled in configuration
         """
@@ -159,24 +159,24 @@ class WeatherHandler(BaseBotHandler):
         self, extraData: Optional[Dict[str, Any]], city: str, countryCode: Optional[str] = None, **kwargs
     ) -> str:
         """LLM tool handler for retrieving weather by city name, dood!
-        
+
         This method is registered as an LLM tool and can be called by the AI
         to fetch weather data for a specified city. It returns JSON-formatted
         weather information including current conditions and forecast.
-        
+
         Args:
             extraData: Optional extra data passed by LLM service
             city: Name of the city to get weather for
             countryCode: Optional ISO 3166 country code for disambiguation
             **kwargs: Additional keyword arguments (ignored)
-            
+
         Returns:
             JSON string containing weather data with structure:
             - done: Boolean indicating success
             - location: Geocoding information
             - weather: Current weather and forecast data
             - errorMessage: Error description if done is False
-            
+
         Note:
             Filters location local_names to reduce context size by keeping
             only languages defined in constants.GEOCODER_LOCATION_LANGS.
@@ -203,17 +203,17 @@ class WeatherHandler(BaseBotHandler):
         self, extraData: Optional[Dict[str, Any]], lat: float, lon: float, **kwargs
     ) -> str:
         """LLM tool handler for retrieving weather by coordinates, dood!
-        
+
         This method is registered as an LLM tool and can be called by the AI
         to fetch weather data for a specific geographic location using latitude
         and longitude coordinates.
-        
+
         Args:
             extraData: Optional extra data passed by LLM service
             lat: Latitude of the location
             lon: Longitude of the location
             **kwargs: Additional keyword arguments (ignored)
-            
+
         Returns:
             JSON string containing weather data with structure:
             - done: Boolean indicating success
@@ -235,15 +235,15 @@ class WeatherHandler(BaseBotHandler):
 
     async def _formatWeather(self, weatherData: CombinedWeatherResult) -> str:
         """Format weather data for user-friendly presentation, dood!
-        
+
         Converts raw weather API response into a formatted markdown string
         with current weather conditions, temperature, pressure, humidity,
         wind, UV index, and sunrise/sunset times.
-        
+
         Args:
             weatherData: Combined weather result from OpenWeatherMap API containing
                         location info and current weather data
-                        
+
         Returns:
             Markdown-formatted string with weather information in Russian,
             including:
@@ -255,7 +255,7 @@ class WeatherHandler(BaseBotHandler):
             - UV index
             - Wind direction and speed
             - Sunrise and sunset times
-            
+
         Note:
             - Pressure is converted from hPa to mmHg using HPA_TO_MMHG constant
             - Times are displayed in UTC timezone
@@ -286,21 +286,21 @@ class WeatherHandler(BaseBotHandler):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
     ) -> HandlerResultStatus:
         """Handle natural language weather requests in messages, dood!
-        
+
         Processes messages that mention the bot and contain weather-related queries
         in Russian. Supports patterns like "погода в [город]" and "какая погода в [город]".
-        
+
         Args:
             update: Telegram update object
             context: Telegram context for the handler
             ensuredMessage: Validated message object with user and chat info
-            
+
         Returns:
             HandlerResultStatus indicating the result:
             - FINAL: Weather request was processed and response sent
             - SKIPPED: Message doesn't match weather request pattern
             - ERROR: Failed to process weather request or ensuredMessage is None
-            
+
         Note:
             - Only processes messages in PRIVATE, GROUP, or SUPERGROUP chats
             - Requires bot to be mentioned at the beginning of the message
@@ -380,19 +380,19 @@ class WeatherHandler(BaseBotHandler):
     )
     async def weather_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /weather command for retrieving weather information, dood!
-        
+
         Processes the /weather command with city name and optional country code
         to fetch and display current weather conditions and forecast.
-        
+
         Command format: /weather <city> [, <countryCode>]
-        
+
         Args:
             update: Telegram update object containing the command message
             context: Telegram context with command arguments in context.args
-            
+
         Returns:
             None. Sends weather information or error message to the chat.
-            
+
         Behavior:
             - Validates chat settings for weather command permission
             - Requires admin privileges if weather is disabled in chat settings
@@ -400,13 +400,13 @@ class WeatherHandler(BaseBotHandler):
             - Fetches weather data from OpenWeatherMap API
             - Formats and sends weather information as markdown
             - Handles errors gracefully with user-friendly messages
-            
+
         Error cases:
             - No arguments provided: Prompts user to specify city
             - OpenWeatherMap client not configured: Notifies about missing setup
             - Weather data unavailable: Informs about retrieval failure
             - Exception during processing: Logs error and notifies user
-            
+
         Note:
             - Saves command message to database with USER_COMMAND category
             - Response is saved with BOT_COMMAND_REPLY or BOT_ERROR category
