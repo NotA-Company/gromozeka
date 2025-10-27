@@ -23,9 +23,6 @@ from .media import MediaProcessingInfo
 # User Metadata
 from .user_metadata import UserMetadataDict
 
-# Cache
-from ...cache.types import HCChatCacheDict, HandlersCacheDict
-
 # Command Handlers
 from .command_handlers import (
     CommandHandlerInfo,
@@ -55,9 +52,6 @@ __all__ = [
     "DelayedTaskFunction",
     # Media
     "MediaProcessingInfo",
-    # Cache (Reexport)
-    "HCChatCacheDict",
-    "HandlersCacheDict",
     # User Metadata
     "UserMetadataDict",
     # Command Handlers
