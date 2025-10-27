@@ -196,7 +196,8 @@ class BaseBotHandler(CommandHandlerMixin):
             returnDefault: If True, merge with default settings; if False, return only custom settings
 
         Returns:
-            Dictionary mapping [`ChatSettingsKey`](internal/bot/models/chat_settings.py) to [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
+            Dictionary mapping [`ChatSettingsKey`](internal/bot/models/chat_settings.py)
+                            to [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
         """
         if chatId is None:
             return self.chatDefaults.copy()
@@ -240,7 +241,7 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         Get user-specific data for a chat, dood!
 
-        Retrieves temporary user data stored in cache (not persisted to database).
+        Retrieves user data stored in cache or database.
 
         Args:
             chatId: Telegram chat ID

@@ -419,79 +419,43 @@ class BotHandlers(BaseBotHandler):
     # Handling messages
     ###
 
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle regular text messages."""
-        # logger.debug(f"Handling SOME message: {update}")
+    async def messageHandler(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    ) -> HandlerResultStatus:
+        if ensuredMessage is None:
+            logger.error("Ensured message undefined")
+            return HandlerResultStatus.ERROR
 
-        chat = update.effective_chat
-        if not chat:
-            logger.error("Chat undefined")
-            return
+        chat = ensuredMessage.chat
         chatType = chat.type
 
         match chatType:
             case Chat.PRIVATE:
                 chatSettings = self.getChatSettings(chat.id)
-                if chatSettings[ChatSettingsKey.ALLOW_PRIVATE].toBool():
-                    return await self.handle_chat_message(update, context)
-                else:
-                    return
+                if not chatSettings[ChatSettingsKey.ALLOW_PRIVATE].toBool():
+                    return HandlerResultStatus.SKIPPED
             case Chat.GROUP:
-                return await self.handle_chat_message(update, context)
+                pass
             case Chat.SUPERGROUP:
-                return await self.handle_chat_message(update, context)
+                pass
             case Chat.CHANNEL:
                 logger.error(f"Unsupported chat type: {chatType}")
+                return HandlerResultStatus.SKIPPED
             case _:
                 logger.error(f"Unsupported chat type: {chatType}")
+                return HandlerResultStatus.ERROR
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
-    ) -> HandlerResultStatus:
-        await self.handle_message(update, context)
+        await self.handle_chat_message(update, context, ensuredMessage)
+
         return HandlerResultStatus.FINAL
 
-    async def handle_chat_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handle_chat_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: EnsuredMessage
+    ) -> None:
         logger.debug(f"Handling group message #{update.update_id}")
 
-        message = update.message
-        if not message:
-            # Not new message, ignore
-            logger.warning(f"Message undefined in {update}")
-            return
-
-        # logger.debug(f"Message: {message}")
-        logger.debug(f"Message: {utils.dumpMessage(message)}")
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self._updateEMessageUserData(ensuredMessage)
-
+        message = ensuredMessage.getBaseMessage()
         user = ensuredMessage.user
-
-        match ensuredMessage.messageType:
-            case MessageType.TEXT:
-                # No special handling for text messages needed
-                pass
-            case MessageType.IMAGE:
-                media = await self.processImage(ensuredMessage)
-                ensuredMessage.setMediaProcessingInfo(media)
-            case MessageType.STICKER:
-                media = await self.processSticker(ensuredMessage)
-                ensuredMessage.setMediaProcessingInfo(media)
-
-            case _:
-                # For unsupported message types, just log a warning and process caption like text message
-                logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
-                # return
-
-        if not self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
-            logger.error("Failed to save chat message")
 
         if message.is_automatic_forward:
             # Automatic forward from licked Channel
@@ -1008,7 +972,6 @@ class BotHandlers(BaseBotHandler):
 
         if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/models` by not owner {ensuredMessage.user}")
-            await self.handle_message(update=update, context=context)
             return
 
         self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
@@ -1075,7 +1038,6 @@ class BotHandlers(BaseBotHandler):
 
         if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/settings` by not owner {ensuredMessage.user}")
-            await self.handle_message(update=update, context=context)
             return
 
         self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
@@ -1122,7 +1084,6 @@ class BotHandlers(BaseBotHandler):
 
         if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/[un]set` by not owner {ensuredMessage.user}")
-            await self.handle_message(update=update, context=context)
             return
 
         self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
@@ -1223,7 +1184,6 @@ class BotHandlers(BaseBotHandler):
 
         if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
             logger.warning(f"OWNER ONLY command `/test` by not owner {ensuredMessage.user}")
-            await self.handle_message(update=update, context=context)
             return
 
         self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
