@@ -2,66 +2,30 @@
 Telegram bot command handlers for Gromozeka.
 """
 
-import asyncio
-import datetime
-import json
 import logging
-import re
-
-import random
-import time
-from typing import Any, Callable, Dict, List, Optional
-
-import requests
-import magic
+from typing import Any, Dict, List, Optional
 
 from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update, Message, User
-from telegram.constants import MessageEntityType, MessageLimit
 from telegram.ext import ContextTypes
 
 from internal.bot.handlers.base import HandlerResultStatus
 
 from .base import BaseBotHandler
 from internal.cache.types import UserActiveActionEnum
-from lib.ai.abstract import AbstractModel, LLMAbstractTool
-from lib.ai.models import (
-    LLMFunctionParameter,
-    LLMParameterType,
-    LLMToolFunction,
-    ModelImageMessage,
-    ModelMessage,
-    ModelRunResult,
-    ModelResultStatus,
-)
-from lib.ai.manager import LLMManager
-from lib.openweathermap.client import OpenWeatherMapClient
-from lib.openweathermap.models import CombinedWeatherResult
+
 from lib.markdown import markdown_to_markdownv2
 import lib.utils as utils
 
-from internal.config.manager import ConfigManager
-
-from internal.database.wrapper import DatabaseWrapper
-from internal.database.openweathermap_cache import DatabaseWeatherCache
-from internal.database.models import (
-    ChatInfoDict,
-    ChatMessageDict,
-    MessageCategory,
-)
+from internal.database.models import MessageCategory
 
 from ..models import (
     ButtonConfigureAction,
     ButtonDataKey,
-    ButtonSummarizationAction,
     ChatSettingsKey,
     ChatSettingsValue,
     CommandCategory,
     CommandHandlerOrder,
-    DelayedTask,
-    DelayedTaskFunction,
     EnsuredMessage,
-    LLMMessageFormat,
-    MessageType,
     commandHandler,
     getChatSettingsInfo,
 )
@@ -73,7 +37,6 @@ logger = logging.getLogger(__name__)
 class ConfigureCommandHandler(BaseBotHandler):
     """Contains all bot command and message handlers, dood!"""
 
-
     async def messageHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
     ) -> HandlerResultStatus:
@@ -84,26 +47,24 @@ class ConfigureCommandHandler(BaseBotHandler):
         chatType = chat.type
 
         if chatType != Chat.PRIVATE:
-                return HandlerResultStatus.SKIPPED
-        
+            return HandlerResultStatus.SKIPPED
+
         if ensuredMessage is None:
             logger.error("Ensured message undefined")
             return HandlerResultStatus.ERROR
-        
-        if not ensuredMessage.messageText:
-            logger.error("ensuredMessage.messageText is udefined")
+
+        message = update.message
+        if not message or not message.text:
+            logger.error("message.text is udefined")
             return HandlerResultStatus.ERROR
-        
-        
+
         user = ensuredMessage.user
         userId = user.id
-        messageText = ensuredMessage.messageText
-        activeConfigureId = self.cache.getUserState(
-            userId=userId, stateKey=UserActiveActionEnum.Configuration
-        )
+        messageText = message.text
+        activeConfigureId = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
         if activeConfigureId is None:
             return HandlerResultStatus.SKIPPED
-        
+
         await self._handle_chat_configuration(
             data={
                 ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
@@ -115,33 +76,6 @@ class ConfigureCommandHandler(BaseBotHandler):
             user=user,
         )
         return HandlerResultStatus.FINAL
-
-        # activeSummarizationId = self.cache.getUserState(
-        #     userId=userId, stateKey=UserActiveActionEnum.Summarization
-        # )
-        # if activeSummarizationId is not None:
-        #     data = activeSummarizationId.copy()
-        #     data.pop("message", None)
-        #     # TODO: Make user action enum
-        #     userAction = data.pop(ButtonDataKey.UserAction, None)
-        #     match userAction:
-        #         case 1:
-        #             try:
-        #                 data[ButtonDataKey.MaxMessages] = int(messageText.strip())
-        #             except Exception as e:
-        #                 logger.error(f"Not int: {messageText}")
-        #                 logger.exception(e)
-        #         case 2:
-        #             data[ButtonDataKey.Prompt] = messageText
-        #         case _:
-        #             logger.error(f"Wrong K in data {activeSummarizationId}")
-        #     await self._handle_summarization(
-        #         data=data,  # pyright: ignore[reportArgumentType]
-        #         message=activeSummarizationId["message"],
-        #         user=user,
-        #     )
-        #     return
-
 
     async def _handle_chat_configuration(self, data: Dict[str | int, Any], message: Message, user: User) -> bool:
         """Parses the CallbackQuery and updates the message text."""
@@ -555,7 +489,6 @@ class ConfigureCommandHandler(BaseBotHandler):
             logger.error("Message undefined")
             return
 
-
     async def buttonHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: Dict[str | int, str | int | float | bool | None]
     ) -> HandlerResultStatus:
@@ -585,15 +518,5 @@ class ConfigureCommandHandler(BaseBotHandler):
         if configureAction is not None:
             await self._handle_chat_configuration(data, query.message, user)
             return HandlerResultStatus.FINAL
-
-        # summaryAction = data.get(ButtonDataKey.SummarizationAction, None)
-        # # Used keys:
-        # # s: Action
-        # # c: ChatId
-        # # t: topicId
-        # # m: MaxMessages/time
-        # if summaryAction is not None:
-        #     await self._handle_summarization(data, query.message, user)
-        #     return
 
         return HandlerResultStatus.SKIPPED

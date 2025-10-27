@@ -22,6 +22,7 @@ from .main import BotHandlers
 from .spam import SpamHandlers
 from .help_command import CommandHandlerGetterInterface, HelpHandler
 from .configure import ConfigureCommandHandler
+from .summarization import SummarizationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +43,14 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.queueService = QueueService.getInstance()
 
         self.handlers: list[BaseBotHandler] = [
-            SpamHandlers(configManager, database, llmManager), # Should be first to check for spam before other handlers
-
+            SpamHandlers(
+                configManager, database, llmManager
+            ),  # Should be first to check for spam before other handlers
             ConfigureCommandHandler(configManager, database, llmManager),
-            
-            BotHandlers(configManager, database, llmManager),  # Should be last messageHandler as it can handle any message
+            SummarizationHandler(configManager, database, llmManager),
+            BotHandlers(
+                configManager, database, llmManager
+            ),  # Should be last messageHandler as it can handle any message
             HelpHandler(
                 configManager, database, llmManager, self
             ),  # Special case - help command require all command handlers information
@@ -107,7 +111,9 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         possibleFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
         if not possibleFinalResults.intersection(retSet):
-            logger.error(f"No handler returned any of ({possibleFinalResults}), but only ({retSet}), something went wrong")
+            logger.error(
+                f"No handler returned any of ({possibleFinalResults}), but only ({retSet}), something went wrong"
+            )
             return
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -162,10 +168,12 @@ class HandlersManager(CommandHandlerGetterInterface):
                 case _:
                     logger.error(f"Unknown handler result: {ret}")
                     continue
-        
+
         possibleFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
         if not possibleFinalResults.intersection(retSet):
-            logger.error(f"No handler returned any of ({possibleFinalResults}), but only ({retSet}), something went wrong")
+            logger.error(
+                f"No handler returned any of ({possibleFinalResults}), but only ({retSet}), something went wrong"
+            )
             return
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
