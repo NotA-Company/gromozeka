@@ -268,6 +268,11 @@ class TestChatUserData(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests"""
+        # Clear the database reference to avoid resource warnings
+        if hasattr(self.cache, 'dbWrapper') and self.cache.dbWrapper is not None:
+            self.cache.dbWrapper = None
+        if hasattr(self, 'mockDb'):
+            del self.mockDb
         CacheService._instance = None
 
     def testGetChatUserDataFromCache(self):

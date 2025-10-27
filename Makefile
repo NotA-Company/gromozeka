@@ -8,6 +8,7 @@ FLAKE8 = $(VENV_PATH)/bin/flake8
 BLACK = $(VENV_PATH)/bin/black
 ISORT = $(VENV_PATH)/bin/isort
 PYRIGHT = $(VENV_PATH)/bin/pyright
+PYTEST = $(VENV_PATH)/bin/pytest
 
 # Targets
 
@@ -54,6 +55,16 @@ test:
 	@echo ""
 	@echo "✅ All tests completed, dood!"
 
+# Run tests with coverage report
+coverage:
+	@echo "📊 Running tests with coverage report, dood!"
+	@echo "============================================"
+	@echo ""
+	$(PYTHON) -m pytest --cov=. --cov-report=term-missing --cov-report=html --cov-branch -v
+	@echo ""
+	@echo "✅ Coverage report generated, dood!"
+	@echo "📁 HTML report available at: htmlcov/index.html"
+
 # Check code quality (lint + format check)
 check: lint
 	@echo "Running format check..."
@@ -77,9 +88,10 @@ help:
 	@echo "  lint         - Run linter on entire project"
 	@echo "  format       - Format Python files"
 	@echo "  test         - Run all tests"
+	@echo "  coverage     - Run tests with coverage report"
 	@echo "  check        - Check code quality (lint + format)"
 	@echo "  clean        - Clean build files and cache"
 	@echo "  help         - Show this help message"
 
 # Default target
-.PHONY: venv install requirements run lint format test check clean help
+.PHONY: venv install requirements run lint format test coverage check clean help
