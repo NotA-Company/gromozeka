@@ -316,6 +316,10 @@ class WeatherHandler(BaseBotHandler):
         if chatType not in [Chat.PRIVATE, Chat.GROUP, Chat.SUPERGROUP]:
             return HandlerResultStatus.SKIPPED
 
+        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
+            return HandlerResultStatus.SKIPPED
+
         mentionedMe = self.checkEMMentionsMe(ensuredMessage)
         if not mentionedMe.restText or (
             not mentionedMe.byNick and (not mentionedMe.byName or mentionedMe.byName[0] > 0)
