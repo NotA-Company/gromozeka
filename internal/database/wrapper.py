@@ -74,8 +74,19 @@ def convert_boolean(val: bytes) -> bool:
         raise ValueError(f"Invalid boolean value: {val}")
 
 
+def adapt_datetime(val: datetime.datetime) -> str:
+    """Adapt datetime.datetime to SQLite format string for sqlite3, dood!"""
+    # Use SQLite's datetime format (YYYY-MM-DD HH:MM:SS) for consistency with CURRENT_TIMESTAMP
+    # Strip microseconds to match SQLite's CURRENT_TIMESTAMP format exactly
+    return val.replace(microsecond=0).strftime('%Y-%m-%d %H:%M:%S')
+
+
+# Register converters for reading from database
 sqlite3.register_converter("timestamp", convert_timestamp)
 sqlite3.register_converter("boolean", convert_boolean)
+
+# Register adapters for writing to database (Python 3.12+ requirement)
+sqlite3.register_adapter(datetime.datetime, adapt_datetime)
 
 
 class DatabaseWrapper:
@@ -964,7 +975,7 @@ class DatabaseWrapper:
         limit: int = 10,
         seenSince: Optional[datetime.datetime] = None,
     ) -> List[ChatUserDict]:
-        """Get the usernames of all users in a chat."""
+        """Get the usernames of all users in a chat, optionally filtered by when they last sent a message."""
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -1186,7 +1197,7 @@ class DatabaseWrapper:
                     SELECT value FROM chat_settings
                     WHERE
                         chat_id = ?
-                        AND setting = ?
+                        AND key = ?
                     LIMIT 1
                 """,
                     (chatId, setting),
@@ -1813,7 +1824,16 @@ class DatabaseWrapper:
     def getCacheEntry(self, key: str, cacheType: CacheType, ttl: Optional[int] = None) -> Optional[CacheDict]:
         """Get weather cache entry by key and type"""
         try:
-            minimalUpdatedAt = datetime.datetime.utcnow() - datetime.timedelta(seconds=ttl) if ttl else None
+            # TTL of 0 or negative means entry must be from the future (impossible), so return None
+            if ttl is not None and ttl <= 0:
+                return None
+
+            # Use datetime.now(datetime.UTC) to match SQLite's CURRENT_TIMESTAMP which is in UTC
+            minimalUpdatedAt = (
+                datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=ttl)
+                if ttl is not None and ttl > 0
+                else None
+            )
             # logger.debug(f"getCacheEntry({key}, {cacheType}, {ttl})")
             # logger.debug(f"ttl is {ttl}, minimal updated_at is {minimalUpdatedAt}")
             with self.getCursor() as cursor:
@@ -1822,7 +1842,7 @@ class DatabaseWrapper:
                     SELECT *
                     FROM cache_{cacheType}
                     WHERE key = :cacheKey AND
-                    (:minimalUpdatedAt IS NULL OR updated_at > :minimalUpdatedAt)
+                    (:minimalUpdatedAt IS NULL OR updated_at >= :minimalUpdatedAt)
                 """,
                     {
                         "cacheKey": key,
