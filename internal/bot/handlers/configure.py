@@ -464,11 +464,11 @@ class ConfigureCommandHandler(BaseBotHandler):
 
                 if action == ButtonConfigureAction.SetTrue:
                     self.setChatSetting(chatId, key, ChatSettingsValue(True))
-                elif action == "s-":
+                elif action == ButtonConfigureAction.SetFalse:
                     self.setChatSetting(chatId, key, ChatSettingsValue(False))
-                elif action == "s#":
+                elif action == ButtonConfigureAction.ResetValue:
                     self.unsetChatSetting(chatId, key)
-                elif action == "sv":
+                elif action == ButtonConfigureAction.SetValue:
                     self.setChatSetting(chatId, key, ChatSettingsValue(data.get(ButtonDataKey.Value, None)))
                 else:
                     logger.error(f"handle_chat_configuration: wrong action: {action}")

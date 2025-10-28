@@ -14,9 +14,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from internal.services.queue import constants
-from internal.services.queue.service import QueueService, makeEmptyAsyncTask
-from internal.services.queue.types import DelayedTask, DelayedTaskFunction
+from internal.services.queue_service import constants
+from internal.services.queue_service.service import QueueService, makeEmptyAsyncTask
+from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from tests.utils import createAsyncMock
 
 # ============================================================================
@@ -1189,7 +1189,7 @@ class TestEdgeCases:
 
     def testSingletonPersistsAcrossModules(self, queueService):
         """Test that singleton instance persists across different access points."""
-        from internal.services.queue.service import QueueService as ImportedQueueService
+        from internal.services.queue_service.service import QueueService as ImportedQueueService
 
         instance1 = queueService
         instance2 = ImportedQueueService.getInstance()

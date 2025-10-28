@@ -486,8 +486,8 @@ class DevCommandsHandler(BaseBotHandler):
 
         match suite:
             case "long":
-                iterationsCount = 10
-                delay = 10
+                iterationsCount = 2
+                delay = 1
                 if len(context.args) > 1:
                     try:
                         iterationsCount = int(context.args[1])

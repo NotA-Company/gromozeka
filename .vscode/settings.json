@@ -1,7 +1,9 @@
 {
+    "python.testing.unittestEnabled": false,
+
+    /*"python.testing.pytestPath": "./venv/bin/python3 -m pytest",*/
     "python.testing.pytestArgs": [
         "."
     ],
-    "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true
 }
