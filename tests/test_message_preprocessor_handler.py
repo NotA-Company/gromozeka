@@ -17,7 +17,7 @@ import pytest
 from telegram import Chat, PhotoSize, Sticker
 
 from internal.bot.handlers.message_preprocessor import MessagePreprocessorHandler
-from internal.bot.models import ChatSettingsKey, EnsuredMessage, MessageType
+from internal.bot.models import ChatSettingsKey, EnsuredMessage
 from internal.database.models import MessageCategory
 from tests.fixtures.service_mocks import createMockDatabaseWrapper, createMockLlmManager
 from tests.fixtures.telegram_mocks import (
@@ -287,7 +287,9 @@ class TestSkipProcessingScenarios:
         mockDatabase.saveChatMessage.assert_not_called()
 
     @pytest.mark.asyncio
-    async def testProcessPrivateChatWhenEnabled(self, messagePreprocessorHandler, mockBot, mockDatabase, mockCacheService):
+    async def testProcessPrivateChatWhenEnabled(
+        self, messagePreprocessorHandler, mockBot, mockDatabase, mockCacheService
+    ):
         """Test processes private chat when ALLOW_PRIVATE is enabled, dood!"""
         messagePreprocessorHandler.injectBot(mockBot)
 
@@ -504,7 +506,7 @@ class TestEdgeCases:
     async def testHandlesDatabaseSaveFailure(self, messagePreprocessorHandler, mockBot, mockDatabase):
         """Test handles database save failure gracefully, dood!"""
         messagePreprocessorHandler.injectBot(mockBot)
-        
+
         # Mock saveChatMessage method on the handler itself
         messagePreprocessorHandler.saveChatMessage = Mock(return_value=False)
 

@@ -17,7 +17,7 @@ import pytest
 from telegram import Chat
 
 from internal.bot.handlers.help_command import CommandHandlerGetterInterface, HelpHandler
-from internal.bot.models import CommandCategory, CommandHandlerOrder, EnsuredMessage
+from internal.bot.models import CommandCategory, CommandHandlerOrder
 from internal.bot.models.command_handlers import CommandHandlerInfo
 from internal.database.models import MessageCategory
 from tests.fixtures.service_mocks import createMockDatabaseWrapper, createMockLlmManager
@@ -94,7 +94,7 @@ def mockQueueService():
 def mockCommandsGetter():
     """Create a mock CommandHandlerGetterInterface, dood!"""
     mock = Mock(spec=CommandHandlerGetterInterface)
-    
+
     # Create sample command handlers
     sampleHandlers = [
         CommandHandlerInfo(
@@ -138,13 +138,15 @@ def mockCommandsGetter():
             handler=Mock(),
         ),
     ]
-    
+
     mock.getCommandHandlers.return_value = sampleHandlers
     return mock
 
 
 @pytest.fixture
-def helpHandler(mockConfigManager, mockDatabase, mockLlmManager, mockCommandsGetter, mockCacheService, mockQueueService):
+def helpHandler(
+    mockConfigManager, mockDatabase, mockLlmManager, mockCommandsGetter, mockCacheService, mockQueueService
+):
     """Create a HelpHandler instance with mocked dependencies, dood!"""
     handler = HelpHandler(mockConfigManager, mockDatabase, mockLlmManager, mockCommandsGetter)
     return handler
@@ -633,7 +635,9 @@ class TestBotOwnerCommands:
         # Should NOT show bot owner section
         if "dev_test" in messageText:
             # If command name appears, it should NOT be in owner section
-            assert "владельцам бота" not in messageText or messageText.index("dev_test") < messageText.index("владельцам бота")
+            assert "владельцам бота" not in messageText or messageText.index("dev_test") < messageText.index(
+                "владельцам бота"
+            )
 
 
 # ============================================================================

@@ -198,7 +198,8 @@ class OpenWeatherMapClient:
 
         # Extract and convert to our format
         currentData = responseData.get("current", {})
-        weather_info = currentData.get("weather", [{}])[0]
+        weather_list = currentData.get("weather", [])
+        weather_info = weather_list[0] if weather_list else {}
 
         currentWeather: CurrentWeather = {
             "dt": currentData.get("dt", 0),
