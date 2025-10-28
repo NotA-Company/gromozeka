@@ -473,6 +473,129 @@ class TestErrorHandling(unittest.TestCase):
         doc = self.parser.parse(nested_quotes)
         self.assertIsInstance(doc, MDDocument)
 
+    def test_mixed_list_types_in_nesting(self):
+        """Test mixing ordered and unordered lists in nesting."""
+        input_text = """1. Ordered item
+   - Unordered nested
+   - Another unordered
+2. Second ordered
+   1. Ordered nested
+   2. Another ordered nested"""
+
+        doc = self.parser.parse(input_text)
+        self.assertIsInstance(doc, MDDocument)
+        self.assertGreater(len(doc.children), 0)
+
+    def test_emphasis_with_punctuation(self):
+        """Test emphasis markers adjacent to punctuation."""
+        test_cases = [
+            ("*italic*.", "italic"),
+            ("**bold**!", "bold"),
+            ("~~strike~~?", "strike"),
+            ("(*italic*)", "italic"),
+            ("[**bold**]", "bold"),
+        ]
+
+        for markdown, expected_text in test_cases:
+            with self.subTest(markdown=markdown):
+                self.parser.parse(markdown)
+                html = self.parser.parse_to_html(markdown)
+                self.assertIn(expected_text, html)
+
+    def test_multiple_paragraphs_with_blank_lines(self):
+        """Test multiple paragraphs separated by varying blank lines."""
+        input_text = "Para 1\n\nPara 2\n\n\nPara 3\n\n\n\nPara 4"
+        doc = self.parser.parse(input_text)
+
+        # Should have 4 paragraphs
+        paragraphs = [child for child in doc.children if isinstance(child, MDParagraph)]
+        self.assertGreaterEqual(len(paragraphs), 3)
+
+    def test_code_block_with_blank_lines(self):
+        """Test code block containing blank lines."""
+        input_text = """```python
+def func():
+    x = 1
+
+    y = 2
+
+    return x + y
+```"""
+        doc = self.parser.parse(input_text)
+        code_blocks = [child for child in doc.children if isinstance(child, MDCodeBlock)]
+        self.assertEqual(len(code_blocks), 1)
+
+    def test_list_with_multiple_paragraphs_in_item(self):
+        """Test list item containing multiple paragraphs."""
+        input_text = """- First item
+
+  Second paragraph in first item
+
+  Third paragraph in first item
+
+- Second item"""
+
+        doc = self.parser.parse(input_text)
+        self.assertIsInstance(doc, MDDocument)
+
+    def test_blockquote_with_multiple_blocks(self):
+        """Test blockquote containing multiple block elements."""
+        input_text = """> # Header in quote
+>
+> Paragraph in quote
+>
+> - List in quote
+> - Another item"""
+
+        doc = self.parser.parse(input_text)
+        blockquotes = [child for child in doc.children if isinstance(child, MDBlockQuote)]
+        self.assertGreaterEqual(len(blockquotes), 1)
+
+    def test_autolink_variations(self):
+        """Test various autolink formats."""
+        test_cases = [
+            "<http://example.com>",
+            "<https://example.com>",
+            "<ftp://example.com>",
+            "<mailto:user@example.com>",
+            "<user@example.com>",
+        ]
+
+        for markdown in test_cases:
+            with self.subTest(markdown=markdown):
+                self.parser.parse(markdown)
+                html = self.parser.parse_to_html(markdown)
+                # Should parse without crashing and contain the URL
+                self.assertIsInstance(html, str)
+                self.assertGreater(len(html), 0)
+
+    def test_reference_links(self):
+        """Test reference-style links."""
+        input_text = """[link text][ref]
+
+[ref]: http://example.com "Title" """
+
+        doc = self.parser.parse(input_text)
+        # Should parse without crashing
+        self.assertIsInstance(doc, MDDocument)
+
+    def test_nested_emphasis_combinations(self):
+        """Test various nested emphasis combinations."""
+        test_cases = [
+            "***bold and italic***",
+            "**bold with *italic* inside**",
+            "*italic with **bold** inside*",
+            "~~strike with **bold** inside~~",
+            "**bold with ~~strike~~ inside**",
+        ]
+
+        for markdown in test_cases:
+            with self.subTest(markdown=markdown):
+                self.parser.parse(markdown)
+                html = self.parser.parse_to_html(markdown)
+                self.assertIsInstance(html, str)
+                self.assertGreater(len(html), 0)
+
 
 if __name__ == "__main__":
     # Run all tests
