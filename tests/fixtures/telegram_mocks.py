@@ -134,9 +134,11 @@ def createMockMessage(
     message = Mock(spec=Message)
     message.message_id = messageId
     message.chat = createMockChat(chatId=chatId)
+    message.chat_id = chatId  # Add chat_id as direct attribute
     message.from_user = createMockUser(userId=userId)
     message.sender_chat = None  # Add sender_chat attribute for channel messages
     message.text = text
+    message.text_markdown_v2 = text  # Add markdown version for reply text extraction
     message.date = date or datetime.now()
     message.reply_to_message = replyToMessage
     message.entities = entities or []
@@ -144,7 +146,9 @@ def createMockMessage(
     message.document = document
     message.sticker = sticker
     message.caption = caption
+    message.caption_markdown_v2 = caption  # Add markdown version for caption
     message.quote = None  # Add quote attribute
+    message.forum_topic_created = None  # Add forum topic created attribute
 
     # Add media type attributes that EnsuredMessage checks
     message.animation = None
@@ -154,12 +158,16 @@ def createMockMessage(
     message.voice = None
     message.message_thread_id = None  # Add thread ID
     message.is_topic_message = False  # Add topic message flag
+    message.is_automatic_forward = False  # Add automatic forward flag
 
     # Add async methods
     message.reply_text = AsyncMock(return_value=message)
     message.reply_photo = AsyncMock(return_value=message)
     message.delete = AsyncMock(return_value=True)
     message.edit_text = AsyncMock(return_value=message)
+
+    # Add get_bot method - will be overridden by tests that need specific bot
+    message.get_bot = Mock(return_value=None)
 
     return message
 
