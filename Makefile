@@ -11,6 +11,9 @@ PYRIGHT = $(VENV_PATH)/bin/pyright
 #PYTEST = $(PYTHON) -m pytest
 PYTEST = $(VENV_PATH)/bin/pytest
 
+ifdef V
+	ARGS := $(ARGS) -v
+endif
 # Targets
 
 # Create virtual environment
@@ -52,16 +55,24 @@ test:
 	@echo "🧪 Running all Gromozeka tests, dood!"
 	@echo "=================================="
 	@echo ""
-	$(PYTEST) -v
+	$(PYTEST) --durations=4 $(ARGS)
 	@echo ""
 	@echo "✅ All tests completed, dood!"
+
+test-failed:
+	@echo "🧪 Re-Running Failed Gromozeka tests, dood!"
+	@echo "=================================="
+	@echo ""
+	$(PYTEST) --last-failed --durations=4 $(ARGS)
+	@echo ""
+	@echo "✅ Tests completed, dood!"
 
 # Run tests with coverage report
 coverage:
 	@echo "📊 Running tests with coverage report, dood!"
 	@echo "============================================"
 	@echo ""
-	$(PYTEST) --cov=. --cov-report=term-missing --cov-report=html --cov-branch -v
+	$(PYTEST) --cov=. --cov-report=term-missing --cov-report=html --cov-branch $(ARGS)
 	@echo ""
 	@echo "✅ Coverage report generated, dood!"
 	@echo "📁 HTML report available at: htmlcov/index.html"
@@ -75,7 +86,7 @@ check: lint
 # Clean build files and cache
 clean:
 	rm -rf $(VENV_PATH)
-	find . -type d -name "__pycache__" -exec rm -rf {} +
+	find . -type d -name "__pycache__" -exec rm -rf '{}' +
 	find . -type f -name "*.pyc" -delete
 	@echo "Cleaned build files and cache"
 
@@ -88,8 +99,9 @@ help:
 	@echo "  run          - Run the application"
 	@echo "  lint         - Run linter on entire project"
 	@echo "  format       - Format Python files"
-	@echo "  test         - Run all tests"
-	@echo "  coverage     - Run tests with coverage report"
+	@echo "  test         - Run all tests (Pass V=1 to enable verbose output)"
+	@echo "  test-failed  - ReRun failed tests (Pass V=1 to enable verbose output)"
+	@echo "  coverage     - Run tests with coverage report (Pass V=1 to enable verbose output)"
 	@echo "  check        - Check code quality (lint + format)"
 	@echo "  clean        - Clean build files and cache"
 	@echo "  help         - Show this help message"

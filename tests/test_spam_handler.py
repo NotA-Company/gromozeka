@@ -25,8 +25,14 @@ from internal.bot.models import ChatSettingsKey, ChatSettingsValue, EnsuredMessa
 from internal.database.models import MessageCategory, SpamReason
 from lib.spam import NaiveBayesFilter
 from lib.spam.models import BayesModelStats, SpamScore
-from tests.fixtures.telegram_mocks import createMockBot, createMockContext, createMockUpdate
-from tests.utils import createMockChat, createMockMessage, createMockUser
+from tests.fixtures.telegram_mocks import (
+    createMockBot,
+    createMockChat,
+    createMockContext,
+    createMockMessage,
+    createMockUpdate,
+    createMockUser,
+)
 
 # ============================================================================
 # Test Fixtures
@@ -536,7 +542,9 @@ class TestBayesFilterIntegration:
     @pytest.mark.asyncio
     async def testMarkAsHamLearnsBayesFilter(self, spamHandler, mockBayesFilter):
         """Test marking as ham trains Bayes filter, dood!"""
-        message = createMockMessage(text="Legitimate message")
+        message = createMockMessage(text="Legitimate message", chatId=123)
+        # Ensure message.chat_id returns the integer, not a Mock
+        message.chat_id = 123
 
         result = await spamHandler.markAsHam(message)
 
