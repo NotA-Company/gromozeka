@@ -24,8 +24,10 @@ from tests.fixtures.service_mocks import (
     createMockQueueService,
 )
 from tests.fixtures.telegram_mocks import (
+    createMockBot,
     createMockCallbackQuery,
     createMockChat,
+    createMockContext,
     createMockDocument,
     createMockMessage,
     createMockPhoto,
@@ -36,10 +38,12 @@ from tests.fixtures.telegram_mocks import (
 
 __all__ = [
     # Telegram mocks
+    "createMockBot",
     "createMockUpdate",
     "createMockMessage",
     "createMockUser",
     "createMockChat",
+    "createMockContext",
     "createMockCallbackQuery",
     "createMockPhoto",
     "createMockDocument",

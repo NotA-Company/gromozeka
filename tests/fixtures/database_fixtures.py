@@ -42,16 +42,17 @@ def createSampleChatMessage(
         msg = createSampleChatMessage(text="Hello", chatId=123)
         db.saveChatMessage(**msg)
     """
+    # DatabaseWrapper.saveChatMessage expects camelCase parameters
     return {
-        "message_id": messageId,
-        "chat_id": chatId,
-        "user_id": userId,
-        "text": text,
-        "timestamp": timestamp or int(datetime.now().timestamp()),
-        "reply_to_message_id": replyToMessageId,
-        "thread_id": threadId,
-        "media_type": mediaType,
-        "media_file_id": mediaFileId,
+        "date": datetime.fromtimestamp(timestamp or int(datetime.now().timestamp())),
+        "chatId": chatId,
+        "userId": userId,
+        "messageId": messageId,
+        "replyId": replyToMessageId,
+        "threadId": threadId,
+        "messageText": text or "",
+        "messageType": "text",
+        "mediaId": mediaFileId,
     }
 
 
