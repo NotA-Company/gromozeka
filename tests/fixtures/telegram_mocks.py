@@ -1,14 +1,16 @@
 """
-Mock Telegram API objects for testing.
+Telegram mock objects for testing.
 
 This module provides factory functions to create mock Telegram objects
-with realistic default values. All mocks use unittest.mock.Mock with
-proper spec to ensure type safety.
+for use in tests. All mocks are configured with sensible defaults.
 """
 
-from datetime import datetime
-from typing import List, Optional
+import datetime
+from typing import Optional
 from unittest.mock import AsyncMock, Mock
+
+from telegram import Chat, Message, MessageEntity, Update, User
+from telegram.ext import ExtBot
 
 
 def createMockUser(
@@ -17,18 +19,16 @@ def createMockUser(
     firstName: str = "Test",
     lastName: Optional[str] = "User",
     isBot: bool = False,
-    languageCode: str = "en",
 ) -> Mock:
     """
-    Create a mock Telegram User object.
+    Create a mock Telegram User.
 
     Args:
         userId: User ID (default: 456)
-        username: Username without @ (default: "testuser")
-        firstName: User's first name (default: "Test")
-        lastName: User's last name (default: "User")
+        username: Username (default: "testuser")
+        firstName: First name (default: "Test")
+        lastName: Last name (default: "User")
         isBot: Whether user is a bot (default: False)
-        languageCode: User's language code (default: "en")
 
     Returns:
         Mock: Mocked User instance
@@ -36,19 +36,15 @@ def createMockUser(
     Example:
         user = createMockUser(userId=123, username="john")
         assert user.id == 123
-        assert user.username == "john"
     """
-    from telegram import User
-
     user = Mock(spec=User)
     user.id = userId
     user.username = username
     user.first_name = firstName
     user.last_name = lastName
     user.is_bot = isBot
-    user.language_code = languageCode
     user.full_name = f"{firstName} {lastName}" if lastName else firstName
-
+    user.name = username  # Add name property for compatibility
     return user
 
 
@@ -57,19 +53,15 @@ def createMockChat(
     chatType: str = "private",
     title: Optional[str] = None,
     username: Optional[str] = None,
-    firstName: Optional[str] = None,
-    lastName: Optional[str] = None,
 ) -> Mock:
     """
-    Create a mock Telegram Chat object.
+    Create a mock Telegram Chat.
 
     Args:
         chatId: Chat ID (default: 123)
-        chatType: Chat type: "private", "group", "supergroup", "channel" (default: "private")
-        title: Chat title for groups (default: None)
+        chatType: Chat type (private, group, supergroup, channel) (default: "private")
+        title: Chat title (default: None)
         username: Chat username (default: None)
-        firstName: First name for private chats (default: None)
-        lastName: Last name for private chats (default: None)
 
     Returns:
         Mock: Mocked Chat instance
@@ -77,18 +69,13 @@ def createMockChat(
     Example:
         chat = createMockChat(chatId=123, chatType="group", title="Test Group")
         assert chat.type == "group"
-        assert chat.title == "Test Group"
     """
-    from telegram import Chat
-
     chat = Mock(spec=Chat)
     chat.id = chatId
+    chat.chat_id = chatId  # Add chat_id property for compatibility
     chat.type = chatType
     chat.title = title
     chat.username = username
-    chat.first_name = firstName
-    chat.last_name = lastName
-
     return chat
 
 
@@ -97,144 +84,194 @@ def createMockMessage(
     chatId: int = 123,
     userId: int = 456,
     text: Optional[str] = "test message",
-    date: Optional[datetime] = None,
+    chat: Optional[Mock] = None,
+    fromUser: Optional[Mock] = None,
     replyToMessage: Optional[Mock] = None,
-    entities: Optional[List] = None,
-    photo: Optional[List] = None,
-    document: Optional[Mock] = None,
-    sticker: Optional[Mock] = None,
-    caption: Optional[str] = None,
 ) -> Mock:
     """
-    Create a mock Telegram Message object.
+    Create a mock Telegram Message.
 
     Args:
         messageId: Message ID (default: 1)
         chatId: Chat ID (default: 123)
         userId: User ID (default: 456)
         text: Message text (default: "test message")
-        date: Message date (default: current time)
-        replyToMessage: Replied message (default: None)
-        entities: Message entities (default: None)
-        photo: List of PhotoSize objects (default: None)
-        document: Document object (default: None)
-        sticker: Sticker object (default: None)
-        caption: Media caption (default: None)
+        chat: Mock Chat object (default: auto-created)
+        fromUser: Mock User object (default: auto-created)
+        replyToMessage: Mock Message being replied to (default: None)
 
     Returns:
         Mock: Mocked Message instance
 
     Example:
-        msg = createMockMessage(text="Hello", chatId=123)
-        assert msg.text == "Hello"
-        assert msg.chat.id == 123
+        message = createMockMessage(text="Hello", chatId=123)
+        assert message.text == "Hello"
     """
-    from telegram import Message
-
     message = Mock(spec=Message)
     message.message_id = messageId
-    message.chat = createMockChat(chatId=chatId)
-    message.chat_id = chatId  # Add chat_id as direct attribute
-    message.from_user = createMockUser(userId=userId)
-    message.sender_chat = None  # Add sender_chat attribute for channel messages
     message.text = text
-    message.text_markdown_v2 = text  # Add markdown version for reply text extraction
-    message.date = date or datetime.now()
+    message.text_markdown_v2 = text  # For reply text formatting
+    message.chat = chat or createMockChat(chatId=chatId)
+    message.from_user = fromUser or createMockUser(userId=userId)
     message.reply_to_message = replyToMessage
-    message.entities = entities or []
-    message.photo = photo
-    message.document = document
-    message.sticker = sticker
-    message.caption = caption
-    message.caption_markdown_v2 = caption  # Add markdown version for caption
-    message.quote = None  # Add quote attribute
-    message.forum_topic_created = None  # Add forum topic created attribute
+    message.date = datetime.datetime.now()  # Use real datetime instead of Mock
+    message.photo = None
+    message.document = None
+    message.sticker = None
+    message.sender_chat = None  # Explicitly set to None to avoid Mock issues
+    message.is_automatic_forward = False
 
-    # Add media type attributes that EnsuredMessage checks
-    message.animation = None
+    # Auto-detect commands and add BOT_COMMAND entity
+    entities = []
+    if text and text.startswith("/"):
+        # Extract command (everything before first space or end of string)
+        commandEnd = text.find(" ")
+        if commandEnd == -1:
+            commandEnd = len(text)
+
+        # Create BOT_COMMAND entity
+        commandEntity = Mock(spec=MessageEntity)
+        commandEntity.type = MessageEntity.BOT_COMMAND
+        commandEntity.offset = 0
+        commandEntity.length = commandEnd
+        entities.append(commandEntity)
+
+    message.entities = entities
+    message.caption = None
+    message.caption_entities = []
     message.video = None
     message.video_note = None
     message.audio = None
     message.voice = None
-    message.message_thread_id = None  # Add thread ID
-    message.is_topic_message = False  # Add topic message flag
-    message.is_automatic_forward = False  # Add automatic forward flag
-
-    # Add async methods
-    message.reply_text = AsyncMock(return_value=message)
-    message.reply_photo = AsyncMock(return_value=message)
-    message.delete = AsyncMock(return_value=True)
-    message.edit_text = AsyncMock(return_value=message)
-
-    # Add get_bot method - will be overridden by tests that need specific bot
-    message.get_bot = Mock(return_value=None)
-
+    message.animation = None
+    message.quote = None  # Explicitly set to None to avoid Mock issues
+    message.is_topic_message = False
+    message.message_thread_id = None
+    message.forum_topic_created = None
+    message.external_reply = None  # For external quote handling
     return message
 
 
 def createMockUpdate(
     updateId: int = 1,
+    messageId: int = 1,
+    chatId: int = 123,
+    userId: int = 456,
+    text: str = "test message",
     message: Optional[Mock] = None,
     callbackQuery: Optional[Mock] = None,
-    text: Optional[str] = None,
-    chatId: Optional[int] = None,
-    userId: Optional[int] = None,
 ) -> Mock:
     """
-    Create a mock Telegram Update object.
+    Create a mock Telegram Update.
 
     Args:
         updateId: Update ID (default: 1)
-        message: Message object (default: auto-created)
-        callbackQuery: CallbackQuery object (default: None)
-        text: Message text for auto-created message (default: None)
-        chatId: Chat ID for auto-created message (default: None)
-        userId: User ID for auto-created message (default: None)
+        messageId: Message ID (default: 1)
+        chatId: Chat ID (default: 123)
+        userId: User ID (default: 456)
+        text: Message text (default: "test message")
+        message: Mock Message object (default: auto-created)
+        callbackQuery: Mock CallbackQuery object (default: None)
 
     Returns:
         Mock: Mocked Update instance
 
     Example:
-        update = createMockUpdate(text="Hello", chatId=123)
+        update = createMockUpdate(text="Hello")
         assert update.message.text == "Hello"
-        assert update.effective_chat.id == 123
     """
-    from telegram import Update
-
     update = Mock(spec=Update)
     update.update_id = updateId
-
-    # Create message if not provided
-    if message is None and callbackQuery is None:
-        message = createMockMessage(
-            text=text or "test message",
-            chatId=chatId or 123,
-            userId=userId or 456,
-        )
-
-    update.message = message
+    update.message = message or createMockMessage(
+        messageId=messageId,
+        chatId=chatId,
+        userId=userId,
+        text=text,
+    )
     update.callback_query = callbackQuery
-    update.effective_message = message or (callbackQuery.message if callbackQuery else None)
-    update.effective_chat = message.chat if message else (callbackQuery.message.chat if callbackQuery else None)
-    update.effective_user = message.from_user if message else (callbackQuery.from_user if callbackQuery else None)
-
+    update.effective_chat = update.message.chat if update.message else None
+    update.effective_user = (
+        update.message.from_user if update.message else (callbackQuery.from_user if callbackQuery else None)
+    )
+    update.effective_message = update.message if update.message else (callbackQuery.message if callbackQuery else None)
     return update
+
+
+def createMockBot(
+    botId: int = 123456789,
+    username: str = "test_bot",
+    firstName: str = "Test Bot",
+) -> AsyncMock:
+    """
+    Create a mock Telegram Bot.
+
+    Args:
+        botId: Bot ID (default: 123456789)
+        username: Bot username (default: "test_bot")
+        firstName: Bot first name (default: "Test Bot")
+
+    Returns:
+        AsyncMock: Mocked ExtBot instance
+
+    Example:
+        bot = createMockBot()
+        await bot.sendMessage(chat_id=123, text="test")
+    """
+    bot = AsyncMock(spec=ExtBot)
+    bot.id = botId
+    bot.username = username
+    bot.first_name = firstName
+
+    # Configure common async methods
+    # Use lambda to create new mock message each time to avoid shared state
+    bot.sendMessage = AsyncMock(
+        side_effect=lambda **kwargs: createMockMessage(
+            messageId=kwargs.get("message_id", 1),
+            chatId=kwargs.get("chat_id", 123),
+            text=kwargs.get("text", "mock response"),
+        )
+    )
+    bot.sendPhoto = AsyncMock(
+        side_effect=lambda **kwargs: createMockMessage(
+            messageId=kwargs.get("message_id", 1), chatId=kwargs.get("chat_id", 123)
+        )
+    )
+    bot.deleteMessage = AsyncMock(return_value=True)
+    bot.delete_message = AsyncMock(return_value=True)  # snake_case alias
+    bot.delete_messages = AsyncMock(return_value=True)
+    bot.getChatAdministrators = AsyncMock(return_value=[])
+    bot.get_chat_administrators = AsyncMock(return_value=[])  # snake_case alias
+    bot.banChatMember = AsyncMock(return_value=True)
+    bot.ban_chat_member = AsyncMock(return_value=True)  # snake_case alias
+    bot.ban_chat_sender_chat = AsyncMock(return_value=True)
+    bot.unbanChatMember = AsyncMock(return_value=True)
+    bot.unban_chat_member = AsyncMock(return_value=True)  # snake_case alias
+
+    # Create mock file with awaitable download_as_bytearray
+    mockFile = Mock()
+    mockFile.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake_image_data"))
+    bot.getFile = AsyncMock(return_value=mockFile)
+    bot.get_file = AsyncMock(return_value=mockFile)  # snake_case alias
+
+    return bot
 
 
 def createMockCallbackQuery(
     queryId: str = "callback_123",
     data: str = "test_callback",
     message: Optional[Mock] = None,
-    userId: int = 456,
+    fromUser: Optional[Mock] = None,
+    userId: Optional[int] = None,
 ) -> Mock:
     """
-    Create a mock Telegram CallbackQuery object.
+    Create a mock Telegram CallbackQuery.
 
     Args:
         queryId: Query ID (default: "callback_123")
         data: Callback data (default: "test_callback")
-        message: Associated message (default: auto-created)
-        userId: User ID (default: 456)
+        message: Mock Message object (default: auto-created)
+        fromUser: Mock User object (default: auto-created)
+        userId: User ID for auto-created user (default: 456)
 
     Returns:
         Mock: Mocked CallbackQuery instance
@@ -242,7 +279,6 @@ def createMockCallbackQuery(
     Example:
         query = createMockCallbackQuery(data="button_clicked")
         assert query.data == "button_clicked"
-        await query.answer()
     """
     from telegram import CallbackQuery
 
@@ -250,12 +286,8 @@ def createMockCallbackQuery(
     query.id = queryId
     query.data = data
     query.message = message or createMockMessage()
-    query.from_user = createMockUser(userId=userId)
-
-    # Add async methods
+    query.from_user = fromUser or createMockUser(userId=userId if userId is not None else 456)
     query.answer = AsyncMock(return_value=True)
-    query.edit_message_text = AsyncMock(return_value=query.message)
-    query.edit_message_reply_markup = AsyncMock(return_value=query.message)
 
     return query
 
@@ -263,26 +295,26 @@ def createMockCallbackQuery(
 def createMockPhoto(
     fileId: str = "photo_123",
     fileUniqueId: str = "unique_photo_123",
-    width: int = 1280,
-    height: int = 720,
+    width: int = 1920,
+    height: int = 1080,
     fileSize: int = 102400,
 ) -> Mock:
     """
-    Create a mock Telegram PhotoSize object.
+    Create a mock Telegram PhotoSize.
 
     Args:
         fileId: File ID (default: "photo_123")
         fileUniqueId: Unique file ID (default: "unique_photo_123")
-        width: Photo width (default: 1280)
-        height: Photo height (default: 720)
+        width: Photo width (default: 1920)
+        height: Photo height (default: 1080)
         fileSize: File size in bytes (default: 102400)
 
     Returns:
         Mock: Mocked PhotoSize instance
 
     Example:
-        photo = createMockPhoto(width=1920, height=1080)
-        assert photo.width == 1920
+        photo = createMockPhoto(width=800, height=600)
+        assert photo.width == 800
     """
     from telegram import PhotoSize
 
@@ -297,18 +329,18 @@ def createMockPhoto(
 
 
 def createMockDocument(
-    fileId: str = "doc_123",
-    fileUniqueId: str = "unique_doc_123",
+    fileId: str = "document_123",
+    fileUniqueId: str = "unique_document_123",
     fileName: str = "test.pdf",
     mimeType: str = "application/pdf",
     fileSize: int = 204800,
 ) -> Mock:
     """
-    Create a mock Telegram Document object.
+    Create a mock Telegram Document.
 
     Args:
-        fileId: File ID (default: "doc_123")
-        fileUniqueId: Unique file ID (default: "unique_doc_123")
+        fileId: File ID (default: "document_123")
+        fileUniqueId: Unique file ID (default: "unique_document_123")
         fileName: File name (default: "test.pdf")
         mimeType: MIME type (default: "application/pdf")
         fileSize: File size in bytes (default: 204800)
@@ -342,7 +374,7 @@ def createMockSticker(
     emoji: Optional[str] = "😀",
 ) -> Mock:
     """
-    Create a mock Telegram Sticker object.
+    Create a mock Telegram Sticker.
 
     Args:
         fileId: File ID (default: "sticker_123")
@@ -357,8 +389,8 @@ def createMockSticker(
         Mock: Mocked Sticker instance
 
     Example:
-        sticker = createMockSticker(isAnimated=True)
-        assert sticker.is_animated == True
+        sticker = createMockSticker(emoji="👍")
+        assert sticker.emoji == "👍"
     """
     from telegram import Sticker
 
@@ -374,71 +406,36 @@ def createMockSticker(
     return sticker
 
 
-def createMockContext(bot: Optional[Mock] = None) -> Mock:
+def createMockContext(
+    bot: Optional[AsyncMock] = None,
+    chatData: Optional[dict] = None,
+    userData: Optional[dict] = None,
+    botData: Optional[dict] = None,
+) -> Mock:
     """
-    Create a mock CallbackContext for handlers.
+    Create a mock Telegram Context (CallbackContext).
 
     Args:
-        bot: Bot instance (default: auto-created)
+        bot: Mock bot instance (default: auto-created)
+        chatData: Chat data dictionary (default: empty dict)
+        userData: User data dictionary (default: empty dict)
+        botData: Bot data dictionary (default: empty dict)
 
     Returns:
         Mock: Mocked CallbackContext instance
 
     Example:
-        context = createMockContext()
-        await context.bot.sendMessage(chat_id=123, text="test")
+        context = createMockContext(chatData={"setting": "value"})
+        assert context.chat_data["setting"] == "value"
     """
     from telegram.ext import CallbackContext
 
     context = Mock(spec=CallbackContext)
     context.bot = bot or createMockBot()
-    context.user_data = {}
-    context.chat_data = {}
-    context.bot_data = {}
+    context.chat_data = chatData or {}
+    context.user_data = userData or {}
+    context.bot_data = botData or {}
     context.args = []
     context.error = None
 
     return context
-
-
-def createMockBot(
-    botId: int = 123456789,
-    username: str = "test_bot",
-    firstName: str = "Test Bot",
-) -> AsyncMock:
-    """
-    Create a mock Telegram Bot instance.
-
-    Args:
-        botId: Bot ID (default: 123456789)
-        username: Bot username (default: "test_bot")
-        firstName: Bot first name (default: "Test Bot")
-
-    Returns:
-        AsyncMock: Mocked ExtBot instance
-
-    Example:
-        bot = createMockBot()
-        await bot.sendMessage(chat_id=123, text="test")
-        bot.sendMessage.assert_called_once()
-    """
-    from telegram.ext import ExtBot
-
-    bot = AsyncMock(spec=ExtBot)
-    bot.id = botId
-    bot.username = username
-    bot.first_name = firstName
-
-    # Configure common async methods
-    bot.sendMessage = AsyncMock(return_value=createMockMessage())
-    bot.sendPhoto = AsyncMock(return_value=createMockMessage())
-    bot.sendDocument = AsyncMock(return_value=createMockMessage())
-    bot.deleteMessage = AsyncMock(return_value=True)
-    bot.editMessageText = AsyncMock(return_value=createMockMessage())
-    bot.getChatAdministrators = AsyncMock(return_value=[])
-    bot.getChatMember = AsyncMock(return_value=Mock())
-    bot.banChatMember = AsyncMock(return_value=True)
-    bot.unbanChatMember = AsyncMock(return_value=True)
-    bot.getFile = AsyncMock(return_value=Mock())
-
-    return bot
