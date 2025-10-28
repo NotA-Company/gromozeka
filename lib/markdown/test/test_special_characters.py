@@ -228,6 +228,113 @@ class TestSpecialCharacters(unittest.TestCase):
         # Link text should have escaped characters
         self.assertTrue("\\*" in result or "*" in result)  # May be in link text
 
+    def test_backslash_escaping(self):
+        """Test backslash escaping of special characters."""
+        test_cases = [
+            (r"\*", "*"),
+            (r"\_", "_"),
+            (r"\~", "~"),
+            (r"\[", "["),
+            (r"\]", "]"),
+            (r"\(", "("),
+            (r"\)", ")"),
+            (r"\\", "\\"),
+        ]
+
+        for markdown, expected_char in test_cases:
+            with self.subTest(markdown=markdown):
+                html = markdown_to_html(markdown)
+                # Escaped character should appear in output
+                self.assertIn(expected_char, html)
+
+    def test_special_chars_in_different_positions(self):
+        """Test special characters at different positions in text."""
+        test_cases = [
+            "*start",
+            "end*",
+            "mid*dle",
+            "* standalone",
+            "multiple * in * text",
+        ]
+
+        for markdown in test_cases:
+            with self.subTest(markdown=markdown):
+                result = markdown_to_markdownv2(markdown)
+                # Should handle without crashing
+                self.assertIsInstance(result, str)
+
+    def test_consecutive_different_special_chars(self):
+        """Test consecutive different special characters."""
+        markdown = "*_~`[](){}#>-=+|\\!@$%^&"
+
+        result = markdown_to_markdownv2(markdown)
+        html = markdown_to_html(markdown)
+
+        # Should not crash
+        self.assertIsInstance(result, str)
+        self.assertIsInstance(html, str)
+
+    def test_special_chars_with_whitespace(self):
+        """Test special characters with various whitespace."""
+        test_cases = [
+            "* space after",
+            "space before *",
+            "*no space*",
+            "* \ttab",
+            "*\nnewline",
+        ]
+
+        for markdown in test_cases:
+            with self.subTest(markdown=markdown):
+                result = markdown_to_markdownv2(markdown)
+                html = markdown_to_html(markdown)
+
+                self.assertIsInstance(result, str)
+                self.assertIsInstance(html, str)
+
+    def test_special_chars_in_headers(self):
+        """Test special characters within headers."""
+        test_cases = [
+            "# Header with * asterisk",
+            "## Header with _ underscore",
+            "### Header with ~ tilde",
+            "#### Header with [brackets]",
+        ]
+
+        for markdown in test_cases:
+            with self.subTest(markdown=markdown):
+                html = markdown_to_html(markdown)
+                result = markdown_to_markdownv2(markdown)
+
+                self.assertIsInstance(html, str)
+                self.assertIsInstance(result, str)
+
+    def test_special_chars_in_lists(self):
+        """Test special characters within list items."""
+        markdown = """- Item with * asterisk
+- Item with _ underscore
+- Item with ~ tilde
+- Item with [brackets]"""
+
+        html = markdown_to_html(markdown)
+        result = markdown_to_markdownv2(markdown)
+
+        self.assertIn("<ul>", html)
+        self.assertIn("•", result)
+
+    def test_special_chars_in_blockquotes(self):
+        """Test special characters within blockquotes."""
+        markdown = """> Quote with * asterisk
+> Quote with _ underscore
+> Quote with ~ tilde"""
+
+        html = markdown_to_html(markdown)
+        markdown_to_markdownv2(markdown)
+
+        self.assertIn("asterisk", html)
+        self.assertIn("underscore", html)
+        self.assertIn("tilde", html)
+
 
 if __name__ == "__main__":
     unittest.main()
