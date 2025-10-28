@@ -282,7 +282,7 @@ def mockQueueService():
             await mockQueueService.addBackgroundTask(task)
             mockQueueService.addBackgroundTask.assert_called_once()
     """
-    from internal.services.queue.service import QueueService
+    from internal.services.queue_service.service import QueueService
 
     mock = Mock(spec=QueueService)
     mock.addBackgroundTask = AsyncMock(return_value=None)

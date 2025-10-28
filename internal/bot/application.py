@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 
 from internal.bot.models import CommandCategory
-from internal.services.queue.service import QueueService
+from internal.services.queue_service.service import QueueService
 from lib.ai.manager import LLMManager
 
 from ..config.manager import ConfigManager

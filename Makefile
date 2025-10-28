@@ -8,6 +8,7 @@ FLAKE8 = $(VENV_PATH)/bin/flake8
 BLACK = $(VENV_PATH)/bin/black
 ISORT = $(VENV_PATH)/bin/isort
 PYRIGHT = $(VENV_PATH)/bin/pyright
+#PYTEST = $(PYTHON) -m pytest
 PYTEST = $(VENV_PATH)/bin/pytest
 
 # Targets
@@ -51,7 +52,7 @@ test:
 	@echo "🧪 Running all Gromozeka tests, dood!"
 	@echo "=================================="
 	@echo ""
-	$(PYTHON) -m pytest -v
+	$(PYTEST) -v
 	@echo ""
 	@echo "✅ All tests completed, dood!"
 
@@ -60,7 +61,7 @@ coverage:
 	@echo "📊 Running tests with coverage report, dood!"
 	@echo "============================================"
 	@echo ""
-	$(PYTHON) -m pytest --cov=. --cov-report=term-missing --cov-report=html --cov-branch -v
+	$(PYTEST) --cov=. --cov-report=term-missing --cov-report=html --cov-branch -v
 	@echo ""
 	@echo "✅ Coverage report generated, dood!"
 	@echo "📁 HTML report available at: htmlcov/index.html"
