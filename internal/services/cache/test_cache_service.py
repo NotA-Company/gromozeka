@@ -11,10 +11,12 @@ Tests cover:
 - Statistics
 """
 
+import gc
 import json
 import os
 import sys
 import unittest
+import warnings
 from unittest.mock import Mock
 
 # Add project root to path to avoid circular imports
@@ -136,12 +138,22 @@ class TestCacheServiceBasics(unittest.TestCase):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
+        # Use plain Mock to avoid any connection creation
         self.mockDb = Mock()
+        # Configure mock BEFORE injection to avoid connection issues
+        self.mockDb.getCacheStorage.return_value = []
         self.cache.injectDatabase(self.mockDb)
 
     def tearDown(self):
         """Clean up after tests"""
+        if hasattr(self, "mockDb"):
+            self.mockDb.reset_mock()
+            del self.mockDb
         CacheService._instance = None
+        # Suppress ResourceWarnings from test environment during cleanup
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            gc.collect()
 
     def testNamespaceAccess(self):
         """Test accessing different namespaces"""
@@ -183,7 +195,11 @@ class TestChatSettings(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests"""
+        if hasattr(self, "mockDb"):
+            self.mockDb.reset_mock()
+            del self.mockDb
         CacheService._instance = None
+        gc.collect()
 
     def testGetChatSettingsFromCache(self):
         """Test getting chat settings from cache"""
@@ -227,7 +243,11 @@ class TestChatInfo(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests"""
+        if hasattr(self, "mockDb"):
+            self.mockDb.reset_mock()
+            del self.mockDb
         CacheService._instance = None
+        gc.collect()
 
     def testGetChatInfo(self):
         """Test getting chat info"""
@@ -269,11 +289,15 @@ class TestChatUserData(unittest.TestCase):
     def tearDown(self):
         """Clean up after tests"""
         # Clear the database reference to avoid resource warnings
-        if hasattr(self.cache, 'dbWrapper') and self.cache.dbWrapper is not None:
+        if hasattr(self.cache, "dbWrapper") and self.cache.dbWrapper is not None:
             self.cache.dbWrapper = None
-        if hasattr(self, 'mockDb'):
+        if hasattr(self, "mockDb"):
+            # Reset the mock to release any held references
+            self.mockDb.reset_mock()
             del self.mockDb
         CacheService._instance = None
+        # Force garbage collection to clean up any lingering references
+        gc.collect()
 
     def testGetChatUserDataFromCache(self):
         """Test getting user data from cache"""
@@ -335,7 +359,11 @@ class TestUserState(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests"""
+        if hasattr(self, "mockDb"):
+            self.mockDb.reset_mock()
+            del self.mockDb
         CacheService._instance = None
+        gc.collect()
 
     def testGetUserState(self):
         """Test getting user state"""
@@ -416,7 +444,11 @@ class TestNamespaceOperations(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests"""
+        if hasattr(self, "mockDb"):
+            self.mockDb.reset_mock()
+            del self.mockDb
         CacheService._instance = None
+        gc.collect()
 
     def testClearNamespace(self):
         """Test clearing entire namespace"""
@@ -444,7 +476,11 @@ class TestPersistence(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests"""
+        if hasattr(self, "mockDb"):
+            self.mockDb.reset_mock()
+            del self.mockDb
         CacheService._instance = None
+        gc.collect()
 
     def testPersistAllWithoutDb(self):
         """Test that persist fails gracefully without database"""
@@ -573,6 +609,7 @@ class TestThreadSafety(unittest.TestCase):
     def tearDown(self):
         """Clean up after tests"""
         CacheService._instance = None
+        gc.collect()
 
     def testLRUCacheConcurrentAccess(self):
         """Test that LRU cache handles concurrent access"""
@@ -612,7 +649,11 @@ class TestEdgeCases(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests"""
+        if hasattr(self, "mockDb"):
+            self.mockDb.reset_mock()
+            del self.mockDb
         CacheService._instance = None
+        gc.collect()
 
     def testSetChatSettingWithoutDb(self):
         """Test setting chat settings without database"""

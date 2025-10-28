@@ -1469,3 +1469,559 @@ class TestEdgeCases:
         # All handlers should have been called
         for handler in handlersManager.handlers:
             handler.messageHandler.assert_called_once()
+
+
+# ============================================================================
+# Handler Result Status Processing Tests
+# ============================================================================
+
+
+class TestHandlerResultStatusProcessing:
+    """Test handler result status processing logic, dood!"""
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testSkippedStatusContinuesChain(self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage):
+        """Test that SKIPPED status allows chain to continue, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        # Mock handlers: first returns SKIPPED, second returns FINAL
+        handlersManager.handlers[0].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.SKIPPED)
+        handlersManager.handlers[1].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.FINAL)
+
+        for handler in handlersManager.handlers[2:]:
+            handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_message(update, mockContext)
+
+        # Verify first two handlers were called
+        handlersManager.handlers[0].messageHandler.assert_called_once()
+        handlersManager.handlers[1].messageHandler.assert_called_once()
+
+        # Verify remaining handlers were not called (FINAL stopped chain)
+        for handler in handlersManager.handlers[2:]:
+            handler.messageHandler.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testNextStatusContinuesChain(self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage):
+        """Test that NEXT status allows chain to continue, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        # Mock all handlers to return NEXT
+        for handler in handlersManager.handlers:
+            handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_message(update, mockContext)
+
+        # Verify all handlers were called
+        for handler in handlersManager.handlers:
+            handler.messageHandler.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testFinalStatusStopsChain(self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage):
+        """Test that FINAL status stops handler chain, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        # Mock first handler to return FINAL
+        handlersManager.handlers[0].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.FINAL)
+
+        for handler in handlersManager.handlers[1:]:
+            handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_message(update, mockContext)
+
+        # Verify only first handler was called
+        handlersManager.handlers[0].messageHandler.assert_called_once()
+
+        for handler in handlersManager.handlers[1:]:
+            handler.messageHandler.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testErrorStatusContinuesChain(self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage):
+        """Test that ERROR status allows chain to continue, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        # Mock first handler to return ERROR, rest return NEXT
+        handlersManager.handlers[0].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.ERROR)
+
+        for handler in handlersManager.handlers[1:]:
+            handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_message(update, mockContext)
+
+        # Verify all handlers were called (ERROR doesn't stop chain)
+        for handler in handlersManager.handlers:
+            handler.messageHandler.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testFatalStatusStopsChain(self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage):
+        """Test that FATAL status stops handler chain, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        # Mock first handler to return FATAL
+        handlersManager.handlers[0].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.FATAL)
+
+        for handler in handlersManager.handlers[1:]:
+            handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_message(update, mockContext)
+
+        # Verify only first handler was called
+        handlersManager.handlers[0].messageHandler.assert_called_once()
+
+        for handler in handlersManager.handlers[1:]:
+            handler.messageHandler.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testMixedStatusesInChain(self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage):
+        """Test mixed handler statuses in chain, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        # Mock handlers with different statuses
+        if len(handlersManager.handlers) >= 5:
+            handlersManager.handlers[0].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.SKIPPED)
+            handlersManager.handlers[1].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+            handlersManager.handlers[2].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.ERROR)
+            handlersManager.handlers[3].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+            handlersManager.handlers[4].messageHandler = createAsyncMock(returnValue=HandlerResultStatus.FINAL)
+
+            for handler in handlersManager.handlers[5:]:
+                handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+            await handlersManager.handle_message(update, mockContext)
+
+            # Verify first 5 handlers were called
+            for i in range(5):
+                handlersManager.handlers[i].messageHandler.assert_called_once()
+
+            # Verify remaining handlers were not called (FINAL stopped chain)
+            for handler in handlersManager.handlers[5:]:
+                handler.messageHandler.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testPossibleFinalResultsValidation(
+        self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage
+    ):
+        """Test validation that at least one handler returns FINAL or NEXT, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        # Mock all handlers to return only SKIPPED and ERROR (no FINAL or NEXT)
+        for i, handler in enumerate(handlersManager.handlers):
+            if i % 2 == 0:
+                handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.SKIPPED)
+            else:
+                handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.ERROR)
+
+        # This should trigger the validation error log
+        await handlersManager.handle_message(update, mockContext)
+
+        # All handlers should have been called
+        for handler in handlersManager.handlers:
+            handler.messageHandler.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def testButtonHandlerStatusProcessing(self, handlersManager, mockContext):
+        """Test button handler status processing, dood!"""
+        query = createMockCallbackQuery(data='{"action": "test"}')
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        # Mock handlers with different statuses
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.SKIPPED)
+        handlersManager.handlers[1].buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+        handlersManager.handlers[2].buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.FINAL)
+
+        for handler in handlersManager.handlers[3:]:
+            handler.buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify first 3 handlers were called
+        for i in range(3):
+            handlersManager.handlers[i].buttonHandler.assert_called_once()
+
+        # Verify remaining handlers were not called (FINAL stopped chain)
+        for handler in handlersManager.handlers[3:]:
+            handler.buttonHandler.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def testButtonHandlerErrorStatus(self, handlersManager, mockContext):
+        """Test ERROR status in button handler chain, dood!"""
+        query = createMockCallbackQuery(data='{"action": "test"}')
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        # Mock first handler to return ERROR, rest return NEXT
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.ERROR)
+
+        for handler in handlersManager.handlers[1:]:
+            handler.buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify all handlers were called (ERROR doesn't stop chain)
+        for handler in handlersManager.handlers:
+            handler.buttonHandler.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def testButtonHandlerFatalStatus(self, handlersManager, mockContext):
+        """Test FATAL status in button handler chain, dood!"""
+        query = createMockCallbackQuery(data='{"action": "test"}')
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        # Mock first handler to return FATAL
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.FATAL)
+
+        for handler in handlersManager.handlers[1:]:
+            handler.buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify only first handler was called
+        handlersManager.handlers[0].buttonHandler.assert_called_once()
+
+        for handler in handlersManager.handlers[1:]:
+            handler.buttonHandler.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def testButtonHandlerPossibleFinalResultsValidation(self, handlersManager, mockContext):
+        """Test button handler validation for FINAL or NEXT status, dood!"""
+        query = createMockCallbackQuery(data='{"action": "test"}')
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        # Mock all handlers to return only SKIPPED and ERROR
+        for i, handler in enumerate(handlersManager.handlers):
+            if i % 2 == 0:
+                handler.buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.SKIPPED)
+            else:
+                handler.buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.ERROR)
+
+        # This should trigger the validation error log
+        await handlersManager.handle_button(update, mockContext)
+
+        # All handlers should have been called
+        for handler in handlersManager.handlers:
+            handler.buttonHandler.assert_called_once()
+
+
+# ============================================================================
+# Button Data Processing Tests
+# ============================================================================
+
+
+class TestButtonDataProcessing:
+    """Test button callback data processing, dood!"""
+
+    @pytest.mark.asyncio
+    async def testButtonDataUnpacking(self, handlersManager, mockContext):
+        """Test that button data is unpacked correctly using packed format, dood!"""
+        # Use packed format: key:value,key2:value2
+        from typing import Dict, Union
+
+        from lib.utils import packDict
+
+        testData: Dict[Union[str, int], Union[str, int, float, bool, None]] = {
+            "action": "test_action",
+            "value": 123,
+            "flag": True,
+        }
+        packedData = packDict(testData)
+
+        query = createMockCallbackQuery(data=packedData)
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        # Mock handlers to capture the data parameter
+        capturedData = []
+
+        async def captureData(update, context, data):
+            capturedData.append(data)
+            return HandlerResultStatus.FINAL
+
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(sideEffect=captureData)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify data was unpacked correctly
+        assert len(capturedData) == 1
+        assert capturedData[0] == testData
+
+    @pytest.mark.asyncio
+    async def testButtonDataWithStrings(self, handlersManager, mockContext):
+        """Test button data with string values, dood!"""
+        from typing import Dict, Union
+
+        from lib.utils import packDict
+
+        testData: Dict[Union[str, int], Union[str, int, float, bool, None]] = {
+            "action": "click",
+            "target": "button1",
+            "user": "test_user",
+        }
+        packedData = packDict(testData)
+
+        query = createMockCallbackQuery(data=packedData)
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        capturedData = []
+
+        async def captureData(update, context, data):
+            capturedData.append(data)
+            return HandlerResultStatus.FINAL
+
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(sideEffect=captureData)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify data was unpacked correctly with strings
+        assert len(capturedData) == 1
+        assert capturedData[0] == testData
+
+    @pytest.mark.asyncio
+    async def testButtonDataEmpty(self, handlersManager, mockContext):
+        """Test button data with empty string, dood!"""
+        query = createMockCallbackQuery(data="")
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        capturedData = []
+
+        async def captureData(update, context, data):
+            capturedData.append(data)
+            return HandlerResultStatus.FINAL
+
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(sideEffect=captureData)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify empty data was unpacked to empty dict
+        assert len(capturedData) == 1
+        assert capturedData[0] == {}
+
+    @pytest.mark.asyncio
+    async def testButtonDataWithNumbers(self, handlersManager, mockContext):
+        """Test button data with various number types, dood!"""
+        from typing import Dict, Union
+
+        from lib.utils import packDict
+
+        testData: Dict[Union[str, int], Union[str, int, float, bool, None]] = {
+            "int_val": 42,
+            "float_val": 3.14,
+            "zero": 0,
+        }
+        packedData = packDict(testData)
+
+        query = createMockCallbackQuery(data=packedData)
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        capturedData = []
+
+        async def captureData(update, context, data):
+            capturedData.append(data)
+            return HandlerResultStatus.FINAL
+
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(sideEffect=captureData)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify number data was unpacked correctly
+        assert len(capturedData) == 1
+        assert capturedData[0] == testData
+
+    @pytest.mark.asyncio
+    async def testButtonDataWithBooleans(self, handlersManager, mockContext):
+        """Test button data with boolean values, dood!"""
+        from typing import Dict, Union
+
+        from lib.utils import packDict
+
+        testData: Dict[Union[str, int], Union[str, int, float, bool, None]] = {
+            "enabled": True,
+            "visible": False,
+            "active": True,
+        }
+        packedData = packDict(testData)
+
+        query = createMockCallbackQuery(data=packedData)
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        capturedData = []
+
+        async def captureData(update, context, data):
+            capturedData.append(data)
+            return HandlerResultStatus.FINAL
+
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(sideEffect=captureData)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify boolean data was unpacked correctly
+        assert len(capturedData) == 1
+        assert capturedData[0] == testData
+
+    @pytest.mark.asyncio
+    async def testButtonDataWithNullValues(self, handlersManager, mockContext):
+        """Test button data with None/null values, dood!"""
+        from typing import Dict, Union
+
+        from lib.utils import packDict
+
+        testData: Dict[Union[str, int], Union[str, int, float, bool, None]] = {
+            "key1": "value1",
+            "key2": None,
+            "key3": "value3",
+        }
+        packedData = packDict(testData)
+
+        query = createMockCallbackQuery(data=packedData)
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        capturedData = []
+
+        async def captureData(update, context, data):
+            capturedData.append(data)
+            return HandlerResultStatus.FINAL
+
+        handlersManager.handlers[0].buttonHandler = createAsyncMock(sideEffect=captureData)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify null values were unpacked correctly
+        assert len(capturedData) == 1
+        assert capturedData[0] == testData
+
+
+# ============================================================================
+# Additional Edge Cases
+# ============================================================================
+
+
+class TestAdditionalEdgeCases:
+    """Test additional edge cases for complete coverage, dood!"""
+
+    @pytest.mark.asyncio
+    async def testButtonHandlerWithNonMessageCallbackQuery(self, handlersManager, mockContext):
+        """Test button handler when callback query message is not a Message type, dood!"""
+        query = createMockCallbackQuery(data='{"action": "test"}')
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        # Make query.message something other than Message
+        from telegram import InaccessibleMessage
+
+        query.message = Mock(spec=InaccessibleMessage)
+
+        # Mock handlers
+        for handler in handlersManager.handlers:
+            handler.buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        # Should handle gracefully and not call handlers
+        await handlersManager.handle_button(update, mockContext)
+
+        # Verify handlers were not called (invalid message type)
+        for handler in handlersManager.handlers:
+            handler.buttonHandler.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testMessageHandlerWithVeryLongChain(
+        self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage
+    ):
+        """Test message handling with all handlers returning NEXT, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        callCount = 0
+
+        async def countCalls(*args, **kwargs):
+            nonlocal callCount
+            callCount += 1
+            return HandlerResultStatus.NEXT
+
+        # Mock all handlers to return NEXT and count calls
+        for handler in handlersManager.handlers:
+            handler.messageHandler = createAsyncMock(sideEffect=countCalls)
+
+        await handlersManager.handle_message(update, mockContext)
+
+        # Verify all handlers were called exactly once
+        assert callCount == len(handlersManager.handlers)
+
+    @pytest.mark.asyncio
+    async def testButtonHandlerWithAllSkipped(self, handlersManager, mockContext):
+        """Test button handler when all handlers return SKIPPED, dood!"""
+        query = createMockCallbackQuery(data='{"action": "test"}')
+        update = createMockUpdate()
+        update.callback_query = query
+        update.message = None
+
+        # Mock all handlers to return SKIPPED
+        for handler in handlersManager.handlers:
+            handler.buttonHandler = createAsyncMock(returnValue=HandlerResultStatus.SKIPPED)
+
+        await handlersManager.handle_button(update, mockContext)
+
+        # All handlers should have been called
+        for handler in handlersManager.handlers:
+            handler.buttonHandler.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("internal.bot.models.ensured_message.EnsuredMessage.fromMessage")
+    async def testMessageHandlerResultSetTracking(
+        self, mockFromMessage, handlersManager, mockContext, mockEnsuredMessage
+    ):
+        """Test that result set is properly tracked across handlers, dood!"""
+        mockFromMessage.return_value = mockEnsuredMessage
+        update = createMockUpdate(text="test")
+
+        # Mock handlers with various statuses
+        statuses = [
+            HandlerResultStatus.SKIPPED,
+            HandlerResultStatus.NEXT,
+            HandlerResultStatus.ERROR,
+            HandlerResultStatus.NEXT,
+            HandlerResultStatus.FINAL,
+        ]
+
+        for i, handler in enumerate(handlersManager.handlers[: len(statuses)]):
+            handler.messageHandler = createAsyncMock(returnValue=statuses[i])
+
+        for handler in handlersManager.handlers[len(statuses) :]:
+            handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
+
+        await handlersManager.handle_message(update, mockContext)
+
+        # Verify handlers up to FINAL were called
+        for i in range(len(statuses)):
+            handlersManager.handlers[i].messageHandler.assert_called_once()
