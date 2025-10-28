@@ -214,7 +214,7 @@ def llmHandler(mockConfigManager, mockDatabase, mockLlmManager, mockLlmService, 
     with (
         patch("internal.services.llm.service.LLMService.getInstance", return_value=mockLlmService),
         patch("internal.services.cache.service.CacheService.getInstance", return_value=mockCacheService),
-        patch("internal.services.queue.service.QueueService.getInstance", return_value=Mock()),
+        patch("internal.services.queue_service.service.QueueService.getInstance", return_value=Mock()),
     ):
         handler = LLMMessageHandler(
             configManager=mockConfigManager,

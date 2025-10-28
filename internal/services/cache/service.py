@@ -9,8 +9,8 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
-from internal.services.queue.service import QueueService
-from internal.services.queue.types import DelayedTask, DelayedTaskFunction
+from internal.services.queue_service.service import QueueService
+from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib import utils
 
 from .models import CacheNamespace, CachePersistenceLevel
