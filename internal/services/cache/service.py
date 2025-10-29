@@ -247,7 +247,8 @@ class CacheService:
         self.getChatSettings(chatId)
         chatCache = self.chats.get(chatId, {})
         if "settings" in chatCache:
-            del chatCache["settings"][key]
+            # Use pop to safely remove key, even if it doesn't exist
+            chatCache["settings"].pop(key, None)
             self.chats.set(chatId, chatCache)
             if self.dbWrapper:
                 self.dbWrapper.unsetChatSetting(chatId, key)
@@ -256,16 +257,35 @@ class CacheService:
         logger.debug(f"Unset chat setting {key} for {chatId}, dood!")
 
     def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
-        """Get chat info from cache"""
+        """Get chat info from cache or database"""
         chatCache = self.chats.get(chatId, {})
-        return chatCache.get("info", None)
+        info = chatCache.get("info", None)
+
+        # If not in cache, try loading from database
+        if info is None and self.dbWrapper:
+            info = self.dbWrapper.getChatInfo(chatId)
+            if info:
+                # Cache it for future use
+                chatCache["info"] = info
+                self.chats.set(chatId, chatCache)
+
+        return info
 
     def setChatInfo(self, chatId: int, info: ChatInfoDict) -> None:
         """Update chat info in cache"""
         chatCache = self.chats.get(chatId, {})
         chatCache["info"] = info
         self.chats.set(chatId, chatCache)
-        self.dirtyKeys[CacheNamespace.CHATS].add(chatId)
+        if self.dbWrapper:
+            self.dbWrapper.addChatInfo(
+                chatId=chatId,
+                type=info["type"],
+                title=info["title"],
+                username=info["username"],
+                isForum=info["is_forum"],
+            )
+        else:
+            logger.error(f"No dbWrapper found, can't save chat info for {chatId}")
         logger.debug(f"Updated chat info for {chatId}, dood!")
 
     def getChatTopicsInfo(self, chatId: int) -> Dict[int, ChatTopicInfoDict]:

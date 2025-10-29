@@ -44,8 +44,18 @@ async def inMemoryDb():
     Yields:
         DatabaseWrapper: In-memory database instance
     """
+    from internal.services.cache.models import CacheNamespace
+    from internal.services.cache.service import CacheService
+
     db = DatabaseWrapper(":memory:")
+    # Inject database into CacheService singleton
+    cache = CacheService.getInstance()
+    cache.injectDatabase(db)
     yield db
+    # Clean up: clear cache after test
+    for namespace in CacheNamespace:
+        cache._caches[namespace].clear()
+        cache.dirtyKeys[namespace].clear()
     db.close()
 
 
@@ -225,7 +235,7 @@ async def testHelpCommand(inMemoryDb, mockBot, helpHandler):
 
 
 @pytest.mark.asyncio
-async def testEchoCommand(inMemoryDb, mockBot, commonHandler):
+async def testEchoCommand(inMemoryDb, mockBot, devCommandsHandler):
     """
     Test /echo command handler directly, dood!
 
@@ -233,12 +243,37 @@ async def testEchoCommand(inMemoryDb, mockBot, commonHandler):
         - Echo message contains original text
         - Response formatted correctly
     """
-    # Skip test - echo_command doesn't exist in CommonHandler
-    pytest.skip("echo_command not implemented in CommonHandler")
+    chatId = 123
+    userId = 456
+    testText = "Hello, this is a test message!"
+
+    message = createMockMessage(
+        messageId=1,
+        chatId=chatId,
+        userId=userId,
+        text=f"/echo {testText}",
+    )
+    message.chat.type = Chat.PRIVATE
+    message.reply_text = AsyncMock(return_value=message)
+    update = createMockUpdate(message=message)
+    context = createMockContext(bot=mockBot)
+    context.args = testText.split()
+
+    # Call handler directly
+    await devCommandsHandler.echo_command(update, context)
+
+    # Verify echo message sent
+    message.reply_text.assert_called()
+    callArgs = message.reply_text.call_args
+    # Check that the text argument contains our test text (may be escaped for MarkdownV2)
+    sentText = callArgs.kwargs.get("text", "")
+    # Remove MarkdownV2 escaping for comparison
+    unescapedText = sentText.replace("\\", "")
+    assert testText in unescapedText, f"Should echo back the original text '{testText}', dood!"
 
 
 @pytest.mark.asyncio
-async def testEchoCommandWithoutText(inMemoryDb, mockBot, commonHandler):
+async def testEchoCommandWithoutText(inMemoryDb, mockBot, devCommandsHandler):
     """
     Test /echo command without text shows error, dood!
 
@@ -246,8 +281,30 @@ async def testEchoCommandWithoutText(inMemoryDb, mockBot, commonHandler):
         - Error message sent when no text provided
         - Error message contains usage instructions
     """
-    # Skip test - echo_command doesn't exist in CommonHandler
-    pytest.skip("echo_command not implemented in CommonHandler")
+    chatId = 123
+    userId = 456
+
+    message = createMockMessage(
+        messageId=1,
+        chatId=chatId,
+        userId=userId,
+        text="/echo",
+    )
+    message.chat.type = Chat.PRIVATE
+    message.reply_text = AsyncMock(return_value=message)
+    update = createMockUpdate(message=message)
+    context = createMockContext(bot=mockBot)
+    context.args = []
+
+    # Call handler directly
+    await devCommandsHandler.echo_command(update, context)
+
+    # Verify error message sent
+    message.reply_text.assert_called()
+    callArgs = message.reply_text.call_args
+    responseText = str(callArgs)
+    assert "echo" in responseText.lower(), "Should mention echo command in error, dood!"
+    assert "текст" in responseText.lower() or "text" in responseText.lower(), "Should mention text requirement, dood!"
 
 
 # ============================================================================
@@ -360,7 +417,6 @@ async def testSettingsCommand(inMemoryDb, mockBot, devCommandsHandler):
             assert "Настройки" in responseText or "settings" in responseText.lower(), "Should show settings, dood!"
 
 
-@pytest.mark.skip("Cache service needs dbWrapper initialization - requires refactoring")
 @pytest.mark.asyncio
 async def testSetCommand(inMemoryDb, mockBot, devCommandsHandler):
     """
@@ -405,7 +461,6 @@ async def testSetCommand(inMemoryDb, mockBot, devCommandsHandler):
             assert settings[settingKey] == settingValue
 
 
-@pytest.mark.skip("Cache service KeyError when unsetting non-existent key - needs fix")
 @pytest.mark.asyncio
 async def testUnsetCommand(inMemoryDb, mockBot, devCommandsHandler):
     """
