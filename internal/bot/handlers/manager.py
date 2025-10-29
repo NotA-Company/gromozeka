@@ -24,7 +24,7 @@ from .help_command import CommandHandlerGetterInterface, HelpHandler
 from .llm_messages import LLMMessageHandler
 from .media import MediaHandler
 from .message_preprocessor import MessagePreprocessorHandler
-from .spam import SpamHandlers
+from .spam import SpamHandler
 from .summarization import SummarizationHandler
 from .user_data import UserDataHandler
 from .weather import WeatherHandler
@@ -49,7 +49,7 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self.handlers: List[BaseBotHandler] = [
             # Should be first to check for spam before other handlers
-            SpamHandlers(configManager, database, llmManager),
+            SpamHandler(configManager, database, llmManager),
             # Should be before MessagePreprocessorHandler to not save configuration answers
             ConfigureCommandHandler(configManager, database, llmManager),
             SummarizationHandler(configManager, database, llmManager),

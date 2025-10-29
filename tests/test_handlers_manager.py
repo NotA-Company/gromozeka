@@ -203,9 +203,9 @@ class TestInitialization:
         manager = HandlersManager(mockConfigManager, mockDatabase, mockLlmManager)
 
         # Verify SpamHandlers is first
-        from internal.bot.handlers.spam import SpamHandlers
+        from internal.bot.handlers.spam import SpamHandler
 
-        assert isinstance(manager.handlers[0], SpamHandlers)
+        assert isinstance(manager.handlers[0], SpamHandler)
 
         # Verify LLMMessageHandler is last
         from internal.bot.handlers.llm_messages import LLMMessageHandler
@@ -581,10 +581,10 @@ class TestMessagePreprocessor:
         update = createMockUpdate(text="spam message")
 
         # Mock spam handler to return FINAL (blocks message)
-        from internal.bot.handlers.spam import SpamHandlers
+        from internal.bot.handlers.spam import SpamHandler
 
         for handler in handlersManager.handlers:
-            if isinstance(handler, SpamHandlers):
+            if isinstance(handler, SpamHandler):
                 handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.FINAL)
             else:
                 handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
@@ -592,12 +592,12 @@ class TestMessagePreprocessor:
         await handlersManager.handle_message(update, mockContext)
 
         # Verify spam handler was called
-        spamHandler = next(h for h in handlersManager.handlers if isinstance(h, SpamHandlers))
+        spamHandler = next(h for h in handlersManager.handlers if isinstance(h, SpamHandler))
         spamHandler.messageHandler.assert_called_once()  # type: ignore[attr-defined]
 
         # Verify other handlers were not called (spam blocked)
         for handler in handlersManager.handlers:
-            if not isinstance(handler, SpamHandlers):
+            if not isinstance(handler, SpamHandler):
                 handler.messageHandler.assert_not_called()
 
 
@@ -645,10 +645,10 @@ class TestHandlerPriority:
         await handlersManager.handle_message(update, mockContext)
 
         # Verify SpamHandlers (first) was called before others
-        from internal.bot.handlers.spam import SpamHandlers
+        from internal.bot.handlers.spam import SpamHandler
 
         spamHandler = handlersManager.handlers[0]
-        assert isinstance(spamHandler, SpamHandlers)
+        assert isinstance(spamHandler, SpamHandler)
         spamHandler.messageHandler.assert_called_once()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
@@ -1027,10 +1027,10 @@ class TestSpamHandlerIntegration:
         update = createMockUpdate(text="spam spam spam")
 
         # Mock spam handler to detect spam
-        from internal.bot.handlers.spam import SpamHandlers
+        from internal.bot.handlers.spam import SpamHandler
 
         for handler in handlersManager.handlers:
-            if isinstance(handler, SpamHandlers):
+            if isinstance(handler, SpamHandler):
                 handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.FINAL)
             else:
                 handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
@@ -1038,7 +1038,7 @@ class TestSpamHandlerIntegration:
         await handlersManager.handle_message(update, mockContext)
 
         # Verify spam handler blocked the message
-        spamHandler = next(h for h in handlersManager.handlers if isinstance(h, SpamHandlers))
+        spamHandler = next(h for h in handlersManager.handlers if isinstance(h, SpamHandler))
         spamHandler.messageHandler.assert_called_once()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
@@ -1049,10 +1049,10 @@ class TestSpamHandlerIntegration:
         update = createMockUpdate(text="spam")
 
         # Mock spam handler
-        from internal.bot.handlers.spam import SpamHandlers
+        from internal.bot.handlers.spam import SpamHandler
 
         for handler in handlersManager.handlers:
-            if isinstance(handler, SpamHandlers):
+            if isinstance(handler, SpamHandler):
                 handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.FINAL)
             else:
                 handler.messageHandler = createAsyncMock(returnValue=HandlerResultStatus.NEXT)
@@ -1060,7 +1060,7 @@ class TestSpamHandlerIntegration:
         await handlersManager.handle_message(update, mockContext)
 
         # Verify message was blocked
-        spamHandler = next(h for h in handlersManager.handlers if isinstance(h, SpamHandlers))
+        spamHandler = next(h for h in handlersManager.handlers if isinstance(h, SpamHandler))
         spamHandler.messageHandler.assert_called_once()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio

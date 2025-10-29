@@ -17,7 +17,7 @@ import pytest
 from telegram import Message
 from telegram.constants import MessageEntityType
 
-from internal.bot.handlers.spam import SpamHandlers
+from internal.bot.handlers.spam import SpamHandler
 from internal.bot.models import EnsuredMessage
 from internal.database.models import MessageCategory, SpamReason
 from internal.database.wrapper import DatabaseWrapper
@@ -97,7 +97,7 @@ async def spamHandler(inMemoryDb, mockConfigManager, mockLlmManager, mockBot, mo
     cache = CacheService.getInstance()
     cache.injectDatabase(inMemoryDb)
 
-    handler = SpamHandlers(
+    handler = SpamHandler(
         configManager=mockConfigManager,
         database=inMemoryDb,
         llmManager=mockLlmManager,
