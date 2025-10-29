@@ -6,6 +6,11 @@
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
+- [ ] Add Search support
+- [ ] Add Better geocoder
+- [ ] Add support of choosing models via configure
+- [ ] Add Per PR tests (make lint + make test)
+- [ ] Add coverage badge?
 - [x] Add support for spam-handling
 - [x] Add Bayes filtering into spam-detection
 - [x] Add some AI support via YandexCloud
