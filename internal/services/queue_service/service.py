@@ -216,7 +216,7 @@ class QueueService:
                 task = await self.asyncTasksQueue.get_nowait()
                 if not inspect.isawaitable(task):
                     # By some reason all finished tasks magically converts to it's results
-                    logger.warning(f"Task {task} is not awaitable, but a {type(task)}")
+                    logger.info(f"Task {task} is not awaitable, but a {type(task)}")
                 else:
                     try:
                         logger.debug(f"Awaiting task {task}...")
