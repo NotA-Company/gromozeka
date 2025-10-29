@@ -265,7 +265,12 @@ class TestChatInfo(unittest.TestCase):
 
     def testSetChatInfo(self):
         """Test setting chat info"""
-        testInfo = {"title": "Test Chat", "type": "group", "username": None, "is_forum": False}  # type: ignore[typeddict-item]
+        testInfo = {
+            "title": "Test Chat",
+            "type": "group",
+            "username": None,
+            "is_forum": False,
+        }  # type: ignore[typeddict-item]
         self.cache.setChatInfo(123, testInfo)  # type: ignore[arg-type]
 
         info = self.cache.getChatInfo(123)
