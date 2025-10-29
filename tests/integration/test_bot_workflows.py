@@ -343,7 +343,7 @@ class TestDatabasePersistence:
         """Test chat info updates, dood!"""
         chatId = 123
 
-        inMemoryDb.addChatInfo(
+        inMemoryDb.updateChatInfo(
             chatId=chatId,
             type=Chat.GROUP,
             title="Test Group",

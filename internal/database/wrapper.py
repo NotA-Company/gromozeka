@@ -1245,7 +1245,7 @@ class DatabaseWrapper:
     ###
     # Chat Info manipulation
     ###
-    def addChatInfo(
+    def updateChatInfo(
         self,
         chatId: int,
         type: str,

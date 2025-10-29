@@ -113,7 +113,7 @@ async def testConfigureCommandRouting(application, inMemoryDb, mockBot):
     userId = 123456  # Bot owner
 
     # Add chat to database
-    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
     inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
     message = createMockMessage(
@@ -154,7 +154,7 @@ async def testConfigurationButtonRouting(application, inMemoryDb, mockBot):
     chatId = 123
     userId = 123456  # Bot owner
 
-    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
 
     callbackMessage = createMockMessage(messageId=1, chatId=userId, userId=mockBot.id)
 
@@ -193,8 +193,8 @@ async def testConfigurationPermissionCheck(application, inMemoryDb, mockBot):
     userId = 999  # Not bot owner, not admin
 
     # Add both the group chat and the private chat with user
-    inMemoryDb.addChatInfo(chatId, "group", "Test Group", None)
-    inMemoryDb.addChatInfo(userId, "private", None, None)
+    inMemoryDb.updateChatInfo(chatId, "group", "Test Group", None)
+    inMemoryDb.updateChatInfo(userId, "private", None, None)
     inMemoryDb.updateChatUser(userId, userId, "testuser", "Test User")
 
     message = createMockMessage(

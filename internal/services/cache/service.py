@@ -277,7 +277,7 @@ class CacheService:
         chatCache["info"] = info
         self.chats.set(chatId, chatCache)
         if self.dbWrapper:
-            self.dbWrapper.addChatInfo(
+            self.dbWrapper.updateChatInfo(
                 chatId=chatId,
                 type=info["type"],
                 title=info["title"],

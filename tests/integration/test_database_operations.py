@@ -54,8 +54,8 @@ def populatedDb(inMemoryDb):
     db = inMemoryDb
 
     # Add sample chat info
-    db.addChatInfo(chatId=123, type="supergroup", title="Test Chat", isForum=False)
-    db.addChatInfo(chatId=456, type="private", title="Private Chat", isForum=False)
+    db.updateChatInfo(chatId=123, type="supergroup", title="Test Chat", isForum=False)
+    db.updateChatInfo(chatId=456, type="private", title="Private Chat", isForum=False)
 
     # Add sample users
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
@@ -76,7 +76,7 @@ async def testTransactionCommitOnSuccess(inMemoryDb):
     db = inMemoryDb
 
     # Add chat info and user in a transaction
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="test", fullName="Test User")
 
     # Verify data was committed
@@ -95,7 +95,7 @@ async def testTransactionRollbackOnError(inMemoryDb):
     db = inMemoryDb
 
     # Add valid chat info
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
 
     # Try to add duplicate chat info (should fail)
     try:
@@ -118,7 +118,7 @@ async def testNestedTransactions(inMemoryDb):
 
     # SQLite doesn't support true nested transactions, but we can test
     # that multiple operations in sequence work correctly
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
     db.setChatSetting(chatId=123, key="model", value="gpt-4")
 
@@ -134,7 +134,7 @@ async def testConcurrentTransactions(inMemoryDb):
     db = inMemoryDb
 
     # Setup initial data
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     results = []
@@ -173,7 +173,7 @@ async def testForeignKeyConstraints(inMemoryDb):
     db = inMemoryDb
 
     # Setup chat and user
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # Try to save message for non-existent user (should work as FK not enforced in current schema)
@@ -194,10 +194,10 @@ async def testUniqueConstraints(inMemoryDb):
     db = inMemoryDb
 
     # Add chat info
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
 
     # Try to add duplicate chat info
-    result = db.addChatInfo(chatId=123, type="supergroup", title="Updated")
+    result = db.updateChatInfo(chatId=123, type="supergroup", title="Updated")
 
     # Should succeed as we use INSERT OR REPLACE
     assert result is True
@@ -228,7 +228,7 @@ async def testDataValidation(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # Save message with valid data
@@ -265,7 +265,7 @@ async def testMultipleReaders(threadSafeDb):
     db = threadSafeDb
 
     # Setup data
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     results = []
@@ -299,7 +299,7 @@ async def testMultipleWriters(threadSafeDb):
     db = threadSafeDb
 
     # Setup
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
 
     results = []
     errors = []
@@ -340,7 +340,7 @@ async def testReadWriteConflicts(threadSafeDb):
     db = threadSafeDb
 
     # Setup
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     readResults = []
@@ -379,8 +379,8 @@ async def testDeadlockHandling(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.addChatInfo(chatId=123, type="group", title="Test")
-    db.addChatInfo(chatId=456, type="group", title="Test 2")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=456, type="group", title="Test 2")
 
     # SQLite uses a simple locking mechanism that prevents true deadlocks
     # But we can test that concurrent operations don't hang
@@ -475,7 +475,7 @@ async def testDataMigration(inMemoryDb):
     db = inMemoryDb
 
     # Add data before "migration"
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # Verify data persists (simulating migration)
@@ -656,7 +656,7 @@ async def testChatUsersCrud(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
 
     # CREATE
     success = db.updateChatUser(chatId=123, userId=1001, username="testuser", fullName="Test User")
@@ -705,7 +705,7 @@ async def testChatSettingsCrud(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
 
     # CREATE
     success = db.setChatSetting(123, "model", "gpt-4")
@@ -760,7 +760,7 @@ async def testUserDataCrud(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # CREATE
@@ -889,7 +889,7 @@ async def testSpamHamMessagesCrud(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # CREATE spam message
@@ -1123,7 +1123,7 @@ async def testChatTopicsWorkflow(inMemoryDb):
     db = inMemoryDb
 
     # Setup forum chat
-    db.addChatInfo(chatId=123, type="supergroup", title="Forum", isForum=True)
+    db.updateChatInfo(chatId=123, type="supergroup", title="Forum", isForum=True)
 
     # Add topics
     db.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0xFF0000, topicName="General")
@@ -1178,7 +1178,7 @@ async def testUserChatRelationships(populatedDb):
     db = populatedDb
 
     # Add user to multiple chats
-    db.addChatInfo(chatId=789, type="group", title="Another Chat")
+    db.updateChatInfo(chatId=789, type="group", title="Another Chat")
     db.updateChatUser(chatId=789, userId=1001, username="user1", fullName="User One")
 
     # Get user's chats
@@ -1229,7 +1229,7 @@ async def testRecoveryAfterError(inMemoryDb):
     db = inMemoryDb
 
     # Add valid data
-    db.addChatInfo(chatId=123, type="group", title="Test")
+    db.updateChatInfo(chatId=123, type="group", title="Test")
 
     # Cause an error
     try:
