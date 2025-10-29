@@ -26,6 +26,7 @@ class ChatSettingsKey(StrEnum):
 
     UNKNOWN = "unknown"
 
+    # LLM Models
     CHAT_MODEL = "chat-model"
     FALLBACK_MODEL = "fallback-model"
     SUMMARY_MODEL = "summary-model"
@@ -34,11 +35,13 @@ class ChatSettingsKey(StrEnum):
     IMAGE_GENERATION_MODEL = "image-generation-model"
     IMAGE_GENERATION_FALLBACK_MODEL = "image-generation-fallback-model"
 
+    # Prompts for different actions
     SUMMARY_PROMPT = "summary-prompt"
     PARSE_IMAGE_PROMPT = "parse-image-prompt"
     CHAT_PROMPT = "chat-prompt"
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
 
+    # Some system settings
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
     BOT_NICKNAMES = "bot-nicknames"
     LLM_MESSAGE_FORMAT = "llm-message-format"
@@ -50,17 +53,20 @@ class ChatSettingsKey(StrEnum):
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
 
+    # Allowing different commands in chat
     ALLOW_DRAW = "allow-draw"
     ALLOW_ANALYZE = "allow-analyze"
     ALLOW_SUMMARY = "allow-summary"
     ALLOW_WEATHER = "allow-weather"
 
+    # Allowing different reactions in chat (to mention/reply/random)
     ALLOW_MENTION = "allow-mention"
     ALLOW_REPLY = "allow-reply"
     ALLOW_PRIVATE = "allow-private"
     RANDOM_ANSWER_PROBABILITY = "random-answer-probability"
     RANDOM_ANSWER_TO_ADMIN = "random-answer-to-admin"
 
+    # Spam-related settings
     ALLOW_USER_SPAM_COMMAND = "allow-user-spam-command"
     SPAM_DELETE_ALL_USER_MESSAGES = "spam-delete-all-user-messages"
     DETECT_SPAM = "detect-spam"
@@ -73,6 +79,13 @@ class ChatSettingsKey(StrEnum):
     BAYES_ENABLED = "bayes-enabled"
     BAYES_MIN_CONFIDENCE = "bayes-min-confidence"
     BAYES_AUTO_LEARN = "bayes-auto-learn"
+
+    # Reaction settings
+    REACTION_AUTHOR_ID = (
+        "reaction-author-id"  # List of id's of authors to react (if forward - who wrote original message)
+    )
+    REACTION_AUTHOR_USERNAME = "reaction-author-username"  # The same, but usernames
+    REACTION_EMOJI = "reaction-emoji"  # Emoji to react
 
     def getId(self) -> int:
         """Return some unique id

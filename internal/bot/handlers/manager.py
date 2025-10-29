@@ -24,6 +24,7 @@ from .help_command import CommandHandlerGetterInterface, HelpHandler
 from .llm_messages import LLMMessageHandler
 from .media import MediaHandler
 from .message_preprocessor import MessagePreprocessorHandler
+from .react_on_user import ReactOnUserMessageHandler
 from .spam import SpamHandler
 from .summarization import SummarizationHandler
 from .user_data import UserDataHandler
@@ -55,6 +56,8 @@ class HandlersManager(CommandHandlerGetterInterface):
             SummarizationHandler(configManager, database, llmManager),
             # Should be before other handlers to ensure message saving + media processing
             MessagePreprocessorHandler(configManager, database, llmManager),
+            #
+            ReactOnUserMessageHandler(configManager, database, llmManager),
             #
             UserDataHandler(configManager, database, llmManager),
             DevCommandsHandler(configManager, database, llmManager),
