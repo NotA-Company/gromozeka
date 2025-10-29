@@ -160,6 +160,8 @@ class SummarizationHandler(BaseBotHandler):
         if sinceDT is None and maxMessages is None:
             raise ValueError("one of sinceDT or maxMessages MUST be not None")
 
+        await self.startTyping(ensuredMessage)
+
         messages = self.db.getChatMessagesSince(
             chatId=chatId,
             sinceDateTime=sinceDT if maxMessages is None else None,

@@ -30,6 +30,7 @@ import magic
 from telegram import Chat, Message, Update, User
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes, ExtBot
 
 import lib.utils as utils
@@ -762,6 +763,12 @@ class BaseBotHandler(CommandHandlerMixin):
 
         metadataStr = utils.jsonDumps(metadata)
         self.db.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
+
+    async def startTyping(self, ensuredMessage: EnsuredMessage, action: ChatAction = ChatAction.TYPING) -> None:
+        """
+        Send typing action
+        """
+        await ensuredMessage.chat.send_action(action=action, message_thread_id=ensuredMessage.threadId)
 
     ###
     # Processing media
