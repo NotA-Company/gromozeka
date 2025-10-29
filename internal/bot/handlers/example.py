@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class ExampleHandler(BaseBotHandler):
     """
     Example bot handler demonstrating basic functionality, dood!
-    
+
     This handler showcases message processing, button callbacks, command handling,
     and integration with queue services and LLM tools. It serves as a reference
     implementation for other bot handlers.
@@ -90,7 +90,7 @@ class ExampleHandler(BaseBotHandler):
     async def _dtOnExit(self, task: DelayedTask) -> None:
         """
         Handle delayed exit task from queue service, dood!
-        
+
         Args:
             task (DelayedTask): The delayed task to process.
         """
@@ -99,12 +99,12 @@ class ExampleHandler(BaseBotHandler):
     async def _llmToolExample(self, extraData: Optional[Dict[str, Any]], text: str, **kwargs) -> str:
         """
         Example LLM tool handler for processing text, dood!
-        
+
         Args:
             extraData (Optional[Dict[str, Any]]): Additional data from LLM service.
             text (str): Text to process.
             **kwargs: Additional keyword arguments.
-            
+
         Returns:
             str: JSON string containing the processed text and additional data.
         """
@@ -120,12 +120,12 @@ class ExampleHandler(BaseBotHandler):
     ) -> HandlerResultStatus:
         """
         Handle incoming messages, dood!
-        
+
         Args:
             update (Update): Telegram update object.
             context (ContextTypes.DEFAULT_TYPE): Bot context.
             ensuredMessage (Optional[EnsuredMessage]): Ensured message object.
-            
+
         Returns:
             HandlerResultStatus: Status of message handling.
         """
@@ -144,12 +144,12 @@ class ExampleHandler(BaseBotHandler):
     ) -> HandlerResultStatus:
         """
         Handle inline keyboard button callbacks, dood!
-        
+
         Args:
             update (Update): Telegram update object.
             context (ContextTypes.DEFAULT_TYPE): Bot context.
             data (CallbackDataDict): Callback data from button press.
-            
+
         Returns:
             HandlerResultStatus: Status of button handling.
         """
@@ -180,10 +180,10 @@ class ExampleHandler(BaseBotHandler):
     async def example_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
         Handle the example command, dood!
-        
+
         This command demonstrates basic command functionality including
         typing indicators, message saving, and admin checking.
-        
+
         Args:
             update (Update): Telegram update object.
             context (ContextTypes.DEFAULT_TYPE): Bot context.
