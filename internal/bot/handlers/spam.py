@@ -52,7 +52,7 @@ from .base import BaseBotHandler, HandlerResultStatus
 logger = logging.getLogger(__name__)
 
 
-class SpamHandlers(BaseBotHandler):
+class SpamHandler(BaseBotHandler):
     """
     Comprehensive spam detection and management handler, dood!
 
