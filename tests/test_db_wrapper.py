@@ -530,7 +530,7 @@ class TestChatUserOperations:
         # Create multiple chats with the user
         for i in range(3):
             chatId = 3000 + i
-            inMemoryDb.addChatInfo(chatId, "group", f"Chat {i}")
+            inMemoryDb.updateChatInfo(chatId, "group", f"Chat {i}")
             inMemoryDb.updateChatUser(chatId, sampleUserId, "user", "User")
 
         chats = inMemoryDb.getUserChats(sampleUserId)
@@ -541,10 +541,10 @@ class TestChatUserOperations:
         from telegram import Chat
 
         # Create different types of chats
-        inMemoryDb.addChatInfo(4001, Chat.PRIVATE, "Private")
-        inMemoryDb.addChatInfo(4002, Chat.GROUP, "Group 1")
-        inMemoryDb.addChatInfo(4003, Chat.SUPERGROUP, "Supergroup")
-        inMemoryDb.addChatInfo(4004, Chat.GROUP, "Group 2")
+        inMemoryDb.updateChatInfo(4001, Chat.PRIVATE, "Private")
+        inMemoryDb.updateChatInfo(4002, Chat.GROUP, "Group 1")
+        inMemoryDb.updateChatInfo(4003, Chat.SUPERGROUP, "Supergroup")
+        inMemoryDb.updateChatInfo(4004, Chat.GROUP, "Group 2")
 
         groupChats = inMemoryDb.getAllGroupChats()
         assert len(groupChats) == 3  # 2 groups + 1 supergroup
@@ -1068,9 +1068,9 @@ class TestSpamOperations:
 class TestChatInfoOperations:
     """Test chat info operations."""
 
-    def testAddChatInfo(self, inMemoryDb):
+    def testupdateChatInfo(self, inMemoryDb):
         """Test adding chat info."""
-        result = inMemoryDb.addChatInfo(
+        result = inMemoryDb.updateChatInfo(
             chatId=10001,
             type="group",
             title="Test Group",
@@ -1082,7 +1082,7 @@ class TestChatInfoOperations:
     def testGetChatInfo(self, inMemoryDb):
         """Test retrieving chat info."""
         chatId = 10002
-        inMemoryDb.addChatInfo(chatId, "supergroup", "Test Supergroup", isForum=True)
+        inMemoryDb.updateChatInfo(chatId, "supergroup", "Test Supergroup", isForum=True)
 
         info = inMemoryDb.getChatInfo(chatId)
         assert info is not None
@@ -1098,8 +1098,8 @@ class TestChatInfoOperations:
     def testUpdateChatInfo(self, inMemoryDb):
         """Test updating existing chat info."""
         chatId = 10003
-        inMemoryDb.addChatInfo(chatId, "group", "Old Title")
-        inMemoryDb.addChatInfo(chatId, "supergroup", "New Title")
+        inMemoryDb.updateChatInfo(chatId, "group", "Old Title")
+        inMemoryDb.updateChatInfo(chatId, "supergroup", "New Title")
 
         info = inMemoryDb.getChatInfo(chatId)
         assert info["type"] == "supergroup"
@@ -1409,7 +1409,7 @@ class TestIntegration:
         messageId = 13003
 
         # 1. Create chat info
-        inMemoryDb.addChatInfo(chatId, "group", "Test Group")
+        inMemoryDb.updateChatInfo(chatId, "group", "Test Group")
 
         # 2. Create user
         inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")

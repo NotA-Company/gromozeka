@@ -157,7 +157,7 @@ async def testConcurrentMessageProcessing(threadSafePerformanceDb):
     Uses file-based database to support proper concurrent access.
     """
     # Setup: Add chat info and users first (foreign key constraints)
-    threadSafePerformanceDb.addChatInfo(chatId=123, type="group", title="Test Chat")
+    threadSafePerformanceDb.updateChatInfo(chatId=123, type="group", title="Test Chat")
     for userId in [456, 457, 458]:  # Users from createBatchChatMessages
         threadSafePerformanceDb.updateChatUser(
             chatId=123, userId=userId, username=f"user{userId}", fullName=f"User {userId}"
@@ -254,7 +254,7 @@ def testDatabaseBulkInsertPerformance(performanceDb):
     Target: Insert 1000 messages in < 5 seconds (relaxed for CI)
     """
     # Setup: Add chat info and users first (foreign key constraints)
-    performanceDb.addChatInfo(chatId=123, type="group", title="Test Chat")
+    performanceDb.updateChatInfo(chatId=123, type="group", title="Test Chat")
     for userId in [456, 457, 458]:  # Users from createBatchChatMessages
         performanceDb.updateChatUser(chatId=123, userId=userId, username=f"user{userId}", fullName=f"User {userId}")
 
@@ -287,7 +287,7 @@ def testDatabaseComplexQueryPerformance(performanceDb):
     # Populate database with multiple chats
     for chatId in range(1, 11):
         # Setup: Add chat info and users first (foreign key constraints)
-        performanceDb.addChatInfo(chatId=chatId, type="group", title=f"Test Chat {chatId}")
+        performanceDb.updateChatInfo(chatId=chatId, type="group", title=f"Test Chat {chatId}")
         for userId in [456, 457, 458]:  # Users from createBatchChatMessages
             performanceDb.updateChatUser(
                 chatId=chatId, userId=userId, username=f"user{userId}", fullName=f"User {userId}"
@@ -525,7 +525,7 @@ def testHighMessageVolumeStress(performanceDb):
     Marked as slow - run with: pytest -m slow
     """
     # Setup: Add chat info and users first (foreign key constraints)
-    performanceDb.addChatInfo(chatId=123, type="group", title="Test Chat")
+    performanceDb.updateChatInfo(chatId=123, type="group", title="Test Chat")
     for userId in [456, 457, 458]:  # Users from createBatchChatMessages
         performanceDb.updateChatUser(chatId=123, userId=userId, username=f"user{userId}", fullName=f"User {userId}")
 
@@ -572,7 +572,7 @@ def testLargeDatabaseOperations(performanceDb):
 
     for chatId in range(1, chatCount + 1):
         # Setup: Add chat info and users first (foreign key constraints)
-        performanceDb.addChatInfo(chatId=chatId, type="group", title=f"Test Chat {chatId}")
+        performanceDb.updateChatInfo(chatId=chatId, type="group", title=f"Test Chat {chatId}")
         for userId in [456, 457, 458]:  # Users from createBatchChatMessages
             performanceDb.updateChatUser(
                 chatId=chatId, userId=userId, username=f"user{userId}", fullName=f"User {userId}"
@@ -618,7 +618,7 @@ async def testConcurrentDatabaseAccess(threadSafePerformanceDb):
 
         # Setup: Add chat info and users first (foreign key constraints)
         await asyncio.to_thread(
-            threadSafePerformanceDb.addChatInfo, chatId=chatId, type="group", title=f"Test Chat {chatId}"
+            threadSafePerformanceDb.updateChatInfo, chatId=chatId, type="group", title=f"Test Chat {chatId}"
         )
         for userId in [456, 457, 458]:  # Users from createBatchChatMessages
             await asyncio.to_thread(

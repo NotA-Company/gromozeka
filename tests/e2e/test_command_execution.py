@@ -119,7 +119,7 @@ async def testStartCommandRouting(application, mockBot, inMemoryDb):
     userId = 456
 
     # Add chat to database so handlers can determine chat type
-    inMemoryDb.addChatInfo(chatId, "private", None, None)
+    inMemoryDb.updateChatInfo(chatId, "private", None, None)
     inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
     message = createMockMessage(
@@ -156,7 +156,7 @@ async def testHelpCommandRouting(application, mockBot, inMemoryDb):
     userId = 456
 
     # Add chat to database so handlers can determine chat type
-    inMemoryDb.addChatInfo(chatId, "private", None, None)
+    inMemoryDb.updateChatInfo(chatId, "private", None, None)
     inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
     message = createMockMessage(
@@ -224,7 +224,7 @@ async def testCommandWithParameters(application, mockBot, inMemoryDb):
     echoText = "Test message"
 
     # Add chat to database so handlers can determine chat type
-    inMemoryDb.addChatInfo(chatId, "private", None, None)
+    inMemoryDb.updateChatInfo(chatId, "private", None, None)
     inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
     message = createMockMessage(

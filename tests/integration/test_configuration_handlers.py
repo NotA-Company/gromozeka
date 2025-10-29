@@ -111,7 +111,7 @@ async def testConfigureCommand(inMemoryDb, mockBot, configureHandler):
     userId = 123456  # Bot owner
 
     # Add chat to database with proper values (not Mock objects)
-    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
     inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
     message = createMockMessage(
@@ -159,8 +159,8 @@ async def testConfigureCommandDisplaysChatList(inMemoryDb, mockBot, configureHan
     userId = 123456  # Bot owner
 
     # Add both user's private chat and the group chat
-    inMemoryDb.addChatInfo(userId, "private", None, "testuser")
-    inMemoryDb.addChatInfo(chatId, "group", "Test Group", None)
+    inMemoryDb.updateChatInfo(userId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "group", "Test Group", None)
     inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
     message = createMockMessage(
@@ -202,7 +202,7 @@ async def testConfigureCommandNoAdminChats(inMemoryDb, mockBot, configureHandler
     userId = 999  # Not a bot owner
 
     # Add user's private chat
-    inMemoryDb.addChatInfo(userId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(userId, "private", None, "testuser")
 
     message = createMockMessage(
         messageId=1,
@@ -255,7 +255,7 @@ async def testBooleanSettingConfiguration(inMemoryDb, mockBot, configureHandler)
     userId = 123456
     settingKey = ChatSettingsKey.USE_TOOLS
 
-    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
 
     message = createMockMessage(messageId=1, chatId=userId, userId=userId)
     message.get_bot = Mock(return_value=mockBot)
@@ -321,7 +321,7 @@ async def testStringSettingConfiguration(inMemoryDb, mockBot, configureHandler):
     settingKey = ChatSettingsKey.CHAT_PROMPT
     newValue = "You are a helpful assistant"
 
-    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
 
     message = createMockMessage(messageId=1, chatId=userId, userId=userId)
     message.get_bot = Mock(return_value=mockBot)
@@ -363,7 +363,7 @@ async def testResetSettingToDefault(inMemoryDb, mockBot, configureHandler):
     userId = 123456
     settingKey = ChatSettingsKey.USE_TOOLS
 
-    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
 
     # Set custom value first
     inMemoryDb.setChatSetting(chatId, settingKey.value, "False")
@@ -412,7 +412,7 @@ async def testAdminOnlySettingProtection(inMemoryDb, mockBot, configureHandler):
     userId = 999  # Not an admin
     settingKey = ChatSettingsKey.USE_TOOLS
 
-    inMemoryDb.addChatInfo(chatId, "group", "Test Group", None)
+    inMemoryDb.updateChatInfo(chatId, "group", "Test Group", None)
 
     message = createMockMessage(messageId=1, chatId=userId, userId=userId)
     message.get_bot = Mock(return_value=mockBot)
@@ -454,7 +454,7 @@ async def testBotOwnerBypassesPermissions(inMemoryDb, mockBot, configureHandler)
     userId = 123456  # Bot owner
     settingKey = ChatSettingsKey.USE_TOOLS
 
-    inMemoryDb.addChatInfo(chatId, "group", "Test Group", None)
+    inMemoryDb.updateChatInfo(chatId, "group", "Test Group", None)
 
     message = createMockMessage(messageId=1, chatId=userId, userId=userId)
     message.get_bot = Mock(return_value=mockBot)
@@ -499,7 +499,7 @@ async def testInvalidSettingKey(inMemoryDb, mockBot, configureHandler):
     userId = 123456
     invalidKeyId = 9999  # Non-existent key
 
-    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
 
     message = createMockMessage(messageId=1, chatId=userId, userId=userId)
     message.get_bot = Mock(return_value=mockBot)
@@ -574,7 +574,7 @@ async def testSettingPersistenceToDatabase(inMemoryDb, mockBot, configureHandler
     chatId = 123
     userId = 123456
 
-    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
 
     message = createMockMessage(messageId=1, chatId=userId, userId=userId)
     message.get_bot = Mock(return_value=mockBot)
