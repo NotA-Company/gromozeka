@@ -3,6 +3,9 @@
 token = "YOUR_BOT_TOKEN_HERE"
 bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
 
+# Salt for signing [not]spam buttons to reject those actions on random messages
+spam-button-salt = "YOUR_SALT_HERE"
+
 [bot.defaults]
 # Can chat admins change channel-specific bot settings?
 admin-can-change-settings = true
@@ -95,6 +98,7 @@ chat-prompt-suffix = """
 Отвечай так же в JSON-формате, но заполняй только поле `text` (и `quote`, если нужно процитировать часть сообщения).
 В Тексте сообщения можно использовать Markdown форматирование.
 """
+
 [database]
 # Database configuration
 path = "bot_data.db"
