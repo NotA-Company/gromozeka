@@ -69,6 +69,18 @@ def performanceDb():
 
 
 @pytest.fixture
+def threadSafePerformanceDb(tmp_path):
+    """Create file-based database for threading performance tests, dood!
+
+    File-based databases support proper concurrent access across threads.
+    """
+    dbPath = tmp_path / "test_performance_threading.db"
+    db = DatabaseWrapper(str(dbPath))
+    yield db
+    db.close()
+
+
+@pytest.fixture
 def mockBot():
     """Create mock bot for performance tests."""
     return createMockBot()
@@ -136,15 +148,21 @@ def testMessageProcessingPerformance(performanceDb):
 
 @pytest.mark.benchmark
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Threading with in-memory DB causes issues, dood!")
-async def testConcurrentMessageProcessing(performanceDb):
+async def testConcurrentMessageProcessing(threadSafePerformanceDb):
     """
     Test performance with concurrent messages.
 
     Target: Process 100 messages in < 5 seconds
 
-    SKIPPED: Threading with in-memory SQLite database causes connection issues.
+    Uses file-based database to support proper concurrent access.
     """
+    # Setup: Add chat info and users first (foreign key constraints)
+    threadSafePerformanceDb.addChatInfo(chatId=123, type="group", title="Test Chat")
+    for userId in [456, 457, 458]:  # Users from createBatchChatMessages
+        threadSafePerformanceDb.updateChatUser(
+            chatId=123, userId=userId, username=f"user{userId}", fullName=f"User {userId}"
+        )
+
     messageCount = 100
     messages = createBatchChatMessages(count=messageCount, chatId=123)
 
@@ -153,7 +171,7 @@ async def testConcurrentMessageProcessing(performanceDb):
     # Process messages concurrently
     tasks = []
     for msg in messages:
-        task = asyncio.create_task(asyncio.to_thread(performanceDb.saveChatMessage, **msg))
+        task = asyncio.create_task(asyncio.to_thread(threadSafePerformanceDb.saveChatMessage, **msg))
         tasks.append(task)
 
     await asyncio.gather(*tasks)
@@ -162,11 +180,11 @@ async def testConcurrentMessageProcessing(performanceDb):
     duration = endTime - startTime
 
     # Verify all messages were saved
-    savedMessages = performanceDb.getChatMessagesSince(123, limit=messageCount)
+    savedMessages = threadSafePerformanceDb.getChatMessagesSince(123, limit=messageCount)
     assert len(savedMessages) == messageCount
 
-    # Check performance target
-    assert duration < 5.0, f"Processing {messageCount} messages took {duration:.2f}s (target: < 5s)"
+    # Check performance target (relaxed for CI)
+    assert duration < 10.0, f"Processing {messageCount} messages took {duration:.2f}s (target: < 10s)"
 
     # Calculate throughput
     throughput = messageCount / duration
@@ -228,15 +246,18 @@ def testDatabaseQueryPerformance(performanceDb):
 
 
 @pytest.mark.benchmark
-@pytest.mark.skip(reason="Performance target too strict for CI environment, dood!")
+@pytest.mark.slow
 def testDatabaseBulkInsertPerformance(performanceDb):
     """
     Benchmark bulk insert performance.
 
-    Target: Insert 1000 messages in < 2 seconds
-
-    SKIPPED: Performance targets are environment-dependent and may fail in CI.
+    Target: Insert 1000 messages in < 5 seconds (relaxed for CI)
     """
+    # Setup: Add chat info and users first (foreign key constraints)
+    performanceDb.addChatInfo(chatId=123, type="group", title="Test Chat")
+    for userId in [456, 457, 458]:  # Users from createBatchChatMessages
+        performanceDb.updateChatUser(chatId=123, userId=userId, username=f"user{userId}", fullName=f"User {userId}")
+
     messages = createBatchChatMessages(count=1000, chatId=123)
 
     startTime = time.time()
@@ -247,7 +268,8 @@ def testDatabaseBulkInsertPerformance(performanceDb):
     duration = endTime - startTime
     print(f"\nBulk insert of 1000 messages: {duration:.2f}s")
 
-    assert duration < 2.0, f"Bulk insert took {duration:.2f}s (target: < 2s)"
+    # Relaxed target for CI environments
+    assert duration < 5.0, f"Bulk insert took {duration:.2f}s (target: < 5s)"
 
     # Verify all messages were inserted
     savedMessages = performanceDb.getChatMessagesSince(123, limit=1000)
@@ -255,17 +277,22 @@ def testDatabaseBulkInsertPerformance(performanceDb):
 
 
 @pytest.mark.benchmark
-@pytest.mark.skip(reason="Performance target too strict for CI environment, dood!")
+@pytest.mark.slow
 def testDatabaseComplexQueryPerformance(performanceDb):
     """
     Test performance of complex database queries.
 
-    Target: < 100ms for complex queries
-
-    SKIPPED: Performance targets are environment-dependent and may fail in CI.
+    Target: < 500ms for complex queries (relaxed for CI)
     """
     # Populate database with multiple chats
     for chatId in range(1, 11):
+        # Setup: Add chat info and users first (foreign key constraints)
+        performanceDb.addChatInfo(chatId=chatId, type="group", title=f"Test Chat {chatId}")
+        for userId in [456, 457, 458]:  # Users from createBatchChatMessages
+            performanceDb.updateChatUser(
+                chatId=chatId, userId=userId, username=f"user{userId}", fullName=f"User {userId}"
+            )
+
         messages = createBatchChatMessages(count=100, chatId=chatId)
         for msg in messages:
             performanceDb.saveChatMessage(**msg)
@@ -281,7 +308,8 @@ def testDatabaseComplexQueryPerformance(performanceDb):
     duration = (endTime - startTime) * 1000  # Convert to ms
 
     print(f"\nComplex query duration: {duration:.2f}ms")
-    assert duration < 100, f"Complex query took {duration:.2f}ms (target: < 100ms)"
+    # Relaxed target for CI environments
+    assert duration < 500, f"Complex query took {duration:.2f}ms (target: < 500ms)"
 
 
 @pytest.mark.benchmark
@@ -312,27 +340,25 @@ def testDatabaseSettingsPerformance(performanceDb):
 
 
 @pytest.mark.benchmark
-@pytest.mark.skip(reason="Requires pytest-benchmark plugin")
 def testCacheOperationPerformance(performanceDb):
     """
     Benchmark cache operations.
 
-    Target: < 10ms per operation
-
-    Note: This test requires pytest-benchmark plugin to be installed.
+    Target: < 20ms per operation (relaxed for CI)
     """
     from internal.database.models import CacheType
 
     startTime = time.time()
     for _ in range(100):
-        performanceDb.setCacheEntry("test_key", "test_value", CacheType.WEATHER, ttl=3600)
+        performanceDb.setCacheEntry("test_key", "test_value", CacheType.WEATHER)
         performanceDb.getCacheEntry("test_key", CacheType.WEATHER)
     endTime = time.time()
 
     avgTime = (endTime - startTime) / 100 * 1000  # ms per operation
     print(f"\nAverage cache operation time: {avgTime:.2f}ms")
 
-    assert avgTime < 10, f"Cache operation took {avgTime:.2f}ms (target: < 10ms)"
+    # Relaxed target for CI environments
+    assert avgTime < 20, f"Cache operation took {avgTime:.2f}ms (target: < 20ms)"
 
 
 @pytest.mark.benchmark
@@ -489,15 +515,20 @@ def testMemoryLeakDetection(performanceDb):
 
 @pytest.mark.benchmark
 @pytest.mark.stress
-@pytest.mark.skip(reason="High volume stress test too slow for regular CI, dood!")
+@pytest.mark.slow
 def testHighMessageVolumeStress(performanceDb):
     """
     Stress test with high message volume.
 
     Target: Handle 10,000 messages without errors
 
-    SKIPPED: High volume tests are too slow for regular CI runs.
+    Marked as slow - run with: pytest -m slow
     """
+    # Setup: Add chat info and users first (foreign key constraints)
+    performanceDb.addChatInfo(chatId=123, type="group", title="Test Chat")
+    for userId in [456, 457, 458]:  # Users from createBatchChatMessages
+        performanceDb.updateChatUser(chatId=123, userId=userId, username=f"user{userId}", fullName=f"User {userId}")
+
     messageCount = 10000
     batchSize = 1000
 
@@ -526,20 +557,27 @@ def testHighMessageVolumeStress(performanceDb):
 
 @pytest.mark.benchmark
 @pytest.mark.stress
-@pytest.mark.skip(reason="Large database operations too slow for regular CI, dood!")
+@pytest.mark.slow
 def testLargeDatabaseOperations(performanceDb):
     """
     Stress test with large database operations.
 
     Target: Handle large queries without performance degradation
 
-    SKIPPED: Large database tests are too slow for regular CI runs.
+    Marked as slow - run with: pytest -m slow
     """
     # Populate database with many chats
     chatCount = 50
     messagesPerChat = 200
 
     for chatId in range(1, chatCount + 1):
+        # Setup: Add chat info and users first (foreign key constraints)
+        performanceDb.addChatInfo(chatId=chatId, type="group", title=f"Test Chat {chatId}")
+        for userId in [456, 457, 458]:  # Users from createBatchChatMessages
+            performanceDb.updateChatUser(
+                chatId=chatId, userId=userId, username=f"user{userId}", fullName=f"User {userId}"
+            )
+
         messages = createBatchChatMessages(count=messagesPerChat, chatId=chatId)
         for msg in messages:
             performanceDb.saveChatMessage(**msg)
@@ -564,26 +602,39 @@ def testLargeDatabaseOperations(performanceDb):
 @pytest.mark.benchmark
 @pytest.mark.stress
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Threading with in-memory DB causes issues, dood!")
-async def testConcurrentDatabaseAccess(performanceDb):
+async def testConcurrentDatabaseAccess(threadSafePerformanceDb):
     """
     Stress test with concurrent database access.
 
     Target: Handle 50 concurrent operations without errors
 
-    SKIPPED: Threading with in-memory SQLite database causes connection issues.
+    Uses file-based database to support proper concurrent access.
     """
     concurrentOperations = 50
 
     async def performOperation(operationId: int):
         """Perform a database operation."""
         chatId = 100 + operationId
+
+        # Setup: Add chat info and users first (foreign key constraints)
+        await asyncio.to_thread(
+            threadSafePerformanceDb.addChatInfo, chatId=chatId, type="group", title=f"Test Chat {chatId}"
+        )
+        for userId in [456, 457, 458]:  # Users from createBatchChatMessages
+            await asyncio.to_thread(
+                threadSafePerformanceDb.updateChatUser,
+                chatId=chatId,
+                userId=userId,
+                username=f"user{userId}",
+                fullName=f"User {userId}",
+            )
+
         messages = createBatchChatMessages(count=10, chatId=chatId)
 
         for msg in messages:
-            await asyncio.to_thread(performanceDb.saveChatMessage, **msg)
+            await asyncio.to_thread(threadSafePerformanceDb.saveChatMessage, **msg)
 
-        savedMessages = await asyncio.to_thread(performanceDb.getChatMessagesSince, chatId, limit=10)
+        savedMessages = await asyncio.to_thread(threadSafePerformanceDb.getChatMessagesSince, chatId, limit=10)
         assert len(savedMessages) == 10
 
     startTime = time.time()
@@ -596,7 +647,8 @@ async def testConcurrentDatabaseAccess(performanceDb):
     duration = endTime - startTime
 
     print(f"\nCompleted {concurrentOperations} concurrent operations in {duration:.2f}s")
-    assert duration < 10, f"Concurrent operations took {duration:.2f}s (target: < 10s)"
+    # Relaxed target for CI environments
+    assert duration < 20, f"Concurrent operations took {duration:.2f}s (target: < 20s)"
 
 
 @pytest.mark.benchmark

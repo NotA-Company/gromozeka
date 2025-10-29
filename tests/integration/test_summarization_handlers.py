@@ -38,8 +38,18 @@ from tests.fixtures.telegram_mocks import (
 @pytest.fixture
 async def inMemoryDb():
     """Provide in-memory SQLite database for testing, dood!"""
+    from internal.services.cache.models import CacheNamespace
+    from internal.services.cache.service import CacheService
+
     db = DatabaseWrapper(":memory:")
+    # Inject database into CacheService singleton
+    cache = CacheService.getInstance()
+    cache.injectDatabase(db)
     yield db
+    # Clean up: clear cache after test
+    for namespace in CacheNamespace:
+        cache._caches[namespace].clear()
+        cache.dirtyKeys[namespace].clear()
     db.close()
 
 
@@ -149,7 +159,6 @@ def populateDatabaseWithMessages(
 # ============================================================================
 
 
-@pytest.mark.skip("Cache service needs dbWrapper initialization - requires refactoring")
 @pytest.mark.asyncio
 async def testBasicSummaryCommand(inMemoryDb, mockBot, summarizationHandler):
     """
@@ -191,11 +200,10 @@ async def testBasicSummaryCommand(inMemoryDb, mockBot, summarizationHandler):
     # Call handler directly
     await summarizationHandler.summary_command(update, context)
 
-    # Verify bot sent summary response
-    assert mockBot.sendMessage.called, "Bot should send summary response, dood!"
+    # Verify message.reply_text was called (handlers use message.reply_text, not bot.sendMessage)
+    assert message.reply_text.called, "Bot should send summary response, dood!"
 
 
-@pytest.mark.skip("Cache service needs dbWrapper initialization - requires refactoring")
 @pytest.mark.asyncio
 async def testSummaryCommandWithCustomMessageCount(inMemoryDb, mockBot, summarizationHandler):
     """
@@ -232,8 +240,8 @@ async def testSummaryCommandWithCustomMessageCount(inMemoryDb, mockBot, summariz
     # Call handler directly
     await summarizationHandler.summary_command(update, context)
 
-    # Verify summary sent
-    assert mockBot.sendMessage.called, "Bot should send summary, dood!"
+    # Verify message.reply_text was called (handlers use message.reply_text, not bot.sendMessage)
+    assert message.reply_text.called, "Bot should send summary, dood!"
 
 
 # ============================================================================
@@ -241,7 +249,6 @@ async def testSummaryCommandWithCustomMessageCount(inMemoryDb, mockBot, summariz
 # ============================================================================
 
 
-@pytest.mark.skip("Cache service needs dbWrapper initialization - requires refactoring")
 @pytest.mark.asyncio
 async def testSummarizationWithNoMessages(inMemoryDb, mockBot, summarizationHandler):
     """
@@ -276,11 +283,10 @@ async def testSummarizationWithNoMessages(inMemoryDb, mockBot, summarizationHand
     # Call handler directly
     await summarizationHandler.summary_command(update, context)
 
-    # Verify message sent (should be "No messages to summarize")
-    assert mockBot.sendMessage.called, "Bot should send no messages notification, dood!"
+    # Verify message.reply_text was called (should be "No messages to summarize")
+    assert message.reply_text.called, "Bot should send no messages notification, dood!"
 
 
-@pytest.mark.skip("Cache service needs dbWrapper initialization - requires refactoring")
 @pytest.mark.asyncio
 async def testSummarizationWithLlmError(inMemoryDb, mockBot, mockConfigManager):
     """
@@ -337,8 +343,8 @@ async def testSummarizationWithLlmError(inMemoryDb, mockBot, mockConfigManager):
     # Call handler directly
     await handler.summary_command(update, context)
 
-    # Verify error message sent
-    assert mockBot.sendMessage.called, "Bot should send error notification, dood!"
+    # Verify message.reply_text was called for error notification
+    assert message.reply_text.called, "Bot should send error notification, dood!"
 
 
 @pytest.mark.asyncio
@@ -383,7 +389,6 @@ async def testSummarizationUnauthorizedUser(inMemoryDb, mockBot, summarizationHa
 # ============================================================================
 
 
-@pytest.mark.skip("Cache service needs dbWrapper initialization - requires refactoring")
 @pytest.mark.asyncio
 async def testTopicSummarization(inMemoryDb, mockBot, summarizationHandler):
     """
@@ -443,5 +448,5 @@ async def testTopicSummarization(inMemoryDb, mockBot, summarizationHandler):
     # Call handler directly
     await summarizationHandler.summary_command(update, context)
 
-    # Verify summary sent
-    assert mockBot.sendMessage.called, "Bot should send topic summary, dood!"
+    # Verify message.reply_text was called (handlers use message.reply_text, not bot.sendMessage)
+    assert message.reply_text.called, "Bot should send topic summary, dood!"

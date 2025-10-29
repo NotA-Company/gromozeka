@@ -318,6 +318,29 @@ def mockLlmService():
     return mock
 
 
+@pytest.fixture(autouse=True)
+def resetLlmServiceSingleton():
+    """
+    Reset LLMService singleton before each test, dood!
+
+    This fixture ensures that each test gets a fresh LLMService instance
+    without any state from previous tests. It runs automatically before
+    each test due to autouse=True.
+
+    Yields:
+        None: Fixture runs before and after each test
+    """
+    from internal.services.llm.service import LLMService
+
+    # Reset singleton instance before test
+    LLMService._instance = None
+
+    yield
+
+    # Reset singleton instance after test
+    LLMService._instance = None
+
+
 @pytest.fixture
 def mockCacheService():
     """

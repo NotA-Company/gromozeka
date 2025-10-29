@@ -35,8 +35,18 @@ from tests.fixtures.telegram_mocks import (
 @pytest.fixture
 async def inMemoryDb():
     """Provide in-memory SQLite database for testing, dood!"""
+    from internal.services.cache.models import CacheNamespace
+    from internal.services.cache.service import CacheService
+
     db = DatabaseWrapper(":memory:")
+    # Inject database into CacheService singleton
+    cache = CacheService.getInstance()
+    cache.injectDatabase(db)
     yield db
+    # Clean up: clear cache after test
+    for namespace in CacheNamespace:
+        cache._caches[namespace].clear()
+        cache.dirtyKeys[namespace].clear()
     db.close()
 
 
@@ -55,6 +65,7 @@ def mockConfigManager():
     mock.getBotConfig.return_value = {
         "token": "test_token",
         "owners": [123456],
+        "bot_owners": ["testuser"],  # Add bot_owners as usernames
     }
     # Mock OpenWeatherMap config to prevent initialization errors
     mock.getOpenWeatherMapConfig.return_value = {
@@ -89,7 +100,6 @@ async def application(mockConfigManager, inMemoryDb, mockLlmManager, mockBot):
 # ============================================================================
 
 
-@pytest.mark.skip("E2E test requires full Application setup - updateChatInfo method missing")
 @pytest.mark.asyncio
 async def testConfigureCommandRouting(application, inMemoryDb, mockBot):
     """
@@ -103,8 +113,8 @@ async def testConfigureCommandRouting(application, inMemoryDb, mockBot):
     userId = 123456  # Bot owner
 
     # Add chat to database
-    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
-    inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test", "User", False)
+    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
     message = createMockMessage(
         messageId=1,
@@ -113,20 +123,25 @@ async def testConfigureCommandRouting(application, inMemoryDb, mockBot):
         text="/configure",
     )
     message.chat.type = Chat.PRIVATE
+    message._bot = mockBot  # Set bot for shortcuts
+    message.chat._bot = mockBot  # Set bot on chat for get_administrators()
     update = createMockUpdate(message=message)
     context = createMockContext(bot=mockBot)
 
     sentMessage = createMockMessage(messageId=2, chatId=userId, userId=mockBot.id)
     mockBot.sendMessage.return_value = sentMessage
 
-    # Route through Application
-    await application.handlerManager.handle_message(update, context)
+    # Find and call the /configure command handler directly
+    commandHandlers = application.handlerManager.getCommandHandlers()
+    configureHandler = next((h for h in commandHandlers if "configure" in h.commands), None)
+    assert configureHandler is not None, "Configure command handler not found, dood!"
+
+    await configureHandler.handler(update, context)
 
     # Verify menu displayed
-    assert mockBot.sendMessage.called, "Bot should send configuration menu, dood!"
+    assert message.reply_text.called, "Bot should send configuration menu, dood!"
 
 
-@pytest.mark.skip("E2E test requires full Application setup - updateChatInfo method missing")
 @pytest.mark.asyncio
 async def testConfigurationButtonRouting(application, inMemoryDb, mockBot):
     """
@@ -139,7 +154,7 @@ async def testConfigurationButtonRouting(application, inMemoryDb, mockBot):
     chatId = 123
     userId = 123456  # Bot owner
 
-    inMemoryDb.updateChatInfo(chatId, "private", None, "testuser")
+    inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
 
     callbackMessage = createMockMessage(messageId=1, chatId=userId, userId=mockBot.id)
 
@@ -165,7 +180,6 @@ async def testConfigurationButtonRouting(application, inMemoryDb, mockBot):
     query.answer.assert_called()
 
 
-@pytest.mark.skip("E2E test requires full Application setup - updateChatInfo method missing")
 @pytest.mark.asyncio
 async def testConfigurationPermissionCheck(application, inMemoryDb, mockBot):
     """
@@ -178,7 +192,10 @@ async def testConfigurationPermissionCheck(application, inMemoryDb, mockBot):
     chatId = 789  # Group chat
     userId = 999  # Not bot owner, not admin
 
-    inMemoryDb.updateChatInfo(chatId, "group", "Test Group", None)
+    # Add both the group chat and the private chat with user
+    inMemoryDb.addChatInfo(chatId, "group", "Test Group", None)
+    inMemoryDb.addChatInfo(userId, "private", None, None)
+    inMemoryDb.updateChatUser(userId, userId, "testuser", "Test User")
 
     message = createMockMessage(
         messageId=1,
@@ -187,14 +204,20 @@ async def testConfigurationPermissionCheck(application, inMemoryDb, mockBot):
         text="/configure",
     )
     message.chat.type = Chat.PRIVATE
+    message._bot = mockBot  # Set bot for shortcuts
+    message.chat._bot = mockBot  # Set bot on chat for get_administrators()
     update = createMockUpdate(message=message)
     context = createMockContext(bot=mockBot)
 
     sentMessage = createMockMessage(messageId=2, chatId=userId, userId=mockBot.id)
     mockBot.sendMessage.return_value = sentMessage
 
-    # Route through Application
-    await application.handlerManager.handle_message(update, context)
+    # Find and call the /configure command handler directly
+    commandHandlers = application.handlerManager.getCommandHandlers()
+    configureHandler = next((h for h in commandHandlers if "configure" in h.commands), None)
+    assert configureHandler is not None, "Configure command handler not found, dood!"
+
+    await configureHandler.handler(update, context)
 
     # Verify response sent (should show "no admin chats" message)
-    assert mockBot.sendMessage.called, "Bot should send response, dood!"
+    assert message.reply_text.called, "Bot should send response, dood!"

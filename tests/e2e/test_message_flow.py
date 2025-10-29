@@ -47,8 +47,18 @@ async def inMemoryDb():
     Yields:
         DatabaseWrapper: In-memory database instance
     """
+    from internal.services.cache.models import CacheNamespace
+    from internal.services.cache.service import CacheService
+
     db = DatabaseWrapper(":memory:")
+    # Inject database into CacheService singleton
+    cache = CacheService.getInstance()
+    cache.injectDatabase(db)
     yield db
+    # Clean up: clear cache after test
+    for namespace in CacheNamespace:
+        cache._caches[namespace].clear()
+        cache.dirtyKeys[namespace].clear()
     db.close()
 
 
@@ -77,6 +87,7 @@ def mockConfigManager():
     mock.getBotConfig.return_value = {
         "token": "test_token",
         "owners": [123456],
+        "bot_owners": ["testuser"],  # Add bot_owners as usernames
     }
     mock.getOpenWeatherMapConfig.return_value = {"enabled": False}
     return mock
@@ -182,7 +193,6 @@ async def testSimpleTextMessageFlow(inMemoryDb, mockBot, handlersManager):
     assert len(users) >= 1, "User should be saved to database, dood!"
 
 
-@pytest.mark.skip("LLM singleton mocking issue - requires refactoring")
 @pytest.mark.asyncio
 async def testSimpleTextMessageWithBotResponse(inMemoryDb, mockBot, handlersManager):
     """
@@ -199,8 +209,10 @@ async def testSimpleTextMessageWithBotResponse(inMemoryDb, mockBot, handlersMana
         - Bot response sent
         - Bot response saved to database
     """
+    from internal.services.llm.service import LLMService
+
     # Mock LLM service to return response
-    mockService = Mock()
+    mockService = Mock(spec=LLMService)
     result = ModelRunResult(
         rawResult=None,
         status=ModelResultStatus.FINAL,
@@ -210,47 +222,45 @@ async def testSimpleTextMessageWithBotResponse(inMemoryDb, mockBot, handlersMana
     result.setToolsUsed(False)
     mockService.generateTextViaLLM = AsyncMock(return_value=result)
 
-    # Inject mock into the LLM handler
+    # Inject mock service into all handlers that have llmService
     for handler in handlersManager.handlers:
         if hasattr(handler, "llmService"):
             handler.llmService = mockService
 
-    with patch("internal.services.llm.service.LLMService.getInstance", return_value=mockService):
+    # 1. Create private chat message
+    chatId = 123
+    userId = 456
 
-        # 1. Create private chat message
-        chatId = 123
-        userId = 456
+    message = createMockMessage(
+        messageId=1,
+        chatId=chatId,
+        userId=userId,
+        text="Hello bot!",
+    )
+    message.chat.type = Chat.PRIVATE
+    update = createMockUpdate(message=message)
+    context = createMockContext(bot=mockBot)
 
-        message = createMockMessage(
-            messageId=1,
-            chatId=chatId,
-            userId=userId,
-            text="Hello bot!",
-        )
-        message.chat.type = Chat.PRIVATE
-        update = createMockUpdate(message=message)
-        context = createMockContext(bot=mockBot)
+    # Set chat settings to allow private messages
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
 
-        # Set chat settings to allow private messages
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
+    # 2. Process message
+    await handlersManager.handle_message(update, context)
 
-        # 2. Process message
-        await handlersManager.handle_message(update, context)
+    # 3. Verify bot sent response
+    message.reply_text.assert_called()
 
-        # 3. Verify bot sent response
-        mockBot.sendMessage.assert_called()
-
-        # 4. Verify both messages in database
-        messages = inMemoryDb.getChatMessages(chatId=chatId, limit=10)
-        assert len(messages) >= 1, "At least user message should be saved, dood!"
+    # 4. Verify both messages in database
+    messages = inMemoryDb.getChatMessagesSince(chatId=chatId, limit=10)
+    assert len(messages) >= 1, "At least user message should be saved, dood!"
 
 
 # ============================================================================
@@ -258,7 +268,6 @@ async def testSimpleTextMessageWithBotResponse(inMemoryDb, mockBot, handlersMana
 # ============================================================================
 
 
-@pytest.mark.skip("LLM singleton mocking issue - requires refactoring")
 @pytest.mark.asyncio
 async def testReplyToBotMessageFlow(inMemoryDb, mockBot, handlersManager):
     """
@@ -277,8 +286,10 @@ async def testReplyToBotMessageFlow(inMemoryDb, mockBot, handlersManager):
         - Contextual response generated
         - Thread linkage maintained in database
     """
+    from internal.services.llm.service import LLMService
+
     # Mock LLM service
-    mockService = Mock()
+    mockService = Mock(spec=LLMService)
     result = ModelRunResult(
         rawResult=None,
         status=ModelResultStatus.FINAL,
@@ -288,74 +299,87 @@ async def testReplyToBotMessageFlow(inMemoryDb, mockBot, handlersManager):
     result.setToolsUsed(False)
     mockService.generateTextViaLLM = AsyncMock(return_value=result)
 
-    # Inject mock into the LLM handler
+    # Inject mock service into all handlers that have llmService
     for handler in handlersManager.handlers:
         if hasattr(handler, "llmService"):
             handler.llmService = mockService
 
-    with patch("internal.services.llm.service.LLMService.getInstance", return_value=mockService):
+    chatId = 123
+    userId = 456
+    botId = mockBot.id
 
-        chatId = 123
-        userId = 456
-        botId = mockBot.id
+    # 1. Create chat_users entries (required for JOIN in getChatMessageByMessageId)
+    inMemoryDb.updateChatUser(
+        chatId=chatId,
+        userId=botId,
+        username="test_bot",
+        fullName="Test Bot",
+    )
+    inMemoryDb.updateChatUser(
+        chatId=chatId,
+        userId=userId,
+        username="testuser",
+        fullName="Test User",
+    )
 
-        # 1. Save bot's original message to database
-        botMessageId = 10
-        inMemoryDb.saveChatMessage(
-            date=datetime.now(),
-            messageId=botMessageId,
-            chatId=chatId,
-            userId=botId,
-            messageText="Hello! How can I help you, dood?",
-            messageCategory=MessageCategory.BOT,
-            rootMessageId=botMessageId,  # Root of thread
-        )
+    # 2. Save bot's original message to database
+    botMessageId = 10
+    inMemoryDb.saveChatMessage(
+        date=datetime.now(),
+        messageId=botMessageId,
+        chatId=chatId,
+        userId=botId,
+        messageText="Hello! How can I help you, dood?",
+        messageCategory=MessageCategory.BOT,
+        rootMessageId=botMessageId,  # Root of thread
+    )
 
-        # 2. Create user's reply message
-        userReplyId = 11
-        botMessage = createMockMessage(
-            messageId=botMessageId,
-            chatId=chatId,
-            userId=botId,
-            text="Hello! How can I help you, dood?",
-        )
+    # 2. Create user's reply message
+    userReplyId = 11
+    botMessage = createMockMessage(
+        messageId=botMessageId,
+        chatId=chatId,
+        userId=botId,
+        text="Hello! How can I help you, dood?",
+    )
 
-        userReply = createMockMessage(
-            messageId=userReplyId,
-            chatId=chatId,
-            userId=userId,
-            text="I need help with something",
-            replyToMessage=botMessage,
-        )
+    userReply = createMockMessage(
+        messageId=userReplyId,
+        chatId=chatId,
+        userId=userId,
+        text="I need help with something",
+        replyToMessage=botMessage,
+    )
 
-        update = createMockUpdate(message=userReply)
-        context = createMockContext(bot=mockBot)
+    update = createMockUpdate(message=userReply)
+    context = createMockContext(bot=mockBot)
 
-        # Set chat settings
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_REPLY.value, "true")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
+    # Set chat settings
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_REPLY.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
 
-        # 3. Process reply
-        await handlersManager.handle_message(update, context)
+    # 3. Process reply
+    await handlersManager.handle_message(update, context)
 
-        # 4. Verify bot sent response
-        mockBot.sendMessage.assert_called()
+    # 4. Verify bot sent response
+    userReply.reply_text.assert_called()
 
-        # 5. Verify messages in database with thread linkage
-        messages = inMemoryDb.getChatMessages(chatId=chatId, limit=10)
-        assert len(messages) >= 2, "Should have bot message and user reply, dood!"
+    # 5. Verify messages in database with thread linkage
+    messages = inMemoryDb.getChatMessagesSince(chatId=chatId, limit=10)
+    assert len(messages) >= 2, "Should have bot message and user reply, dood!"
 
-        # Verify thread structure
-        userMessage = [m for m in messages if m["message_id"] == userReplyId]
-        assert len(userMessage) == 1
-        assert userMessage[0]["reply_to_message_id"] == botMessageId
+    # Verify thread structure
+    userMessage = [m for m in messages if m["message_id"] == userReplyId]
+    assert len(userMessage) == 1
+    assert userMessage[0]["reply_id"] == botMessageId
 
 
 # ============================================================================
@@ -363,7 +387,6 @@ async def testReplyToBotMessageFlow(inMemoryDb, mockBot, handlersManager):
 # ============================================================================
 
 
-@pytest.mark.skip("LLM singleton mocking issue - requires refactoring")
 @pytest.mark.asyncio
 async def testBotMentionInGroupFlow(inMemoryDb, mockBot, handlersManager):
     """
@@ -380,8 +403,10 @@ async def testBotMentionInGroupFlow(inMemoryDb, mockBot, handlersManager):
         - Bot responds to mentions
         - Group chat handling correct
     """
+    from internal.services.llm.service import LLMService
+
     # Mock LLM service
-    mockService = Mock()
+    mockService = Mock(spec=LLMService)
     result = ModelRunResult(
         rawResult=None,
         status=ModelResultStatus.FINAL,
@@ -391,48 +416,46 @@ async def testBotMentionInGroupFlow(inMemoryDb, mockBot, handlersManager):
     result.setToolsUsed(False)
     mockService.generateTextViaLLM = AsyncMock(return_value=result)
 
-    # Inject mock into the LLM handler
+    # Inject mock service into all handlers that have llmService
     for handler in handlersManager.handlers:
         if hasattr(handler, "llmService"):
             handler.llmService = mockService
 
-    with patch("internal.services.llm.service.LLMService.getInstance", return_value=mockService):
+    chatId = 789
+    userId = 456
 
-        chatId = 789
-        userId = 456
+    # 1. Create group message with bot mention
+    message = createMockMessage(
+        messageId=1,
+        chatId=chatId,
+        userId=userId,
+        text=f"@{mockBot.username} are you there?",
+    )
+    message.chat.type = Chat.GROUP
 
-        # 1. Create group message with bot mention
-        message = createMockMessage(
-            messageId=1,
-            chatId=chatId,
-            userId=userId,
-            text=f"@{mockBot.username} are you there?",
-        )
-        message.chat.type = Chat.GROUP
+    update = createMockUpdate(message=message)
+    context = createMockContext(bot=mockBot)
 
-        update = createMockUpdate(message=message)
-        context = createMockContext(bot=mockBot)
+    # Set chat settings
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_MENTION.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
 
-        # Set chat settings
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_MENTION.value, "true")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
+    # 2. Process message
+    await handlersManager.handle_message(update, context)
 
-        # 2. Process message
-        await handlersManager.handle_message(update, context)
+    # 3. Verify bot sent response
+    message.reply_text.assert_called()
 
-        # 3. Verify bot sent response
-        mockBot.sendMessage.assert_called()
-
-        # 4. Verify message saved
-        messages = inMemoryDb.getChatMessages(chatId=chatId, limit=10)
-        assert len(messages) >= 1, "Message should be saved, dood!"
+    # 4. Verify message saved
+    messages = inMemoryDb.getChatMessagesSince(chatId=chatId, limit=10)
+    assert len(messages) >= 1, "Message should be saved, dood!"
 
 
 # ============================================================================
@@ -493,7 +516,6 @@ async def testPhotoMessageFlow(inMemoryDb, mockBot, handlersManager):
     assert savedMessage["message_text"] == "Check out this photo, dood!"
 
 
-@pytest.mark.skip("Sticker handling requires proper mock setup")
 @pytest.mark.asyncio
 async def testStickerMessageFlow(inMemoryDb, mockBot, handlersManager):
     """
@@ -547,7 +569,6 @@ async def testStickerMessageFlow(inMemoryDb, mockBot, handlersManager):
 # ============================================================================
 
 
-@pytest.mark.skip("LLM singleton mocking issue - requires refactoring")
 @pytest.mark.asyncio
 async def testPrivateChatBehavior(inMemoryDb, mockBot, handlersManager):
     """
@@ -558,8 +579,10 @@ async def testPrivateChatBehavior(inMemoryDb, mockBot, handlersManager):
         - No mention required
         - Context from previous messages used
     """
+    from internal.services.llm.service import LLMService
+
     # Mock LLM service
-    mockService = Mock()
+    mockService = Mock(spec=LLMService)
     result = ModelRunResult(
         rawResult=None,
         status=ModelResultStatus.FINAL,
@@ -569,44 +592,42 @@ async def testPrivateChatBehavior(inMemoryDb, mockBot, handlersManager):
     result.setToolsUsed(False)
     mockService.generateTextViaLLM = AsyncMock(return_value=result)
 
-    # Inject mock into the LLM handler
+    # Inject mock service into all handlers that have llmService
     for handler in handlersManager.handlers:
         if hasattr(handler, "llmService"):
             handler.llmService = mockService
 
-    with patch("internal.services.llm.service.LLMService.getInstance", return_value=mockService):
+    chatId = 123
+    userId = 456
 
-        chatId = 123
-        userId = 456
+    # Create private chat message (no mention needed)
+    message = createMockMessage(
+        messageId=1,
+        chatId=chatId,
+        userId=userId,
+        text="Just a regular message",
+    )
+    message.chat.type = Chat.PRIVATE
 
-        # Create private chat message (no mention needed)
-        message = createMockMessage(
-            messageId=1,
-            chatId=chatId,
-            userId=userId,
-            text="Just a regular message",
-        )
-        message.chat.type = Chat.PRIVATE
+    update = createMockUpdate(message=message)
+    context = createMockContext(bot=mockBot)
 
-        update = createMockUpdate(message=message)
-        context = createMockContext(bot=mockBot)
+    # Enable private chat
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
 
-        # Enable private chat
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
+    # Process message
+    await handlersManager.handle_message(update, context)
 
-        # Process message
-        await handlersManager.handle_message(update, context)
-
-        # Verify bot responded (no mention required in private chat)
-        mockBot.sendMessage.assert_called()
+    # Verify bot responded (no mention required in private chat)
+    message.reply_text.assert_called()
 
 
 @pytest.mark.asyncio
@@ -649,7 +670,6 @@ async def testGroupChatBehavior(inMemoryDb, mockBot, handlersManager):
 # ============================================================================
 
 
-@pytest.mark.skip("LLM error handling requires proper mock setup")
 @pytest.mark.asyncio
 async def testMessageFlowWithLlmError(inMemoryDb, mockBot, handlersManager):
     """
@@ -660,48 +680,48 @@ async def testMessageFlowWithLlmError(inMemoryDb, mockBot, handlersManager):
         - Error handled gracefully
         - User notified of error
     """
+    from internal.services.llm.service import LLMService
+
     # Mock LLM service to raise error
-    mockService = Mock()
+    mockService = Mock(spec=LLMService)
     mockService.generateTextViaLLM = AsyncMock(side_effect=Exception("LLM service error, dood!"))
 
-    # Inject mock into the LLM handler
+    # Inject mock service into all handlers that have llmService
     for handler in handlersManager.handlers:
         if hasattr(handler, "llmService"):
             handler.llmService = mockService
 
-    with patch("internal.services.llm.service.LLMService.getInstance", return_value=mockService):
+    chatId = 123
+    userId = 456
 
-        chatId = 123
-        userId = 456
+    message = createMockMessage(
+        messageId=1,
+        chatId=chatId,
+        userId=userId,
+        text="Test message",
+    )
+    message.chat.type = Chat.PRIVATE
 
-        message = createMockMessage(
-            messageId=1,
-            chatId=chatId,
-            userId=userId,
-            text="Test message",
-        )
-        message.chat.type = Chat.PRIVATE
+    update = createMockUpdate(message=message)
+    context = createMockContext(bot=mockBot)
 
-        update = createMockUpdate(message=message)
-        context = createMockContext(bot=mockBot)
+    # Enable private chat
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
 
-        # Enable private chat
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
-        inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
+    # Process message (should handle error gracefully)
+    await handlersManager.handle_message(update, context)
 
-        # Process message (should handle error gracefully)
-        await handlersManager.handle_message(update, context)
-
-        # Verify message still saved despite error
-        messages = inMemoryDb.getChatMessagesSince(chatId=chatId, limit=10)
-        assert len(messages) >= 1, "Message should be saved even on error, dood!"
+    # Verify message still saved despite error
+    messages = inMemoryDb.getChatMessagesSince(chatId=chatId, limit=10)
+    assert len(messages) >= 1, "Message should be saved even on error, dood!"
 
 
 # ============================================================================

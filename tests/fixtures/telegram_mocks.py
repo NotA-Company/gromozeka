@@ -53,6 +53,7 @@ def createMockChat(
     chatType: str = "private",
     title: Optional[str] = None,
     username: Optional[str] = None,
+    isForum: bool = False,
 ) -> Mock:
     """
     Create a mock Telegram Chat.
@@ -62,6 +63,7 @@ def createMockChat(
         chatType: Chat type (private, group, supergroup, channel) (default: "private")
         title: Chat title (default: None)
         username: Chat username (default: None)
+        isForum: Whether chat is a forum (default: False)
 
     Returns:
         Mock: Mocked Chat instance
@@ -76,6 +78,8 @@ def createMockChat(
     chat.type = chatType
     chat.title = title
     chat.username = username
+    chat.is_forum = isForum
+    chat._bot = None  # Set _bot to None by default (tests can override)
     return chat
 
 
@@ -118,7 +122,6 @@ def createMockMessage(
     message.photo = None
     message.document = None
     message.sticker = None
-    message.sender_chat = None  # Explicitly set to None to avoid Mock issues
     message.is_automatic_forward = False
 
     # Auto-detect commands and add BOT_COMMAND entity
@@ -144,11 +147,52 @@ def createMockMessage(
     message.audio = None
     message.voice = None
     message.animation = None
-    message.quote = None  # Explicitly set to None to avoid Mock issues
     message.is_topic_message = False
     message.message_thread_id = None
     message.forum_topic_created = None
-    message.external_reply = None  # For external quote handling
+
+    # Use configure_mock to properly set these to None
+    # This prevents Mock from auto-generating mocks when accessed
+    message.configure_mock(sender_chat=None, quote=None, external_reply=None)
+
+    # Configure reply methods to return properly configured mock messages
+    # This ensures that when reply_text() or reply_photo() is called,
+    # the returned message has all attributes properly set
+    message.reply_text = AsyncMock(
+        side_effect=lambda text=None, **kwargs: createMockMessage(
+            messageId=kwargs.get("message_id", messageId + 1),
+            chatId=message.chat.id,
+            userId=message.from_user.id,
+            text=text or kwargs.get("text", "reply"),
+            chat=message.chat,
+            fromUser=message.from_user,
+        )
+    )
+    message.reply_photo = AsyncMock(
+        side_effect=lambda photo=None, **kwargs: createMockMessage(
+            messageId=kwargs.get("message_id", messageId + 1),
+            chatId=message.chat.id,
+            userId=message.from_user.id,
+            text=kwargs.get("caption", ""),
+            chat=message.chat,
+            fromUser=message.from_user,
+        )
+    )
+
+    # Configure edit methods for inline keyboard interactions
+    # These are used by configuration handlers and callback queries
+    message.edit_text = AsyncMock(return_value=True)
+    message.edit_reply_markup = AsyncMock(return_value=True)
+
+    # Configure get_bot method to return a bot instance
+    # This is needed for handlers that call message.get_bot()
+    # Make get_bot() return the _bot attribute
+    message.get_bot = lambda: message._bot
+
+    # Set _bot attribute to None by default (tests can override)
+    # This prevents "no bot associated" errors when using shortcuts
+    message._bot = None
+
     return message
 
 
@@ -372,6 +416,7 @@ def createMockSticker(
     isAnimated: bool = False,
     isVideo: bool = False,
     emoji: Optional[str] = "😀",
+    fileSize: int = 12345,
 ) -> Mock:
     """
     Create a mock Telegram Sticker.
@@ -384,6 +429,7 @@ def createMockSticker(
         isAnimated: Whether sticker is animated (default: False)
         isVideo: Whether sticker is video (default: False)
         emoji: Associated emoji (default: "😀")
+        fileSize: File size in bytes (default: 12345)
 
     Returns:
         Mock: Mocked Sticker instance
@@ -402,6 +448,7 @@ def createMockSticker(
     sticker.is_animated = isAnimated
     sticker.is_video = isVideo
     sticker.emoji = emoji
+    sticker.file_size = fileSize
 
     return sticker
 

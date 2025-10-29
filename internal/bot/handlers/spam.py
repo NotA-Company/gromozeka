@@ -304,7 +304,7 @@ class SpamHandlers(BaseBotHandler):
         else:
             logger.debug(f"SPAM Bayes: Bayes filter disabled or not needed (spamScore: {spamScore})")
 
-        if spamScore > banTreshold:
+        if spamScore >= banTreshold:
             logger.info(f"SPAM: spamScore: {spamScore} > {banTreshold} {ensuredMessage.getBaseMessage()}")
             userName = sender.name or sender.username
             banMessage = await self.sendMessage(
