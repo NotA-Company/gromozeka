@@ -26,6 +26,7 @@ from telegram.ext import ContextTypes
 
 import lib.utils as utils
 from internal.database.models import MessageCategory
+from internal.services.cache.models import CacheNamespace
 
 from ..models import (
     ChatSettingsKey,
@@ -518,6 +519,17 @@ class DevCommandsHandler(BaseBotHandler):
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
+            case "dumpCache":
+                ret = ""
+                for ns in CacheNamespace:
+                    ret += f"`{ns}`: \n```json\n{utils.jsonDumps(self.cache._caches[ns], indent=2)}\n```\n"
+
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=ret,
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+
             case "dumpEntities":
                 if message.reply_to_message is None:
                     await self.sendMessage(
@@ -561,3 +573,43 @@ class DevCommandsHandler(BaseBotHandler):
                     messageText=f"Unknown test suite: {suite}.",
                     messageCategory=MessageCategory.BOT_ERROR,
                 )
+
+    @commandHandler(
+        commands=("clear_cache",),
+        shortDescription="- Clear cache (all except of user state)",
+        helpMessage=": Очистить кеш (кроме состояния пользователя) "
+        "для перечитывания всех значений из базы (полезно при ручном вмешательстве в базу данных)",
+        categories={CommandCategory.BOT_OWNER},
+        order=CommandHandlerOrder.TECHNICAL,
+    )
+    async def clear_cache_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Clear cache"""
+        logger.debug(f"Got clear_cache command: {update}")
+
+        message = update.message
+        if not message:
+            logger.error("Message undefined")
+            return
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromMessage(message)
+        except Exception as e:
+            logger.error(f"Error while ensuring message: {e}")
+            return
+
+        if not await self.isAdmin(ensuredMessage.user, allowBotOwners=True):
+            logger.warning(f"OWNER ONLY command `/test` by not owner {ensuredMessage.user}")
+            return
+
+        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        await self.startTyping(ensuredMessage)
+
+        self.cache.clearNamespace(CacheNamespace.CHAT_USERS)
+        self.cache.clearNamespace(CacheNamespace.CHATS)
+
+        await self.sendMessage(
+            ensuredMessage,
+            messageText="Готово, кеши очищены (используйте `/test dumpCache` для проверки состояния кеша)",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
