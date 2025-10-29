@@ -14,6 +14,7 @@ class LLMMessageFormat(StrEnum):
 class ButtonDataKey(StrEnum):
     ConfigureAction = "a"
     SummarizationAction = "s"
+    SpamAction = "spam"
 
     ChatId = "c"
     TopicId = "t"
@@ -23,6 +24,7 @@ class ButtonDataKey(StrEnum):
     Key = "k"
     Value = "v"
     UserAction = "ua"
+    ActionHash = "h"
 
 
 class ButtonConfigureAction(StrEnum):

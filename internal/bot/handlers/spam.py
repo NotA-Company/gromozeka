@@ -16,14 +16,17 @@ import asyncio
 import datetime
 import logging
 import time
+import zlib
 from typing import Any, Dict, List, Optional, Set
 
-from telegram import Chat, Message, Update
+from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram._utils.entities import parse_message_entity
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.bot.models.command_handlers import CallbackDataDict
+from internal.bot.models.enums import ButtonDataKey
 from internal.config.manager import ConfigManager
 from internal.database.bayes_storage import DatabaseBayesStorage
 from internal.database.models import (
@@ -94,6 +97,7 @@ class SpamHandlers(BaseBotHandler):
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
 
+        self.spamButtonSalt = self.config.get("spam-button-salt", str(self.botOwners))
         # self.config = configManager.getBotConfig()
 
         # Initialize Bayes spam filter
@@ -111,6 +115,14 @@ class SpamHandlers(BaseBotHandler):
         )
         self.bayesFilter = NaiveBayesFilter(bayesStorage, bayesConfig)
         logger.info("Initialized Bayes spam filter, dood!")
+
+    def _makeSpamButtonSignature(self, message: Message, extra: Any = None) -> str:
+        userId = message.from_user.id if message.from_user else message.chat.id
+        str = f"{message.message_id}:{message.chat.id}:{userId}:{message.text}:{self.spamButtonSalt}:{extra}"
+        # Adler32 isn't proper function to make hashes, but who cares?
+        # We just need some easy protection against users who tried to mark as spam some definetly-not-a-spam messages
+        hashed = zlib.adler32(str.encode("utf-8", "ignore"))
+        return hex(hashed)[2:]
 
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
         """
@@ -330,11 +342,33 @@ class SpamHandlers(BaseBotHandler):
             logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage}")
             await self.sendMessage(
                 ensuredMessage,
-                messageText=f"Возможно спам (Вероятность: {spamScore:.3f}, порог: {warnTreshold})\n"
-                "(Когда-нибудь тут будут кнопки спам/не спам)",
+                messageText=f"Возможно спам (Вероятность: {spamScore:.3f}, порог: {warnTreshold})\n",
+                replyMarkup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Да, это Спам",
+                                callback_data=utils.packDict(
+                                    {
+                                        ButtonDataKey.SpamAction: True,
+                                        ButtonDataKey.ActionHash: self._makeSpamButtonSignature(message, True),
+                                    }
+                                ),
+                            ),
+                            InlineKeyboardButton(
+                                "Нет, это НЕ Спам",
+                                callback_data=utils.packDict(
+                                    {
+                                        ButtonDataKey.SpamAction: False,
+                                        ButtonDataKey.ActionHash: self._makeSpamButtonSignature(message, False),
+                                    }
+                                ),
+                            ),
+                        ],
+                    ]
+                ),
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
-            # TODO: Add SPAM/Not-SPAM buttons
         else:
             logger.debug(f"Not SPAM: spamScore: {spamScore} < {warnTreshold} {ensuredMessage}")
 
@@ -407,7 +441,9 @@ class SpamHandlers(BaseBotHandler):
         if ensuredMessage.messageText and doBayesLearn:
             try:
                 await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
-                logger.debug(f"Bayes filter learned spam message: {ensuredMessage.messageId}, dood!")
+                logger.debug(
+                    f"Bayes filter learned spam message: {ensuredMessage.chat.id}:{ensuredMessage.messageId}, dood!"
+                )
             except Exception as e:
                 logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
 
@@ -451,7 +487,9 @@ class SpamHandlers(BaseBotHandler):
                     if msg["message_text"] and doBayesLearn:
                         try:
                             await self.bayesFilter.learnSpam(messageText=msg["message_text"], chatId=msg["chat_id"])
-                            logger.debug(f"Bayes filter learned spam message: {msg['message_id']}, dood!")
+                            logger.debug(
+                                f"Bayes filter learned spam message: {msg['chat_id']}{msg['message_id']}, dood!"
+                            )
                         except Exception as e:
                             logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
                     # And add message to spam-base
@@ -501,7 +539,7 @@ class SpamHandlers(BaseBotHandler):
 
         try:
             await self.bayesFilter.learnHam(messageText=message.text, chatId=message.chat_id)
-            logger.debug(f"Bayes filter learned ham message: {message.message_id}, dood!")
+            logger.debug(f"Bayes filter learned ham message: {message.chat.id}:{message.message_id}, dood!")
             return True
         except Exception as e:
             logger.error(f"Failed to learn ham message in Bayes filter: {e}, dood!")
@@ -700,6 +738,120 @@ class SpamHandlers(BaseBotHandler):
             case _:
                 # logger.warning(f"Unsupported chat type: {chatType}")
                 return HandlerResultStatus.SKIPPED
+
+    ###
+    # Handling Click on SPAM/NotSPAM buttons
+    ###
+    async def buttonHandler(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: CallbackDataDict
+    ) -> HandlerResultStatus:
+        """
+        Handle inline keyboard button callbacks for possible-spam messages, dood!
+        """
+
+        query = update.callback_query
+        if query is None:
+            logger.error("handle_button: query is None")
+            return HandlerResultStatus.FATAL
+
+        spamAction = data.get(ButtonDataKey.SpamAction, None)
+
+        if spamAction is None:
+            return HandlerResultStatus.SKIPPED
+        if not isinstance(spamAction, bool):
+            logger.error(f"Invalid spam action {type(spamAction).__name__}({spamAction}) in {data}")
+            return HandlerResultStatus.FATAL
+
+        message = query.message
+        if not isinstance(message, Message):
+            logger.error(f"handle_button: message {message} not Message in {query}")
+            return HandlerResultStatus.FATAL
+
+        user = query.from_user
+        chat = message.chat
+
+        if message.from_user is None or message.from_user.id != context.bot.id:
+            logger.error(f"handle_button: Base message from {message.from_user}, not bot (#{context.bot.id})")
+            return HandlerResultStatus.FATAL
+
+        if message.reply_to_message is None:
+            logger.error(f"handle_button: Base message is not reply to message in {query}")
+            return HandlerResultStatus.FATAL
+
+        repliedMessage = message.reply_to_message
+
+        passedHash = data.get(ButtonDataKey.ActionHash, None)
+        neededHash = self._makeSpamButtonSignature(repliedMessage, spamAction)
+
+        if passedHash != neededHash:
+            logger.error(f"handle_button: passed hash {passedHash} does not match needed hash {neededHash} in {query}")
+            return HandlerResultStatus.FATAL
+
+        isAdmin = await self.isAdmin(user=user, chat=chat)
+
+        chatSettings = self.getChatSettings(chatId=chat.id)
+        userCanMarkSpam = chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
+
+        if not isAdmin and not userCanMarkSpam:
+            logger.info(f"user {user} in chat {chat} tried to click [Not]SPAM button. Denied.")
+            return HandlerResultStatus.FINAL
+        markReason = SpamReason.ADMIN if isAdmin else SpamReason.USER
+
+        logger.debug(f"SPAM: Message {repliedMessage} tagged as isSpam={spamAction} by {user}")
+        reportedUser = repliedMessage.from_user if repliedMessage.from_user else user
+        hamPrefix = ""
+
+        if spamAction:
+            # Mark As SPAM will doo what we need: mark message, add to db, ban user, delete messages
+            await self.markAsSpam(repliedMessage, markReason, 100)
+
+        else:
+            # Mark As HAM will only learn Bayes as HAM, all other things need to be done manually
+            messageText = repliedMessage.text or repliedMessage.caption or ""
+            hamUserId = repliedMessage.from_user.id if repliedMessage.from_user is not None else 0
+            hamPrefix = "НЕ "
+            if messageText:
+                await self.markAsHam(repliedMessage)
+
+                self.db.addHamMessage(
+                    chatId=chat.id,
+                    userId=hamUserId,
+                    messageId=repliedMessage.message_id,
+                    messageText=messageText,
+                    spamReason=markReason,
+                    score=100,
+                )
+
+            if repliedMessage.from_user:
+                hamUserDB: Optional[ChatUserDict] = self.db.getChatUser(chatId=chat.id, userId=hamUserId)
+                if hamUserDB is not None:
+                    userMetadata = self.parseUserMetadata(hamUserDB)
+                    userMetadata["notSpammer"] = True
+                    self.setUserMetadata(
+                        chatId=hamUserDB["chat_id"], userId=hamUserDB["user_id"], metadata=userMetadata
+                    )
+
+        # We need to fallback somewhere, let's fallback to called user
+        reportedUser = repliedMessage.from_user if repliedMessage.from_user else user
+        await message.edit_text(
+            f"[{user.full_name}](tg://user?id={user.id}) подтвердил, что "
+            f"[{reportedUser.full_name}](tg://user?id={reportedUser.id}) {hamPrefix}Спаммер \n"
+            "\\(Данное сообщение будет удалено в течение минуты\\)",
+            parse_mode="MarkdownV2",
+        )
+
+        await self.queueService.addDelayedTask(
+            time.time() + 60,
+            DelayedTaskFunction.DELETE_MESSAGE,
+            kwargs={"messageId": message.message_id, "chatId": chat.id},
+            taskId=f"del-{chat.id}-{message.message_id}",
+        )
+
+        return HandlerResultStatus.FINAL
+
+    ###
+    # Command Handlers
+    ###
 
     @commandHandler(
         commands=("test_spam",),
