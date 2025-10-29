@@ -1,7 +1,9 @@
 """
-Gromozeka SPAM Handlers Module, dood!
+Gromozeka Example Handler Module, dood!
 
-
+This module contains the ExampleHandler class which demonstrates basic bot handler functionality
+including message handling, button callbacks, command processing, and integration with
+queue services and LLM tools.
 """
 
 import logging
@@ -35,15 +37,19 @@ logger = logging.getLogger(__name__)
 
 class ExampleHandler(BaseBotHandler):
     """
-    Example bot Handler
+    Example bot handler demonstrating basic functionality, dood!
+    
+    This handler showcases message processing, button callbacks, command handling,
+    and integration with queue services and LLM tools. It serves as a reference
+    implementation for other bot handlers.
     """
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
         """
-        Initialize spam handlers with database and LLM model, dood!
+        Initialize example handler with database and LLM model, dood!
 
-        Sets up the Naive Bayes spam filter with per-chat statistics and configurable
-        parameters for spam detection and learning.
+        Sets up the example handler with queue service integration and LLM tool registration
+        for demonstrating basic bot functionality.
 
         Args:
             configManager (ConfigManager): Configuration manager for bot settings.
@@ -51,12 +57,10 @@ class ExampleHandler(BaseBotHandler):
             llmManager (LLMManager): LLM manager for AI-powered features.
 
         Note:
-            The Bayes filter is initialized with:
-            - Per-chat statistics enabled
-            - Laplace smoothing (alpha=1.0)
-            - Minimum token count of 2
-            - Default spam threshold of 50.0
-            - Trigram tokenization enabled
+            The handler initializes with:
+            - Queue service registration for delayed tasks
+            - LLM tool registration for example text processing
+            - Example command handling capabilities
         """
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
 
@@ -84,9 +88,26 @@ class ExampleHandler(BaseBotHandler):
     # Example handlers for QueueSrvice and LLM-Tool
     ###
     async def _dtOnExit(self, task: DelayedTask) -> None:
+        """
+        Handle delayed exit task from queue service, dood!
+        
+        Args:
+            task (DelayedTask): The delayed task to process.
+        """
         logger.info("Example module DoExit handler...")
 
     async def _llmToolExample(self, extraData: Optional[Dict[str, Any]], text: str, **kwargs) -> str:
+        """
+        Example LLM tool handler for processing text, dood!
+        
+        Args:
+            extraData (Optional[Dict[str, Any]]): Additional data from LLM service.
+            text (str): Text to process.
+            **kwargs: Additional keyword arguments.
+            
+        Returns:
+            str: JSON string containing the processed text and additional data.
+        """
         logger.info("Example LLM Tool handler...")
         return utils.jsonDumps({**kwargs, "text": text})
 
@@ -97,7 +118,17 @@ class ExampleHandler(BaseBotHandler):
     async def messageHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
     ) -> HandlerResultStatus:
-        """ """
+        """
+        Handle incoming messages, dood!
+        
+        Args:
+            update (Update): Telegram update object.
+            context (ContextTypes.DEFAULT_TYPE): Bot context.
+            ensuredMessage (Optional[EnsuredMessage]): Ensured message object.
+            
+        Returns:
+            HandlerResultStatus: Status of message handling.
+        """
 
         if ensuredMessage is None:
             # Not new message, Skip
@@ -112,7 +143,15 @@ class ExampleHandler(BaseBotHandler):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: CallbackDataDict
     ) -> HandlerResultStatus:
         """
-        Handle inline keyboard button callbacks for possible-spam messages, dood!
+        Handle inline keyboard button callbacks, dood!
+        
+        Args:
+            update (Update): Telegram update object.
+            context (ContextTypes.DEFAULT_TYPE): Bot context.
+            data (CallbackDataDict): Callback data from button press.
+            
+        Returns:
+            HandlerResultStatus: Status of button handling.
         """
 
         query = update.callback_query
@@ -138,8 +177,17 @@ class ExampleHandler(BaseBotHandler):
         categories={CommandCategory.PRIVATE},
         order=CommandHandlerOrder.TEST,
     )
-    async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """ """
+    async def example_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """
+        Handle the example command, dood!
+        
+        This command demonstrates basic command functionality including
+        typing indicators, message saving, and admin checking.
+        
+        Args:
+            update (Update): Telegram update object.
+            context (ContextTypes.DEFAULT_TYPE): Bot context.
+        """
         logger.debug(f"Got example command: {update}")
 
         message = update.message
