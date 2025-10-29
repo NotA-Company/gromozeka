@@ -854,20 +854,20 @@ class DatabaseWrapper:
 
     def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> bool:
         """Store or update a user as a chat member with their current information.
-        
+
         This method performs an upsert operation on the chat_users table. If the user
         is not already a member of the chat, they will be added. If they already exist,
         their @username, full_name, and updated_at timestamp will be refreshed.
-        
+
         Args:
             chatId: The unique identifier of the chat, dood
             userId: The unique identifier of the user, dood
             username: The current @username of the user (may be None) (Note: Should be with @ sign)
             fullName: The current full name/display name of the user
-            
+
         Returns:
             bool: True if the operation succeeded, False if an exception occurred
-            
+
         Note:
             The updated_at timestamp is automatically set to CURRENT_TIMESTAMP
             on both insert and update operations, dood.
