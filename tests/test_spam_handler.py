@@ -20,7 +20,7 @@ import pytest
 from telegram import Chat, MessageEntity
 from telegram.constants import MessageEntityType
 
-from internal.bot.handlers.spam import SpamHandlers
+from internal.bot.handlers.spam import SpamHandler
 from internal.bot.models import ChatSettingsKey, ChatSettingsValue, EnsuredMessage
 from internal.database.models import MessageCategory, SpamReason
 from lib.spam import NaiveBayesFilter
@@ -143,7 +143,7 @@ def spamHandler(mockConfigManager, mockDatabase, mockLlmManager, mockCacheServic
     """Create a SpamHandlers instance with mocked dependencies, dood!"""
     with patch("internal.bot.handlers.spam.DatabaseBayesStorage"):
         with patch("internal.bot.handlers.spam.NaiveBayesFilter", return_value=mockBayesFilter):
-            handler = SpamHandlers(mockConfigManager, mockDatabase, mockLlmManager)
+            handler = SpamHandler(mockConfigManager, mockDatabase, mockLlmManager)
             handler.bayesFilter = mockBayesFilter
             return handler
 
@@ -172,7 +172,7 @@ class TestInitialization:
         """Test handler initializes correctly with all dependencies, dood!"""
         with patch("internal.bot.handlers.spam.DatabaseBayesStorage"):
             with patch("internal.bot.handlers.spam.NaiveBayesFilter"):
-                handler = SpamHandlers(mockConfigManager, mockDatabase, mockLlmManager)
+                handler = SpamHandler(mockConfigManager, mockDatabase, mockLlmManager)
 
                 assert handler.configManager == mockConfigManager
                 assert handler.db == mockDatabase
@@ -183,7 +183,7 @@ class TestInitialization:
         """Test Bayes filter is created during initialization, dood!"""
         with patch("internal.bot.handlers.spam.DatabaseBayesStorage") as MockStorage:
             with patch("internal.bot.handlers.spam.NaiveBayesFilter") as MockFilter:
-                handler = SpamHandlers(mockConfigManager, mockDatabase, mockLlmManager)
+                handler = SpamHandler(mockConfigManager, mockDatabase, mockLlmManager)
 
                 MockStorage.assert_called_once_with(mockDatabase)
                 MockFilter.assert_called_once()
