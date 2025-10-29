@@ -463,26 +463,8 @@ class DevCommandsHandler(BaseBotHandler):
             )
             return
 
-        # user = ensuredMessage.user
-        # if not user.username:
-        #     await self._sendMessage(
-        #         ensuredMessage,
-        #         messageText="You need to have a username to run tests.",
-        #         messageCategory=MessageCategory.BOT_ERROR,
-        #     )
-        #     return
-
-        # allowedUsers = self.botOwners[:]
-
-        # if user.username.lower() not in allowedUsers:
-        #     await self._sendMessage(
-        #         ensuredMessage,
-        #         messageText="You are not allowed to run tests.",
-        #         messageCategory=MessageCategory.BOT_ERROR,
-        #     )
-        #     return
-
         suite = context.args[0]
+        await self.startTyping(ensuredMessage)
 
         match suite:
             case "long":
@@ -517,6 +499,8 @@ class DevCommandsHandler(BaseBotHandler):
                         skipLogs=True,  # Do not spam logs
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     )
+                    if i < iterationsCount - 1:
+                        await self.startTyping(ensuredMessage)
                     await asyncio.sleep(delay)
 
             case "delayedQueue":
@@ -538,7 +522,7 @@ class DevCommandsHandler(BaseBotHandler):
                 if message.reply_to_message is None:
                     await self.sendMessage(
                         ensuredMessage,
-                        messageText="`dumpEntities` should be retpy to message with entities",
+                        messageText="`dumpEntities` should be retly to message with entities",
                         messageCategory=MessageCategory.BOT_ERROR,
                     )
                     return

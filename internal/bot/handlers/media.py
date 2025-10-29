@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 import magic
 from telegram import Chat, Update
-from telegram.constants import MessageEntityType, MessageLimit
+from telegram.constants import ChatAction, MessageEntityType, MessageLimit
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
@@ -147,6 +147,7 @@ class MediaHandler(BaseBotHandler):
         if not isinstance(ensuredMessage, EnsuredMessage):
             raise RuntimeError("ensuredMessage should be EnsuredMessage")
 
+        await self.startTyping(ensuredMessage, ChatAction.UPLOAD_PHOTO)
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         logger.debug(
             f"Generating image: {image_prompt}. Image description: {image_description}, "
@@ -273,6 +274,7 @@ class MediaHandler(BaseBotHandler):
             # Process further
             return HandlerResultStatus.NEXT
 
+        await self.startTyping(ensuredMessage)
         # Not text message, try to get it's content from DB
         storedReply = self.db.getChatMessageByMessageId(
             chatId=ensuredReply.chat.id,
@@ -354,6 +356,8 @@ class MediaHandler(BaseBotHandler):
         ):
             logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
             return
+
+        await self.startTyping(ensuredMessage)
 
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self.sendMessage(
@@ -538,6 +542,7 @@ class MediaHandler(BaseBotHandler):
                     break
 
         logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
+        await self.startTyping(ensuredMessage, ChatAction.UPLOAD_PHOTO)
 
         if not prompt:
             # Fixed f-string missing placeholders
