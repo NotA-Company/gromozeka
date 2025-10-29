@@ -36,6 +36,19 @@ def inMemoryDb():
 
 
 @pytest.fixture
+def threadSafeDb(tmp_path):
+    """Provide file-based SQLite database for threading tests, dood!
+
+    File-based databases support proper concurrent access across threads,
+    unlike in-memory databases which are isolated per connection.
+    """
+    dbPath = tmp_path / "test_threading.db"
+    db = DatabaseWrapper(str(dbPath))
+    yield db
+    db.close()
+
+
+@pytest.fixture
 def populatedDb(inMemoryDb):
     """Provide database with sample data, dood!"""
     db = inMemoryDb
@@ -243,19 +256,13 @@ async def testDataValidation(inMemoryDb):
 # ============================================================================
 
 
-@pytest.mark.skip(reason="SQLite in-memory databases don't share schema across threads")
 @pytest.mark.asyncio
-async def testMultipleReaders(inMemoryDb):
+async def testMultipleReaders(threadSafeDb):
     """Test multiple concurrent read operations, dood!
 
-    Note: This test is skipped because SQLite in-memory databases have a limitation
-    where each thread gets its own isolated database instance. This means threads
-    cannot see tables created by other threads. This is a known SQLite limitation
-    and not a bug in our code.
-
-    For production use with file-based databases, concurrent reads work correctly.
+    Uses file-based database to support proper concurrent access across threads.
     """
-    db = inMemoryDb
+    db = threadSafeDb
 
     # Setup data
     db.addChatInfo(chatId=123, type="group", title="Test")
@@ -283,19 +290,13 @@ async def testMultipleReaders(inMemoryDb):
     assert all(r["chat_id"] == 123 for r in results)
 
 
-@pytest.mark.skip(reason="SQLite in-memory databases don't share schema across threads")
 @pytest.mark.asyncio
-async def testMultipleWriters(inMemoryDb):
+async def testMultipleWriters(threadSafeDb):
     """Test multiple concurrent write operations, dood!
 
-    Note: This test is skipped because SQLite in-memory databases have a limitation
-    where each thread gets its own isolated database instance. This means threads
-    cannot see tables created by other threads. This is a known SQLite limitation
-    and not a bug in our code.
-
-    For production use with file-based databases, concurrent writes work correctly.
+    Uses file-based database to support proper concurrent access across threads.
     """
-    db = inMemoryDb
+    db = threadSafeDb
 
     # Setup
     db.addChatInfo(chatId=123, type="group", title="Test")
@@ -330,19 +331,13 @@ async def testMultipleWriters(inMemoryDb):
     assert len(users) == 10
 
 
-@pytest.mark.skip(reason="SQLite in-memory databases don't share schema across threads")
 @pytest.mark.asyncio
-async def testReadWriteConflicts(inMemoryDb):
+async def testReadWriteConflicts(threadSafeDb):
     """Test read-write conflict handling, dood!
 
-    Note: This test is skipped because SQLite in-memory databases have a limitation
-    where each thread gets its own isolated database instance. This means threads
-    cannot see tables created by other threads. This is a known SQLite limitation
-    and not a bug in our code.
-
-    For production use with file-based databases, concurrent read-write operations work correctly.
+    Uses file-based database to support proper concurrent access across threads.
     """
-    db = inMemoryDb
+    db = threadSafeDb
 
     # Setup
     db.addChatInfo(chatId=123, type="group", title="Test")

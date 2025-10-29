@@ -13,7 +13,7 @@ Test Coverage:
     - Setting persistence to database
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from telegram import Chat
@@ -77,6 +77,12 @@ def mockLlmManager():
 @pytest.fixture
 async def configureHandler(mockConfigManager, inMemoryDb, mockLlmManager, mockBot):
     """Create configure handler with all dependencies, dood!"""
+    # Inject database into cache service singleton
+    from internal.services.cache import CacheService
+
+    cache = CacheService.getInstance()
+    cache.injectDatabase(inMemoryDb)
+
     handler = ConfigureCommandHandler(
         configManager=mockConfigManager,
         database=inMemoryDb,
@@ -91,7 +97,6 @@ async def configureHandler(mockConfigManager, inMemoryDb, mockLlmManager, mockBo
 # ============================================================================
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testConfigureCommand(inMemoryDb, mockBot, configureHandler):
     """
@@ -105,7 +110,7 @@ async def testConfigureCommand(inMemoryDb, mockBot, configureHandler):
     chatId = 123
     userId = 123456  # Bot owner
 
-    # Add chat to database
+    # Add chat to database with proper values (not Mock objects)
     inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
     inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
@@ -120,19 +125,27 @@ async def testConfigureCommand(inMemoryDb, mockBot, configureHandler):
     context = createMockContext(bot=mockBot)
 
     sentMessage = createMockMessage(messageId=2, chatId=userId, userId=mockBot.id)
-    mockBot.sendMessage.return_value = sentMessage
+    sentMessage.get_bot = Mock(return_value=mockBot)
+    mockBot.sendMessage = AsyncMock(return_value=sentMessage)
 
-    # Call handler directly
-    await configureHandler.configure_command(update, context)
+    # Mock getChatAdministrators to avoid bot association issues
+    mockBot.get_chat_administrators = AsyncMock(return_value=[])
+
+    # Call handler directly with mocked isAdmin, saveChatMessage, and sendMessage
+    with (
+        patch.object(configureHandler, "isAdmin", return_value=True),
+        patch.object(configureHandler, "saveChatMessage"),
+        patch.object(configureHandler, "sendMessage", return_value=sentMessage) as mockSendMessage,
+    ):
+        await configureHandler.configure_command(update, context)
 
     # Verify menu displayed
-    mockBot.sendMessage.assert_called_once()
-    callArgs = mockBot.sendMessage.call_args
-    assert callArgs[1]["chat_id"] == userId
-    assert "Загружаю настройки" in callArgs[1]["text"]
+    mockSendMessage.assert_called_once()
+
+    # Verify edit_text was called on the sent message
+    sentMessage.edit_text.assert_called()
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testConfigureCommandDisplaysChatList(inMemoryDb, mockBot, configureHandler):
     """
@@ -145,6 +158,8 @@ async def testConfigureCommandDisplaysChatList(inMemoryDb, mockBot, configureHan
     chatId = 123
     userId = 123456  # Bot owner
 
+    # Add both user's private chat and the group chat
+    inMemoryDb.addChatInfo(userId, "private", None, "testuser")
     inMemoryDb.addChatInfo(chatId, "group", "Test Group", None)
     inMemoryDb.updateChatUser(chatId, userId, "testuser", "Test User")
 
@@ -159,9 +174,15 @@ async def testConfigureCommandDisplaysChatList(inMemoryDb, mockBot, configureHan
     context = createMockContext(bot=mockBot)
 
     sentMessage = createMockMessage(messageId=2, chatId=userId, userId=mockBot.id)
-    mockBot.sendMessage.return_value = sentMessage
+    sentMessage.get_bot = Mock(return_value=mockBot)
+    mockBot.sendMessage = AsyncMock(return_value=sentMessage)
+    mockBot.get_chat_administrators = AsyncMock(return_value=[])
 
-    with patch.object(configureHandler, "isAdmin", return_value=True):
+    with (
+        patch.object(configureHandler, "isAdmin", return_value=True),
+        patch.object(configureHandler, "saveChatMessage"),
+        patch.object(configureHandler, "sendMessage", return_value=sentMessage),
+    ):
         await configureHandler.configure_command(update, context)
 
     # Verify chat list displayed
@@ -170,7 +191,6 @@ async def testConfigureCommandDisplaysChatList(inMemoryDb, mockBot, configureHan
     assert "Выберите чат" in editArgs[1]["text"]
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testConfigureCommandNoAdminChats(inMemoryDb, mockBot, configureHandler):
     """
@@ -180,6 +200,9 @@ async def testConfigureCommandNoAdminChats(inMemoryDb, mockBot, configureHandler
         - Shows appropriate message when no admin chats
     """
     userId = 999  # Not a bot owner
+
+    # Add user's private chat
+    inMemoryDb.addChatInfo(userId, "private", None, "testuser")
 
     message = createMockMessage(
         messageId=1,
@@ -192,15 +215,25 @@ async def testConfigureCommandNoAdminChats(inMemoryDb, mockBot, configureHandler
     context = createMockContext(bot=mockBot)
 
     sentMessage = createMockMessage(messageId=2, chatId=userId, userId=mockBot.id)
-    mockBot.sendMessage.return_value = sentMessage
+    sentMessage.get_bot = Mock(return_value=mockBot)
+    mockBot.sendMessage = AsyncMock(return_value=sentMessage)
+    mockBot.get_chat_administrators = AsyncMock(return_value=[])
 
-    with patch.object(configureHandler, "isAdmin", return_value=False):
+    with (
+        patch.object(configureHandler, "isAdmin", return_value=False),
+        patch.object(configureHandler, "saveChatMessage"),
+        patch.object(configureHandler, "sendMessage", return_value=sentMessage),
+    ):
         await configureHandler.configure_command(update, context)
 
     # Verify no admin message
     sentMessage.edit_text.assert_called()
     editArgs = sentMessage.edit_text.call_args
-    assert "не являетесь администратором" in editArgs[1]["text"]
+    # Check if text is in positional args or keyword args
+    if editArgs[0]:  # Positional args
+        assert "не являетесь администратором" in editArgs[0][0]
+    else:  # Keyword args
+        assert "не являетесь администратором" in editArgs[1]["text"]
 
 
 # ============================================================================
@@ -208,7 +241,6 @@ async def testConfigureCommandNoAdminChats(inMemoryDb, mockBot, configureHandler
 # ============================================================================
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testBooleanSettingConfiguration(inMemoryDb, mockBot, configureHandler):
     """
@@ -221,7 +253,7 @@ async def testBooleanSettingConfiguration(inMemoryDb, mockBot, configureHandler)
     """
     chatId = 123
     userId = 123456
-    settingKey = ChatSettingsKey.ALLOW_PRIVATE
+    settingKey = ChatSettingsKey.USE_TOOLS
 
     inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
 
@@ -275,7 +307,6 @@ async def testBooleanSettingConfiguration(inMemoryDb, mockBot, configureHandler)
     assert settings[settingKey.value] == "False"
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testStringSettingConfiguration(inMemoryDb, mockBot, configureHandler):
     """
@@ -287,8 +318,8 @@ async def testStringSettingConfiguration(inMemoryDb, mockBot, configureHandler):
     """
     chatId = 123
     userId = 123456
-    settingKey = ChatSettingsKey.BOT_NICKNAMES
-    newValue = "Громозека,Gromozeka,Bot"
+    settingKey = ChatSettingsKey.CHAT_PROMPT
+    newValue = "You are a helpful assistant"
 
     inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
 
@@ -319,7 +350,6 @@ async def testStringSettingConfiguration(inMemoryDb, mockBot, configureHandler):
     assert settings[settingKey.value] == newValue
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testResetSettingToDefault(inMemoryDb, mockBot, configureHandler):
     """
@@ -331,7 +361,7 @@ async def testResetSettingToDefault(inMemoryDb, mockBot, configureHandler):
     """
     chatId = 123
     userId = 123456
-    settingKey = ChatSettingsKey.ALLOW_PRIVATE
+    settingKey = ChatSettingsKey.USE_TOOLS
 
     inMemoryDb.addChatInfo(chatId, "private", None, "testuser")
 
@@ -369,7 +399,6 @@ async def testResetSettingToDefault(inMemoryDb, mockBot, configureHandler):
 # ============================================================================
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testAdminOnlySettingProtection(inMemoryDb, mockBot, configureHandler):
     """
@@ -381,7 +410,7 @@ async def testAdminOnlySettingProtection(inMemoryDb, mockBot, configureHandler):
     """
     chatId = 789  # Group chat
     userId = 999  # Not an admin
-    settingKey = ChatSettingsKey.ALLOW_PRIVATE
+    settingKey = ChatSettingsKey.USE_TOOLS
 
     inMemoryDb.addChatInfo(chatId, "group", "Test Group", None)
 
@@ -412,7 +441,6 @@ async def testAdminOnlySettingProtection(inMemoryDb, mockBot, configureHandler):
     assert "не являетесь администратором" in editArgs[1]["text"]
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testBotOwnerBypassesPermissions(inMemoryDb, mockBot, configureHandler):
     """
@@ -424,7 +452,7 @@ async def testBotOwnerBypassesPermissions(inMemoryDb, mockBot, configureHandler)
     """
     chatId = 789
     userId = 123456  # Bot owner
-    settingKey = ChatSettingsKey.ALLOW_PRIVATE
+    settingKey = ChatSettingsKey.USE_TOOLS
 
     inMemoryDb.addChatInfo(chatId, "group", "Test Group", None)
 
@@ -533,7 +561,6 @@ async def testCancellationHandling(inMemoryDb, mockBot, configureHandler):
 # ============================================================================
 
 
-@pytest.mark.skip("Button callback testing requires complex async mock setup")
 @pytest.mark.asyncio
 async def testSettingPersistenceToDatabase(inMemoryDb, mockBot, configureHandler):
     """
@@ -554,7 +581,7 @@ async def testSettingPersistenceToDatabase(inMemoryDb, mockBot, configureHandler
 
     # Set multiple settings
     settings = [
-        (ChatSettingsKey.ALLOW_PRIVATE, "True"),
+        (ChatSettingsKey.USE_TOOLS, "True"),
         (ChatSettingsKey.ALLOW_MENTION, "False"),
         (ChatSettingsKey.RANDOM_ANSWER_PROBABILITY, "0.5"),
     ]
