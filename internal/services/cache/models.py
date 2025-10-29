@@ -24,7 +24,7 @@ class CacheNamespace(StrEnum):
         """Auto-determine persistence level based on namespace"""
         match self:
             case CacheNamespace.USERS:
-                return CachePersistenceLevel.ON_CHANGE
+                return CachePersistenceLevel.ON_SHUTDOWN
             case _:
                 return CachePersistenceLevel.MEMORY_ONLY
 

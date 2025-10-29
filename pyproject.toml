@@ -46,9 +46,20 @@ per-file-ignores = [
 testpaths = ["tests", "lib", "internal"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
-python_functions = ["test_*"]
+python_functions = ["test_*", "test*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore::ResourceWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "performance: marks tests as performance tests",
+    "benchmark: marks tests as benchmark tests",
+    "memory: marks tests as memory profiling tests",
+    "stress: marks tests as stress tests",
+    "profile: marks tests as profiling tests",
+]
 
 [tool.isort]
 profile = "black"

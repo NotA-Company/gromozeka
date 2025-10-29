@@ -78,7 +78,7 @@ def adapt_datetime(val: datetime.datetime) -> str:
     """Adapt datetime.datetime to SQLite format string for sqlite3, dood!"""
     # Use SQLite's datetime format (YYYY-MM-DD HH:MM:SS) for consistency with CURRENT_TIMESTAMP
     # Strip microseconds to match SQLite's CURRENT_TIMESTAMP format exactly
-    return val.replace(microsecond=0).strftime('%Y-%m-%d %H:%M:%S')
+    return val.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
 
 
 # Register converters for reading from database
@@ -853,7 +853,25 @@ class DatabaseWrapper:
     ###
 
     def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> bool:
-        """Store user as chat member + update username and updated_at."""
+        """Store or update a user as a chat member with their current information.
+
+        This method performs an upsert operation on the chat_users table. If the user
+        is not already a member of the chat, they will be added. If they already exist,
+        their @username, full_name, and updated_at timestamp will be refreshed.
+
+        Args:
+            chatId: The unique identifier of the chat, dood
+            userId: The unique identifier of the user, dood
+            username: The current @username of the user (may be None) (Note: Should be with @ sign)
+            fullName: The current full name/display name of the user
+
+        Returns:
+            bool: True if the operation succeeded, False if an exception occurred
+
+        Note:
+            The updated_at timestamp is automatically set to CURRENT_TIMESTAMP
+            on both insert and update operations, dood.
+        """
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -1227,7 +1245,7 @@ class DatabaseWrapper:
     ###
     # Chat Info manipulation
     ###
-    def addChatInfo(
+    def updateChatInfo(
         self,
         chatId: int,
         type: str,

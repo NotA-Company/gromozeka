@@ -35,7 +35,7 @@ from telegram.ext import ContextTypes, ExtBot
 import lib.utils as utils
 from internal.services.cache import CacheService
 from internal.services.cache.types import UserDataType, UserDataValueType
-from internal.services.queue.service import QueueService, makeEmptyAsyncTask
+from internal.services.queue_service.service import QueueService, makeEmptyAsyncTask
 from lib.ai.manager import LLMManager
 from lib.ai.models import (
     ModelImageMessage,
@@ -585,12 +585,14 @@ class BaseBotHandler(CommandHandlerMixin):
         chatId = chat.id
         storedChatInfo = self.getChatInfo(chatId=chatId)
 
+        isForum = chat.is_forum or False
+
         if (
             storedChatInfo is None
-            or chat.title != storedChatInfo.get("title", None)
-            or chat.username != storedChatInfo.get("username", None)
-            or chat.is_forum != storedChatInfo.get("is_forum", None)
-            or chat.type != storedChatInfo.get("type", None)
+            or chat.title != storedChatInfo["title"]
+            or chat.username != storedChatInfo["username"]
+            or isForum != storedChatInfo["is_forum"]
+            or chat.type != storedChatInfo["type"]
         ):
             self.cache.setChatInfo(
                 chat.id,
@@ -598,7 +600,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     "chat_id": chat.id,
                     "title": chat.title,
                     "username": chat.username,
-                    "is_forum": chat.is_forum or False,
+                    "is_forum": isForum,
                     "type": chat.type,
                     "created_at": datetime.datetime.now(),
                     "updated_at": datetime.datetime.now(),
