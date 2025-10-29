@@ -370,6 +370,10 @@ class BaseBotHandler(CommandHandlerMixin):
         if allowBotOwners and username in self.botOwners:
             return True
 
+        # If userId is the same as chatID, then it's private chat or Anonymous Admin
+        if chat is not None and user.id == chat.id:
+            return True
+
         if chat is not None:
             for admin in await chat.get_administrators():
                 # logger.debug(f"Got admin for chat {chat.id}: {admin}")
