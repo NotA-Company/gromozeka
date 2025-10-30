@@ -9,14 +9,14 @@ from typing import Dict, List, Sequence
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from internal.bot.models.command_handlers import CommandHandlerInfo
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
-from lib.ai.manager import LLMManager
+from lib.ai import LLMManager
 
 from ..models import (
     CommandCategory,
+    CommandHandlerInfo,
     CommandHandlerOrder,
     EnsuredMessage,
     commandHandler,

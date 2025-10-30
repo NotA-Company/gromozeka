@@ -13,7 +13,10 @@ import telegram
 from telegram import Chat, Message, Update
 from telegram.ext import ContextTypes
 
-from internal.bot.models import (
+from internal.database.models import MessageCategory
+from lib import utils
+
+from ..models import (
     ChatSettingsKey,
     ChatSettingsValue,
     CommandCategory,
@@ -22,9 +25,6 @@ from internal.bot.models import (
     MessageSender,
     commandHandler,
 )
-from internal.database.models import MessageCategory
-from lib import utils
-
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)

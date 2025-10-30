@@ -26,7 +26,7 @@ from telegram.ext import ContextTypes
 
 import lib.utils as utils
 from internal.database.models import MessageCategory
-from internal.services.cache.models import CacheNamespace
+from internal.services.cache import CacheNamespace
 
 from ..models import (
     ChatSettingsKey,
