@@ -398,7 +398,7 @@ def createMockBayesFilter(
         score = filter.calculateSpamScore("test message")
         assert score == 0.9
     """
-    from lib.spam.bayes_filter import NaiveBayesFilter
+    from lib.bayes_filter.bayes_filter import NaiveBayesFilter
 
     mock = Mock(spec=NaiveBayesFilter)
 

@@ -25,8 +25,7 @@ from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
-from internal.bot.models.command_handlers import CallbackDataDict
-from internal.bot.models.enums import ButtonDataKey
+from internal.bot.models import ButtonDataKey, CallbackDataDict
 from internal.config.manager import ConfigManager
 from internal.database.bayes_storage import DatabaseBayesStorage
 from internal.database.models import (
@@ -35,9 +34,8 @@ from internal.database.models import (
     SpamReason,
 )
 from internal.database.wrapper import DatabaseWrapper
-from lib.ai.manager import LLMManager
-from lib.spam import BayesConfig, NaiveBayesFilter
-from lib.spam.tokenizer import TokenizerConfig
+from lib.ai import LLMManager
+from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
 
 from ..models import (
     ChatSettingsKey,
@@ -742,6 +740,7 @@ class SpamHandler(BaseBotHandler):
     ###
     # Handling Click on SPAM/NotSPAM buttons
     ###
+
     async def buttonHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: CallbackDataDict
     ) -> HandlerResultStatus:
