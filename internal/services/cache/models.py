@@ -17,13 +17,14 @@ class CacheNamespace(StrEnum):
     """Predefined cache namespaces with their persistence rules"""
 
     CHATS = "chats"
+    CHAT_PERSISTENT = "chatPersistent"
     CHAT_USERS = "chatUsers"
     USERS = "users"
 
     def getPersistenceLevel(self) -> CachePersistenceLevel:
         """Auto-determine persistence level based on namespace"""
         match self:
-            case CacheNamespace.USERS:
+            case CacheNamespace.USERS | CacheNamespace.CHAT_PERSISTENT:
                 return CachePersistenceLevel.ON_SHUTDOWN
             case _:
                 return CachePersistenceLevel.MEMORY_ONLY

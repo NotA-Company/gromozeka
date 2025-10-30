@@ -25,7 +25,6 @@ from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
-from internal.bot.models import ButtonDataKey, CallbackDataDict
 from internal.config.manager import ConfigManager
 from internal.database.bayes_storage import DatabaseBayesStorage
 from internal.database.models import (
@@ -34,10 +33,13 @@ from internal.database.models import (
     SpamReason,
 )
 from internal.database.wrapper import DatabaseWrapper
+from internal.services.cache.types import HCSpamWarningMessageInfo
 from lib.ai import LLMManager
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
 
 from ..models import (
+    ButtonDataKey,
+    CallbackDataDict,
     ChatSettingsKey,
     CommandCategory,
     CommandHandlerOrder,
@@ -112,6 +114,7 @@ class SpamHandler(BaseBotHandler):
             ),
         )
         self.bayesFilter = NaiveBayesFilter(bayesStorage, bayesConfig)
+
         logger.info("Initialized Bayes spam filter, dood!")
 
     def _makeSpamButtonSignature(self, message: Message, extra: Any = None) -> str:
@@ -121,6 +124,46 @@ class SpamHandler(BaseBotHandler):
         # We just need some easy protection against users who tried to mark as spam some definetly-not-a-spam messages
         hashed = zlib.adler32(str.encode("utf-8", "ignore"))
         return hex(hashed)[2:]
+
+    def _rememberSpamWarningMessage(self, message: Message) -> None:
+        """
+        Remember SpamWarning Message for future manipulations
+        """
+        userId = 0
+        username = ""
+        if message.sender_chat:
+            userId = message.sender_chat.id
+            if message.sender_chat.username is not None:
+                username = message.sender_chat.username
+        elif message.from_user:
+            userId = message.from_user.id
+            if message.from_user.username is not None:
+                username = message.from_user.username
+        else:
+            logger.error(f"No sender found in {message.reply_to_message}")
+
+        self.cache.addSpamWarningMessage(
+            chatId=message.chat.id,
+            messageId=message.message_id,
+            data={
+                "parentMessageId": message.reply_to_message.message_id if message.reply_to_message else None,
+                "userId": userId,
+                "username": username,
+                "ts": message.date.timestamp(),
+            },
+        )
+
+    def _getSpamWarningMessageInfo(self, chatId: int, messageId: int) -> Optional[HCSpamWarningMessageInfo]:
+        """
+        Get SpamWarning Message Info from cache
+        """
+        return self.cache.getSpamWarningMessageInfo(chatId=chatId, messageId=messageId)
+
+    def _deleteSpamWarningMessageInfo(self, chatId: int, messageId: int) -> None:
+        """
+        Delete SpamWarning Message Info from cache
+        """
+        self.cache.removeSpamWarningMessageInfo(chatId=chatId, messageId=messageId)
 
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
         """
@@ -338,9 +381,12 @@ class SpamHandler(BaseBotHandler):
             return True
         elif spamScore >= warnTreshold:
             logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage}")
-            await self.sendMessage(
+            sentMessage = await self.sendMessage(
                 ensuredMessage,
-                messageText=f"Возможно спам (Вероятность: {spamScore:.3f}, порог: {warnTreshold})\n",
+                messageText=(
+                    f"Возможно спам (Вероятность: {spamScore:.3f}, "
+                    f"порог: {warnTreshold}, id: {ensuredMessage.messageId})\n"
+                ),
                 replyMarkup=InlineKeyboardMarkup(
                     [
                         [
@@ -367,6 +413,8 @@ class SpamHandler(BaseBotHandler):
                 ),
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
+            if sentMessage is not None:
+                self._rememberSpamWarningMessage(sentMessage)
         else:
             logger.debug(f"Not SPAM: spamScore: {spamScore} < {warnTreshold} {ensuredMessage}")
 
@@ -773,9 +821,22 @@ class SpamHandler(BaseBotHandler):
             logger.error(f"handle_button: Base message from {message.from_user}, not bot (#{context.bot.id})")
             return HandlerResultStatus.FATAL
 
+        messageInfo = self._getSpamWarningMessageInfo(chatId=chat.id, messageId=message.message_id)
+
         if message.reply_to_message is None:
-            logger.error(f"handle_button: Base message is not reply to message in {query}")
-            return HandlerResultStatus.FATAL
+            if messageInfo is not None:
+                self._deleteSpamWarningMessageInfo(chatId=chat.id, messageId=message.message_id)
+                logger.info(f"handle_button: repliedMessage is deleted, but messageInfo is {messageInfo}")
+                # TODO: We can get message from DB and create Message\EnsuredMessage for it
+                try:
+                    await message.delete()
+                except Exception as e:
+                    logger.error(f"handle_button: failed to delete message {message} in {query}: {e}")
+
+                return HandlerResultStatus.FINAL
+            else:
+                logger.error(f"handle_button: Base message is not reply to message in {query}")
+                return HandlerResultStatus.FATAL
 
         repliedMessage = message.reply_to_message
 
@@ -794,6 +855,8 @@ class SpamHandler(BaseBotHandler):
         if not isAdmin and not userCanMarkSpam:
             logger.info(f"user {user} in chat {chat} tried to click [Not]SPAM button. Denied.")
             return HandlerResultStatus.FINAL
+
+        self._deleteSpamWarningMessageInfo(chatId=chat.id, messageId=message.message_id)
         markReason = SpamReason.ADMIN if isAdmin else SpamReason.USER
 
         logger.debug(f"SPAM: Message {repliedMessage} tagged as isSpam={spamAction} by {user}")
