@@ -28,10 +28,10 @@ from telegram.ext import ContextTypes
 from internal.config.manager import ConfigManager
 from internal.database.models import ChatMessageDict, MessageCategory
 from internal.database.wrapper import DatabaseWrapper
-from internal.services.llm.service import LLMService
-from lib.ai.abstract import AbstractModel
-from lib.ai.manager import LLMManager
-from lib.ai.models import (
+from internal.services.llm import LLMService
+from lib.ai import (
+    AbstractModel,
+    LLMManager,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,

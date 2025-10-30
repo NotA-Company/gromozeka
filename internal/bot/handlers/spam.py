@@ -33,7 +33,7 @@ from internal.database.models import (
     SpamReason,
 )
 from internal.database.wrapper import DatabaseWrapper
-from internal.services.cache.types import HCSpamWarningMessageInfo
+from internal.services.cache import HCSpamWarningMessageInfo
 from lib.ai import LLMManager
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
 

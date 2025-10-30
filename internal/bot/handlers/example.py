@@ -13,17 +13,16 @@ from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
-from internal.bot.models.command_handlers import CallbackDataDict
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm.service import LLMService
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask
-from lib.ai.manager import LLMManager
-from lib.ai.models import LLMFunctionParameter, LLMParameterType
+from lib.ai import LLMFunctionParameter, LLMManager, LLMParameterType
 
 from ..models import (
+    CallbackDataDict,
     CommandCategory,
     CommandHandlerOrder,
     DelayedTaskFunction,

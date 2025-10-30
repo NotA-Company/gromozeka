@@ -23,10 +23,10 @@ import lib.utils as utils
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
-from internal.services.llm.service import LLMService
-from lib.ai.manager import LLMManager
-from lib.ai.models import (
+from internal.services.llm import LLMService
+from lib.ai import (
     LLMFunctionParameter,
+    LLMManager,
     LLMParameterType,
     ModelImageMessage,
     ModelMessage,
