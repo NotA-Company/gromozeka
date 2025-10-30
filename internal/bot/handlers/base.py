@@ -526,7 +526,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     raise ValueError("No reply message")
 
                 if not skipLogs:
-                    logger.debug(f"Sent message: {replyMessage}")
+                    logger.debug(f"Sent message: {utils.dumpMessage(replyMessage)}")
 
                 # Save message
                 ensuredReplyMessage = EnsuredMessage.fromMessage(replyMessage)
