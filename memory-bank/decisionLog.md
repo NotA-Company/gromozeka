@@ -1401,3 +1401,41 @@ Move [`MessageType`](internal/bot/models/enums.py) and other enums to a separate
 * Updated [`README.md`](README.md:30) prerequisites section to specify Python 3.12+ with explanation
 * Added requirements section to [`README_BOT.md`](README_BOT.md:13) specifying Python 3.12+
 * Updated memory bank files with timestamp and technical requirements
+
+[2025-10-30 20:33:00] - Enhanced AI Module Exports
+
+## Decision
+
+* Updated lib/ai/__init__.py to include comprehensive imports from all AI submodules
+* Added proper __all__ list with all exported classes organized by category
+* Ensured all model classes, enums, and providers are properly exposed
+
+## Rationale 
+
+* The original __init__.py was only exporting 3 classes (AbstractModel, AbstractLLMProvider, LLMManager)
+* Many useful classes in models.py and providers were not accessible without deep imports
+* Comprehensive __all__ list provides better module interface and IDE autocomplete support
+* Organized imports by category improves code readability and maintainability
+
+## Implementation Details
+
+* Added imports for all model classes from models.py:
+  - LLMAbstractTool: Abstract base class for LLM tools
+  - LLMParameterType: Enum for parameter types (string, number, boolean, etc.)
+  - LLMFunctionParameter: Class for function parameter definitions
+  - LLMToolFunction: Class for function tools with callable functionality
+  - LLMToolCall: Class for tool-calling operations
+  - ModelMessage: Message class for model communication
+  - ModelImageMessage: Extended message class with image support
+  - ModelResultStatus: Enum for model run status values
+  - ModelRunResult: Unified result class for model operations
+* Added provider imports from providers module:
+  - YcSdkProvider: Yandex Cloud SDK provider implementation
+  - YcOpenaiProvider: Yandex Cloud OpenAI-compatible provider
+  - OpenrouterProvider: OpenRouter API provider implementation
+* Created comprehensive __all__ list with 15 items organized by:
+  - Abstract classes (3 items)
+  - Manager (1 item)
+  - Models and enums (8 items)
+  - Providers (3 items)
+* Maintained backward compatibility with existing imports
