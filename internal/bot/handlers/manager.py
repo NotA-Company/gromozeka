@@ -8,14 +8,14 @@ from typing import List, Optional, Sequence, Set
 from telegram import Message, Update
 from telegram.ext import ContextTypes, ExtBot
 
-from internal.bot.models import CommandHandlerInfo, EnsuredMessage
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
-from internal.services.cache.service import CacheService
-from internal.services.queue_service.service import QueueService
+from internal.services.cache import CacheService
+from internal.services.queue_service import QueueService
 from lib import utils
-from lib.ai.manager import LLMManager
+from lib.ai import LLMManager
 
+from ..models import CommandHandlerInfo, EnsuredMessage
 from .base import BaseBotHandler, HandlerResultStatus
 from .common import CommonHandler
 from .configure import ConfigureCommandHandler

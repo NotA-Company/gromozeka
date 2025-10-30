@@ -19,7 +19,6 @@ from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, 
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
-from internal.bot.models.command_handlers import CallbackDataDict
 from internal.database.models import MessageCategory
 from internal.services.cache.types import UserActiveActionEnum
 from lib.markdown import markdown_to_markdownv2
@@ -28,6 +27,7 @@ from .. import constants
 from ..models import (
     ButtonConfigureAction,
     ButtonDataKey,
+    CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
     CommandCategory,

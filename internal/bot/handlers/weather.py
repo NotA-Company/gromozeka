@@ -30,14 +30,13 @@ from internal.database.models import (
 )
 from internal.database.openweathermap_cache import DatabaseWeatherCache
 from internal.database.wrapper import DatabaseWrapper
-from internal.services.llm.service import LLMService
-from lib.ai.manager import LLMManager
-from lib.ai.models import (
+from internal.services.llm import LLMService
+from lib.ai import (
     LLMFunctionParameter,
+    LLMManager,
     LLMParameterType,
 )
-from lib.openweathermap.client import OpenWeatherMapClient
-from lib.openweathermap.models import CombinedWeatherResult
+from lib.openweathermap import CombinedWeatherResult, OpenWeatherMapClient
 
 from .. import constants
 from ..models import (

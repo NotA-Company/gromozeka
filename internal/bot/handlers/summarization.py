@@ -17,13 +17,12 @@ from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
-from internal.bot.models import CallbackDataDict
 from internal.database.models import (
     ChatInfoDict,
     MessageCategory,
 )
-from internal.services.cache.types import UserActiveActionEnum
-from lib.ai.models import (
+from internal.services.cache import UserActiveActionEnum
+from lib.ai import (
     ModelMessage,
     ModelRunResult,
 )
@@ -33,6 +32,7 @@ from .. import constants
 from ..models import (
     ButtonDataKey,
     ButtonSummarizationAction,
+    CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
     CommandCategory,
