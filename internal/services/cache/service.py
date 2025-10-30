@@ -16,7 +16,9 @@ from lib import utils
 from .models import CacheNamespace, CachePersistenceLevel
 from .types import (
     HCChatCacheDict,
+    HCChatPersistentCacheDict,
     HCChatUserCacheDict,
+    HCSpamWarningMessageInfo,
     HCUserCacheDict,
     UserActiveActionEnum,
     UserDataType,
@@ -127,9 +129,13 @@ class CacheService:
             # Initialize namespaces with LRU caches
             self._caches: Dict[
                 CacheNamespace,
-                LRUCache[int, HCChatCacheDict] | LRUCache[str, HCChatUserCacheDict] | LRUCache[int, HCUserCacheDict],
+                LRUCache[int, HCChatCacheDict]
+                | LRUCache[str, HCChatUserCacheDict]
+                | LRUCache[int, HCUserCacheDict]
+                | LRUCache[int, HCChatPersistentCacheDict],
             ] = {
                 CacheNamespace.CHATS: LRUCache[int, HCChatCacheDict](self.maxCacheSize),
+                CacheNamespace.CHAT_PERSISTENT: LRUCache[int, HCChatPersistentCacheDict](self.maxCacheSize),
                 CacheNamespace.CHAT_USERS: LRUCache[str, HCChatUserCacheDict](self.maxCacheSize),
                 CacheNamespace.USERS: LRUCache[int, HCUserCacheDict](self.maxCacheSize),
             }
@@ -137,6 +143,7 @@ class CacheService:
             # Track what needs persistence
             self.dirtyKeys: Dict[CacheNamespace, set[str | int]] = {
                 CacheNamespace.CHATS: set(),
+                CacheNamespace.CHAT_PERSISTENT: set(),
                 CacheNamespace.CHAT_USERS: set(),
                 CacheNamespace.USERS: set(),
             }
@@ -166,6 +173,11 @@ class CacheService:
         """Access users namespace"""
         return self._caches[CacheNamespace.USERS]  # pyright: ignore[reportReturnType]
 
+    @property
+    def chatPersistent(self) -> LRUCache[int, HCChatPersistentCacheDict]:
+        """Access chatPersistent namespace"""
+        return self._caches[CacheNamespace.CHAT_PERSISTENT]  # pyright: ignore[reportReturnType]
+
     def injectDatabase(self, dbWrapper: "DatabaseWrapper") -> None:
         """Inject database wrapper for persistence"""
         self.dbWrapper = dbWrapper
@@ -181,8 +193,9 @@ class CacheService:
         else:
             logger.error("doExit: database wrapper not injected, dood!")
 
-    # Convenience methods
+    # ## Convenience methods
 
+    # # ChatSettings
     def getChatSettings(self, chatId: int) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
         """Get chat settings with cache"""
         # Preventing circullar dependencies
@@ -256,6 +269,8 @@ class CacheService:
                 logger.error(f"No dbWrapper found, can't unset chatSettings for {chatId}")
         logger.debug(f"Unset chat setting {key} for {chatId}, dood!")
 
+    # # Chat Info
+
     def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """Get chat info from cache or database"""
         chatCache = self.chats.get(chatId, {})
@@ -287,6 +302,8 @@ class CacheService:
         else:
             logger.error(f"No dbWrapper found, can't save chat info for {chatId}")
         logger.debug(f"Updated chat info for {chatId}, dood!")
+
+    # # Chat Topics Info
 
     def getChatTopicsInfo(self, chatId: int) -> Dict[int, ChatTopicInfoDict]:
         """Get all known topics info from cache or DB"""
@@ -334,6 +351,7 @@ class CacheService:
             logger.error(f"No dbWrapper found, can't save topic info for {chatId}:{topicId}")
         logger.debug(f"Updated topic info for {chatId}:{topicId}, dood!")
 
+    # ## ChatUser UserData
     def _getChatUserKey(self, chatId: int, userId: int) -> str:
         """Get key for chat user data"""
         return f"{chatId}:{userId}"
@@ -419,6 +437,8 @@ class CacheService:
         self.chatUsers.set(userKey, userCache)
         logger.debug(f"Cleared user data for {userKey}, dood!")
 
+    # ## User State
+
     def getUserState(
         self, userId: int, stateKey: UserActiveActionEnum, default: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
@@ -458,6 +478,40 @@ class CacheService:
         self.users.set(userId, userState)
         self.dirtyKeys[CacheNamespace.USERS].add(userId)
 
+    # ## ChatPersistent spamWarningMessages
+
+    def getSpamWarningMessageInfo(self, chatId: int, messageId: int) -> Optional[HCSpamWarningMessageInfo]:
+        """..."""
+        chatPCache = self.chatPersistent.get(chatId, {})
+        messages = chatPCache.get("spamWarningMessages", {})
+        return messages.get(messageId, None)
+
+    def addSpamWarningMessage(self, chatId: int, messageId: int, data: HCSpamWarningMessageInfo) -> None:
+        """..."""
+        chatPCache = self.chatPersistent.get(chatId, {})
+        if "spamWarningMessages" not in chatPCache:
+            chatPCache["spamWarningMessages"] = {}
+
+        chatPCache["spamWarningMessages"][messageId] = data
+
+        self.chatPersistent.set(chatId, chatPCache)
+        self.dirtyKeys[CacheNamespace.CHAT_PERSISTENT].add(chatId)
+        logger.debug(f"Updated spamWarningMessage {messageId} for {chatId}, dood!")
+
+    def removeSpamWarningMessageInfo(self, chatId: int, messageId: int) -> None:
+        """..."""
+        chatPCache = self.chatPersistent.get(chatId, {})
+        if "spamWarningMessages" not in chatPCache:
+            return
+
+        messages = chatPCache.get("spamWarningMessages", {})
+        messages.pop(messageId, None)
+
+        self.chatPersistent.set(chatId, chatPCache)
+        self.dirtyKeys[CacheNamespace.CHAT_PERSISTENT].add(chatId)
+        logger.debug(f"Removed spamWarningMessage {messageId} for {chatId}, dood!")
+
+    # Common methods
     def clearNamespace(self, namespace: CacheNamespace) -> None:
         """Clear all entries in a namespace"""
         # Mark all keys dirty for deleteing them on save
