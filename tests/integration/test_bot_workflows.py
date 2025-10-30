@@ -237,7 +237,7 @@ class TestHandlerChainExecution:
         originalHandlers = []
         for i, handler in enumerate(handlersManager.handlers):
             originalHandlers.append(handler.messageHandler)
-            handler.messageHandler = await trackingHandler(f"handler_{i}")
+            handler.messageHandler = await trackingHandler(f"handler_{i:02d}")
 
         message = createMockMessage(messageId=1, chatId=123, userId=456, text="test")
         update = createMockUpdate(message=message)
