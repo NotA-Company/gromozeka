@@ -23,8 +23,8 @@ from telegram.constants import MessageEntityType
 from internal.bot.handlers.spam import SpamHandler
 from internal.bot.models import ChatSettingsKey, ChatSettingsValue, EnsuredMessage
 from internal.database.models import MessageCategory, SpamReason
-from lib.spam import NaiveBayesFilter
-from lib.spam.models import BayesModelStats, SpamScore
+from lib.bayes_filter import NaiveBayesFilter
+from lib.bayes_filter.models import BayesModelStats, SpamScore
 from tests.fixtures.telegram_mocks import (
     createMockBot,
     createMockChat,
