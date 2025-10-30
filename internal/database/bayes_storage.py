@@ -9,8 +9,8 @@ import logging
 from typing import Any, Dict, Iterable, List, Optional
 
 from internal.database.wrapper import DatabaseWrapper
-from lib.spam.models import BayesModelStats, ClassStats, TokenStats
-from lib.spam.storage_interface import BayesStorageInterface
+from lib.bayes_filter.models import BayesModelStats, ClassStats, TokenStats
+from lib.bayes_filter.storage_interface import BayesStorageInterface
 
 logger = logging.getLogger(__name__)
 
