@@ -3,12 +3,24 @@ Cache: TypedDict models for handlers cache
 """
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypeAlias, TypedDict
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
 
 if TYPE_CHECKING:
     from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
+
+
+class HCSpamWarningMessageInfo(TypedDict):
+    # messageId: int
+    parentMessageId: NotRequired[Optional[int]]
+    userId: int
+    username: str
+    ts: float
+
+
+class HCChatPersistentCacheDict(TypedDict):
+    spamWarningMessages: NotRequired[Dict[int, HCSpamWarningMessageInfo]]
 
 
 class HCChatCacheDict(TypedDict):
