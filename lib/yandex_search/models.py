@@ -251,6 +251,13 @@ class SearchRequest(TypedDict):
         responseFormat (ResponseFormat): Response format from the API.
             Valid value: ResponseFormat.FORMAT_XML
 
+        metadata (Dict[str, str]): Search flags, key:value pairs.
+            No more than 64.
+            The maximum string length in characters for each value is 63.
+            Each value must match the regular expression [-_0-9a-z]*.
+            The string length in characters for each key must be 1-63.
+            Each key must match the regular expression [a-z][-_0-9a-z]*.
+
     Example:
         ```python
         request: SearchRequest = {
@@ -287,6 +294,7 @@ class SearchRequest(TypedDict):
     l10n: NotRequired[Localization]
     folderId: str
     responseFormat: ResponseFormat
+    metadata: NotRequired[Dict[str, str]]
 
 
 # Response Models
