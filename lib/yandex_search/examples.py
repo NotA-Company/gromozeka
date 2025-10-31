@@ -22,7 +22,15 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from lib.yandex_search import DictSearchCache, YandexSearchClient  # noqa: E402
-from lib.yandex_search.models import FamilyMode, FixTypoMode, GroupMode, Localization, SearchType, SortMode, SortOrder
+from lib.yandex_search.models import (  # noqa: E402
+    FamilyMode,
+    FixTypoMode,
+    GroupMode,
+    Localization,
+    SearchType,
+    SortMode,
+    SortOrder,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
