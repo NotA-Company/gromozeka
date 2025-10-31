@@ -122,14 +122,14 @@ class TestDictSearchCache(unittest.TestCase):
             await self.cache.setSearch("key3", self.sample_response)
 
             # Check stats
-            stats = self.cache.get_stats()
+            stats = self.cache.getStats()
             self.assertEqual(stats["search_entries"], 3)
 
             # Add one more entry (should evict oldest)
             await self.cache.setSearch("key4", self.sample_response)
 
             # Check that cache size is maintained
-            stats = self.cache.get_stats()
+            stats = self.cache.getStats()
             self.assertEqual(stats["search_entries"], 3)  # Should still be max_size
 
             # Check that newest entry exists
@@ -147,14 +147,14 @@ class TestDictSearchCache(unittest.TestCase):
             await self.cache.setSearch("key2", self.sample_response)
 
             # Verify data exists
-            stats = self.cache.get_stats()
+            stats = self.cache.getStats()
             self.assertEqual(stats["search_entries"], 2)
 
             # Clear cache
             self.cache.clear()
 
             # Verify cache is empty
-            stats = self.cache.get_stats()
+            stats = self.cache.getStats()
             self.assertEqual(stats["search_entries"], 0)
 
             # Verify data is gone
@@ -168,7 +168,7 @@ class TestDictSearchCache(unittest.TestCase):
 
         async def run_test():
             # Initial stats
-            stats = self.cache.get_stats()
+            stats = self.cache.getStats()
             self.assertEqual(stats["search_entries"], 0)
             self.assertEqual(stats["max_size"], 3)
             self.assertEqual(stats["default_ttl"], 1)
@@ -178,7 +178,7 @@ class TestDictSearchCache(unittest.TestCase):
             await self.cache.setSearch("key2", self.sample_response)
 
             # Updated stats
-            stats = self.cache.get_stats()
+            stats = self.cache.getStats()
             self.assertEqual(stats["search_entries"], 2)
 
         asyncio.run(run_test())

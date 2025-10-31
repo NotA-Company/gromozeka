@@ -243,7 +243,7 @@ class TestCachePerformance:
 
         # Make many requests to fill cache
         for i in range(150):  # More than cache max_size
-            await client.searchSimple(f"test query {i}")
+            await client.search(f"test query {i}")
 
         # Take second memory snapshot
         snapshot2 = tracemalloc.take_snapshot()
@@ -253,7 +253,7 @@ class TestCachePerformance:
         total_size = sum(stat.size_diff for stat in top_stats if stat.size_diff > 0)
 
         # Cache should not grow beyond its limits
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] <= 100  # Should not exceed max_size
 
         # Memory usage should be reasonable

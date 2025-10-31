@@ -35,27 +35,23 @@ from .cache_interface import SearchCacheInterface
 from .client import YandexSearchClient
 from .dict_cache import DictSearchCache
 from .models import (
-    AuthConfig,
     ErrorResponse,
     GroupSpec,
     SearchGroup,
-    SearchMetadata,
     SearchQuery,
     SearchRequest,
     SearchResponse,
     SearchResult,
     SortSpec,
 )
-from .xml_parser import parseErrorResponse, parseSearchResponse
+from .xml_parser import parseSearchResponse
 
 __all__ = [
     # Client
     "YandexSearchClient",
     # Models
-    "AuthConfig",
     "ErrorResponse",
     "GroupSpec",
-    "SearchMetadata",
     "SearchQuery",
     "SearchRequest",
     "SearchResponse",
@@ -63,7 +59,6 @@ __all__ = [
     "SearchGroup",
     "SortSpec",
     # XML Parser
-    "parseErrorResponse",
     "parseSearchResponse",
     # Cache
     "SearchCacheInterface",
