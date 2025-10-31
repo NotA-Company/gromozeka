@@ -1439,3 +1439,29 @@ Move [`MessageType`](internal/bot/models/enums.py) and other enums to a separate
   - Models and enums (8 items)
   - Providers (3 items)
 * Maintained backward compatibility with existing imports
+[2025-10-31 00:12:00] - Phase 2 Yandex Search API Client Implementation Completed
+
+## Decision
+
+* Successfully implemented comprehensive caching and rate limiting for Yandex Search API client
+* Followed established project patterns from OpenWeatherMap client for consistency
+* Added thread-safe in-memory caching with TTL and size limits
+* Implemented configurable rate limiting to prevent API abuse
+
+## Rationale
+
+* Caching reduces API costs and improves response times for repeated queries
+* Rate limiting prevents accidental API abuse and quota exhaustion
+* Thread safety ensures reliable operation in concurrent environments
+* Following existing patterns maintains code consistency and maintainability
+
+## Implementation Details
+
+* Created SearchCacheInterface abstract class following project patterns
+* Implemented DictSearchCache with RLock for thread safety and automatic cleanup
+* Added cache support to YandexSearchClient with bypass options at global and per-request level
+* Implemented sliding window rate limiting with async lock for thread safety
+* Cache key generation excludes folderId to allow cache sharing across clients
+* Created comprehensive test suites with 30 total tests (11 for cache, 19 for client)
+* Updated module exports to include new cache classes
+* All code follows project standards (camelCase naming, proper error handling, logging)
