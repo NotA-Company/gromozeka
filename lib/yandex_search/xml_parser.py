@@ -240,8 +240,6 @@ def _parseDocument(docElement: ET.Element) -> Optional[SearchResult]:
             "hlwords": [],
         }
 
-        hlwords = []
-
         # <doc id="XXX">
         #     <relevance priority="all"/>
         #     <saved-copy-url>https://yandexwebcache.net/...</saved-copy-url>

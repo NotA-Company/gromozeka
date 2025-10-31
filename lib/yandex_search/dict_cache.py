@@ -166,20 +166,16 @@ class DictSearchCache(SearchCacheInterface):
             The cache key generation is deterministic - the same request parameters
             will always produce the same hash, regardless of parameter order.
         """
-        import hashlib
-        import json
 
         # Create a normalized representation of the request
         # Exclude folderId from cache key as it's constant per client
         cacheData = {
             "query": request["query"],
-            "sortSpec": request["sortSpec"],
-            "groupSpec": request["groupSpec"],
-            # Include relevant metadata fields except folderId
-            "maxPassages": request["maxPassages"],
-            "region": request["region"],
-            "l10n": request["l10n"],
-            "responseFormat": request["responseFormat"],
+            "sortSpec": request.get("sortSpec", None),
+            "groupSpec": request.get("groupSpec", None),
+            "maxPassages": request.get("maxPassages", None),
+            "region": request.get("region", None),
+            "l10n": request.get("l10n", None),
         }
 
         # Sort and serialize to ensure consistent keys

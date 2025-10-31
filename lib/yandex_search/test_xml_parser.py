@@ -7,7 +7,7 @@ This module contains unit tests for the XML parser functionality.
 import base64
 import unittest
 
-from .xml_parser import parseErrorResponse, parseSearchResponse
+from .xml_parser import parseSearchResponse
 
 
 class TestXmlParser(unittest.TestCase):
@@ -17,35 +17,80 @@ class TestXmlParser(unittest.TestCase):
         """Set up test fixtures"""
         # Sample successful response XML
         self.successXml = """<?xml version="1.0" encoding="utf-8"?>
-<search requestid="test-request-id" found="100" found-human="Found 100 results" page="0">
-    <group>
-        <doc url="https://example.com" domain="example.com" title="Example Title">
-            <passage>This is a <hlword>sample</hlword> passage with <hlword>highlighted</hlword> words.</passage>
-            <mime-type>text/html</mime-type>
-        </doc>
-        <doc url="https://another.com" domain="another.com" title="Another Title">
-            <passage>Another passage without highlighting.</passage>
-            <mime-type>text/html</mime-type>
-        </doc>
-    </group>
-    <group>
-        <doc url="https://third.com" domain="third.com" title="Third Title">
-            <passage>Third passage with <hlword>different</hlword> highlighting.</passage>
-            <mime-type>text/html</mime-type>
-        </doc>
-    </group>
-</search>"""
+<yandexsearch version="1.0">
+    <response>
+        <reqid>test-request-id</reqid>
+        <found priority="all">100</found>
+        <found-human>Found 100 results</found-human>
+        <results>
+            <grouping>
+                <page>0</page>
+                <group>
+                    <doc>
+                        <url>https://example.com</url>
+                        <domain>example.com</domain>
+                        <title>Example <hlword>Title</hlword></title>
+                        <modtime>20231015T120000</modtime>
+                        <size>1024</size>
+                        <charset>utf-8</charset>
+                        <saved-copy-url>https://yandexwebcache.net/example</saved-copy-url>
+                        <mime-type>text/html</mime-type>
+                        <passages>
+                            <passage>This is a <hlword>sample</hlword> passage.</passage>
+                        </passages>
+                        <properties>
+                            <lang>en</lang>
+                            <extended-text>Extended text content</extended-text>
+                        </properties>
+                    </doc>
+                    <doc>
+                        <url>https://another.com</url>
+                        <domain>another.com</domain>
+                        <title>Another Title</title>
+                        <mime-type>text/html</mime-type>
+                        <passages>
+                            <passage>Another passage without highlighting.</passage>
+                        </passages>
+                    </doc>
+                </group>
+                <group>
+                    <doc>
+                        <url>https://third.com</url>
+                        <domain>third.com</domain>
+                        <title>Third Title</title>
+                        <mime-type>text/html</mime-type>
+                        <passages>
+                            <passage>Third passage with <hlword>different</hlword> highlighting.</passage>
+                        </passages>
+                    </doc>
+                </group>
+            </grouping>
+        </results>
+    </response>
+</yandexsearch>"""
 
         # Sample error response XML
         self.errorXml = """<?xml version="1.0" encoding="utf-8"?>
-<search>
-    <error code="INVALID_QUERY" message="Invalid search query" details="The query contains forbidden characters"/>
-</search>"""
+<yandexsearch version="1.0">
+    <response>
+        <error code="15">Invalid search query</error>
+    </response>
+</yandexsearch>"""
 
         # Empty response XML
         self.emptyXml = """<?xml version="1.0" encoding="utf-8"?>
-<search requestid="empty-request" found="0" found-human="No results found" page="0">
-</search>"""
+<yandexsearch version="1.0">
+    <response>
+        <reqid>empty-request</reqid>
+        <found priority="all">0</found>
+        <found-human>No results found</found-human>
+        <results>
+            <grouping>
+                <page>0</page>
+            </grouping>
+        </results>
+    </response>
+</yandexsearch>"""
 
     def testParseSuccessResponse(self):
         """Test parsing a successful search response"""
@@ -60,45 +105,50 @@ class TestXmlParser(unittest.TestCase):
         self.assertEqual(response["found"], 100)
         self.assertEqual(response["foundHuman"], "Found 100 results")
         self.assertEqual(response["page"], 0)
-        self.assertIsNone(response["error"])
+        self.assertIsNone(response.get("error"))
 
         # Verify groups
         self.assertEqual(len(response["groups"]), 2)
 
         # Verify first group
         firstGroup = response["groups"][0]
-        self.assertEqual(len(firstGroup["group"]), 2)
+        self.assertEqual(len(firstGroup), 2)
 
         # Verify first document
-        firstDoc = firstGroup["group"][0]
+        firstDoc = firstGroup[0]
         self.assertEqual(firstDoc["url"], "https://example.com")
         self.assertEqual(firstDoc["domain"], "example.com")
-        self.assertEqual(firstDoc["title"], "Example Title")
+        self.assertEqual(firstDoc["title"], "Example *Title*")
         self.assertEqual(len(firstDoc["passages"]), 1)
-        self.assertEqual(firstDoc["passages"][0], "This is a *sample* passage with *highlighted* words.")
+        self.assertEqual(firstDoc["passages"][0], "This is a *sample* passage.")
         hlwords = firstDoc.get("hlwords")
         self.assertIsNotNone(hlwords)
         if hlwords:
-            self.assertEqual(set(hlwords), {"sample", "highlighted"})
-        mimetypes = firstDoc.get("mimetypes")
-        self.assertIsNotNone(mimetypes)
-        self.assertEqual(mimetypes, ["text/html"])
+            self.assertEqual(set(hlwords), {"sample"})
+        # Verify new fields
+        self.assertEqual(firstDoc.get("mimeType"), "text/html")
+        self.assertEqual(firstDoc.get("charset"), "utf-8")
+        self.assertEqual(firstDoc.get("savedCopyUrl"), "https://yandexwebcache.net/example")
+        self.assertIsNotNone(firstDoc.get("modtime"))
+        self.assertEqual(firstDoc.get("size"), 1024)
+        self.assertEqual(firstDoc.get("lang"), "en")
+        self.assertEqual(firstDoc.get("extendedText"), "Extended text content")
 
         # Verify second document
-        secondDoc = firstGroup["group"][1]
+        secondDoc = firstGroup[1]
         self.assertEqual(secondDoc["url"], "https://another.com")
         self.assertEqual(secondDoc["domain"], "another.com")
         self.assertEqual(secondDoc["title"], "Another Title")
         self.assertEqual(len(secondDoc["passages"]), 1)
         self.assertEqual(secondDoc["passages"][0], "Another passage without highlighting.")
-        self.assertIsNone(secondDoc["hlwords"])
+        self.assertEqual(secondDoc["hlwords"], [])
 
         # Verify second group
         secondGroup = response["groups"][1]
-        self.assertEqual(len(secondGroup["group"]), 1)
+        self.assertEqual(len(secondGroup), 1)
 
         # Verify third document
-        thirdDoc = secondGroup["group"][0]
+        thirdDoc = secondGroup[0]
         self.assertEqual(thirdDoc["url"], "https://third.com")
         self.assertEqual(thirdDoc["domain"], "third.com")
         self.assertEqual(thirdDoc["title"], "Third Title")
@@ -125,9 +175,8 @@ class TestXmlParser(unittest.TestCase):
         error = response.get("error")
         self.assertIsNotNone(error)
         if error:
-            self.assertEqual(error.get("code"), "INVALID_QUERY")
+            self.assertEqual(error.get("code"), "15")
             self.assertEqual(error.get("message"), "Invalid search query")
-            self.assertEqual(error.get("details"), "The query contains forbidden characters")
 
     def testParseEmptyResponse(self):
         """Test parsing an empty response"""
@@ -142,7 +191,7 @@ class TestXmlParser(unittest.TestCase):
         self.assertEqual(response["found"], 0)
         self.assertEqual(response["foundHuman"], "No results found")
         self.assertEqual(response["page"], 0)
-        self.assertIsNone(response["error"])
+        self.assertIsNone(response.get("error"))
         self.assertEqual(len(response["groups"]), 0)
 
     def testParseInvalidBase64(self):
@@ -163,40 +212,33 @@ class TestXmlParser(unittest.TestCase):
 
         self.assertIn("Invalid XML format", str(context.exception))
 
-    def testParseErrorResponseFunction(self):
-        """Test the dedicated error response parser function"""
-        # Encode error XML to Base64
-        base64Xml = base64.b64encode(self.errorXml.encode("utf-8")).decode("utf-8")
-
-        # Parse error response
-        error = parseErrorResponse(base64Xml)
-
-        # Verify error structure
-        self.assertEqual(error["code"], "INVALID_QUERY")
-        self.assertEqual(error["message"], "Invalid search query")
-        self.assertEqual(error["details"], "The query contains forbidden characters")
-
-    def testParseErrorResponseFunctionWithInvalidData(self):
-        """Test error response parser with invalid data"""
-        # Test with completely invalid data
-        error = parseErrorResponse("invalid-base64-data")
-
-        # Should return a generic error
-        self.assertEqual(error["code"], "PARSE_ERROR")
-        self.assertIn("Failed to parse error response", error["message"])
-
     def testComplexPassageParsing(self):
         """Test parsing complex passages with multiple highlighted words"""
         complexXml = """<?xml version="1.0" encoding="utf-8"?>
-<search requestid="complex-test" found="1" found-human="Found 1 result" page="0">
-    <group>
-        <doc url="https://complex.com" domain="complex.com" title="Complex Title">
-            <passage>Start text <hlword>first</hlword> middle text <hlword>second</hlword> end text.</passage>
-            <passage>Another passage with <hlword>third</hlword> and <hlword>fourth</hlword> words.</passage>
-            <mime-type>text/html</mime-type>
-        </doc>
-    </group>
-</search>"""
+<yandexsearch version="1.0">
+    <response>
+        <reqid>complex-test</reqid>
+        <found priority="all">1</found>
+        <found-human>Found 1 result</found-human>
+        <results>
+            <grouping>
+                <page>0</page>
+                <group>
+                    <doc>
+                        <url>https://complex.com</url>
+                        <domain>complex.com</domain>
+                        <title>Complex Title</title>
+                        <mime-type>text/html</mime-type>
+                        <passages>
+                            <passage>Start <hlword>1st</hlword> middle <hlword>2nd</hlword> end.</passage>
+                            <passage>With <hlword>third</hlword> and <hlword>fourth</hlword> words.</passage>
+                        </passages>
+                    </doc>
+                </group>
+            </grouping>
+        </results>
+    </response>
+</yandexsearch>"""
 
         # Encode XML to Base64
         base64Xml = base64.b64encode(complexXml.encode("utf-8")).decode("utf-8")
@@ -205,14 +247,14 @@ class TestXmlParser(unittest.TestCase):
         response = parseSearchResponse(base64Xml)
 
         # Verify document
-        doc = response["groups"][0]["group"][0]
+        doc = response["groups"][0][0]
         self.assertEqual(len(doc["passages"]), 2)
-        self.assertEqual(doc["passages"][0], "Start text *first* middle text *second* end text.")
-        self.assertEqual(doc["passages"][1], "Another passage with *third* and *fourth* words.")
+        self.assertEqual(doc["passages"][0], "Start *1st* middle *2nd* end.")
+        self.assertEqual(doc["passages"][1], "With *third* and *fourth* words.")
         hlwords = doc.get("hlwords")
         self.assertIsNotNone(hlwords)
         if hlwords:
-            self.assertEqual(set(hlwords), {"first", "second", "third", "fourth"})
+            self.assertEqual(set(hlwords), {"1st", "2nd", "third", "fourth"})
 
 
 if __name__ == "__main__":

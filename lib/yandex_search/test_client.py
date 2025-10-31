@@ -35,9 +35,13 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
             <grouping>
                 <page>0</page>
                 <group>
-                    <doc url="https://example.com" domain="example.com" title="Example Title">
+                    <doc url="https://example.com" domain="example.com">
+                        <title>Example Title</title>
                         <passage>This is a <hlword>sample</hlword> passage.</passage>
                         <mime-type>text/html</mime-type>
+                        <charset>utf-8</charset>
+                        <modtime>1234567890</modtime>
+                        <size>1024</size>
                     </doc>
                 </group>
             </grouping>
@@ -504,39 +508,49 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
         # Create sample requests
         # Create two requests with different folder IDs
-        from .models import SearchRequest
+        from .models import (
+            FamilyMode,
+            FixTypoMode,
+            GroupMode,
+            Localization,
+            ResponseFormat,
+            SearchRequest,
+            SearchType,
+            SortMode,
+            SortOrder,
+        )
 
         request1: SearchRequest = {
             "query": {
-                "searchType": "SEARCH_TYPE_RU",
+                "searchType": SearchType.SEARCH_TYPE_RU,
                 "queryText": "test query",
-                "familyMode": None,
-                "page": None,
-                "fixTypoMode": None,
+                "familyMode": FamilyMode.FAMILY_MODE_MODERATE,
+                "page": "0",
+                "fixTypoMode": FixTypoMode.FIX_TYPO_MODE_ON,
             },
-            "sortSpec": {"sortMode": "SORT_MODE_BY_RELEVANCE", "sortOrder": None},
-            "groupSpec": {"groupMode": "GROUP_MODE_DEEP", "groupsOnPage": None, "docsInGroup": None},
+            "sortSpec": {"sortMode": SortMode.SORT_MODE_BY_RELEVANCE, "sortOrder": SortOrder.SORT_ORDER_DESC},
+            "groupSpec": {"groupMode": GroupMode.GROUP_MODE_DEEP},
             "maxPassages": "2",
             "region": "225",
-            "l10n": "LOCALIZATION_RU",
+            "l10n": Localization.LOCALIZATION_RU,
             "folderId": self.folderId,
-            "responseFormat": "FORMAT_XML",
+            "responseFormat": ResponseFormat.FORMAT_XML,
         }
         request2: SearchRequest = {
             "query": {
-                "searchType": "SEARCH_TYPE_RU",
+                "searchType": SearchType.SEARCH_TYPE_RU,
                 "queryText": "test query",
-                "familyMode": None,
-                "page": None,
-                "fixTypoMode": None,
+                "familyMode": FamilyMode.FAMILY_MODE_MODERATE,
+                "page": "0",
+                "fixTypoMode": FixTypoMode.FIX_TYPO_MODE_ON,
             },
-            "sortSpec": {"sortMode": "SORT_MODE_BY_RELEVANCE", "sortOrder": None},
-            "groupSpec": {"groupMode": "GROUP_MODE_DEEP", "groupsOnPage": None, "docsInGroup": None},
+            "sortSpec": {"sortMode": SortMode.SORT_MODE_BY_RELEVANCE, "sortOrder": SortOrder.SORT_ORDER_DESC},
+            "groupSpec": {"groupMode": GroupMode.GROUP_MODE_DEEP},
             "maxPassages": "2",
             "region": "225",
-            "l10n": "LOCALIZATION_RU",
+            "l10n": Localization.LOCALIZATION_RU,
             "folderId": "different-folder",  # Different folder ID
-            "responseFormat": "FORMAT_XML",
+            "responseFormat": ResponseFormat.FORMAT_XML,
         }
 
         # Generate cache keys
