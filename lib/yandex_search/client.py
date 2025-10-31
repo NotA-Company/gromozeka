@@ -305,7 +305,7 @@ class YandexSearchClient:
             ```
         """
         # Build group specification
-        groupSpec: Optional[GroupSpec] = {"groupMode": groupMode}
+        groupSpec: GroupSpec = {"groupMode": groupMode}
 
         if groupsOnPage is not None:
             groupSpec["groupsOnPage"] = str(groupsOnPage)
