@@ -1,6 +1,10 @@
 """
 Yandex Search API Async Client
 
+API References:
+- https://yandex.cloud/ru/docs/search-api/api-ref/WebSearch/search
+- https://yandex.cloud/ru/docs/search-api/concepts/response
+
 This module provides the main YandexSearchClient class for interacting with
 the Yandex Search API v2 with XML response format.
 
@@ -24,7 +28,7 @@ Example:
     )
 
     # Simple search
-    results = await client.searchSimple("python programming")
+    results = await client.search("python programming")
     if results:
         print(f"Found {results['found']} results")
         for group in results['groups']:
@@ -45,11 +49,8 @@ import httpx
 from .cache_interface import SearchCacheInterface
 from .models import (
     GroupSpec,
-    SearchMetadata,
-    SearchQuery,
     SearchRequest,
     SearchResponse,
-    SortSpec,
 )
 from .xml_parser import parseSearchResponse
 
@@ -80,7 +81,7 @@ class YandexSearchClient:
         )
 
         # Simple search with defaults
-        results = await client.searchSimple("python programming")
+        results = await client.search("python programming")
 
         # Advanced search with custom parameters
         results = await client.search(
@@ -106,13 +107,14 @@ class YandexSearchClient:
 
     def __init__(
         self,
+        *,
         iamToken: Optional[str] = None,
         apiKey: Optional[str] = None,
         folderId: str = "",
         requestTimeout: int = 30,
         cache: Optional[SearchCacheInterface] = None,
         cacheTTL: Optional[int] = 3600,
-        bypassCache: bool = False,
+        useCache: bool = True,
         rateLimitRequests: int = 10,
         rateLimitWindow: int = 60,
     ):
@@ -134,7 +136,7 @@ class YandexSearchClient:
                   If None, caching is disabled.
             cacheTTL: Default cache TTL in seconds (default: 3600 = 1 hour).
                      Can be overridden per request.
-            bypassCache: If True, bypass cache for all requests by default.
+            useCache: If False, do not use cache for all requests by default.
                         Can be overridden per request.
             rateLimitRequests: Maximum requests allowed within the rate limit window
                               (default: 10 requests).
@@ -169,7 +171,7 @@ class YandexSearchClient:
         self.requestTimeout = requestTimeout
         self.cache = cache
         self.cacheTTL = cacheTTL
-        self.bypassCache = bypassCache
+        self.useCache = useCache
 
         # Rate limiting
         self.rateLimitRequests = rateLimitRequests
@@ -182,25 +184,26 @@ class YandexSearchClient:
     async def search(
         self,
         queryText: str,
-        searchType: str = "SEARCH_TYPE_RU",
-        familyMode: Optional[str] = None,
-        page: Optional[int] = None,
-        fixTypoMode: Optional[str] = None,
-        sortMode: Optional[str] = None,
-        sortOrder: Optional[str] = None,
-        groupMode: Optional[str] = None,
+        *,
+        searchType: str = "SEARCH_TYPE_RU",  # TODO: Do StrEnum
+        familyMode: str = "FAMILY_MODE_MODERATE",  # TODO: Do StrEnum
+        page: int = 0,
+        fixTypoMode: str = "FIX_TYPO_MODE_ON",  # TODO: Do StrEnum
+        sortMode: str = "SORT_MODE_BY_RELEVANCE",  # TODO: Do StrEnum
+        sortOrder: str = "SORT_ORDER_DESC",  # TODO: Do StrEnum
+        groupMode: str = "GROUP_MODE_DEEP",  # TODO: Do StrEnum
         groupsOnPage: Optional[int] = None,
         docsInGroup: Optional[int] = None,
-        maxPassages: Optional[int] = None,
-        region: Optional[str] = None,
-        l10n: Optional[str] = None,
-        bypassCache: Optional[bool] = None,
+        maxPassages: int = 2,
+        region: str = "225",  # See https://yandex.cloud/ru/docs/search-api/reference/regions for examples
+        l10n: str = "LOCALIZATION_RU",  # TODO: Do StrEnum
+        useCache: Optional[bool] = None,
     ) -> Optional[SearchResponse]:
         """
         Perform search with full parameter control.
 
-        This method provides access to all Yandex Search API parameters. For common
-        use cases, consider using searchSimple() which provides sensible defaults.
+        This method provides access to all Yandex Search API parameters.
+         It provides sensible defaults.
 
         The method automatically handles caching (if enabled), rate limiting, and
         error recovery. It creates a new HTTP session for each request to ensure
@@ -253,8 +256,8 @@ class YandexSearchClient:
                   - LOCALIZATION_EN: English
                   - LOCALIZATION_TR: Turkish
                   - etc.
-            bypassCache: If True, bypass cache for this request (overrides client default).
-                        If None, uses client's default bypassCache setting.
+            useCache: If False, do not use cache for this request (overrides client default).
+                        If None, uses client's default useCache setting.
 
         Returns:
             SearchResponse: Dictionary containing search results with the following structure:
@@ -293,131 +296,58 @@ class YandexSearchClient:
                         print(f"URL: {doc['url']}")
             ```
         """
-        # Build search query with all required fields
-        searchQuery: SearchQuery = {
-            "searchType": searchType,
-            "queryText": queryText,
-            "familyMode": familyMode or "FAMILY_MODE_MODERATE",
-            "page": str(page) if page is not None else "0",
-            "fixTypoMode": "FIX_TYPO_MODE_ON",
-        }
-        if fixTypoMode is not None:
-            searchQuery["fixTypoMode"] = fixTypoMode
-
-        # Build sort specification
-        sortSpec: Optional[SortSpec] = None
-        if sortMode is not None or sortOrder is not None:
-            sortSpecDict: Dict[str, str] = {}
-            if sortMode is not None:
-                sortSpecDict["sortMode"] = sortMode
-            if sortOrder is not None:
-                sortSpecDict["sortOrder"] = sortOrder
-            sortSpec = sortSpecDict  # type: ignore
-
         # Build group specification
-        groupSpec: Optional[GroupSpec] = None
-        if groupMode is not None or groupsOnPage is not None or docsInGroup is not None:
-            groupSpecDict: Dict[str, str] = {}
-            if groupMode is not None:
-                groupSpecDict["groupMode"] = groupMode
-            if groupsOnPage is not None:
-                groupSpecDict["groupsOnPage"] = str(groupsOnPage)
-            if docsInGroup is not None:
-                groupSpecDict["docsInGroup"] = str(docsInGroup)
-            groupSpec = groupSpecDict  # type: ignore
+        groupSpec: Optional[GroupSpec] = {"groupMode": groupMode}
 
-        # Build metadata with all required fields
-        metadata: SearchMetadata = {
-            "maxPassages": "2",
-            "region": "225",
-            "l10n": "LOCALIZATION_RU",
-            "folderId": self.folderId,
-            "responseFormat": "FORMAT_XML",
-        }
-
-        if maxPassages is not None:
-            metadata["maxPassages"] = str(maxPassages)
-        if region is not None:
-            metadata["region"] = region
-        if l10n is not None:
-            metadata["l10n"] = l10n
+        if groupsOnPage is not None:
+            groupSpec["groupsOnPage"] = str(groupsOnPage)
+        if docsInGroup is not None:
+            groupSpec["docsInGroup"] = str(docsInGroup)
 
         # Build complete request with correct structure
         # Ensure all required fields have string values
         request: SearchRequest = {
-            "query": searchQuery,
-            "sortSpec": sortSpec,
+            "query": {
+                "searchType": searchType,
+                "queryText": queryText,
+                "familyMode": familyMode,
+                "page": str(page),
+                "fixTypoMode": fixTypoMode,
+            },
+            "sortSpec": {
+                "sortMode": sortMode,
+                "sortOrder": sortOrder,
+            },
             "groupSpec": groupSpec,
-            "maxPassages": metadata["maxPassages"] or "2",
-            "region": metadata["region"] or "225",
-            "l10n": metadata["l10n"] or "LOCALIZATION_RU",
-            "folderId": metadata["folderId"],
-            "responseFormat": metadata["responseFormat"] or "FORMAT_XML",
+            "maxPassages": str(maxPassages),
+            "region": region,
+            "l10n": l10n,
+            "folderId": self.folderId,
+            "responseFormat": "FORMAT_XML",
         }
 
         # Check cache first (if enabled and not bypassed)
-        effective_bypass_cache = bypassCache if bypassCache is not None else self.bypassCache
-        if self.cache and not effective_bypass_cache:
-            cache_key = self._generate_cache_key(request)
-            cached_result = await self.cache.getSearch(cache_key, self.cacheTTL)
-            if cached_result:
+        effectiveUseCache = useCache if useCache is not None else self.useCache
+        if self.cache and effectiveUseCache:
+            cachedResult = await self.cache.getSearch(request, self.cacheTTL)
+            if cachedResult:
                 logger.debug(f"Cache hit for query: {queryText}")
-                return cached_result
+                return cachedResult
             else:
                 logger.debug(f"Cache miss for query: {queryText}")
 
         # Apply rate limiting
-        await self._apply_rate_limit()
+        await self._applyRateLimit()
 
         # Make API request
         result = await self._makeRequest(request)
 
         # Cache successful results
-        if result and self.cache and not effective_bypass_cache:
-            cache_key = self._generate_cache_key(request)
-            await self.cache.setSearch(cache_key, result)
+        if result and self.cache and effectiveUseCache:
+            await self.cache.setSearch(request, result)
             logger.debug(f"Cached result for query: {queryText}")
 
         return result
-
-    async def searchSimple(
-        self,
-        queryText: str,
-        searchType: str = "SEARCH_TYPE_RU",
-        maxPassages: int = 2,
-        groupsOnPage: int = 10,
-        docsInGroup: int = 2,
-        bypassCache: Optional[bool] = None,
-    ) -> Optional[SearchResponse]:
-        """
-        Perform simplified search with common defaults
-
-        Args:
-            queryText: Search query text
-            searchType: Search domain (default: SEARCH_TYPE_RU)
-            maxPassages: Maximum number of passages (default: 2)
-            groupsOnPage: Number of groups per page (default: 10)
-            docsInGroup: Number of documents in each group (default: 2)
-            bypassCache: If True, bypass cache for this request (overrides client default)
-
-        Returns:
-            SearchResponse with results, or None if error
-        """
-        return await self.search(
-            queryText=queryText,
-            searchType=searchType,
-            familyMode="FAMILY_MODE_MODERATE",
-            fixTypoMode="FIX_TYPO_MODE_ON",
-            sortMode="SORT_MODE_BY_RELEVANCE",
-            sortOrder="SORT_ORDER_DESC",
-            groupMode="GROUP_MODE_DEEP",
-            groupsOnPage=groupsOnPage,
-            docsInGroup=docsInGroup,
-            maxPassages=maxPassages,
-            region="225",  # Russia
-            l10n="LOCALIZATION_RU",
-            bypassCache=bypassCache,
-        )
 
     async def _makeRequest(self, request: SearchRequest) -> Optional[SearchResponse]:
         """
@@ -497,48 +427,7 @@ class YandexSearchClient:
             logger.error(f"Unexpected error during API request: {e}")
             return None
 
-    def _generate_cache_key(self, request: SearchRequest) -> str:
-        """
-        Generate a consistent cache key from search request parameters.
-
-        The cache key is an MD5 hash of the normalized request parameters,
-        ensuring that identical searches produce the same cache key. The folderId
-        is excluded from the hash since it's constant per client instance and
-        doesn't affect the search results themselves.
-
-        Args:
-            request: Complete search request structure.
-
-        Returns:
-            str: 32-character MD5 hash string that uniquely identifies the search
-                 parameters. This hash is used as the cache key for storing and
-                 retrieving search results.
-
-        Note:
-            The cache key generation is deterministic - the same request parameters
-            will always produce the same hash, regardless of parameter order.
-        """
-        import hashlib
-        import json
-
-        # Create a normalized representation of the request
-        # Exclude folderId from cache key as it's constant per client
-        cache_data = {
-            "query": request["query"],
-            "sortSpec": request["sortSpec"],
-            "groupSpec": request["groupSpec"],
-            # Include relevant metadata fields except folderId
-            "maxPassages": request["maxPassages"],
-            "region": request["region"],
-            "l10n": request["l10n"],
-            "responseFormat": request["responseFormat"],
-        }
-
-        # Sort and serialize to ensure consistent keys
-        sorted_json = json.dumps(cache_data, sort_keys=True, ensure_ascii=False)
-        return hashlib.md5(sorted_json.encode("utf-8")).hexdigest()
-
-    async def _apply_rate_limit(self) -> None:
+    async def _applyRateLimit(self) -> None:
         """
         Apply rate limiting to prevent API abuse using sliding window algorithm.
 
@@ -561,33 +450,33 @@ class YandexSearchClient:
             external rate limiter (e.g., Redis-based).
         """
         async with self._rateLimitLock:
-            current_time = time.time()
+            currentTime = time.time()
 
             # Remove old request times outside the window
             self._requestTimes = [
-                req_time for req_time in self._requestTimes if current_time - req_time < self.rateLimitWindow
+                reqTime for reqTime in self._requestTimes if currentTime - reqTime < self.rateLimitWindow
             ]
 
             # Check if we've exceeded the rate limit
             if len(self._requestTimes) >= self.rateLimitRequests:
                 # Calculate how long to wait
-                oldest_request = min(self._requestTimes)
-                wait_time = self.rateLimitWindow - (current_time - oldest_request)
+                oldestRequest = min(self._requestTimes)
+                waitTime = self.rateLimitWindow - (currentTime - oldestRequest)
 
-                if wait_time > 0:
-                    logger.debug(f"Rate limit reached, waiting {wait_time:.2f} seconds")
-                    await asyncio.sleep(wait_time)
+                if waitTime > 0:
+                    logger.debug(f"Rate limit reached, waiting {waitTime:.2f} seconds")
+                    await asyncio.sleep(waitTime)
 
                     # Clean up old requests after waiting
-                    current_time = time.time()
+                    currentTime = time.time()
                     self._requestTimes = [
-                        req_time for req_time in self._requestTimes if current_time - req_time < self.rateLimitWindow
+                        req_time for req_time in self._requestTimes if currentTime - req_time < self.rateLimitWindow
                     ]
 
             # Add current request time
-            self._requestTimes.append(current_time)
+            self._requestTimes.append(currentTime)
 
-    def get_rate_limit_stats(self) -> Dict[str, Any]:
+    def getRateLimitStats(self) -> Dict[str, Any]:
         """
         Get current rate limiting statistics for monitoring and debugging.
 
@@ -610,14 +499,12 @@ class YandexSearchClient:
             print(f"Window resets at: {stats['reset_time']}")
             ```
         """
-        current_time = time.time()
-        recent_requests = [
-            req_time for req_time in self._requestTimes if current_time - req_time < self.rateLimitWindow
-        ]
+        currentTime = time.time()
+        recent_requests = [reqTime for reqTime in self._requestTimes if currentTime - reqTime < self.rateLimitWindow]
 
         return {
             "requests_in_window": len(recent_requests),
             "max_requests": self.rateLimitRequests,
             "window_seconds": self.rateLimitWindow,
-            "reset_time": max(recent_requests) + self.rateLimitWindow if recent_requests else current_time,
+            "reset_time": max(recent_requests) + self.rateLimitWindow if recent_requests else currentTime,
         }

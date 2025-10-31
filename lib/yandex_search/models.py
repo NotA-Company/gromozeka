@@ -39,7 +39,7 @@ Example:
     ```
 """
 
-from typing import Dict, List, Optional, TypedDict
+from typing import Dict, List, NotRequired, Optional, TypeAlias, TypedDict
 
 # Request Models
 
@@ -124,8 +124,8 @@ class SortSpec(TypedDict):
         ```
     """
 
-    sortMode: Optional[str]
-    sortOrder: Optional[str]
+    sortMode: NotRequired[str]
+    sortOrder: NotRequired[str]
 
 
 class GroupSpec(TypedDict):
@@ -160,59 +160,9 @@ class GroupSpec(TypedDict):
         ```
     """
 
-    groupMode: Optional[str]
-    groupsOnPage: Optional[str]
-    docsInGroup: Optional[str]
-
-
-class SearchMetadata(TypedDict):
-    """
-    Search metadata and configuration flags.
-
-    This TypedDict contains metadata that controls various aspects of the search
-    operation, including response format, localization, and API configuration.
-
-    Fields:
-        maxPassages (Optional[str]): Maximum number of text passages per document.
-            Valid range: 1-5. Default is "2".
-            Passages are text snippets with highlighted search terms.
-
-        region (Optional[str]): Region code for localized results.
-            Default is "225" for Russia.
-            See Yandex Search API documentation for complete list of region codes.
-
-        l10n (Optional[str]): Localization language for results.
-            Valid values:
-            - LOCALIZATION_RU: Russian (default)
-            - LOCALIZATION_EN: English
-            - LOCALIZATION_TR: Turkish
-            - And others based on supported languages
-
-        folderId (str): Yandex Cloud folder ID. Required field.
-            This identifies your Yandex Cloud account and project.
-
-        responseFormat (Optional[str]): Response format from the API.
-            Valid values:
-            - FORMAT_XML: XML response format (default)
-            - FORMAT_HTML: HTML response format
-
-    Example:
-        ```python
-        metadata: SearchMetadata = {
-            "folderId": "your_folder_id",
-            "responseFormat": "FORMAT_XML",
-            "maxPassages": "2",
-            "region": "225",
-            "l10n": "LOCALIZATION_RU"
-        }
-        ```
-    """
-
-    maxPassages: Optional[str]
-    region: Optional[str]
-    l10n: Optional[str]
-    folderId: str
-    responseFormat: Optional[str]
+    groupMode: NotRequired[str]
+    groupsOnPage: NotRequired[str]
+    docsInGroup: NotRequired[str]
 
 
 class SearchRequest(TypedDict):
@@ -355,52 +305,57 @@ class SearchResult(TypedDict):
     url: str
     domain: str
     title: str
+    charset: NotRequired[str]
+    lang: NotRequired[str]
+
+    mimeType: NotRequired[str]
+    savedCopyUrl: NotRequired[str]
+    modtime: NotRequired[float]
+    size: NotRequired[int]
+
+    extendedText: NotRequired[str]
+
     passages: List[str]
-    modtime: Optional[str]
-    size: Optional[str]
-    charset: Optional[str]
-    mimetypes: Optional[List[str]]
-    hlwords: Optional[List[str]]
+    hlwords: NotRequired[List[str]]
 
 
-class SearchGroup(TypedDict):
+SearchGroup: TypeAlias = List[SearchResult]
+
+
+class ErrorResponse(TypedDict):
     """
-    Group of related search results.
+    Error response structure from the Yandex Search API.
 
-    This TypedDict represents a group of related documents, typically from
-    the same website or about the same topic. Groups help organize search
-    results and show multiple relevant pages from the same source together.
+    This TypedDict represents an error response from the API, containing
+    information about what went wrong during the search request.
 
     Fields:
-        group (List[SearchResult]): List of search results in this group.
-                                  The number of results is controlled by the
-                                  docsInGroup parameter in the search request.
-                                  Required field, but may be empty list.
+        code (str): Machine-readable error code.
+                  Common values include:
+                  - "ERR_INVALID_REQUEST": Invalid request parameters
+                  - "ERR_AUTH_FAILED": Authentication failed
+                  - "ERR_RATE_LIMITED": Rate limit exceeded
+                  - "ERR_INTERNAL_ERROR": Internal server error
+
+        message (str): Human-readable error message describing the problem.
+                      This message is suitable for display to end users.
+
+        details (Optional[str]): Additional error details or context.
+                               May include specific information about what
+                               parameter caused the error or suggested fixes.
 
     Example:
         ```python
-        group: SearchGroup = {
-            "group": [
-                {
-                    "url": "https://example.com/page1",
-                    "domain": "example.com",
-                    "title": "Main Page",
-                    "passages": ["Welcome to our *website*"],
-                    "hlwords": ["website"]
-                },
-                {
-                    "url": "https://example.com/page2",
-                    "domain": "example.com",
-                    "title": "About Us",
-                    "passages": ["Learn more about our *company*"],
-                    "hlwords": ["company"]
-                }
-            ]
+        error: ErrorResponse = {
+            "code": "ERR_INVALID_REQUEST",
+            "message": "Invalid search query",
+            "details": "The query text is too short (minimum 3 characters)"
         }
         ```
     """
 
-    group: List[SearchResult]
+    code: str
+    message: str
 
 
 class SearchResponse(TypedDict):
@@ -463,94 +418,4 @@ class SearchResponse(TypedDict):
     foundHuman: str
     page: int
     groups: List[SearchGroup]
-    error: Optional[Dict]
-
-
-class ErrorResponse(TypedDict):
-    """
-    Error response structure from the Yandex Search API.
-
-    This TypedDict represents an error response from the API, containing
-    information about what went wrong during the search request.
-
-    Fields:
-        code (str): Machine-readable error code.
-                  Common values include:
-                  - "ERR_INVALID_REQUEST": Invalid request parameters
-                  - "ERR_AUTH_FAILED": Authentication failed
-                  - "ERR_RATE_LIMITED": Rate limit exceeded
-                  - "ERR_INTERNAL_ERROR": Internal server error
-
-        message (str): Human-readable error message describing the problem.
-                      This message is suitable for display to end users.
-
-        details (Optional[str]): Additional error details or context.
-                               May include specific information about what
-                               parameter caused the error or suggested fixes.
-
-    Example:
-        ```python
-        error: ErrorResponse = {
-            "code": "ERR_INVALID_REQUEST",
-            "message": "Invalid search query",
-            "details": "The query text is too short (minimum 3 characters)"
-        }
-        ```
-    """
-
-    code: str
-    message: str
-    details: Optional[str]
-
-
-# Authentication Models
-
-
-class AuthConfig(TypedDict):
-    """
-    Authentication configuration for the Yandex Search API.
-
-    This TypedDict contains the authentication credentials and configuration
-    needed to access the Yandex Search API. Either an IAM token or API key
-    must be provided, along with a folder ID.
-
-    Fields:
-        iamToken (Optional[str]): IAM token for authentication.
-                                IAM tokens are temporary credentials that
-                                can be automatically refreshed. Recommended
-                                for production applications.
-                                Obtain from Yandex Cloud IAM service.
-
-        apiKey (Optional[str]): Static API key for authentication.
-                              API keys are long-lived credentials suitable
-                              for simple applications or testing.
-                              Create in Yandex Cloud console.
-
-        folderId (str): Yandex Cloud folder ID. Required field.
-                       Identifies your Yandex Cloud account and project.
-                       Find in Yandex Cloud console.
-
-    Note:
-        Either iamToken or apiKey must be provided, but not both.
-        IAM tokens are preferred for production use as they provide
-        better security and can be automatically rotated.
-
-    Example:
-        ```python
-        # Using IAM token
-        auth: AuthConfig = {
-            "iamToken": "t1.9euel9q...",
-            "folderId": "b1g8v1h2..."
-        }
-
-        # Using API key
-        auth: AuthConfig = {
-            "apiKey": "AQVN1...",
-            "folderId": "b1g8v1h2..."
-        }
-        ```
-    """
-
-    iamToken: Optional[str]
-    apiKey: Optional[str]
-    folderId: str
+    error: NotRequired[ErrorResponse]

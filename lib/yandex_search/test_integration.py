@@ -99,7 +99,7 @@ class TestEndToEndIntegration:
         client = MockYandexSearchClient()
 
         # Perform search
-        results = await client.searchSimple("python programming")
+        results = await client.search("python programming")
 
         # Verify response structure
         assert results is not None
@@ -140,29 +140,29 @@ class TestEndToEndIntegration:
         client = MockYandexSearchClient(cache=cache)
 
         # First search - should hit API
-        results1 = await client.searchSimple("python programming")
+        results1 = await client.search("python programming")
         assert results1 is not None
 
         # Check cache after first search
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 1
 
         # Second search - should hit cache
-        results2 = await client.searchSimple("python programming")
+        results2 = await client.search("python programming")
         assert results2 is not None
         assert results1["requestId"] == results2["requestId"]  # Same cached result
 
         # Verify cache stats
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 1  # Still only one unique entry
 
         # Different query - should hit API again
-        results3 = await client.searchSimple("java programming")
+        results3 = await client.search("java programming")
         assert results3 is not None
         assert results3["requestId"] == results1["requestId"]  # Same mock response
 
         # Verify cache has two entries now
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 2
 
     @pytest.mark.asyncio
@@ -199,20 +199,20 @@ class TestEndToEndIntegration:
         client = MockYandexSearchClient(cache=cache)
 
         # First search
-        results1 = await client.searchSimple("test query")
+        results1 = await client.search("test query")
         assert results1 is not None
 
         # Verify cache has entry
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 1
 
         # Search with cache bypass
-        results2 = await client.searchSimple("test query", bypassCache=True)
+        results2 = await client.search("test query", bypassCache=True)
         assert results2 is not None
         assert results1["requestId"] == results2["requestId"]
 
         # Cache should still have only one entry
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 1
 
     @pytest.mark.asyncio
@@ -225,7 +225,7 @@ class TestEndToEndIntegration:
         queries = ["python", "java", "javascript", "python"]  # Duplicate query
 
         # Execute all searches concurrently
-        tasks = [client.searchSimple(query) for query in queries]
+        tasks = [client.search(query) for query in queries]
         results = await asyncio.gather(*tasks)
 
         # Verify all results
@@ -233,7 +233,7 @@ class TestEndToEndIntegration:
         assert all(r and r["requestId"] == "1234567890" for r in results)
 
         # Verify cache has 3 unique entries (python, java, javascript)
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 3
 
     @pytest.mark.asyncio
@@ -245,9 +245,9 @@ class TestEndToEndIntegration:
         # Make requests sequentially
         start_time = asyncio.get_event_loop().time()
 
-        results1 = await client.searchSimple("query 1")
-        results2 = await client.searchSimple("query 2")
-        results3 = await client.searchSimple("query 3")
+        results1 = await client.search("query 1")
+        results2 = await client.search("query 2")
+        results3 = await client.search("query 3")
 
         end_time = asyncio.get_event_loop().time()
         total_time = end_time - start_time
@@ -259,7 +259,7 @@ class TestEndToEndIntegration:
         assert total_time >= 1.0
 
         # Check rate limit stats
-        stats = client.get_rate_limit_stats()
+        stats = client.getRateLimitStats()
         assert stats["max_requests"] == 2
         assert stats["window_seconds"] == 1
 
@@ -279,7 +279,7 @@ class TestEndToEndIntegration:
 
         try:
             # Search should handle error gracefully
-            results = await client.searchSimple("test query")
+            results = await client.search("test query")
             assert results is None  # Should return None on error
         except Exception:
             # If exception propagates, that's also acceptable behavior
@@ -308,7 +308,7 @@ class TestCacheIntegration:
         assert results1 and results2 and results1["requestId"] == results2["requestId"]
 
         # Cache should have only one entry
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 1
 
     @pytest.mark.asyncio
@@ -319,23 +319,23 @@ class TestCacheIntegration:
         client = MockYandexSearchClient(cache=cache)
 
         # First search
-        results1 = await client.searchSimple("test query")
+        results1 = await client.search("test query")
         assert results1 is not None
 
         # Verify cache has entry
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 1
 
         # Wait for TTL to expire
         await asyncio.sleep(0.2)
 
         # Second search should hit API again (cache expired)
-        results2 = await client.searchSimple("test query")
+        results2 = await client.search("test query")
         assert results2 is not None
         assert results1["requestId"] == results2["requestId"]
 
         # Cache should still have one entry (replaced)
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] == 1
 
 

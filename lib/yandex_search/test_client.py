@@ -87,7 +87,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         # Create client and make request
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
 
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
 
         # Verify response
         self.assertIsNotNone(response)
@@ -130,7 +130,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         # Create client and make request
         client = YandexSearchClient(apiKey=self.apiKey, folderId=self.folderId)
 
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
 
         # Verify error response
         self.assertIsNotNone(response)
@@ -160,17 +160,17 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
 
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
         self.assertIsNone(response)
 
         # Test 429 Rate Limit
         mockResponse.status_code = 429
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
         self.assertIsNone(response)
 
         # Test 500 Server Error
         mockResponse.status_code = 500
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
         self.assertIsNone(response)
 
     @patch("httpx.AsyncClient")
@@ -183,12 +183,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
 
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
         self.assertIsNone(response)
 
         # Mock network error
         mockClient.post.side_effect = httpx.RequestError("Network error")
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
         self.assertIsNone(response)
 
     @patch("httpx.AsyncClient")
@@ -205,7 +205,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
 
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
         self.assertIsNone(response)
 
     @patch("httpx.AsyncClient")
@@ -222,7 +222,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
 
-        response = await client.searchSimple("test query")
+        response = await client.search("test query")
         self.assertIsNone(response)
 
     @patch("httpx.AsyncClient")
@@ -301,7 +301,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
 
         # Make simple search request
-        await client.searchSimple("simple query")
+        await client.search("simple query")
 
         # Verify default parameters
         callArgs = mockClient.post.call_args
@@ -326,7 +326,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(groupSpec["docsInGroup"], "2")
 
         # Check metadata fields at top level
-        self.assertEqual(requestBody["maxPassages"], "2")
+        self.assertEqual(requestBody["maxPassages"], "5")
         self.assertEqual(requestBody["region"], "225")
         self.assertEqual(requestBody["l10n"], "LOCALIZATION_RU")
         self.assertEqual(requestBody["folderId"], self.folderId)
@@ -349,14 +349,14 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId, cache=cache)
 
         # First request - should hit API
-        response1 = await client.searchSimple("cache test query")
+        response1 = await client.search("cache test query")
         self.assertIsNotNone(response1)
 
         # Verify API was called once
         self.assertEqual(mockClient.post.call_count, 1)
 
         # Second request with same query - should hit cache
-        response2 = await client.searchSimple("cache test query")
+        response2 = await client.search("cache test query")
         self.assertIsNotNone(response2)
 
         # Verify API was still called only once (cache hit)
@@ -367,7 +367,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response1["requestId"], response2["requestId"])
 
         # Verify cache stats
-        stats = cache.get_stats()
+        stats = cache.getStats()
         self.assertEqual(stats["search_entries"], 1)
 
     @patch("httpx.AsyncClient")
@@ -387,18 +387,18 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId, cache=cache, bypassCache=True)
 
         # First request - should hit API
-        response1 = await client.searchSimple("bypass test query")
+        response1 = await client.search("bypass test query")
         self.assertIsNotNone(response1)
 
         # Second request - should also hit API (bypass cache)
-        response2 = await client.searchSimple("bypass test query")
+        response2 = await client.search("bypass test query")
         self.assertIsNotNone(response2)
 
         # Verify API was called twice (cache bypassed)
         self.assertEqual(mockClient.post.call_count, 2)
 
         # Verify cache is empty
-        stats = cache.get_stats()
+        stats = cache.getStats()
         self.assertEqual(stats["search_entries"], 0)
 
     @patch("httpx.AsyncClient")
@@ -418,15 +418,15 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId, cache=cache)
 
         # First request - should hit API and cache
-        response1 = await client.searchSimple("per-request test query")
+        response1 = await client.search("per-request test query")
         self.assertIsNotNone(response1)
 
         # Second request with bypass - should hit API
-        response2 = await client.searchSimple("per-request test query", bypassCache=True)
+        response2 = await client.search("per-request test query", bypassCache=True)
         self.assertIsNotNone(response2)
 
         # Third request without bypass - should hit cache
-        response3 = await client.searchSimple("per-request test query")
+        response3 = await client.search("per-request test query")
         self.assertIsNotNone(response3)
 
         # Verify API was called twice (once for first, once for bypass)
@@ -457,15 +457,15 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         start_time = time.time()
 
         # Make requests up to the limit
-        await client.searchSimple("rate limit test 1")
-        await client.searchSimple("rate limit test 2")
+        await client.search("rate limit test 1")
+        await client.search("rate limit test 2")
 
         # These should be immediate
         elapsed_time = time.time() - start_time
         self.assertLess(elapsed_time, 0.5)  # Should be very fast
 
         # Third request should be rate limited
-        await client.searchSimple("rate limit test 3")
+        await client.search("rate limit test 3")
 
         # Should have taken at least 1 second due to rate limiting
         elapsed_time = time.time() - start_time
@@ -478,14 +478,14 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         )
 
         # Get initial stats
-        stats = client.get_rate_limit_stats()
+        stats = client.getRateLimitStats()
         self.assertEqual(stats["requests_in_window"], 0)
         self.assertEqual(stats["max_requests"], 5)
         self.assertEqual(stats["window_seconds"], 60)
 
     def testCacheKeyGeneration(self):
-        """Test cache key generation in client"""
-        client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
+        """Test cache key generation in cache"""
+        cache = DictSearchCache(default_ttl=3600)
 
         # Create sample requests
         # Create two requests with different folder IDs
@@ -525,14 +525,14 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         }
 
         # Generate cache keys
-        key1 = client._generate_cache_key(request1)
-        key2 = client._generate_cache_key(request2)
+        key1 = cache._generateCacheKey(request1)
+        key2 = cache._generateCacheKey(request2)
 
         # Keys should be the same (folderId excluded from cache key)
         self.assertEqual(key1, key2)
 
-        # Keys should be valid MD5 hashes
-        self.assertEqual(len(key1), 32)
+        # Keys should be valid SHA512 hashes
+        self.assertEqual(len(key1), 128)
         self.assertTrue(all(c in "0123456789abcdef" for c in key1))
 
     def testClientInitializationWithCache(self):

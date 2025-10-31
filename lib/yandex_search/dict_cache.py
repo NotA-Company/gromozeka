@@ -59,7 +59,9 @@ import time
 from typing import Dict, Optional, Tuple
 
 from .cache_interface import SearchCacheInterface
-from .models import SearchResponse
+from .models import SearchRequest, SearchResponse
+
+logger = logging.getLogger(__name__)
 
 
 class DictSearchCache(SearchCacheInterface):
@@ -138,13 +140,58 @@ class DictSearchCache(SearchCacheInterface):
             - Cache entries are stored as (data, timestamp) tuples
             - Timestamps are Unix timestamps (seconds since epoch)
         """
-        self.search_cache: Dict[str, Tuple[SearchResponse, float]] = {}
-        self.default_ttl = default_ttl
-        self.max_size = max_size
+        self.searchCache: Dict[str, Tuple[SearchResponse, float]] = {}
+        self.defaultTtl = default_ttl
+        self.maxSize = max_size
         self._lock = threading.RLock()  # Thread-safe operations
-        self.logger = logging.getLogger(__name__)
 
-    def _is_expired(self, timestamp: float, ttl: Optional[int] = None) -> bool:
+    def _generateCacheKey(self, request: SearchRequest) -> str:
+        """
+        Generate a consistent cache key from search request parameters.
+
+        The cache key is an MD5 hash of the normalized request parameters,
+        ensuring that identical searches produce the same cache key. The folderId
+        is excluded from the hash since it's constant per client instance and
+        doesn't affect the search results themselves.
+
+        Args:
+            request: Complete search request structure.
+
+        Returns:
+            str: 32-character MD5 hash string that uniquely identifies the search
+                 parameters. This hash is used as the cache key for storing and
+                 retrieving search results.
+
+        Note:
+            The cache key generation is deterministic - the same request parameters
+            will always produce the same hash, regardless of parameter order.
+        """
+        import hashlib
+        import json
+
+        # Create a normalized representation of the request
+        # Exclude folderId from cache key as it's constant per client
+        cacheData = {
+            "query": request["query"],
+            "sortSpec": request["sortSpec"],
+            "groupSpec": request["groupSpec"],
+            # Include relevant metadata fields except folderId
+            "maxPassages": request["maxPassages"],
+            "region": request["region"],
+            "l10n": request["l10n"],
+            "responseFormat": request["responseFormat"],
+        }
+
+        # Sort and serialize to ensure consistent keys
+        sorted_json = json.dumps(
+            cacheData,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+        return hashlib.sha512(sorted_json.encode("utf-8")).hexdigest()
+
+    def _isExpired(self, timestamp: float, ttl: Optional[int] = None) -> bool:
         """
         Check if a cache entry is expired based on its timestamp.
 
@@ -161,10 +208,10 @@ class DictSearchCache(SearchCacheInterface):
         Returns:
             bool: True if the entry is expired, False otherwise.
         """
-        effective_ttl = ttl if ttl is not None else self.default_ttl
+        effective_ttl = ttl if ttl is not None else self.defaultTtl
         return time.time() - timestamp > effective_ttl
 
-    def _cleanup_expired(self) -> None:
+    def _cleanupExpired(self) -> None:
         """
         Remove expired entries from cache.
 
@@ -178,14 +225,14 @@ class DictSearchCache(SearchCacheInterface):
             - No-op if no expired entries exist
         """
         with self._lock:
-            expired_keys = [key for key, (_, timestamp) in self.search_cache.items() if self._is_expired(timestamp)]
-            for key in expired_keys:
-                del self.search_cache[key]
+            expiredKeys = [key for key, (_, timestamp) in self.searchCache.items() if self._isExpired(timestamp)]
+            for key in expiredKeys:
+                del self.searchCache[key]
 
-            if expired_keys:
-                self.logger.debug(f"Cleaned up {len(expired_keys)} expired entries")
+            if expiredKeys:
+                logger.debug(f"Cleaned up {len(expiredKeys)} expired entries")
 
-    def _enforce_size_limit(self) -> None:
+    def _enforceSizeLimit(self) -> None:
         """
         Enforce maximum cache size by removing oldest entries.
 
@@ -205,49 +252,22 @@ class DictSearchCache(SearchCacheInterface):
             - Uses a simple LRU-like approach based on timestamps
         """
         with self._lock:
-            if len(self.search_cache) <= self.max_size:
+            if len(self.searchCache) <= self.maxSize:
                 return
 
             # Sort by timestamp (oldest first), if timestamps are equal, sort by key
             sorted_items = sorted(
-                self.search_cache.items(), key=lambda item: (item[1][1], item[0])  # timestamp then key
+                self.searchCache.items(), key=lambda item: (item[1][1], item[0])  # timestamp then key
             )
 
-            excess_count = len(self.search_cache) - self.max_size
-            for i in range(excess_count):
+            excessCount = len(self.searchCache) - self.maxSize
+            for i in range(excessCount):
                 key = sorted_items[i][0]
-                del self.search_cache[key]
+                del self.searchCache[key]
 
-            self.logger.debug(f"Removed {excess_count} oldest entries to enforce size limit")
+            logger.debug(f"Removed {excessCount} oldest entries to enforce size limit")
 
-    def _generate_cache_key(self, **kwargs) -> str:
-        """
-        Generate cache key from query parameters.
-
-        This internal method creates a consistent cache key from arbitrary
-        query parameters. It sorts the parameters, serializes them to JSON,
-        and creates an MD5 hash. This ensures that the same parameters
-        always generate the same cache key regardless of order.
-
-        Args:
-            **kwargs: Query parameters (e.g., queryText, searchType, region).
-                     Values can be strings, numbers, booleans, or None.
-
-        Returns:
-            str: 32-character MD5 hash string that uniquely identifies
-                 the parameter combination.
-
-        Note:
-            - Parameters are sorted to ensure consistent key generation
-            - JSON is serialized with ensure_ascii=False for Unicode support
-            - MD5 is used for its speed and sufficient uniqueness
-            - The same parameters will always produce the same key
-        """
-        # Sort parameters to ensure consistent key generation
-        sorted_params = json.dumps(kwargs, sort_keys=True, ensure_ascii=False)
-        return hashlib.md5(sorted_params.encode("utf-8")).hexdigest()
-
-    async def getSearch(self, key: str, ttl: Optional[int] = None) -> Optional[SearchResponse]:
+    async def getSearch(self, key: SearchRequest, ttl: Optional[int] = None) -> Optional[SearchResponse]:
         """
         Retrieve cached search results by key.
 
@@ -283,26 +303,27 @@ class DictSearchCache(SearchCacheInterface):
             ```
         """
         try:
+            keyStr = self._generateCacheKey(key)
             with self._lock:
-                self._cleanup_expired()
+                self._cleanupExpired()
 
-                if key in self.search_cache:
-                    data, timestamp = self.search_cache[key]
-                    if not self._is_expired(timestamp, ttl):
-                        self.logger.debug(f"Cache hit for search key: {key}")
+                if keyStr in self.searchCache:
+                    data, timestamp = self.searchCache[keyStr]
+                    if not self._isExpired(timestamp, ttl):
+                        logger.debug(f"Cache hit for search key: {keyStr}")
                         return data
                     else:
                         # Remove expired entry
-                        del self.search_cache[key]
-                        self.logger.debug(f"Removed expired search entry: {key}")
+                        del self.searchCache[keyStr]
+                        logger.debug(f"Removed expired search entry: {keyStr}")
 
-                self.logger.debug(f"Cache miss for search key: {key}")
+                logger.debug(f"Cache miss for search key: {keyStr}")
                 return None
         except Exception as e:
-            self.logger.error(f"Failed to get search cache entry {key}: {e}")
+            logger.error(f"Failed to get search cache entry {keyStr}: {e}")
             return None
 
-    async def setSearch(self, key: str, data: SearchResponse) -> bool:
+    async def setSearch(self, key: SearchRequest, data: SearchResponse) -> bool:
         """
         Store search results in cache.
 
@@ -335,19 +356,20 @@ class DictSearchCache(SearchCacheInterface):
             ```
         """
         try:
+            keyStr = self._generateCacheKey(key)
             with self._lock:
-                self._cleanup_expired()
+                self._cleanupExpired()
 
                 # Add new entry first
-                self.search_cache[key] = (data, time.time())
+                self.searchCache[keyStr] = (data, time.time())
 
                 # Then enforce size limit
-                self._enforce_size_limit()
+                self._enforceSizeLimit()
 
-                self.logger.debug(f"Stored search data for key: {key}")
+                logger.debug(f"Stored search data for key: {keyStr}")
                 return True
         except Exception as e:
-            self.logger.error(f"Failed to set search cache entry {key}: {e}")
+            logger.error(f"Failed to set search cache entry {keyStr}: {e}")
             return False
 
     def clear(self) -> None:
@@ -371,10 +393,10 @@ class DictSearchCache(SearchCacheInterface):
             ```
         """
         with self._lock:
-            self.search_cache.clear()
-            self.logger.debug("Cleared all cache data")
+            self.searchCache.clear()
+            logger.debug("Cleared all cache data")
 
-    def get_stats(self) -> Dict[str, int]:
+    def getStats(self) -> Dict[str, int]:
         """
         Get cache statistics for monitoring and debugging.
 
@@ -405,52 +427,9 @@ class DictSearchCache(SearchCacheInterface):
             ```
         """
         with self._lock:
-            self._cleanup_expired()
+            self._cleanupExpired()
             return {
-                "search_entries": len(self.search_cache),
-                "max_size": self.max_size,
-                "default_ttl": self.default_ttl,
+                "search_entries": len(self.searchCache),
+                "max_size": self.maxSize,
+                "default_ttl": self.defaultTtl,
             }
-
-    def generate_key_from_params(self, **kwargs) -> str:
-        """
-        Generate cache key from query parameters.
-
-        This is a convenience method that generates a consistent cache key
-        from search parameters. It's useful for testing or when you need
-        to generate keys outside of the client's internal key generation.
-
-        Args:
-            **kwargs: Search parameters (e.g., queryText, searchType, region,
-                     page, maxPassages, etc.). Values can be strings, numbers,
-                     booleans, or None.
-
-        Returns:
-            str: MD5 hash that can be used as cache key for storing and
-                 retrieving search results.
-
-        Example:
-            ```python
-            # Generate key for a search query
-            key = cache.generate_key_from_params(
-                queryText="python programming",
-                searchType="SEARCH_TYPE_RU",
-                region="225",
-                maxPassages=2
-            )
-
-            # Use the key for manual cache operations
-            await cache.setSearch(key, search_response)
-            result = await cache.getSearch(key)
-
-            # The same parameters will always generate the same key
-            key2 = cache.generate_key_from_params(
-                searchType="SEARCH_TYPE_RU",
-                region="225",
-                queryText="python programming",  # Different order
-                maxPassages=2
-            )
-            assert key == key2  # Keys are identical
-            ```
-        """
-        return self._generate_cache_key(**kwargs)

@@ -33,13 +33,16 @@ Example:
 
 import base64
 import binascii
+import datetime
 import logging
 import xml.etree.ElementTree as ET
 from typing import Optional
 
-from .models import ErrorResponse, SearchGroup, SearchResponse, SearchResult
+from .models import SearchGroup, SearchResponse, SearchResult
 
 logger = logging.getLogger(__name__)
+
+DEBUG_PRINT_FULL = False
 
 
 def parseSearchResponse(base64Xml: str) -> SearchResponse:
@@ -101,50 +104,56 @@ def parseSearchResponse(base64Xml: str) -> SearchResponse:
         xmlBytes = base64.b64decode(base64Xml)
         xmlString = xmlBytes.decode("utf-8")
 
-        logger.debug(f"Decoded XML: {xmlString[:500]}...")  # Log first 500 chars
+        if DEBUG_PRINT_FULL:
+            logger.debug(f"Decoded XML: {xmlString}")
+        else:
+            logger.debug(f"Decoded XML: {xmlString[:500]}...")  # Log first 500 chars
 
         # Parse XML
         root = ET.fromstring(xmlString)
+        # You can find document structire here:
+        #  https://yandex.cloud/ru/docs/search-api/concepts/response
 
-        # Check for error response
-        errorElement = root.find(".//error")
-        if errorElement is not None:
-            errorCode = errorElement.get("code", "UNKNOWN_ERROR")
-            errorMessage = errorElement.get("message", "Unknown error")
-            errorDetails = errorElement.get("details", "")
+        responseElement = root.find("response")
+        if responseElement is None:
+            raise ValueError("Invalid XML format: missing response element")
 
-            logger.error(f"API error: {errorCode} - {errorMessage}")
-
-            return {
-                "requestId": "",
-                "found": 0,
-                "foundHuman": "",
-                "page": 0,
-                "groups": [],
-                "error": {"code": errorCode, "message": errorMessage, "details": errorDetails},
-            }
-
-        # Extract response metadata
-        requestId = root.get("requestid", "")
-        found = int(root.get("found", 0))
-        foundHuman = root.get("found-human", "")
-        page = int(root.get("page", 0))
-
-        # Parse result groups
-        groups = []
-        for groupElement in root.findall(".//group"):
-            group = _parseGroup(groupElement)
-            if group:
-                groups.append(group)
-
-        return {
-            "requestId": requestId,
-            "found": found,
-            "foundHuman": foundHuman,
-            "page": page,
-            "groups": groups,
-            "error": None,
+        ret: SearchResponse = {
+            "requestId": "",
+            "found": 0,
+            "foundHuman": "",
+            "page": 0,
+            "groups": [],
         }
+
+        for child in responseElement:
+            if child.tag == "reqid" and child.text is not None:
+                ret["requestId"] = child.text
+            elif child.tag == "found" and child.get("priority", "all") == "all" and child.text is not None:
+                ret["found"] = int(child.text)
+            elif child.tag == "found-human" and child.text is not None:
+                ret["foundHuman"] = child.text
+            elif child.tag == "error":
+                errorCode = child.get("code", "UNKNOWN_ERROR")
+                errorMessage = "".join(child.itertext())
+                logger.error(f"API error: {errorCode} - {errorMessage}")
+                ret["error"] = {"code": errorCode, "message": errorMessage}
+            elif child.tag == "results":
+                groups = []
+                # It should be exactly one "grouping", but who knows
+                for groupingElem in child.iterfind("grouping"):
+                    pageElem = groupingElem.find("page")
+                    if pageElem is not None and pageElem.text is not None:
+                        ret["page"] = int(pageElem.text)
+
+                    for groupElement in groupingElem.iterfind("group"):
+                        group = _parseGroup(groupElement)
+                        if group:
+                            groups.append(group)
+
+                ret["groups"] = groups
+
+        return ret
 
     except binascii.Error as e:
         logger.error(f"Base64 decoding error: {e}")
@@ -180,13 +189,13 @@ def _parseGroup(groupElement: ET.Element) -> Optional[SearchGroup]:
         - The function is tolerant of missing or malformed document elements
     """
     try:
-        results = []
-        for docElement in groupElement.findall(".//doc"):
+        results: SearchGroup = []
+        for docElement in groupElement.iterfind("doc"):
             result = _parseDocument(docElement)
             if result:
                 results.append(result)
 
-        return {"group": results}
+        return results
 
     except Exception as e:
         logger.warning(f"Error parsing group: {e}")
@@ -223,47 +232,80 @@ def _parseDocument(docElement: ET.Element) -> Optional[SearchResult]:
         - Parsing failures are logged as warnings
     """
     try:
-        # Extract basic document info
-        url = docElement.get("url", "")
-        domain = docElement.get("domain", "")
-        title = docElement.get("title", "")
-        modtime = docElement.get("modtime", "")
-        size = docElement.get("size", "")
-        charset = docElement.get("charset", "")
+        ret: SearchResult = {
+            "url": "",
+            "domain": "",
+            "title": "",
+            "passages": [],
+            "hlwords": [],
+        }
 
-        # Extract MIME types
-        mimetypes = []
-        for mimeElement in docElement.findall(".//mime-type"):
-            mimetype = mimeElement.text
-            if mimetype:
-                mimetypes.append(mimetype)
-
-        # Extract passages with highlighted words
-        passages = []
         hlwords = []
 
-        for passageElement in docElement.findall(".//passage"):
-            passageText = _extractPassageText(passageElement)
-            if passageText:
-                passages.append(passageText)
+        # <doc id="XXX">
+        #     <relevance priority="all"/>
+        #     <saved-copy-url>https://yandexwebcache.net/...</saved-copy-url>
+        #     <url>...</url>
+        #     <domain>docs.python.org</domain>
+        #     <title>The <hlword>Python</hlword>...</title>
+        #     <modtime>20130731T033721</modtime>
+        #     <size>1914</size>
+        #     <charset>utf-8</charset>
+        #     <mime-type>text/html</mime-type>
+        #     <passages>
+        #         <passage><hlword>Python</hlword>...</passage>
+        #         <passage>....</passage>
+        #     </passages>
+        #     <properties>
+        #         <_PassagesType>0</_PassagesType>
+        #         <lang>en</lang>
+        #         <extended-text>This...</extended-text>
+        #     </properties>
+        # </doc>
+        for child in docElement:
+            match child.tag:
+                case "title":
+                    ret["title"] = _extractPassageText(child)
+                case "url" | "domain" | "charset":
+                    if child.text is not None:
+                        ret[child.tag] = child.text
+                case "mime-type":
+                    if child.text is not None:
+                        ret["mimeType"] = child.text
+                case "saved-copy-url":
+                    if child.text is not None:
+                        ret["savedCopyUrl"] = child.text
+                case "modtime":
+                    if child.text is not None:
+                        ret["modtime"] = (
+                            datetime.datetime.strptime(child.text, "%Y%m%dT%H%M%S")
+                            .astimezone(datetime.timezone.utc)
+                            .timestamp()
+                        )
+                case "size":
+                    if child.text is not None:
+                        ret["size"] = int(child.text)
 
-            # Extract highlighted words from this passage
-            for hlwordElement in passageElement.findall(".//hlword"):
-                hlword = hlwordElement.text
-                if hlword and hlword not in hlwords:
-                    hlwords.append(hlword)
+                case "passages":
+                    for passageElement in child.iterfind("passage"):
+                        passageText = _extractPassageText(passageElement)
+                        if passageText:
+                            ret["passages"].append(passageText)
 
-        return {
-            "url": url,
-            "domain": domain,
-            "title": title,
-            "passages": passages,
-            "modtime": modtime,
-            "size": size,
-            "charset": charset,
-            "mimetypes": mimetypes if mimetypes else None,
-            "hlwords": hlwords if hlwords else None,
-        }
+                        # Extract highlighted words from this passage
+                        for hlwordElement in passageElement.iterfind("hlword"):
+                            hlword = hlwordElement.text
+                            if hlword and hlword not in ret["hlwords"]:
+                                ret["hlwords"].append(hlword)
+
+                case "properties":
+                    for propElement in child:
+                        if propElement.tag == "extended-text" and propElement.text:
+                            ret["extendedText"] = propElement.text
+                        if propElement.tag == "lang" and propElement.text:
+                            ret["lang"] = propElement.text
+
+        return ret
 
     except Exception as e:
         logger.warning(f"Error parsing document: {e}")
@@ -328,66 +370,3 @@ def _extractPassageText(passageElement: ET.Element) -> str:
     except Exception as e:
         logger.warning(f"Error extracting passage text: {e}")
         return passageElement.text or ""
-
-
-def parseErrorResponse(base64Xml: str) -> ErrorResponse:
-    """
-    Parse Base64-encoded XML error response from the Yandex Search API.
-
-    This function specifically handles error responses from the API,
-    extracting error codes, messages, and additional details. It's used
-    when the API returns an error response instead of search results.
-
-    The error XML structure:
-    <response>
-        <error code="ERROR_CODE" message="Error message" details="Additional info" />
-    </response>
-
-    Args:
-        base64Xml (str): Base64-encoded XML error response from the API.
-                        This is typically found in the 'result' field when
-                        the API returns an error status.
-
-    Returns:
-        ErrorResponse: Parsed error structure with the following fields:
-            - code (str): Machine-readable error code
-            - message (str): Human-readable error message
-            - details (str): Additional error details (may be empty)
-
-    Note:
-        - If no error element is found, a generic error is returned
-        - Missing attributes default to empty strings
-        - Parsing errors are logged but don't raise exceptions
-        - This function is more tolerant than parseSearchResponse()
-
-    Example:
-        ```python
-        error = parseErrorResponse(base64_error_xml)
-        print(f"Error {error['code']}: {error['message']}")
-        if error['details']:
-            print(f"Details: {error['details']}")
-        ```
-    """
-    try:
-        # Decode Base64
-        xmlBytes = base64.b64decode(base64Xml)
-        xmlString = xmlBytes.decode("utf-8")
-
-        # Parse XML
-        root = ET.fromstring(xmlString)
-
-        # Extract error information
-        errorElement = root.find(".//error")
-        if errorElement is None:
-            # If no error element, create a generic error
-            return {"code": "UNKNOWN_ERROR", "message": "Unknown error occurred", "details": ""}
-
-        errorCode = errorElement.get("code", "UNKNOWN_ERROR")
-        errorMessage = errorElement.get("message", "Unknown error")
-        errorDetails = errorElement.get("details", "")
-
-        return {"code": errorCode, "message": errorMessage, "details": errorDetails}
-
-    except Exception as e:
-        logger.error(f"Error parsing error response: {e}")
-        return {"code": "PARSE_ERROR", "message": f"Failed to parse error response: {str(e)}", "details": ""}
