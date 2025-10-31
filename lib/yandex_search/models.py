@@ -39,9 +39,38 @@ Example:
     ```
 """
 
+from enum import StrEnum
 from typing import Dict, List, NotRequired, Optional, TypeAlias, TypedDict
 
 # Request Models
+
+
+class SearchType(StrEnum):
+    """Search type that determines the domain name that will be used for the search queries."""
+
+    SEARCH_TYPE_RU = "SEARCH_TYPE_RU"  # Russian search (yandex.ru)
+    SEARCH_TYPE_TR = "SEARCH_TYPE_TR"  # Turkish search (yandex.com.tr)
+    SEARCH_TYPE_COM = "SEARCH_TYPE_COM"  # International search (yandex.com)
+    SEARCH_TYPE_KK = "SEARCH_TYPE_KK"  # Kazakh search (yandex.kz)
+    SEARCH_TYPE_BE = "SEARCH_TYPE_BE"  # Belarusian search (yandex.by)
+    SEARCH_TYPE_UZ = "SEARCH_TYPE_UZ"  # Uzbek search (yandex.uz)
+
+
+class FamilyMode(StrEnum):
+    """Rule for filtering search results and determines whether any documents should be excluded."""
+
+    FAMILY_MODE_UNSPECIFIED = "FAMILY_MODE_UNSPECIFIED"
+    FAMILY_MODE_MODERATE = "FAMILY_MODE_MODERATE"  # Moderate content filtering
+    FAMILY_MODE_STRICT = "FAMILY_MODE_STRICT"  # Strict content filtering
+    FAMILY_MODE_OFF = "FAMILY_MODE_OFF"  # No content filtering
+
+
+class FixTypoMode(StrEnum):
+    """Typos autocorrections mode"""
+
+    FIX_TYPO_MODE_UNSPECIFIED = "FIX_TYPO_MODE_UNSPECIFIED"
+    FIX_TYPO_MODE_ON = "FIX_TYPO_MODE_ON"  # Automatically correct typos (default value).
+    FIX_TYPO_MODE_OFF = "FIX_TYPO_MODE_OFF"  # Autocorrection is off.
 
 
 class SearchQuery(TypedDict):
@@ -52,48 +81,50 @@ class SearchQuery(TypedDict):
     including the search text, domain, and various search options.
 
     Fields:
-        searchType (str): Search domain identifier. Required field.
-            Valid values:
-            - SEARCH_TYPE_RU: Russian search (yandex.ru)
-            - SEARCH_TYPE_TR: Turkish search (yandex.com.tr)
-            - SEARCH_TYPE_COM: International search (yandex.com)
-            - SEARCH_TYPE_KK: Kazakh search (yandex.kz)
-            - SEARCH_TYPE_BE: Belarusian search (yandex.by)
-            - SEARCH_TYPE_UZ: Uzbek search (yandex.uz)
+        searchType (SearchType): Search domain identifier. Required field.
 
         queryText (str): The actual search query text. Required field.
             Can contain any characters supported by the search engine.
 
-        familyMode (Optional[str]): Family filter mode for content filtering.
-            Valid values:
-            - FAMILY_MODE_MODERATE: Moderate content filtering
-            - FAMILY_MODE_STRICT: Strict content filtering
-            - FAMILY_MODE_OFF: No content filtering
+        familyMode (Optional[FamilyMode]): Family filter mode for content filtering.
 
         page (Optional[str]): Page number for pagination (0-based).
             Used to navigate through search results. Default is "0".
 
-        fixTypoMode (Optional[str]): Typo correction mode.
-            Valid values:
-            - FIX_TYPO_MODE_ON: Enable automatic typo correction
-            - FIX_TYPO_MODE_OFF: Disable typo correction
+        fixTypoMode (Optional[FixTypoMode]): Typo correction mode.
 
     Example:
         ```python
         query: SearchQuery = {
-            "searchType": "SEARCH_TYPE_RU",
+            "searchType": SearchType.SEARCH_TYPE_RU,
             "queryText": "python programming tutorials",
-            "familyMode": "FAMILY_MODE_MODERATE",
-            "fixTypoMode": "FIX_TYPO_MODE_ON"
+            "familyMode": FamilyMode.FAMILY_MODE_MODERATE,
+            "fixTypoMode": FixTypoMode.FIX_TYPO_MODE_ON
         }
         ```
     """
 
-    searchType: str
+    searchType: SearchType
     queryText: str
-    familyMode: Optional[str]
+    familyMode: Optional[FamilyMode]
     page: Optional[str]
-    fixTypoMode: Optional[str]
+    fixTypoMode: Optional[FixTypoMode]
+
+
+class SortMode(StrEnum):
+    """Documents sorting mode."""
+
+    SORT_MODE_UNSPECIFIED = "SORT_MODE_UNSPECIFIED"
+    SORT_MODE_BY_RELEVANCE = "SORT_MODE_BY_RELEVANCE"  # Sort documents by relevance (default value).
+    SORT_MODE_BY_TIME = "SORT_MODE_BY_TIME"  # Sort documents by update time.
+
+
+class SortOrder(StrEnum):
+    """Documents sorting order."""
+
+    SORT_ORDER_UNSPECIFIED = "SORT_ORDER_UNSPECIFIED"
+    SORT_ORDER_ASC = "SORT_ORDER_ASC"  # Reverse order from oldest to most recent.
+    SORT_ORDER_DESC = "SORT_ORDER_DESC"  # Direct order from most recent to oldest (default).
 
 
 class SortSpec(TypedDict):
@@ -104,16 +135,10 @@ class SortSpec(TypedDict):
     All fields are optional - if not provided, the API defaults will be used.
 
     Fields:
-        sortMode (Optional[str]): Sort mode for results.
-            Valid values:
-            - SORT_MODE_BY_RELEVANCE: Sort by relevance score (default)
-            - SORT_MODE_BY_TIME: Sort by publication date
-            - SORT_MODE_BY_PRIORITY: Sort by priority ranking
+        sortMode (Optional[SortMode]): Sort mode for results.
 
-        sortOrder (Optional[str]): Sort order direction.
-            Valid values:
-            - SORT_ORDER_DESC: Descending order (highest first, default)
-            - SORT_ORDER_ASC: Ascending order (lowest first)
+        sortOrder (Optional[SortOrder]): Sort order direction.
+
 
     Example:
         ```python
@@ -124,8 +149,16 @@ class SortSpec(TypedDict):
         ```
     """
 
-    sortMode: NotRequired[str]
-    sortOrder: NotRequired[str]
+    sortMode: NotRequired[SortMode]
+    sortOrder: NotRequired[SortOrder]
+
+
+class GroupMode(StrEnum):
+    """Grouping method."""
+
+    GROUP_MODE_UNSPECIFIED = "GROUP_MODE_UNSPECIFIED"
+    GROUP_MODE_FLAT = "GROUP_MODE_FLAT"  # Flat grouping. Each group contains a single document.
+    GROUP_MODE_DEEP = "GROUP_MODE_DEEP"  # Grouping by domain. Each group contains documents from one domain.
 
 
 class GroupSpec(TypedDict):
@@ -137,10 +170,7 @@ class GroupSpec(TypedDict):
     the same website or different sections of the same document.
 
     Fields:
-        groupMode (Optional[str]): Result grouping mode.
-            Valid values:
-            - GROUP_MODE_DEEP: Deep grouping with hierarchical structure (default)
-            - GROUP_MODE_FLAT: Flat results without grouping
+        groupMode (Optional[GroupMode]): Result grouping mode.
 
         groupsOnPage (Optional[str]): Number of result groups per page.
             Valid range: 1-100. Default is "10".
@@ -160,9 +190,29 @@ class GroupSpec(TypedDict):
         ```
     """
 
-    groupMode: NotRequired[str]
+    groupMode: NotRequired[GroupMode]
     groupsOnPage: NotRequired[str]
     docsInGroup: NotRequired[str]
+
+
+class Localization(StrEnum):
+    """The notification language for a search response."""
+
+    LOCALIZATION_UNSPECIFIED = "LOCALIZATION_UNSPECIFIED"
+    LOCALIZATION_RU = "LOCALIZATION_RU"  # Russian (default value)
+    LOCALIZATION_UK = "LOCALIZATION_UK"  # Ukrainian
+    LOCALIZATION_BE = "LOCALIZATION_BE"  # Belarusian
+    LOCALIZATION_KK = "LOCALIZATION_KK"  # Kazakh
+    LOCALIZATION_TR = "LOCALIZATION_TR"  # Turkish
+    LOCALIZATION_EN = "LOCALIZATION_EN"  # English
+
+
+class ResponseFormat(StrEnum):
+    """Search results format."""
+
+    FORMAT_UNSPECIFIED = "FORMAT_UNSPECIFIED"
+    FORMAT_XML = "FORMAT_XML"  # XML format (default value)
+    FORMAT_HTML = "FORMAT_HTML"  # HTML format (Unsupported by this client)
 
 
 class SearchRequest(TypedDict):
@@ -190,22 +240,16 @@ class SearchRequest(TypedDict):
 
         region (str): Region code for localized results.
             Default is "225" for Russia.
-            See Yandex Search API documentation for complete list of region codes.
+            See Yandex Search API documentation for complete list of region codes:
+            https://yandex.cloud/ru/docs/search-api/reference/regions
 
-        l10n (str): Localization language for results.
-            Valid values:
-            - LOCALIZATION_RU: Russian (default)
-            - LOCALIZATION_EN: English
-            - LOCALIZATION_TR: Turkish
-            - And others based on supported languages
+        l10n (Localization): Localization language for results.
 
         folderId (str): Yandex Cloud folder ID. Required field.
             This identifies your Yandex Cloud account and project.
 
-        responseFormat (str): Response format from the API.
-            Valid values:
-            - FORMAT_XML: XML response format (default)
-            - FORMAT_HTML: HTML response format
+        responseFormat (ResponseFormat): Response format from the API.
+            Valid value: ResponseFormat.FORMAT_XML
 
     Example:
         ```python
@@ -236,13 +280,13 @@ class SearchRequest(TypedDict):
     """
 
     query: SearchQuery
-    sortSpec: Optional[SortSpec]
-    groupSpec: Optional[GroupSpec]
-    maxPassages: str
-    region: str
-    l10n: str
+    sortSpec: NotRequired[SortSpec]
+    groupSpec: NotRequired[GroupSpec]
+    maxPassages: NotRequired[str]
+    region: NotRequired[str]
+    l10n: NotRequired[Localization]
     folderId: str
-    responseFormat: str
+    responseFormat: ResponseFormat
 
 
 # Response Models

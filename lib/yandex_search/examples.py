@@ -22,6 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from lib.yandex_search import DictSearchCache, YandexSearchClient  # noqa: E402
+from lib.yandex_search.models import FamilyMode, FixTypoMode, GroupMode, Localization, SearchType, SortMode, SortOrder
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -97,7 +98,7 @@ async def example_search_with_api_key():
     query = "machine learning algorithms"
     print(f"Searching for: {query}")
 
-    results = await client.search(queryText=query, searchType="SEARCH_TYPE_RU", maxPassages=3, groupsOnPage=5)
+    results = await client.search(queryText=query, searchType=SearchType.SEARCH_TYPE_RU, maxPassages=3, groupsOnPage=5)
 
     if results:
         print(f"Found {results['foundHuman']} results")
@@ -121,18 +122,18 @@ async def example_advanced_search():
     # Advanced search with all parameters
     results = await client.search(
         queryText="artificial intelligence in healthcare",
-        searchType="SEARCH_TYPE_RU",
-        familyMode="FAMILY_MODE_MODERATE",
+        searchType=SearchType.SEARCH_TYPE_RU,
+        familyMode=FamilyMode.FAMILY_MODE_MODERATE,
         page=0,
-        fixTypoMode="FIX_TYPO_MODE_ON",
-        sortMode="SORT_MODE_BY_RELEVANCE",
-        sortOrder="SORT_ORDER_DESC",
-        groupMode="GROUP_MODE_DEEP",
+        fixTypoMode=FixTypoMode.FIX_TYPO_MODE_ON,
+        sortMode=SortMode.SORT_MODE_BY_RELEVANCE,
+        sortOrder=SortOrder.SORT_ORDER_DESC,
+        groupMode=GroupMode.GROUP_MODE_DEEP,
         groupsOnPage=3,
         docsInGroup=2,
         maxPassages=2,
         region="225",  # Russia
-        l10n="LOCALIZATION_RU",
+        l10n=Localization.LOCALIZATION_RU,
     )
 
     if results:
@@ -275,9 +276,9 @@ async def example_different_search_domains():
 
     # Test different search types
     search_types = [
-        ("SEARCH_TYPE_RU", "погода в москве", "Russian search"),
-        ("SEARCH_TYPE_COM", "weather forecast", "International search"),
-        ("SEARCH_TYPE_TR", "hava durumu", "Turkish search"),
+        (SearchType.SEARCH_TYPE_RU, "погода в москве", "Russian search"),
+        (SearchType.SEARCH_TYPE_COM, "weather forecast", "International search"),
+        (SearchType.SEARCH_TYPE_TR, "hava durumu", "Turkish search"),
     ]
 
     for search_type, query, description in search_types:

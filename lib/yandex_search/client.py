@@ -48,9 +48,17 @@ import httpx
 
 from .cache_interface import SearchCacheInterface
 from .models import (
+    FamilyMode,
+    FixTypoMode,
+    GroupMode,
     GroupSpec,
+    Localization,
+    ResponseFormat,
     SearchRequest,
     SearchResponse,
+    SearchType,
+    SortMode,
+    SortOrder,
 )
 from .xml_parser import parseSearchResponse
 
@@ -185,18 +193,18 @@ class YandexSearchClient:
         self,
         queryText: str,
         *,
-        searchType: str = "SEARCH_TYPE_RU",  # TODO: Do StrEnum
-        familyMode: str = "FAMILY_MODE_MODERATE",  # TODO: Do StrEnum
+        searchType: SearchType = SearchType.SEARCH_TYPE_RU,
+        familyMode: FamilyMode = FamilyMode.FAMILY_MODE_MODERATE,
         page: int = 0,
-        fixTypoMode: str = "FIX_TYPO_MODE_ON",  # TODO: Do StrEnum
-        sortMode: str = "SORT_MODE_BY_RELEVANCE",  # TODO: Do StrEnum
-        sortOrder: str = "SORT_ORDER_DESC",  # TODO: Do StrEnum
-        groupMode: str = "GROUP_MODE_DEEP",  # TODO: Do StrEnum
+        fixTypoMode: FixTypoMode = FixTypoMode.FIX_TYPO_MODE_ON,
+        sortMode: SortMode = SortMode.SORT_MODE_BY_RELEVANCE,
+        sortOrder: SortOrder = SortOrder.SORT_ORDER_DESC,
+        groupMode: GroupMode = GroupMode.GROUP_MODE_DEEP,
         groupsOnPage: Optional[int] = None,
         docsInGroup: Optional[int] = None,
         maxPassages: int = 2,
         region: str = "225",  # See https://yandex.cloud/ru/docs/search-api/reference/regions for examples
-        l10n: str = "LOCALIZATION_RU",  # TODO: Do StrEnum
+        l10n: Localization = Localization.LOCALIZATION_RU,
         useCache: Optional[bool] = None,
     ) -> Optional[SearchResponse]:
         """
@@ -323,7 +331,7 @@ class YandexSearchClient:
             "region": region,
             "l10n": l10n,
             "folderId": self.folderId,
-            "responseFormat": "FORMAT_XML",
+            "responseFormat": ResponseFormat.FORMAT_XML,
         }
 
         # Check cache first (if enabled and not bypassed)
