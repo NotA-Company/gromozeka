@@ -16,7 +16,6 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-import requests
 from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
@@ -25,11 +24,7 @@ from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
-from lib.ai import (
-    LLMFunctionParameter,
-    LLMManager,
-    LLMParameterType,
-)
+from lib.ai import LLMManager
 
 from .. import constants
 from ..models import (
@@ -77,20 +72,6 @@ class CommonHandler(BaseBotHandler):
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
 
         self.llmService = LLMService.getInstance()
-
-        self.llmService.registerTool(
-            name="get_url_content",
-            description="Get the content of a URL",
-            parameters=[
-                LLMFunctionParameter(
-                    name="url",
-                    description="The URL to get the content from",
-                    type=LLMParameterType.STRING,
-                    required=True,
-                ),
-            ],
-            handler=self._llmToolGetUrlContent,
-        )
 
         self.llmService.registerTool(
             name="get_current_datetime",
@@ -178,33 +159,6 @@ class CommonHandler(BaseBotHandler):
     ###
     # LLM Tool-Calling handlers
     ###
-
-    async def _llmToolGetUrlContent(self, extraData: Optional[Dict[str, Any]], url: str, **kwargs) -> str:
-        """
-        LLM tool handler to fetch content from a URL, dood!
-
-        This tool is registered with the LLM service and can be called by AI models
-        to retrieve web content during conversations. Currently returns raw content
-        as a string.
-
-        Args:
-            extraData: Optional extra data passed by the LLM service (unused)
-            url: The URL to fetch content from
-            **kwargs: Additional keyword arguments (unused)
-
-        Returns:
-            str: The content from the URL as a string, or a JSON error object
-                 if the request fails
-
-        Note:
-            TODO: Add content type checking to ensure text content is returned
-        """
-        # TODO: Check if content is text content
-        try:
-            return str(requests.get(url).content)
-        except Exception as e:
-            logger.error(f"Error getting content from {url}: {e}")
-            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
     async def _llmToolGetCurrentDateTime(self, extraData: Optional[Dict[str, Any]], **kwargs) -> str:
         """
