@@ -17,6 +17,7 @@ Key Features:
 """
 
 import datetime
+import json
 import logging
 import random
 import re
@@ -113,6 +114,7 @@ class LLMMessageHandler(BaseBotHandler):
         async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
             if mRet.resultText.strip() and sendIntermediateMessages:
                 try:
+                    logger.debug(f"Sending intermediate message. LLM Result status is: {mRet.status}")
                     await self.sendMessage(ensuredMessage, mRet.resultText, messageCategory=MessageCategory.BOT)
                     await self.startTyping(ensuredMessage)
                 except Exception as e:
@@ -200,6 +202,29 @@ class LLMMessageHandler(BaseBotHandler):
         imagePrompt: Optional[str] = None
         # Check if <media-description> is in the message
         if llmMessageFormat != LLMMessageFormat.JSON:
+            # first - check if it JSON'ed reply and deJson it
+            looksLikeJSON = re.match(r"^\s*`*\s*{", lmRetText) is not None
+            if looksLikeJSON:
+                logger.debug(
+                    f"_sendLLMChatMessage: Looks like LLM answered with JSON: '{lmRetText}' trying to parse it..."
+                )
+                try:
+                    jsonReply = json.loads(lmRetText.strip().strip("`").strip())
+                    if "text" in jsonReply:
+                        lmRetText = str(jsonReply["text"]).strip()
+                    elif "message" in jsonReply:
+                        lmRetText = str(jsonReply["message"]).strip()
+                    elif "media_description" in jsonReply:
+                        lmRetText = str(jsonReply["media_description"]).strip()
+                    else:
+                        logger.warning(
+                            f"No text field found in json reply, fallback to text. Json Reply is: {jsonReply}"
+                        )
+                    logger.debug(f"Extracted text is: {lmRetText}")
+                except ValueError as e:
+                    logger.debug(f"It wasnn't JSON...")
+                    logger.exception(e)
+
             if lmRetText.startswith("<media-description>"):
                 # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText
                 match = re.search(r"^<media-description>(.*?)</media-description>(.*?)", lmRetText, re.DOTALL)
