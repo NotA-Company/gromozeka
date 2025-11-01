@@ -136,12 +136,25 @@ class BaseBotHandler(CommandHandlerMixin):
         botDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
             k: ChatSettingsValue(v) for k, v in self.config.get("defaults", {}).items() if k in ChatSettingsKey
         }
+        botPrivatDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
+            k: ChatSettingsValue(v) for k, v in self.config.get("private-defaults", {}).items() if k in ChatSettingsKey
+        }
+        botChatDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
+            k: ChatSettingsValue(v) for k, v in self.config.get("chat-defaults", {}).items() if k in ChatSettingsKey
+        }
 
-        self.chatDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
+        self.defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
             k: ChatSettingsValue("") for k in ChatSettingsKey
         }
 
-        self.chatDefaults.update({k: v for k, v in botDefaults.items() if k in ChatSettingsKey})
+        self.defaultSettings.update({k: v for k, v in botDefaults.items() if k in ChatSettingsKey})
+
+        self.privateDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
+            k: v for k, v in botPrivatDefaults.items() if k in ChatSettingsKey
+        }
+        self.chatDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
+            k: v for k, v in botChatDefaults.items() if k in ChatSettingsKey
+        }
 
         # Init cache
         self.cache = CacheService.getInstance()
@@ -193,15 +206,20 @@ class BaseBotHandler(CommandHandlerMixin):
             Dictionary mapping [`ChatSettingsKey`](internal/bot/models/chat_settings.py)
                             to [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
         """
+        defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {}
+        if returnDefault:
+            defaultSettings = self.defaultSettings.copy()
+            if chatId is not None and chatId > 0:  # it's Private Chat
+                defaultSettings.update(self.privateDefaultSettings)
+            elif chatId is not None and chatId < 0:  # it's Group Chat
+                defaultSettings.update(self.chatDefaultSettings)
+
         if chatId is None:
-            return self.chatDefaults.copy()
+            return defaultSettings
 
         chatSettings = self.cache.getChatSettings(chatId)
 
-        if returnDefault:
-            return {**self.chatDefaults, **chatSettings}
-
-        return chatSettings
+        return {**defaultSettings, **chatSettings}
 
     def setChatSetting(self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue) -> None:
         """

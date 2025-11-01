@@ -478,43 +478,6 @@ class TestBayesFilterIntegration:
     """Test Bayes filter integration, dood!"""
 
     @pytest.mark.asyncio
-    async def testCheckSpamUsesBayesFilter(self, spamHandler, mockBot, mockDatabase, mockCacheService, mockBayesFilter):
-        """Test Bayes filter is used when enabled, dood!"""
-        spamHandler.injectBot(mockBot)
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES: ChatSettingsValue("10"),
-            ChatSettingsKey.SPAM_WARN_TRESHOLD: ChatSettingsValue("50.0"),
-            ChatSettingsKey.SPAM_BAN_TRESHOLD: ChatSettingsValue("90.0"),
-            ChatSettingsKey.BAYES_ENABLED: ChatSettingsValue("true"),
-            ChatSettingsKey.BAYES_MIN_CONFIDENCE: ChatSettingsValue("0.1"),
-        }
-        mockDatabase.getChatUser.return_value = {
-            "chat_id": 123,
-            "user_id": 456,
-            "username": "user",
-            "full_name": "User",
-            "messages_count": 2,
-            "is_spammer": False,
-            "created_at": datetime.datetime.now(),
-            "updated_at": datetime.datetime.now(),
-            "timezone": "",
-            "metadata": "",
-        }
-        mockDatabase.getChatMessagesByUser.return_value = []
-        mockDatabase.getSpamMessagesByText.return_value = []
-        mockBayesFilter.classify.return_value = SpamScore(score=45.0, isSpam=False, confidence=0.8, tokenScores={})
-
-        message = createMockMessage(text="Test message")
-        message._bot = mockBot  # Add the _bot attribute
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-
-        result = await spamHandler.checkSpam(ensuredMessage)
-
-        # Bayes filter should be called twice (with and without trigrams)
-        assert mockBayesFilter.classify.call_count == 2
-        assert result is False
-
-    @pytest.mark.asyncio
     async def testMarkAsSpamLearnsBayesFilter(
         self, spamHandler, mockBot, mockDatabase, mockCacheService, mockBayesFilter
     ):

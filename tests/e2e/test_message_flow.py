@@ -176,7 +176,7 @@ async def testSimpleTextMessageFlow(inMemoryDb, mockBot, handlersManager):
         userId=userId,
         text=messageText,
     )
-    message.chat.type = Chat.GROUP  # Set as group chat to avoid ALLOW_PRIVATE check
+    message.chat.type = Chat.GROUP  # Set as group chat to avoid private chat check
     update = createMockUpdate(message=message)
     context = createMockContext(bot=mockBot)
 
@@ -197,76 +197,6 @@ async def testSimpleTextMessageFlow(inMemoryDb, mockBot, handlersManager):
     # 4. Verify user info updated
     users = inMemoryDb.getChatUsers(chatId=chatId)
     assert len(users) >= 1, "User should be saved to database, dood!"
-
-
-@pytest.mark.asyncio
-async def testSimpleTextMessageWithBotResponse(inMemoryDb, mockBot, handlersManager):
-    """
-    Test flow where bot responds to user message in private chat, dood!
-
-    Flow:
-        1. User sends message in private chat
-        2. Bot generates response via LLM
-        3. Bot sends response
-        4. Both messages saved to database
-
-    Verifies:
-        - User message saved
-        - Bot response sent
-        - Bot response saved to database
-    """
-    from internal.services.llm.service import LLMService
-
-    # Mock LLM service to return response
-    mockService = Mock(spec=LLMService)
-    result = ModelRunResult(
-        rawResult=None,
-        status=ModelResultStatus.FINAL,
-        resultText="Hello user, dood!",
-    )
-    result.setFallback(False)
-    result.setToolsUsed(False)
-    mockService.generateTextViaLLM = AsyncMock(return_value=result)
-
-    # Inject mock service into all handlers that have llmService
-    for handler in handlersManager.handlers:
-        if hasattr(handler, "llmService"):
-            handler.llmService = mockService
-
-    # 1. Create private chat message
-    chatId = 123
-    userId = 456
-
-    message = createMockMessage(
-        messageId=1,
-        chatId=chatId,
-        userId=userId,
-        text="Hello bot!",
-    )
-    message.chat.type = Chat.PRIVATE
-    update = createMockUpdate(message=message)
-    context = createMockContext(bot=mockBot)
-
-    # Set chat settings to allow private messages
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
-
-    # 2. Process message
-    await handlersManager.handle_message(update, context)
-
-    # 3. Verify bot sent response
-    message.reply_text.assert_called()
-
-    # 4. Verify both messages in database
-    messages = inMemoryDb.getChatMessagesSince(chatId=chatId, limit=10)
-    assert len(messages) >= 1, "At least user message should be saved, dood!"
 
 
 # ============================================================================
@@ -361,7 +291,7 @@ async def testReplyToBotMessageFlow(inMemoryDb, mockBot, handlersManager):
     context = createMockContext(bot=mockBot)
 
     # Set chat settings
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_MENTION.value, "true")
     inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_REPLY.value, "true")
     inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
     inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
@@ -576,67 +506,6 @@ async def testStickerMessageFlow(inMemoryDb, mockBot, handlersManager):
 
 
 @pytest.mark.asyncio
-async def testPrivateChatBehavior(inMemoryDb, mockBot, handlersManager):
-    """
-    Test bot behavior in private chat, dood!
-
-    Verifies:
-        - Bot responds to all messages in private chat
-        - No mention required
-        - Context from previous messages used
-    """
-    from internal.services.llm.service import LLMService
-
-    # Mock LLM service
-    mockService = Mock(spec=LLMService)
-    result = ModelRunResult(
-        rawResult=None,
-        status=ModelResultStatus.FINAL,
-        resultText="Private chat response, dood!",
-    )
-    result.setFallback(False)
-    result.setToolsUsed(False)
-    mockService.generateTextViaLLM = AsyncMock(return_value=result)
-
-    # Inject mock service into all handlers that have llmService
-    for handler in handlersManager.handlers:
-        if hasattr(handler, "llmService"):
-            handler.llmService = mockService
-
-    chatId = 123
-    userId = 456
-
-    # Create private chat message (no mention needed)
-    message = createMockMessage(
-        messageId=1,
-        chatId=chatId,
-        userId=userId,
-        text="Just a regular message",
-    )
-    message.chat.type = Chat.PRIVATE
-
-    update = createMockUpdate(message=message)
-    context = createMockContext(bot=mockBot)
-
-    # Enable private chat
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_MODEL.value, "test-model")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT.value, "You are a helpful assistant")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_PROMPT_SUFFIX.value, "")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.TOOLS_USED_PREFIX.value, "")
-
-    # Process message
-    await handlersManager.handle_message(update, context)
-
-    # Verify bot responded (no mention required in private chat)
-    message.reply_text.assert_called()
-
-
-@pytest.mark.asyncio
 async def testGroupChatBehavior(inMemoryDb, mockBot, handlersManager):
     """
     Test bot behavior in group chat, dood!
@@ -712,7 +581,8 @@ async def testMessageFlowWithLlmError(inMemoryDb, mockBot, handlersManager):
     context = createMockContext(bot=mockBot)
 
     # Enable private chat
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_MENTION.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_REPLY.value, "true")
     inMemoryDb.setChatSetting(chatId, ChatSettingsKey.LLM_MESSAGE_FORMAT.value, "text")
     inMemoryDb.setChatSetting(chatId, ChatSettingsKey.USE_TOOLS.value, "false")
     inMemoryDb.setChatSetting(chatId, ChatSettingsKey.CHAT_MODEL.value, "test-model")

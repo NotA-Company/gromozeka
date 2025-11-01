@@ -6,16 +6,47 @@ bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
 # Salt for signing [not]spam buttons to reject those actions on random messages
 spam-button-salt = "YOUR_SALT_HERE"
 
+[bot.private-defaults]
+# Allow configure by default (Turn it of if you'll want to disable private)
+admin-can-change-settings = true
+
+# Allow replying (Disable to disable private)
+allow-mention = true
+allow-reply = true
+
+# For private chats - Always answer something
+random-answer-probability = 1
+# The only user in Private chat is admin
+random-answer-to-admin = true
+
+# No spam possible in private chats
+detect-spam = false
+
+[bot.chat-defaults]
+# Can chat admins change channel-specific bot settings?
+admin-can-change-settings = true
+
+# Allow reaction in bot mention (by username and by name)
+allow-mention = true
+# Allow reaction on reply of bot message
+allow-reply = true
+
+# Probability of random answer to any message (set 0 for disable, 1 for always)
+# For chat it should be very rare event
+random-answer-probability = 0.01
+# In case of random answer - answer to chat admin messages?
+random-answer-to-admin = true
+
 [bot.defaults]
 # Can chat admins change channel-specific bot settings?
 admin-can-change-settings = true
 # Bot nicknames for mention purposes. Comma-separated list
 bot-nicknames = "Громозека, Gro"
 # Message format for LLM, currently supported: `text`, `json`, `smart`
-llm-message-format = "json"
+llm-message-format = "smart"
 # Can we use tools
 use-tools = true
-# Should we save images to S3 for future using?
+# Should we save images to S3 for future using? (Unimplemented)
 save-images = true
 # Should we parse images via LLM
 parse-images = true
@@ -24,6 +55,9 @@ parse-images = true
 # Set to 0 to get largest image possible
 # Set to 1 to get smallest image possible
 optimal-image-size        = 896
+
+# Automatically detect and delete spam messages
+detect-spam = false
 
 # Allow /draw command
 allow-draw = true
@@ -40,7 +74,7 @@ allow-web-search = true
 allow-user-spam-command = false
 # Automatically detect and delete spam messages
 detect-spam = false
-# If user has more than this amount of messages in chat, do not check it for spam (0 - alwayx check)
+# If user has more than this amount of messages in chat, do not check it for spam (0 - always check)
 auto-spam-max-messages = 10
 # In case of spam - delete all known user messages
 spam-delete-all-user-messages = true
@@ -51,17 +85,17 @@ spam-warn-treshold = 60
 # Allow to block old (with more, than `auto-spam-max-messages` messages) users with /spam command
 allow-mark-spam-old-users = false
 
-#Bayes filter settings
-bayes-enabled = false
+# Bayes filter settings
+bayes-enabled = true
 bayes-min-confidence = 0.5
 bayes-auto-learn = true
+# Should we use trigrams for Bayes filter? (Usefull only in case of lots of learned messages)
+bayes-use-trigrams = false
 
 # Allow reaction in bot mention (by username and by name)
 allow-mention = true
 # Allow reaction on reply of bot message
 allow-reply = true
-# Allow reaction on private message
-allow-private = true
 
 # Probability of random answer to any message (set 0 for disable, 1 for always)
 random-answer-probability = 0.01

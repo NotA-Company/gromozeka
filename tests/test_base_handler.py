@@ -176,7 +176,7 @@ class TestInitialization:
         assert handler.queueService == mockQueueService
         assert handler.config is not None
         assert isinstance(handler.botOwners, list)
-        assert isinstance(handler.chatDefaults, dict)
+        assert isinstance(handler.defaultSettings, dict)
 
     def testInitSetsUpBotOwners(self, baseHandler):
         """Test bot owners are properly initialized from config, dood!"""
@@ -187,9 +187,9 @@ class TestInitialization:
 
     def testInitSetsUpChatDefaults(self, baseHandler):
         """Test chat defaults are properly initialized from config, dood!"""
-        assert ChatSettingsKey.CHAT_MODEL in baseHandler.chatDefaults
-        assert baseHandler.chatDefaults[ChatSettingsKey.CHAT_MODEL].toStr() == "gpt-4"
-        assert baseHandler.chatDefaults[ChatSettingsKey.PARSE_IMAGES].toBool() is True
+        assert ChatSettingsKey.CHAT_MODEL in baseHandler.defaultSettings
+        assert baseHandler.defaultSettings[ChatSettingsKey.CHAT_MODEL].toStr() == "gpt-4"
+        assert baseHandler.defaultSettings[ChatSettingsKey.PARSE_IMAGES].toBool() is True
 
     def testInjectBot(self, baseHandler, mockBot):
         """Test bot injection works correctly, dood!"""

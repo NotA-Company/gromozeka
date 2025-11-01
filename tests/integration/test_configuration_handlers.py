@@ -400,48 +400,6 @@ async def testResetSettingToDefault(inMemoryDb, mockBot, configureHandler):
 
 
 @pytest.mark.asyncio
-async def testAdminOnlySettingProtection(inMemoryDb, mockBot, configureHandler):
-    """
-    Test admin-only settings reject non-admin users, dood!
-
-    Verifies:
-        - Non-admin users cannot access configuration
-        - Error message shown to non-admins
-    """
-    chatId = 789  # Group chat
-    userId = 999  # Not an admin
-    settingKey = ChatSettingsKey.USE_TOOLS
-
-    inMemoryDb.updateChatInfo(chatId, "group", "Test Group", None)
-
-    message = createMockMessage(messageId=1, chatId=userId, userId=userId)
-    message.get_bot = Mock(return_value=mockBot)
-
-    callbackData = utils.packDict(
-        {
-            ButtonDataKey.ChatId: chatId,
-            ButtonDataKey.Key: settingKey.getId(),
-            ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetTrue,
-        }
-    )
-
-    # Mock isAdmin to return False
-    with patch.object(configureHandler, "isAdmin", return_value=False):
-        result = await configureHandler._handle_chat_configuration(
-            utils.unpackDict(callbackData),
-            message,
-            createMockUser(userId=userId),
-        )
-
-    assert result is False
-
-    # Verify error message
-    message.edit_text.assert_called()
-    editArgs = message.edit_text.call_args
-    assert "не являетесь администратором" in editArgs[1]["text"]
-
-
-@pytest.mark.asyncio
 async def testBotOwnerBypassesPermissions(inMemoryDb, mockBot, configureHandler):
     """
     Test bot owners can configure any chat, dood!

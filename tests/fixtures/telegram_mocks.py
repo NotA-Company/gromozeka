@@ -116,6 +116,7 @@ def createMockMessage(
     message.text = text
     message.text_markdown_v2 = text  # For reply text formatting
     message.chat = chat or createMockChat(chatId=chatId)
+    message.chat_id = message.chat.id  # Add chat_id property for compatibility
     message.from_user = fromUser or createMockUser(userId=userId)
     message.reply_to_message = replyToMessage
     message.date = datetime.datetime.now()  # Use real datetime instead of Mock
