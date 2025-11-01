@@ -161,3 +161,12 @@ class ConfigManager:
             Dict with OpenWeatherMap settings (api_key, ttls, etc.)
         """
         return self.get("openweathermap", {})
+
+    def getYandexSearchConfig(self) -> Dict[str, Any]:
+        """
+        Get Yandex Search configuration
+
+        Returns:
+            Dict with Yandex Search settings (api-key, cache settings, etc.)
+        """
+        return self.get("yandex-search", {})

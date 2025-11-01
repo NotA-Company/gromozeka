@@ -33,6 +33,8 @@ allow-analyze = true
 allow-summary = true
 # Allow /wather command
 allow-weather = true
+# Allow /web_search command
+allow-web-search = true
 
 # Allow non-admins to send /spam command
 allow-user-spam-command = false
@@ -140,3 +142,36 @@ request-timeout = 10
 
 # Default language for location names (ru, en, etc.)
 default-language = "ru"
+
+[yandex-search]
+enabled = false
+# Yandex Cloud credentials for Search API
+api-key = "YOUR_YANDEX_SEARCH_API_KEY"
+folder-id = "YOUR_YANDEX_FOLDER_ID"
+
+# Cache time-to-live in seconds
+cache-ttl = 86400  # 60 * 60 * 24 = 1 day (Search results shouldn't change often)
+
+# API request timeout in seconds
+request-timeout = 30
+
+# Rate limiting settings
+rate-limit-requests = 10  # Maximum requests per time window
+rate-limit-window = 60    # Time window in seconds
+
+# Default search parameters. Will be passed to search as `**kwargs`
+[yandex-search.defaults]
+# By default empty, use client defaults
+#searchType = "SEARCH_TYPE_RU"
+#familyMode = "FAMILY_MODE_MODERATE"
+#page = 0
+#fixTypoMode = "FIX_TYPO_MODE_ON"
+#sortMode = "SORT_MODE_BY_RELEVANCE"
+#sortOrder = "SORT_ORDER_DESC"
+#groupMode = "GROUP_MODE_DEEP"
+#groupsOnPage = 5
+#docsInGroup = 2
+#maxPassages = 2
+#region = "225"  # Russia. See https://yandex.cloud/ru/docs/search-api/reference/regions for examples
+#l10n = "LOCALIZATION_RU"
+#useCache = true

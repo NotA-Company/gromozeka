@@ -176,9 +176,6 @@ class WeatherHandler(BaseBotHandler):
             only languages defined in constants.GEOCODER_LOCATION_LANGS.
         """
         try:
-            if self.openWeatherMapClient is None:
-                return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
-
             ret = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
             if ret is None:
                 return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
@@ -215,9 +212,6 @@ class WeatherHandler(BaseBotHandler):
             - errorMessage: Error description if done is False
         """
         try:
-            if self.openWeatherMapClient is None:
-                return utils.jsonDumps({"done": False, "errorMessage": "OpenWeatherMapClient is not set"})
-
             ret = await self.openWeatherMapClient.getWeather(lat, lon)
             if ret is None:
                 return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
