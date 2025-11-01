@@ -29,6 +29,7 @@ from telegram.ext import ContextTypes
 
 import lib.utils as utils
 import lib.yandex_search as ys
+import lib.yandex_search.xml_parser as ys_xml
 from internal.config.manager import ConfigManager
 from internal.database.models import (
     MessageCategory,
@@ -100,7 +101,6 @@ class YandexSearchHandler(BaseBotHandler):
         if not ysConfig.get("enabled", False):
             logger.error("YandexSearch integration is not enabled")
             raise RuntimeError("YandexSearch integration is not enabled, can not load YandexSearchHandler")
-
         self.yandexSearchClient = YandexSearchClient(
             apiKey=ysConfig["api-key"],
             folderId=ysConfig["folder-id"],
@@ -112,6 +112,7 @@ class YandexSearchHandler(BaseBotHandler):
             rateLimitWindow=int(ysConfig.get("rate-limit-window", 60)),
         )
         self.yandexSearchDefaults = ysConfig.get("defaults", {})
+        ys_xml.DEBUG_PRINT_FULL = bool(ysConfig.get("dump-full-xml", False))
 
         self.llmService = LLMService.getInstance()
 

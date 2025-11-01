@@ -135,7 +135,6 @@ class HandlersManager(CommandHandlerGetterInterface):
                 case _:
                     logger.error(f"Unknown handler result: {ret}")
 
-        expectedFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
         if ensuredMessage:
             logger.debug(
                 f"Handled message from {ensuredMessage.sender}: {ensuredMessage.messageText[:50]}... "
