@@ -1,54 +1,57 @@
-"""
-Simple dictionary-based search cache implementation
+"""Dictionary-based search cache implementation with thread safety.
 
-This module provides a basic in-memory cache implementation using Python dictionaries.
-It's designed for testing, development, and simple scenarios where persistent
-caching is not required. The cache is thread-safe and supports TTL (Time To Live)
-expiration with automatic cleanup of expired entries.
+This module provides a lightweight in-memory cache implementation using Python
+dictionaries, designed specifically for testing, development, and simple production
+scenarios where persistent caching is not required. The implementation features
+comprehensive thread safety, configurable TTL expiration, and automatic cleanup
+mechanisms.
 
-Key features:
-- Thread-safe operations using RLock
-- Configurable TTL for cache entries
-- Maximum cache size with LRU-like eviction
-- Automatic cleanup of expired entries
-- MD5-based cache key generation
-- Cache statistics for monitoring
+Core Features:
+    - Thread-safe operations using RLock for concurrent access
+    - Configurable TTL (Time To Live) for individual cache entries
+    - Maximum cache size enforcement with LRU-like eviction strategy
+    - Automatic cleanup of expired entries during access operations
+    - SHA512-based cache key generation for consistent hashing
+    - Comprehensive cache statistics for monitoring and debugging
 
-This implementation follows the same pattern as lib/openweathermap/dict_cache.py
-to maintain consistency across the project's caching components.
+Design Philosophy:
+    This implementation follows the established pattern from the OpenWeatherMap
+    dict cache to maintain consistency across the project's caching components,
+    ensuring familiar behavior and maintenance patterns.
 
-Use cases:
-- Unit testing (mock cache)
-- Development and debugging
-- Simple applications with short runtime
-- Scenarios where cache persistence is not needed
-- Prototyping and proof-of-concept
+Ideal Use Cases:
+    - Unit testing scenarios requiring predictable cache behavior
+    - Development environments with frequent restarts
+    - Simple applications with short runtime periods
+    - Prototyping and proof-of-concept implementations
+    - Situations where cache persistence is not a requirement
 
-Limitations:
-- Cache is lost when the process restarts
-- Memory usage grows with cache size
-- Not suitable for distributed systems
-- No persistence to disk or database
+Known Limitations:
+    - Cache data is volatile and lost on process restart
+    - Memory usage scales linearly with cache size
+    - Not suitable for distributed or multi-process systems
+    - No persistence mechanisms to disk or external storage
 
 Example:
-    ```python
-    # Create cache with custom settings
-    cache = DictSearchCache(
-        default_ttl=1800,  # 30 minutes
-        max_size=500      # Maximum 500 entries
-    )
+    Cache initialization with custom configuration::
 
-    # Use with YandexSearchClient
-    client = YandexSearchClient(
-        iam_token="your_token",
-        folder_id="your_folder",
-        cache=cache
-    )
+        cache = DictSearchCache(
+            defaultTtl=1800,  # 30 minutes
+            maxSize=500      # Maximum 500 entries
+        )
 
-    # Monitor cache performance
-    stats = cache.get_stats()
-    print(f"Cache entries: {stats['search_entries']}/{stats['max_size']}")
-    ```
+    Integration with YandexSearchClient::
+
+        client = YandexSearchClient(
+            iamToken="your_iam_token",
+            folderId="your_folder_id",
+            cache=cache
+        )
+
+    Cache performance monitoring::
+
+        stats = cache.getStats()
+        print(f"Cache entries: {stats['searchEntries']}/{stats['maxSize']}")
 """
 
 import hashlib
@@ -65,80 +68,82 @@ logger = logging.getLogger(__name__)
 
 
 class DictSearchCache(SearchCacheInterface):
-    """
-    Simple dictionary-based search cache implementation with thread safety.
+    """Thread-safe dictionary-based search cache with TTL and size management.
 
-    This class provides an in-memory caching solution for search results using
-    Python dictionaries. It implements the SearchCacheInterface and adds features
-    like TTL expiration, size limits, and thread safety.
+    This class provides a robust in-memory caching solution for search results
+    using Python dictionaries with comprehensive thread safety, TTL expiration,
+    and size management features. It fully implements the SearchCacheInterface
+    while adding advanced caching capabilities.
 
-    The cache stores entries as (data, timestamp) tuples, where the timestamp
-    is used for TTL calculations. Expired entries are automatically removed
-    during access operations and can be manually cleaned up.
+    Storage Architecture:
+        Cache entries are stored as (data, timestamp) tuples where the timestamp
+        enables precise TTL calculations. Expired entries are automatically
+        removed during access operations and can be manually cleaned up.
 
-    Thread Safety:
-    All public methods use threading.RLock to ensure thread-safe operations
-    in concurrent environments. This allows multiple threads to safely access
-    and modify the cache without race conditions.
+    Thread Safety Implementation:
+        All public methods utilize threading.RLock to ensure atomic operations
+        in concurrent environments, preventing race conditions and maintaining
+        data consistency across multiple threads.
 
-    Memory Management:
-    The cache enforces a maximum size limit using a simple eviction strategy
-    that removes the oldest entries when the limit is exceeded. This helps
-    prevent unbounded memory growth in long-running applications.
+    Memory Management Strategy:
+        The cache enforces configurable size limits using an LRU-like eviction
+        strategy that removes the oldest entries when capacity is exceeded,
+        preventing unbounded memory growth in long-running applications.
 
-    Performance:
-    - O(1) average case for get/set operations
-    - O(n) for cleanup operations (where n is cache size)
-    - Minimal overhead for small to medium cache sizes
+    Performance Characteristics:
+        - O(1) average time complexity for get/set operations
+        - O(n) time complexity for cleanup operations (n = cache size)
+        - Minimal memory overhead for small to medium cache sizes
+        - Efficient lock usage with minimal contention
 
     Example:
-        ```python
-        # Basic usage
-        cache = DictSearchCache()
+        Basic cache initialization::
 
-        # Custom configuration
-        cache = DictSearchCache(
-            default_ttl=7200,  # 2 hours
-            max_size=2000      # 2000 entries max
-        )
+            cache = DictSearchCache()
 
-        # Store and retrieve
-        await cache.setSearch("key1", search_response)
-        result = await cache.getSearch("key1")
+        Custom configuration for specific requirements::
 
-        # Generate cache key from parameters
-        key = cache.generate_key_from_params(
-            query="python programming",
-            region="225"
-        )
-        ```
+            cache = DictSearchCache(
+                defaultTtl=7200,  # 2 hours
+                maxSize=2000      # 2000 entries maximum
+            )
+
+        Standard cache operations::
+
+            await cache.setSearch(searchRequest, searchResponse)
+            result = await cache.getSearch(searchRequest)
+
+        Cache monitoring and statistics::
+
+            stats = cache.getStats()
+            print(f"Cache utilization: {stats['searchEntries']}/{stats['maxSize']}")
     """
 
     def __init__(self, default_ttl: int = 3600, max_size: int = 1000):
-        """
-        Initialize cache with empty dictionary and thread lock.
+        """Initialize cache with configurable TTL and size limits.
 
-        Creates a new cache instance with the specified TTL and size limits.
-        The cache starts empty and will grow as entries are added, subject
-        to the maximum size constraint.
+        Creates a new cache instance with the specified TTL and size constraints.
+        The cache initializes empty and grows dynamically as entries are added,
+        automatically enforcing the maximum size limit through eviction.
 
         Args:
-            default_ttl (int): Default TTL (Time To Live) in seconds for cache entries.
-                              Entries older than this will be considered expired.
-                              Default is 3600 seconds (1 hour).
-                              Use 0 for immediate expiration, negative for no expiration.
-            max_size (int): Maximum number of cached entries.
-                           When this limit is exceeded, the oldest entries are removed.
-                           Default is 1000 entries.
-                           Must be positive.
+            defaultTtl (int): Default TTL (Time To Live) in seconds for cache entries.
+                Entries older than this duration are considered expired.
+                Default is 3600 seconds (1 hour).
+                Use 0 for immediate expiration, negative values for no expiration.
+            maxSize (int): Maximum number of cached entries allowed.
+                When this limit is exceeded, the oldest entries are automatically removed.
+                Default is 1000 entries.
+                Must be a positive integer greater than 0.
 
         Raises:
-            ValueError: If max_size is not a positive integer.
+            ValueError: If maxSize is not a positive integer.
 
         Note:
-            - The cache uses an RLock for thread safety
+            - The cache uses RLock for thread-safe operations
             - Cache entries are stored as (data, timestamp) tuples
-            - Timestamps are Unix timestamps (seconds since epoch)
+            - Timestamps are Unix timestamps in seconds since epoch
+            - Cache cleanup occurs automatically during access operations
         """
         self.searchCache: Dict[str, Tuple[SearchResponse, float]] = {}
         self.defaultTtl = default_ttl
@@ -146,25 +151,26 @@ class DictSearchCache(SearchCacheInterface):
         self._lock = threading.RLock()  # Thread-safe operations
 
     def _generateCacheKey(self, request: SearchRequest) -> str:
-        """
-        Generate a consistent cache key from search request parameters.
+        """Generate consistent cache key from search request parameters.
 
-        The cache key is an MD5 hash of the normalized request parameters,
-        ensuring that identical searches produce the same cache key. The folderId
-        is excluded from the hash since it's constant per client instance and
-        doesn't affect the search results themselves.
+        Creates a SHA512 hash of the normalized request parameters, ensuring
+        that identical searches always produce the same cache key. The folderId
+        is excluded from the hash calculation since it remains constant per
+        client instance and doesn't influence the actual search results.
 
         Args:
-            request: Complete search request structure.
+            request (SearchRequest): Complete search request structure containing
+                all query parameters, sorting options, and metadata.
 
         Returns:
-            str: 32-character MD5 hash string that uniquely identifies the search
-                 parameters. This hash is used as the cache key for storing and
-                 retrieving search results.
+            str: 128-character SHA512 hash string that uniquely identifies the
+                search parameters. This hash serves as the cache key for storing
+                and retrieving search results.
 
         Note:
-            The cache key generation is deterministic - the same request parameters
-            will always produce the same hash, regardless of parameter order.
+            The cache key generation is deterministic - identical request parameters
+            will always produce the same hash, regardless of parameter ordering.
+            The use of SHA512 provides excellent collision resistance for cache keys.
         """
 
         # Create a normalized representation of the request
@@ -188,37 +194,38 @@ class DictSearchCache(SearchCacheInterface):
         return hashlib.sha512(sorted_json.encode("utf-8")).hexdigest()
 
     def _isExpired(self, timestamp: float, ttl: Optional[int] = None) -> bool:
-        """
-        Check if a cache entry is expired based on its timestamp.
+        """Check if a cache entry has expired based on its storage timestamp.
 
-        This internal method compares the entry's timestamp with the current
-        time and the specified TTL to determine if the entry has expired.
+        This internal method compares the entry's creation timestamp with the
+        current time and the specified TTL to determine expiration status.
 
         Args:
-            timestamp (float): Unix timestamp when the entry was stored.
-            ttl (Optional[int]): TTL in seconds to check against.
-                               If None, uses the cache's default_ttl.
-                               If 0, always returns True (expired).
-                               If negative, always returns False (not expired).
+            timestamp (float): Unix timestamp (seconds since epoch) when the
+                entry was originally stored in the cache.
+            ttl (Optional[int]): Custom TTL in seconds for expiration checking.
+                If None, uses the cache's defaultTtl.
+                If 0, always returns True (treat as expired).
+                If negative, always returns False (treat as never expired).
 
         Returns:
-            bool: True if the entry is expired, False otherwise.
+            bool: True if the entry has exceeded its TTL, False otherwise.
         """
         effective_ttl = ttl if ttl is not None else self.defaultTtl
         return time.time() - timestamp > effective_ttl
 
     def _cleanupExpired(self) -> None:
-        """
-        Remove expired entries from cache.
+        """Remove all expired entries from the cache.
 
-        This internal method iterates through all cache entries and removes
-        those that have exceeded their TTL. It's called automatically during
-        get and set operations to maintain cache freshness.
+        This internal method iterates through the entire cache and removes
+        entries that have exceeded their TTL. The operation is automatically
+        triggered during get and set operations to maintain cache freshness
+        and prevent memory waste from expired data.
 
         Note:
-            - Must be called within a lock context
-            - Logs the number of expired entries removed
-            - No-op if no expired entries exist
+            - Must be called within an existing lock context
+            - Logs the number of expired entries removed at debug level
+            - Performs no operation if no expired entries exist
+            - Complexity: O(n) where n is the number of cache entries
         """
         with self._lock:
             expiredKeys = [key for key, (_, timestamp) in self.searchCache.items() if self._isExpired(timestamp)]
@@ -229,23 +236,24 @@ class DictSearchCache(SearchCacheInterface):
                 logger.debug(f"Cleaned up {len(expiredKeys)} expired entries")
 
     def _enforceSizeLimit(self) -> None:
-        """
-        Enforce maximum cache size by removing oldest entries.
+        """Enforce maximum cache size through LRU-like eviction.
 
-        This internal method implements a simple eviction strategy that removes
-        the oldest entries when the cache exceeds its maximum size. Entries are
-        sorted by timestamp (oldest first) to determine which to remove.
+        This internal method implements an eviction strategy that removes the
+        oldest entries when the cache exceeds its configured maximum size.
+        Entries are sorted primarily by timestamp (oldest first) and secondarily
+        by cache key for consistent eviction behavior.
 
-        The eviction strategy:
-        1. Sort entries by timestamp (oldest first)
-        2. If timestamps are equal, sort by key for consistency
-        3. Remove the excess entries
+        Eviction Algorithm:
+            1. Sort all entries by timestamp (oldest first)
+            2. For equal timestamps, sort by cache key for deterministic behavior
+            3. Remove the excess entries starting from the oldest
 
         Note:
-            - Must be called within a lock context
-            - Only runs if cache size exceeds max_size
-            - Logs the number of entries removed
-            - Uses a simple LRU-like approach based on timestamps
+            - Must be called within an existing lock context
+            - Only executes when cache size exceeds maxSize
+            - Logs the number of evicted entries at debug level
+            - Uses timestamp-based LRU approximation for efficiency
+            - Complexity: O(n log n) due to sorting operation
         """
         with self._lock:
             if len(self.searchCache) <= self.maxSize:
@@ -264,39 +272,39 @@ class DictSearchCache(SearchCacheInterface):
             logger.debug(f"Removed {excessCount} oldest entries to enforce size limit")
 
     async def getSearch(self, key: SearchRequest, ttl: Optional[int] = None) -> Optional[SearchResponse]:
-        """
-        Retrieve cached search results by key.
+        """Retrieve cached search results by request key.
 
-        This method looks up the cache key and returns the associated SearchResponse
-        if it exists and hasn't expired. It automatically cleans up expired entries
-        during the lookup process.
+        This method performs a cache lookup using the provided request key and
+        returns the associated SearchResponse if it exists and hasn't expired.
+        The operation automatically triggers cleanup of expired entries during
+        the lookup process to maintain cache efficiency.
 
         Args:
-            key (str): Cache key (typically an MD5 hash of query parameters).
-                      Should match a key used in a previous setSearch() call.
-            ttl (Optional[int]): TTL in seconds for expiration checking.
-                               If None, uses the cache's default_ttl.
-                               If 0, treats entry as expired.
-                               If negative, treats entry as never expired.
+            key (SearchRequest): Search request object containing query parameters.
+                The cache key is generated internally from this request.
+            ttl (Optional[int]): Custom TTL in seconds for expiration checking.
+                If None, uses the cache's defaultTtl.
+                If 0, treats entry as immediately expired.
+                If negative, treats entry as never expired.
 
         Returns:
-            Optional[SearchResponse]: The cached SearchResponse if found and
-                                    not expired, None otherwise.
+            Optional[SearchResponse]: The cached SearchResponse if found and valid,
+                None if the entry is expired, missing, or an error occurs.
 
         Note:
-            - Thread-safe operation
-            - Automatically removes expired entries
-            - Logs cache hits and misses at debug level
-            - Returns None for any errors (doesn't raise exceptions)
+            - Operation is fully thread-safe with internal locking
+            - Automatically removes expired entries during lookup
+            - Logs cache hits and misses at debug level for monitoring
+            - Returns None for any errors without raising exceptions
 
         Example:
-            ```python
-            # Get with default TTL
-            result = await cache.getSearch("abc123def456")
+            Basic cache retrieval::
 
-            # Get with custom TTL
-            result = await cache.getSearch("abc123def456", ttl=1800)
-            ```
+                result = await cache.getSearch(searchRequest)
+
+            Custom TTL override for specific requirements::
+
+                result = await cache.getSearch(searchRequest, ttl=1800)  # 30 minutes
         """
         try:
             keyStr = self._generateCacheKey(key)
@@ -320,36 +328,36 @@ class DictSearchCache(SearchCacheInterface):
             return None
 
     async def setSearch(self, key: SearchRequest, data: SearchResponse) -> bool:
-        """
-        Store search results in cache.
+        """Store search results in cache with automatic size management.
 
-        This method stores the SearchResponse with the provided key and current
-        timestamp. It automatically cleans up expired entries and enforces the
-        maximum cache size limit by removing oldest entries if necessary.
+        This method stores the SearchResponse data with the provided request key
+        and current timestamp. The operation automatically triggers cleanup of
+        expired entries and enforces the maximum cache size limit by removing
+        the oldest entries if necessary.
 
         Args:
-            key (str): Cache key for storing the data.
-                      Should be generated using _generate_cache_key() or
-                      generate_key_from_params() for consistency.
+            key (SearchRequest): Search request object serving as the cache key.
+                The cache key is generated internally from this request.
             data (SearchResponse): The search response data to cache.
-                                 Contains search results, metadata, and error info.
+                Contains search results, metadata, and any error information.
 
         Returns:
-            bool: True if the data was successfully stored, False otherwise.
+            bool: True if the data was successfully stored, False if an error
+                occurred during the storage operation.
 
         Note:
-            - Thread-safe operation
-            - Automatically enforces size limits
+            - Operation is fully thread-safe with internal locking
+            - Automatically enforces size limits through eviction
             - Stores current timestamp for TTL calculations
-            - Logs storage operations at debug level
-            - Returns False for any errors (doesn't raise exceptions)
+            - Logs storage operations at debug level for monitoring
+            - Returns False for any errors without raising exceptions
 
         Example:
-            ```python
-            success = await cache.setSearch("abc123def456", search_response)
-            if success:
-                print("Data cached successfully")
-            ```
+            Standard cache storage::
+
+                success = await cache.setSearch(searchRequest, searchResponse)
+                if success:
+                    logger.info("Search results cached successfully")
         """
         try:
             keyStr = self._generateCacheKey(key)
@@ -369,58 +377,64 @@ class DictSearchCache(SearchCacheInterface):
             return False
 
     def clear(self) -> None:
-        """
-        Clear all cached data.
+        """Remove all cached data regardless of expiration status.
 
-        This method removes all entries from the cache, regardless of their
-        expiration status. It's useful for testing, debugging, or when you
-        need to reset the cache completely.
+        This method completely empties the cache, removing all entries regardless
+        of their expiration status or timestamps. It's particularly useful for
+        testing scenarios, debugging cache behavior, or when a complete cache
+        reset is required.
 
         Note:
-            - Thread-safe operation
-            - Resets the cache to empty state
-            - Logs the clear operation at debug level
-            - Cannot be undone
+            - Operation is fully thread-safe with internal locking
+            - Resets the cache to a completely empty state
+            - Logs the clear operation at debug level for monitoring
+            - Operation is irreversible and cannot be undone
 
         Example:
-            ```python
-            cache.clear()
-            print(f"Cache cleared. Entries: {cache.get_stats()['search_entries']}")
-            ```
+            Complete cache reset::
+
+                cache.clear()
+                stats = cache.getStats()
+                print(f"Cache cleared. Current entries: {stats['searchEntries']}")
         """
         with self._lock:
             self.searchCache.clear()
             logger.debug("Cleared all cache data")
 
     def getStats(self) -> Dict[str, int]:
-        """
-        Get cache statistics for monitoring and debugging.
+        """Retrieve comprehensive cache statistics for monitoring and optimization.
 
-        This method returns current statistics about the cache state, which
-        can be useful for monitoring cache performance, debugging issues,
-        or optimizing cache settings.
+        This method returns real-time statistics about the cache state, including
+        current usage, configuration limits, and performance metrics. The data
+        is valuable for monitoring cache performance, debugging issues, or
+        optimizing cache settings for specific workloads.
 
         Returns:
-            Dict[str, int]: Dictionary containing the following statistics:
-                - search_entries (int): Current number of non-expired entries
-                - max_size (int): Maximum configured cache size
-                - default_ttl (int): Default TTL in seconds
+            Dict[str, int]: Statistics dictionary containing:
+                - searchEntries (int): Current number of valid, non-expired entries
+                - maxSize (int): Maximum configured cache size limit
+                - defaultTtl (int): Default TTL in seconds for new entries
 
         Note:
-            - Thread-safe operation
+            - Operation is fully thread-safe with internal locking
             - Automatically cleans up expired entries before counting
-            - Returns a copy to prevent external modification
+            - Returns a copy to prevent external modification of internal state
+            - Statistics reflect the state after cleanup operations
 
         Example:
-            ```python
-            stats = cache.get_stats()
-            print(f"Cache usage: {stats['search_entries']}/{stats['max_size']}")
-            print(f"Default TTL: {stats['default_ttl']} seconds")
+            Basic cache monitoring::
 
-            # Calculate cache utilization
-            utilization = stats['search_entries'] / stats['max_size'] * 100
-            print(f"Cache utilization: {utilization:.1f}%")
-            ```
+                stats = cache.getStats()
+                print(f"Cache usage: {stats['searchEntries']}/{stats['maxSize']}")
+                print(f"Default TTL: {stats['defaultTtl']} seconds")
+
+            Advanced utilization analysis::
+
+                utilization = stats['searchEntries'] / stats['maxSize'] * 100
+                print(f"Cache utilization: {utilization:.1f}%")
+                
+                if utilization > 80:
+                    logger.warning("Cache approaching capacity limit")
         """
         with self._lock:
             self._cleanupExpired()

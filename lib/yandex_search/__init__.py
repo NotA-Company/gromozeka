@@ -1,34 +1,69 @@
-"""
-Yandex Search API Async Client Library
+"""Yandex Search API async client library.
 
-This module provides an async client for the Yandex Search API v2 with XML response format.
-Supports text search with various parameters and response parsing.
+This module provides a comprehensive async client library for interacting with the
+Yandex Search API v2, featuring XML response parsing, caching capabilities, and
+rate limiting support.
 
-Example usage:
-    from lib.yandex_search import YandexSearchClient
+The library offers a clean, type-safe interface for performing text searches with
+various parameters including region targeting, search type specification, and
+result filtering. Built-in caching and rate limiting help optimize performance
+and prevent API abuse.
 
-    # Initialize with IAM token
-    client = YandexSearchClient(
-        iam_token="your_iam_token",
-        folder_id="your_folder_id"
-    )
+Example:
+    Basic search usage with API key authentication::
 
-    # Simple search
-    results = await client.searchSimple("python programming")
-    if results:
-        print(f"Found {results['found']} results")
-        for group in results['groups']:
-            for doc in group['group']:
-                print(f"Title: {doc['title']}")
-                print(f"URL: {doc['url']}")
+        from lib.yandex_search import YandexSearchClient
 
-    # Advanced search
-    results = await client.search(
-        query_text="machine learning",
-        search_type="SEARCH_TYPE_RU",
-        region="225",
-        max_passages=3
-    )
+        # Initialize client with credentials
+        client = YandexSearchClient(
+            apiKey="your_api_key",
+            folderId="your_folder_id"
+        )
+
+        # Perform simple search
+        results = await client.search("python programming")
+        if results:
+            print(f"Found {results['found']} results")
+            for group in results['groups']:
+                for doc in group:
+                    print(f"Title: {doc['title']}")
+                    print(f"URL: {doc['url']}")
+
+    Advanced search with custom parameters::
+
+        from lib.yandex_search.models import SearchType
+
+        results = await client.search(
+            queryText="machine learning",
+            searchType=SearchType.SEARCH_TYPE_RU,
+            region="225",
+            maxPassages=3
+        )
+
+    Search with caching enabled::
+
+        from lib.yandex_search import DictSearchCache
+
+        cache = DictSearchCache(maxSize=100, defaultTtl=300)
+        client = YandexSearchClient(
+            apiKey="your_api_key",
+            folderId="your_folder_id",
+            cache=cache
+        )
+
+        # This request will be cached
+        results = await client.search("artificial intelligence")
+
+Components:
+    YandexSearchClient: Main async client for API interactions
+    SearchCacheInterface: Abstract interface for cache implementations
+    DictSearchCache: In-memory cache implementation with TTL support
+    parseSearchResponse: XML response parser utility
+    Various TypedDict models for type-safe API interactions
+
+Note:
+    This library requires proper Yandex Cloud credentials (IAM token or API key)
+    and a valid folder ID to function correctly.
 """
 
 from .cache_interface import SearchCacheInterface

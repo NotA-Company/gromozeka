@@ -1,7 +1,8 @@
-"""
-Tests for Yandex Search XML parser
+"""Tests for Yandex Search XML parser.
 
-This module contains unit tests for the XML parser functionality.
+This module contains comprehensive unit tests for the XML parser functionality,
+covering successful response parsing, error handling, edge cases, and complex
+passage parsing with highlighted words.
 """
 
 import base64
@@ -11,10 +12,21 @@ from .xml_parser import parseSearchResponse
 
 
 class TestXmlParser(unittest.TestCase):
-    """Test cases for XML parser functionality"""
+    """Test cases for XML parser functionality.
+
+    This test class provides comprehensive coverage of the XML parser,
+    including successful response parsing, error handling, invalid data
+    scenarios, and complex passage parsing with multiple highlighted words.
+    """
 
     def setUp(self):
-        """Set up test fixtures"""
+        """Set up test fixtures.
+
+        Initializes sample XML responses for various test scenarios including
+        successful responses with multiple documents and groups, error responses,
+        and empty responses. These fixtures provide realistic test data for
+        validating the parser's behavior.
+        """
         # Sample successful response XML
         self.successXml = """<?xml version="1.0" encoding="utf-8"?>
 <yandexsearch version="1.0">
@@ -93,7 +105,13 @@ class TestXmlParser(unittest.TestCase):
 </yandexsearch>"""
 
     def testParseSuccessResponse(self):
-        """Test parsing a successful search response"""
+        """Test parsing a successful search response.
+
+        Verifies that the parser correctly handles successful search responses
+        with multiple documents, groups, and highlighted words. Tests the
+        complete parsing pipeline including Base64 decoding, XML parsing,
+        and data structure validation.
+        """
         # Encode XML to Base64
         base64Xml = base64.b64encode(self.successXml.encode("utf-8")).decode("utf-8")
 
@@ -161,7 +179,12 @@ class TestXmlParser(unittest.TestCase):
             self.assertEqual(thirdDoc["hlwords"], ["different"])
 
     def testParseErrorResponse(self):
-        """Test parsing an error response"""
+        """Test parsing an error response.
+
+        Verifies that the parser correctly handles error responses from the
+        API, properly extracting error codes and messages while maintaining
+        the expected response structure for error scenarios.
+        """
         # Encode XML to Base64
         base64Xml = base64.b64encode(self.errorXml.encode("utf-8")).decode("utf-8")
 
@@ -183,7 +206,12 @@ class TestXmlParser(unittest.TestCase):
             self.assertEqual(error.get("message"), "Invalid search query")
 
     def testParseEmptyResponse(self):
-        """Test parsing an empty response"""
+        """Test parsing an empty response.
+
+        Verifies that the parser correctly handles responses with no search
+        results, ensuring proper parsing of metadata fields and empty result
+        sets without errors.
+        """
         # Encode XML to Base64
         base64Xml = base64.b64encode(self.emptyXml.encode("utf-8")).decode("utf-8")
 
@@ -199,14 +227,24 @@ class TestXmlParser(unittest.TestCase):
         self.assertEqual(len(response["groups"]), 0)
 
     def testParseInvalidBase64(self):
-        """Test parsing invalid Base64 data"""
+        """Test parsing invalid Base64 data.
+
+        Verifies that the parser properly handles and reports errors when
+        encountering invalid Base64 encoding, ensuring graceful error handling
+        with appropriate error messages.
+        """
         with self.assertRaises(ValueError) as context:
             parseSearchResponse("invalid-base64-data")
 
         self.assertIn("Invalid Base64 encoding", str(context.exception))
 
     def testParseInvalidXml(self):
-        """Test parsing invalid XML"""
+        """Test parsing invalid XML.
+
+        Verifies that the parser properly handles and reports errors when
+        encountering malformed XML data, ensuring graceful error handling
+        with appropriate error messages for invalid XML structures.
+        """
         # Create invalid XML
         invalidXml = "<invalid><xml>"
         base64Xml = base64.b64encode(invalidXml.encode("utf-8")).decode("utf-8")
@@ -217,7 +255,13 @@ class TestXmlParser(unittest.TestCase):
         self.assertIn("Invalid XML format", str(context.exception))
 
     def testComplexPassageParsing(self):
-        """Test parsing complex passages with multiple highlighted words"""
+        """Test parsing complex passages with multiple highlighted words.
+
+        Verifies that the parser correctly handles complex passage structures
+        with multiple highlighted words across different passages, ensuring
+        proper extraction and deduplication of highlighted words while
+        maintaining passage text integrity.
+        """
         complexXml = """<?xml version="1.0" encoding="utf-8"?>
 <yandexsearch version="1.0">
     <response>

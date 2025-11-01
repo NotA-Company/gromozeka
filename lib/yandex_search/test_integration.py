@@ -1,9 +1,13 @@
-"""
-Integration tests for Yandex Search API client.
+"""Integration tests for Yandex Search API client.
 
 This module contains integration tests that demonstrate the client working
 end-to-end with mocked responses. These tests verify that all components
-work together correctly.
+work together correctly, including the client, cache, XML parser, and
+data models.
+
+The tests use a mock client that simulates API responses without making
+actual network requests, ensuring reliable and fast test execution while
+maintaining realistic integration scenarios.
 
 Run with:
     ./venv/bin/python3 -m pytest lib/yandex_search/test_integration.py -v
@@ -80,9 +84,29 @@ MOCK_XML_RESPONSE = """<?xml version="1.0" encoding="utf-8"?>
 
 
 class MockYandexSearchClient(YandexSearchClient):
-    """Mock client that returns predefined responses for integration testing."""
+    """Mock client that returns predefined responses for integration testing.
+
+    This mock client extends the YandexSearchClient to provide predictable
+    responses for testing purposes without making actual API calls. It simulates
+    network delays and uses predefined XML responses to ensure consistent
+    test results.
+    """
 
     def __init__(self, **kwargs):
+        """Initialize the mock client with test credentials and settings.
+
+        Sets default test credentials and disables rate limiting for integration
+        tests. Prepares a mock XML response for testing that includes realistic
+        search results with multiple documents and highlighted words.
+
+        Args:
+            **kwargs: Additional keyword arguments passed to the parent YandexSearchClient.
+                     Default values are set for:
+                     - iamToken: "test_token"
+                     - folderId: "test_folder"
+                     - rateLimitRequests: 1000
+                     - rateLimitWindow: 60
+        """
         # Set default test credentials
         kwargs.setdefault("iamToken", "test_token")
         kwargs.setdefault("folderId", "test_folder")
@@ -94,26 +118,49 @@ class MockYandexSearchClient(YandexSearchClient):
         super().__init__(**kwargs)
 
         # Prepare mock response
-        self.mock_base64_response = base64.b64encode(MOCK_XML_RESPONSE.encode("utf-8")).decode("utf-8")
+        self.mockBase64Response = base64.b64encode(MOCK_XML_RESPONSE.encode("utf-8")).decode("utf-8")
 
     async def _makeRequest(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """Mock API request that returns predefined response."""
+        """Mock API request that returns predefined response.
+
+        Simulates a network delay and returns a parsed XML response that
+        matches the structure of real Yandex Search API responses. This
+        method bypasses actual HTTP requests while maintaining the same
+        response parsing logic as the real client.
+
+        Args:
+            request (Dict[str, Any]): The search request data (ignored in mock).
+
+        Returns:
+            Dict[str, Any]: Parsed search response matching the expected structure.
+        """
         # Simulate network delay
         await asyncio.sleep(0.05)
 
         # Parse the XML response like the real client does
         from .xml_parser import parseSearchResponse
 
-        response = parseSearchResponse(self.mock_base64_response)
+        response = parseSearchResponse(self.mockBase64Response)
         return response  # type: ignore
 
 
 class TestEndToEndIntegration:
-    """End-to-end integration tests."""
+    """End-to-end integration tests.
+
+    This test class verifies that all components of the Yandex Search
+    client work together correctly, from initial search requests through
+    to final parsed results, including caching and error handling.
+    """
 
     @pytest.mark.asyncio
-    async def test_complete_search_workflow(self):
-        """Test complete search workflow from query to parsed results."""
+    async def testCompleteSearchWorkflow(self):
+        """Test complete search workflow from query to parsed results.
+
+        Verifies the entire search pipeline including request formatting,
+        response parsing, and data structure validation. Ensures that
+        the client correctly handles the complete workflow from initial
+        query to final structured results.
+        """
         # Create client
         client = MockYandexSearchClient()
 
@@ -136,23 +183,29 @@ class TestEndToEndIntegration:
         assert len(results["groups"]) >= 2  # At least 2 groups
 
         # Verify first group structure
-        first_group = results["groups"][0]
-        assert len(first_group) == 2
+        firstGroup = results["groups"][0]
+        assert len(firstGroup) == 2
 
         # Verify first document structure
-        first_doc = first_group[0]
-        assert first_doc["url"] == "https://example.com/python"
-        assert first_doc["domain"] == "example.com"
-        assert first_doc["title"] == "Python Programming Tutorial"
-        assert "passages" in first_doc
-        assert len(first_doc["passages"]) == 1
-        hlwords = first_doc.get("hlwords")
+        firstDoc = firstGroup[0]
+        assert firstDoc["url"] == "https://example.com/python"
+        assert firstDoc["domain"] == "example.com"
+        assert firstDoc["title"] == "Python Programming Tutorial"
+        assert "passages" in firstDoc
+        assert len(firstDoc["passages"]) == 1
+        hlwords = firstDoc.get("hlwords")
         assert hlwords is not None
         assert "python" in [word.lower() for word in hlwords]
 
     @pytest.mark.asyncio
-    async def test_search_with_caching_workflow(self):
-        """Test search workflow with caching enabled."""
+    async def testSearchWithCachingWorkflow(self):
+        """Test search workflow with caching enabled.
+
+        Verifies that the caching system integrates correctly with the
+        search client, ensuring that repeated queries are served from
+        cache while new queries hit the mock API. Tests cache statistics
+        and proper cache key generation.
+        """
         # Create cache and client
         cache = DictSearchCache(default_ttl=3600, max_size=100)
         client = MockYandexSearchClient(cache=cache)
@@ -184,8 +237,14 @@ class TestEndToEndIntegration:
         assert stats["search_entries"] == 2
 
     @pytest.mark.asyncio
-    async def test_advanced_search_parameters(self):
-        """Test advanced search with all parameters."""
+    async def testAdvancedSearchParameters(self):
+        """Test advanced search with all parameters.
+
+        Verifies that the client correctly handles all available search
+        parameters including search type, family mode, sorting options,
+        grouping settings, and localization. Ensures proper parameter
+        formatting and transmission to the mock API.
+        """
         client = MockYandexSearchClient()
 
         # Advanced search with all parameters
@@ -211,8 +270,14 @@ class TestEndToEndIntegration:
         assert results["requestId"] == "1234567890"
 
     @pytest.mark.asyncio
-    async def test_cache_bypass_workflow(self):
-        """Test cache bypass functionality."""
+    async def testCacheBypassWorkflow(self):
+        """Test cache bypass functionality.
+
+        Verifies that the client can bypass cache on a per-request basis
+        using the useCache parameter. Ensures that cache bypass works
+        correctly while maintaining normal caching behavior for other
+        requests.
+        """
         cache = DictSearchCache(default_ttl=3600)
         client = MockYandexSearchClient(cache=cache)
 
@@ -234,8 +299,14 @@ class TestEndToEndIntegration:
         assert stats["search_entries"] == 1
 
     @pytest.mark.asyncio
-    async def test_concurrent_searches_workflow(self):
-        """Test concurrent searches with caching."""
+    async def testConcurrentSearchesWorkflow(self):
+        """Test concurrent searches with caching.
+
+        Verifies that the client handles multiple concurrent search
+        requests correctly, including proper cache management for
+        duplicate queries and thread-safe operations. Tests that
+        concurrent execution maintains data integrity.
+        """
         cache = DictSearchCache(default_ttl=3600)
         client = MockYandexSearchClient(cache=cache)
 
@@ -255,26 +326,32 @@ class TestEndToEndIntegration:
         assert stats["search_entries"] == 3
 
     @pytest.mark.asyncio
-    async def test_rate_limiting_workflow(self):
-        """Test rate limiting in integration context."""
+    async def testRateLimitingWorkflow(self):
+        """Test rate limiting in integration context.
+
+        Verifies that the rate limiting mechanism works correctly in
+        an integration scenario, ensuring that requests are properly
+        delayed when the configured limit is exceeded. Tests both
+        the timing behavior and rate limit statistics.
+        """
         # Create client with strict rate limiting
         client = MockYandexSearchClient(rateLimitRequests=2, rateLimitWindow=1)  # 2 requests per 1 second
 
         # Make requests sequentially
-        start_time = asyncio.get_event_loop().time()
+        startTime = asyncio.get_event_loop().time()
 
         results1 = await client.search("query 1")
         results2 = await client.search("query 2")
         results3 = await client.search("query 3")
 
-        end_time = asyncio.get_event_loop().time()
-        total_time = end_time - start_time
+        endTime = asyncio.get_event_loop().time()
+        totalTime = endTime - startTime
 
         # All should succeed
         assert results1 and results2 and results3
 
         # Should take at least 1 second due to rate limiting
-        assert total_time >= 1.0
+        assert totalTime >= 1.0
 
         # Check rate limit stats
         stats = client.getRateLimitStats()
@@ -282,18 +359,24 @@ class TestEndToEndIntegration:
         assert stats["window_seconds"] == 1
 
     @pytest.mark.asyncio
-    async def test_error_handling_workflow(self):
-        """Test error handling in integration context."""
+    async def testErrorHandlingWorkflow(self):
+        """Test error handling in integration context.
+
+        Verifies that the client handles errors gracefully in an
+        integration scenario, including network errors and other
+        exceptions. Ensures that error handling doesn't crash the
+        client and provides appropriate fallback behavior.
+        """
         # Create client with invalid credentials
         client = MockYandexSearchClient()
 
         # Override _makeRequest to simulate error
-        async def mock_error_request(request):
+        async def mockErrorRequest(request):
             raise Exception("Simulated network error")
 
         # Store original method
-        original_make_request = client._makeRequest
-        client._makeRequest = mock_error_request
+        originalMakeRequest = client._makeRequest
+        client._makeRequest = mockErrorRequest
 
         try:
             # Search should handle error gracefully
@@ -305,15 +388,26 @@ class TestEndToEndIntegration:
             pass
         finally:
             # Restore original method
-            client._makeRequest = original_make_request
+            client._makeRequest = originalMakeRequest
 
 
 class TestCacheIntegration:
-    """Integration tests specifically for caching."""
+    """Integration tests specifically for caching.
+
+    This test class focuses on the integration between the cache system
+    and the search client, ensuring proper cache behavior in various
+    scenarios including key generation, TTL management, and consistency.
+    """
 
     @pytest.mark.asyncio
-    async def test_cache_key_consistency(self):
-        """Test that cache keys are generated consistently."""
+    async def testCacheKeyConsistency(self):
+        """Test that cache keys are generated consistently.
+
+        Verifies that cache keys are generated consistently regardless
+        of parameter order in the request, ensuring that identical
+        searches with different parameter ordering produce the same
+        cache key and hit the same cache entry.
+        """
         cache = DictSearchCache()
         client = MockYandexSearchClient(cache=cache)
 
@@ -330,8 +424,14 @@ class TestCacheIntegration:
         assert stats["search_entries"] == 1
 
     @pytest.mark.asyncio
-    async def test_cache_ttl_expiration(self):
-        """Test cache TTL expiration."""
+    async def testCacheTtlExpiration(self):
+        """Test cache TTL expiration.
+
+        Verifies that cache entries properly expire after their TTL
+        and that subsequent requests hit the API again. Tests the
+        integration between TTL management and the search client's
+        caching behavior.
+        """
         # Create cache with very short TTL
         cache = DictSearchCache(default_ttl=1)  # 1 second (int)
         client = MockYandexSearchClient(cache=cache)

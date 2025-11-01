@@ -1,42 +1,45 @@
-"""
-Data models for Yandex Search API client
+"""Comprehensive data models for Yandex Search API client integration.
 
-This module defines TypedDict classes for API requests and responses that
-conform to the Yandex Search API v2 specification. These models provide
-type safety and documentation for the data structures used throughout
-the client library.
+This module defines TypedDict classes and enumerations that strictly conform to the
+Yandex Search API v2 specification, providing type safety, comprehensive documentation,
+and runtime compatibility for all data structures used throughout the client library.
 
-All models use TypedDict for runtime compatibility while providing
-static type checking support. The models are organized into:
-- Request models: Structures for API request parameters
-- Response models: Structures for parsed API responses
-- Authentication models: Structures for authentication configuration
+Model Organization:
+    - Request Models: Structures for API request parameters and configuration
+    - Response Models: Structures for parsed API responses and results
+    - Enumerations: Type-safe enums for API constants and options
+    - Type Aliases: Convenient type aliases for complex structures
+
+Design Philosophy:
+    All models utilize TypedDict for runtime compatibility while maintaining
+    static type checking support. This approach ensures that the code works
+    correctly at runtime while providing excellent IDE support and type safety
+    during development.
 
 Example:
-    ```python
-    # Creating a search request
-    request: SearchRequest = {
-        "query": {
-            "searchType": "SEARCH_TYPE_RU",
-            "queryText": "python programming",
-            "familyMode": "FAMILY_MODE_MODERATE"
-        },
-        "sortSpec": {
-            "sortMode": "SORT_MODE_BY_RELEVANCE",
-            "sortOrder": "SORT_ORDER_DESC"
-        },
-        "groupSpec": {
-            "groupMode": "GROUP_MODE_DEEP",
-            "groupsOnPage": "10",
-            "docsInGroup": "2"
-        },
-        "metadata": {
+    Complete search request construction::
+
+        request: SearchRequest = {
+            "query": {
+                "searchType": SearchType.SEARCH_TYPE_RU,
+                "queryText": "python programming",
+                "familyMode": FamilyMode.FAMILY_MODE_MODERATE
+            },
+            "sortSpec": {
+                "sortMode": SortMode.SORT_MODE_BY_RELEVANCE,
+                "sortOrder": SortOrder.SORT_ORDER_DESC
+            },
+            "groupSpec": {
+                "groupMode": GroupMode.GROUP_MODE_DEEP,
+                "groupsOnPage": "10",
+                "docsInGroup": "2"
+            },
+            "maxPassages": "2",
+            "region": "225",
+            "l10n": Localization.LOCALIZATION_RU,
             "folderId": "your_folder_id",
-            "responseFormat": "FORMAT_XML",
-            "maxPassages": "2"
+            "responseFormat": ResponseFormat.FORMAT_XML
         }
-    }
-    ```
 """
 
 from enum import StrEnum
@@ -46,62 +49,108 @@ from typing import Dict, List, NotRequired, Optional, TypeAlias, TypedDict
 
 
 class SearchType(StrEnum):
-    """Search type that determines the domain name that will be used for the search queries."""
+    """Enumeration of search domains for regional search targeting.
 
-    SEARCH_TYPE_RU = "SEARCH_TYPE_RU"  # Russian search (yandex.ru)
-    SEARCH_TYPE_TR = "SEARCH_TYPE_TR"  # Turkish search (yandex.com.tr)
-    SEARCH_TYPE_COM = "SEARCH_TYPE_COM"  # International search (yandex.com)
-    SEARCH_TYPE_KK = "SEARCH_TYPE_KK"  # Kazakh search (yandex.kz)
-    SEARCH_TYPE_BE = "SEARCH_TYPE_BE"  # Belarusian search (yandex.by)
-    SEARCH_TYPE_UZ = "SEARCH_TYPE_UZ"  # Uzbek search (yandex.uz)
+    This enum determines which Yandex search domain will be used for executing
+    search queries, enabling region-specific search results and localization.
+
+    Values:
+        SEARCH_TYPE_RU: Russian search domain (yandex.ru)
+            Targets Russian-language content and Russian regional results
+        SEARCH_TYPE_TR: Turkish search domain (yandex.com.tr)
+            Targets Turkish-language content and Turkish regional results
+        SEARCH_TYPE_COM: International search domain (yandex.com)
+            Targets global English-language content and international results
+        SEARCH_TYPE_KK: Kazakh search domain (yandex.kz)
+            Targets Kazakh-language content and Kazakhstan regional results
+        SEARCH_TYPE_BE: Belarusian search domain (yandex.by)
+            Targets Belarusian-language content and Belarus regional results
+        SEARCH_TYPE_UZ: Uzbek search domain (yandex.uz)
+            Targets Uzbek-language content and Uzbekistan regional results
+    """
+
+    SEARCH_TYPE_RU = "SEARCH_TYPE_RU"
+    SEARCH_TYPE_TR = "SEARCH_TYPE_TR"
+    SEARCH_TYPE_COM = "SEARCH_TYPE_COM"
+    SEARCH_TYPE_KK = "SEARCH_TYPE_KK"
+    SEARCH_TYPE_BE = "SEARCH_TYPE_BE"
+    SEARCH_TYPE_UZ = "SEARCH_TYPE_UZ"
 
 
 class FamilyMode(StrEnum):
-    """Rule for filtering search results and determines whether any documents should be excluded."""
+    """Content filtering levels for family-safe search results.
+
+    This enum controls the level of content filtering applied to search results,
+    determining what types of content should be excluded based on family safety
+    requirements.
+
+    Values:
+        FAMILY_MODE_UNSPECIFIED: Use API default filtering behavior
+            Delegates content filtering decisions to the API's default settings
+        FAMILY_MODE_MODERATE: Moderate content filtering
+            Filters explicit content while allowing most general content
+        FAMILY_MODE_STRICT: Strict content filtering
+            Applies comprehensive filtering for maximum family safety
+        FAMILY_MODE_OFF: No content filtering
+            Disables all content filtering, showing all available results
+    """
 
     FAMILY_MODE_UNSPECIFIED = "FAMILY_MODE_UNSPECIFIED"
-    FAMILY_MODE_MODERATE = "FAMILY_MODE_MODERATE"  # Moderate content filtering
-    FAMILY_MODE_STRICT = "FAMILY_MODE_STRICT"  # Strict content filtering
-    FAMILY_MODE_OFF = "FAMILY_MODE_OFF"  # No content filtering
+    FAMILY_MODE_MODERATE = "FAMILY_MODE_MODERATE"
+    FAMILY_MODE_STRICT = "FAMILY_MODE_STRICT"
+    FAMILY_MODE_OFF = "FAMILY_MODE_OFF"
 
 
 class FixTypoMode(StrEnum):
-    """Typos autocorrections mode"""
+    """Automatic typo correction modes for search queries.
+
+    This enum controls whether the search engine should automatically detect and
+    correct typographical errors in search queries to improve result relevance.
+
+    Values:
+        FIX_TYPO_MODE_UNSPECIFIED: Use API default typo correction behavior
+            Delegates typo correction decisions to the API's default settings
+        FIX_TYPO_MODE_ON: Enable automatic typo correction
+            Automatically detects and corrects common typos in search queries
+        FIX_TYPO_MODE_OFF: Disable automatic typo correction
+            Searches exactly as typed without any automatic corrections
+    """
 
     FIX_TYPO_MODE_UNSPECIFIED = "FIX_TYPO_MODE_UNSPECIFIED"
-    FIX_TYPO_MODE_ON = "FIX_TYPO_MODE_ON"  # Automatically correct typos (default value).
-    FIX_TYPO_MODE_OFF = "FIX_TYPO_MODE_OFF"  # Autocorrection is off.
+    FIX_TYPO_MODE_ON = "FIX_TYPO_MODE_ON"
+    FIX_TYPO_MODE_OFF = "FIX_TYPO_MODE_OFF"
 
 
 class SearchQuery(TypedDict):
-    """
-    Search query parameters for the Yandex Search API.
+    """Core search query parameters for Yandex Search API requests.
 
-    This TypedDict defines the structure for search query parameters,
-    including the search text, domain, and various search options.
+    This TypedDict defines the essential structure for search query parameters,
+    encompassing the search text, domain selection, and fundamental search options
+    that control how the query is processed and filtered.
 
-    Fields:
-        searchType (SearchType): Search domain identifier. Required field.
-
-        queryText (str): The actual search query text. Required field.
+    Attributes:
+        searchType (SearchType): Search domain identifier determining which
+            Yandex search domain to use. This is a required field.
+        queryText (str): The actual search query text to be processed.
             Can contain any characters supported by the search engine.
-
-        familyMode (Optional[FamilyMode]): Family filter mode for content filtering.
-
-        page (Optional[str]): Page number for pagination (0-based).
-            Used to navigate through search results. Default is "0".
-
-        fixTypoMode (Optional[FixTypoMode]): Typo correction mode.
+            This is a required field.
+        familyMode (Optional[FamilyMode]): Content filtering level for
+            family-safe search results. Controls content filtering behavior.
+        page (Optional[str]): Page number for pagination (0-based indexing).
+            Used to navigate through multi-page search results.
+            Default is "0" for the first page.
+        fixTypoMode (Optional[FixTypoMode]): Automatic typo correction mode.
+            Determines whether the search engine should correct typos.
 
     Example:
-        ```python
-        query: SearchQuery = {
-            "searchType": SearchType.SEARCH_TYPE_RU,
-            "queryText": "python programming tutorials",
-            "familyMode": FamilyMode.FAMILY_MODE_MODERATE,
-            "fixTypoMode": FixTypoMode.FIX_TYPO_MODE_ON
-        }
-        ```
+        Basic search query configuration::
+
+            query: SearchQuery = {
+                "searchType": SearchType.SEARCH_TYPE_RU,
+                "queryText": "python programming tutorials",
+                "familyMode": FamilyMode.FAMILY_MODE_MODERATE,
+                "fixTypoMode": FixTypoMode.FIX_TYPO_MODE_ON
+            }
     """
 
     searchType: SearchType
@@ -112,41 +161,72 @@ class SearchQuery(TypedDict):
 
 
 class SortMode(StrEnum):
-    """Documents sorting mode."""
+    """Sorting criteria for search result ordering.
+
+    This enum determines the primary sorting method used to order search results,
+    affecting how results are ranked and presented to the user.
+
+    Values:
+        SORT_MODE_UNSPECIFIED: Use API default sorting behavior
+            Delegates sorting decisions to the API's default relevance algorithm
+        SORT_MODE_BY_RELEVANCE: Sort by relevance score
+            Orders results based on relevance to the search query (default)
+        SORT_MODE_BY_TIME: Sort by document update time
+            Orders results by when documents were last modified or published
+    """
 
     SORT_MODE_UNSPECIFIED = "SORT_MODE_UNSPECIFIED"
-    SORT_MODE_BY_RELEVANCE = "SORT_MODE_BY_RELEVANCE"  # Sort documents by relevance (default value).
-    SORT_MODE_BY_TIME = "SORT_MODE_BY_TIME"  # Sort documents by update time.
+    SORT_MODE_BY_RELEVANCE = "SORT_MODE_BY_RELEVANCE"
+    SORT_MODE_BY_TIME = "SORT_MODE_BY_TIME"
 
 
 class SortOrder(StrEnum):
-    """Documents sorting order."""
+    """Sort direction for ordered search results.
+
+    This enum controls the direction of sorting when combined with SortMode,
+    determining whether results are presented in ascending or descending order.
+
+    Values:
+        SORT_ORDER_UNSPECIFIED: Use API default sort direction
+            Delegates sort direction to the API's default behavior
+        SORT_ORDER_ASC: Ascending order (oldest to newest)
+            Presents results from oldest to most recent
+        SORT_ORDER_DESC: Descending order (newest to oldest)
+            Presents results from most recent to oldest (default)
+    """
 
     SORT_ORDER_UNSPECIFIED = "SORT_ORDER_UNSPECIFIED"
-    SORT_ORDER_ASC = "SORT_ORDER_ASC"  # Reverse order from oldest to most recent.
-    SORT_ORDER_DESC = "SORT_ORDER_DESC"  # Direct order from most recent to oldest (default).
+    SORT_ORDER_ASC = "SORT_ORDER_ASC"
+    SORT_ORDER_DESC = "SORT_ORDER_DESC"
 
 
 class SortSpec(TypedDict):
-    """
-    Sorting parameters for search results.
+    """Sorting configuration for search result ordering.
 
-    This TypedDict defines how search results should be sorted and ordered.
-    All fields are optional - if not provided, the API defaults will be used.
+    This TypedDict defines the sorting parameters that control how search results
+    are ordered and presented. All fields are optional - if not provided, the API
+    will apply its default sorting behavior (typically relevance-based descending).
 
-    Fields:
-        sortMode (Optional[SortMode]): Sort mode for results.
-
-        sortOrder (Optional[SortOrder]): Sort order direction.
-
+    Attributes:
+        sortMode (NotRequired[SortMode]): Primary sorting criteria for results.
+            Determines what aspect of the documents to sort by (relevance, time, etc.).
+        sortOrder (NotRequired[SortOrder]): Sort direction for the results.
+            Controls whether results are ordered ascending or descending.
 
     Example:
-        ```python
-        sort: SortSpec = {
-            "sortMode": "SORT_MODE_BY_RELEVANCE",
-            "sortOrder": "SORT_ORDER_DESC"
-        }
-        ```
+        Relevance-based descending sort::
+
+            sort: SortSpec = {
+                "sortMode": SortMode.SORT_MODE_BY_RELEVANCE,
+                "sortOrder": SortOrder.SORT_ORDER_DESC
+            }
+
+        Time-based ascending sort::
+
+            sort: SortSpec = {
+                "sortMode": SortMode.SORT_MODE_BY_TIME,
+                "sortOrder": SortOrder.SORT_ORDER_ASC
+            }
     """
 
     sortMode: NotRequired[SortMode]
@@ -162,32 +242,37 @@ class GroupMode(StrEnum):
 
 
 class GroupSpec(TypedDict):
-    """
-    Grouping parameters for search results.
+    """Grouping configuration for organizing search results.
 
-    This TypedDict defines how search results should be grouped and organized.
-    Grouping helps organize related documents together, such as pages from
-    the same website or different sections of the same document.
+    This TypedDict defines parameters that control how search results are grouped
+    and organized, helping to cluster related documents together for better
+    user experience and result presentation.
 
-    Fields:
-        groupMode (Optional[GroupMode]): Result grouping mode.
-
-        groupsOnPage (Optional[str]): Number of result groups per page.
+    Attributes:
+        groupMode (NotRequired[GroupMode]): Primary grouping strategy for results.
+            Determines how documents should be clustered together.
+        groupsOnPage (NotRequired[str]): Number of result groups per page.
             Valid range: 1-100. Default is "10".
-            Each group may contain multiple documents.
-
-        docsInGroup (Optional[str]): Number of documents in each group.
+            Each group may contain multiple documents depending on the grouping mode.
+        docsInGroup (NotRequired[str]): Maximum documents per group.
             Valid range: 1-10. Default is "2".
-            Controls how many related documents are shown together.
+            Controls how many related documents are shown together in each group.
 
     Example:
-        ```python
-        group: GroupSpec = {
-            "groupMode": "GROUP_MODE_DEEP",
-            "groupsOnPage": "10",
-            "docsInGroup": "2"
-        }
-        ```
+        Deep grouping with custom limits::
+
+            group: GroupSpec = {
+                "groupMode": GroupMode.GROUP_MODE_DEEP,
+                "groupsOnPage": "10",
+                "docsInGroup": "2"
+            }
+
+        Flat grouping with single documents::
+
+            group: GroupSpec = {
+                "groupMode": GroupMode.GROUP_MODE_FLAT,
+                "groupsOnPage": "20"
+            }
     """
 
     groupMode: NotRequired[GroupMode]
@@ -196,94 +281,115 @@ class GroupSpec(TypedDict):
 
 
 class Localization(StrEnum):
-    """The notification language for a search response."""
+    """Interface language settings for search response localization.
+
+    This enum determines the language used for interface elements, notifications,
+    and response formatting in the search results, affecting how metadata and
+    system messages are presented to the user.
+
+    Values:
+        LOCALIZATION_UNSPECIFIED: Use API default language
+            Delegates language selection to the API's default behavior
+        LOCALIZATION_RU: Russian language interface
+            Russian language for all interface elements and messages (default)
+        LOCALIZATION_UK: Ukrainian language interface
+            Ukrainian language for interface elements and messages
+        LOCALIZATION_BE: Belarusian language interface
+            Belarusian language for interface elements and messages
+        LOCALIZATION_KK: Kazakh language interface
+            Kazakh language for interface elements and messages
+        LOCALIZATION_TR: Turkish language interface
+            Turkish language for interface elements and messages
+        LOCALIZATION_EN: English language interface
+            English language for interface elements and messages
+    """
 
     LOCALIZATION_UNSPECIFIED = "LOCALIZATION_UNSPECIFIED"
-    LOCALIZATION_RU = "LOCALIZATION_RU"  # Russian (default value)
-    LOCALIZATION_UK = "LOCALIZATION_UK"  # Ukrainian
-    LOCALIZATION_BE = "LOCALIZATION_BE"  # Belarusian
-    LOCALIZATION_KK = "LOCALIZATION_KK"  # Kazakh
-    LOCALIZATION_TR = "LOCALIZATION_TR"  # Turkish
-    LOCALIZATION_EN = "LOCALIZATION_EN"  # English
+    LOCALIZATION_RU = "LOCALIZATION_RU"
+    LOCALIZATION_UK = "LOCALIZATION_UK"
+    LOCALIZATION_BE = "LOCALIZATION_BE"
+    LOCALIZATION_KK = "LOCALIZATION_KK"
+    LOCALIZATION_TR = "LOCALIZATION_TR"
+    LOCALIZATION_EN = "LOCALIZATION_EN"
 
 
 class ResponseFormat(StrEnum):
-    """Search results format."""
+    """Output format options for search response data.
+
+    This enum specifies the format in which the search API should return response
+    data, affecting how results are structured and parsed by the client.
+
+    Values:
+        FORMAT_UNSPECIFIED: Use API default response format
+            Delegates format selection to the API's default behavior
+        FORMAT_XML: XML response format
+            Structured XML format that can be parsed into TypedDict models (default)
+        FORMAT_HTML: HTML response format
+            HTML format intended for direct display (not supported by this client)
+    """
 
     FORMAT_UNSPECIFIED = "FORMAT_UNSPECIFIED"
-    FORMAT_XML = "FORMAT_XML"  # XML format (default value)
-    FORMAT_HTML = "FORMAT_HTML"  # HTML format (Unsupported by this client)
+    FORMAT_XML = "FORMAT_XML"
+    FORMAT_HTML = "FORMAT_HTML"
 
 
 class SearchRequest(TypedDict):
-    """
-    Complete search request structure for the Yandex Search API.
+    """Comprehensive search request structure for Yandex Search API integration.
 
-    This TypedDict combines all components of a search request into a single
-    structure that can be serialized and sent to the API. It includes the query
-    parameters, sorting options, grouping settings, and metadata fields directly
-    at the top level as required by the API specification.
+    This TypedDict consolidates all components of a search request into a unified
+    structure that can be serialized and transmitted to the API. It encompasses
+    query parameters, sorting options, grouping settings, and essential metadata
+    fields as required by the API specification.
 
-    Fields:
-        query (SearchQuery): The search query parameters including the search text,
-                           domain, and query options. Required field.
-
-        sortSpec (Optional[SortSpec]): Sorting parameters for results.
-            If None, API defaults will be used (relevance-based sorting).
-
-        groupSpec (Optional[GroupSpec]): Grouping parameters for results.
-            If None, API defaults will be used (deep grouping with 10 groups).
-
-        maxPassages (str): Maximum number of text passages per document.
+    Attributes:
+        query (SearchQuery): Core search query parameters including search text,
+            domain selection, and fundamental query options. This is a required field.
+        sortSpec (NotRequired[SortSpec]): Sorting configuration for results.
+            If omitted, API defaults will be applied (relevance-based sorting).
+        groupSpec (NotRequired[GroupSpec]): Grouping configuration for results.
+            If omitted, API defaults will be used (deep grouping with 10 groups).
+        maxPassages (NotRequired[str]): Maximum text passages per document.
             Valid range: 1-5. Default is "2".
-            Passages are text snippets with highlighted search terms.
-
-        region (str): Region code for localized results.
+            Passages are text snippets with highlighted search terms for context.
+        region (NotRequired[str]): Region code for localized search results.
             Default is "225" for Russia.
-            See Yandex Search API documentation for complete list of region codes:
-            https://yandex.cloud/ru/docs/search-api/reference/regions
-
-        l10n (Localization): Localization language for results.
-
-        folderId (str): Yandex Cloud folder ID. Required field.
-            This identifies your Yandex Cloud account and project.
-
-        responseFormat (ResponseFormat): Response format from the API.
-            Valid value: ResponseFormat.FORMAT_XML
-
-        metadata (Dict[str, str]): Search flags, key:value pairs.
-            No more than 64.
-            The maximum string length in characters for each value is 63.
-            Each value must match the regular expression [-_0-9a-z]*.
-            The string length in characters for each key must be 1-63.
-            Each key must match the regular expression [a-z][-_0-9a-z]*.
+            Reference: https://yandex.cloud/ru/docs/search-api/reference/regions
+        l10n (NotRequired[Localization]): Interface language for response localization.
+            Controls language of system messages and metadata.
+        folderId (str): Yandex Cloud folder identifier. Required field.
+            Uniquely identifies your Yandex Cloud account and project.
+        responseFormat (NotRequired[ResponseFormat]): Desired response format.
+            Only ResponseFormat.FORMAT_XML is supported by this client.
+        metadata (NotRequired[Dict[str, str]]): Search flags as key:value pairs.
+            Maximum 64 pairs. Values: max 63 chars, must match [-_0-9a-z]*.
+            Keys: 1-63 chars, must match [a-z][-_0-9a-z]*.
 
     Example:
-        ```python
-        request: SearchRequest = {
-            "query": {
-                "searchType": "SEARCH_TYPE_RU",
-                "queryText": "python programming",
-                "familyMode": "FAMILY_MODE_MODERATE",
-                "page": "0",
-                "fixTypoMode": "FIX_TYPO_MODE_ON"
-            },
-            "sortSpec": {
-                "sortMode": "SORT_MODE_BY_RELEVANCE",
-                "sortOrder": "SORT_ORDER_DESC"
-            },
-            "groupSpec": {
-                "groupMode": "GROUP_MODE_DEEP",
-                "groupsOnPage": "10",
-                "docsInGroup": "2"
-            },
-            "maxPassages": "2",
-            "region": "225",
-            "l10n": "LOCALIZATION_RU",
-            "folderId": "your_folder_id",
-            "responseFormat": "FORMAT_XML"
-        }
-        ```
+        Complete search request with all parameters::
+
+            request: SearchRequest = {
+                "query": {
+                    "searchType": SearchType.SEARCH_TYPE_RU,
+                    "queryText": "python programming",
+                    "familyMode": FamilyMode.FAMILY_MODE_MODERATE,
+                    "page": "0",
+                    "fixTypoMode": FixTypoMode.FIX_TYPO_MODE_ON
+                },
+                "sortSpec": {
+                    "sortMode": SortMode.SORT_MODE_BY_RELEVANCE,
+                    "sortOrder": SortOrder.SORT_ORDER_DESC
+                },
+                "groupSpec": {
+                    "groupMode": GroupMode.GROUP_MODE_DEEP,
+                    "groupsOnPage": "10",
+                    "docsInGroup": "2"
+                },
+                "maxPassages": "2",
+                "region": "225",
+                "l10n": Localization.LOCALIZATION_RU,
+                "folderId": "your_folder_id",
+                "responseFormat": ResponseFormat.FORMAT_XML
+            }
     """
 
     query: SearchQuery
@@ -301,57 +407,55 @@ class SearchRequest(TypedDict):
 
 
 class SearchResult(TypedDict):
-    """
-    Individual search result from the Yandex Search API.
+    """Individual search result document from Yandex Search API.
 
-    This TypedDict represents a single document in the search results,
-    containing metadata about the document and relevant text passages.
+    This TypedDict represents a single document within the search results,
+    containing comprehensive metadata about the document and relevant text
+    passages that highlight the search terms.
 
-    Fields:
-        url (str): The full URL of the document. Required field.
-
-        domain (str): The domain name of the document (e.g., "example.com").
-                     Required field.
-
-        title (str): The title of the document as displayed in search results.
-                    Required field.
-
-        passages (List[str]): List of text passages containing the search terms.
-                            Passages include highlighted words marked with asterisks.
-                            Required field, but may be empty list.
-
-        modtime (Optional[str]): Last modification time of the document.
-                                Format varies by source (Unix timestamp, ISO date, etc.).
-
-        size (Optional[str]): Size of the document in human-readable format
-                            (e.g., "15.2 KB", "1.5 MB").
-
-        charset (Optional[str]): Character encoding of the document
-                               (e.g., "utf-8", "windows-1251").
-
-        mimetypes (Optional[List[str]]): List of MIME types for the document.
-                                        Common values include "text/html", "application/pdf".
-
-        hlwords (Optional[List[str]]): List of highlighted words from the search query.
-                                      These are the terms that matched in the document.
+    Attributes:
+        url (str): Complete URL of the document. Required field.
+        domain (str): Domain name of the document source (e.g., "example.com").
+            Required field.
+        title (str): Document title as displayed in search results.
+            Required field.
+        passages (List[str]): Text passages containing search terms with highlighting.
+            Highlighted words are marked with asterisks. Required field, may be empty.
+        charset (NotRequired[str]): Character encoding of the document.
+            Examples: "utf-8", "windows-1251", "iso-8859-1".
+        lang (NotRequired[str]): Language code of the document content.
+            Examples: "ru", "en", "tr".
+        mimeType (NotRequired[str]): MIME type of the document.
+            Examples: "text/html", "application/pdf", "image/jpeg".
+        savedCopyUrl (NotRequired[str]): URL to saved copy or cached version.
+            Provides access to archived or cached document versions.
+        modtime (NotRequired[float]): Last modification timestamp.
+            Unix timestamp format (seconds since epoch).
+        size (NotRequired[int]): Document size in bytes.
+            Integer value representing total file size.
+        extendedText (NotRequired[str]): Additional extended text or description.
+            May contain summaries or additional document metadata.
+        hlwords (NotRequired[List[str]]): Highlighted words from search query.
+            List of terms that matched and were highlighted in the document.
 
     Example:
-        ```python
-        result: SearchResult = {
-            "url": "https://example.com/python-tutorial",
-            "domain": "example.com",
-            "title": "Python Programming Tutorial",
-            "passages": [
-                "Learn *Python* programming with our comprehensive tutorial",
-                "This *Python* guide covers all the basics"
-            ],
-            "modtime": "2023-05-15",
-            "size": "25.3 KB",
-            "charset": "utf-8",
-            "mimetypes": ["text/html"],
-            "hlwords": ["Python"]
-        }
-        ```
+        Complete search result with all available fields::
+
+            result: SearchResult = {
+                "url": "https://example.com/python-tutorial",
+                "domain": "example.com",
+                "title": "Python Programming Tutorial",
+                "passages": [
+                    "Learn *Python* programming with our comprehensive tutorial",
+                    "This *Python* guide covers all the basics"
+                ],
+                "modtime": 1684147200.0,
+                "size": 25984,
+                "charset": "utf-8",
+                "lang": "en",
+                "mimeType": "text/html",
+                "hlwords": ["Python", "programming"]
+            }
     """
 
     url: str
@@ -375,35 +479,37 @@ SearchGroup: TypeAlias = List[SearchResult]
 
 
 class ErrorResponse(TypedDict):
-    """
-    Error response structure from the Yandex Search API.
+    """Error response structure for Yandex Search API failures.
 
-    This TypedDict represents an error response from the API, containing
-    information about what went wrong during the search request.
+    This TypedDict represents standardized error responses from the API,
+    providing structured information about what went wrong during search
+    request processing and helping with debugging and error handling.
 
-    Fields:
-        code (str): Machine-readable error code.
-                  Common values include:
-                  - "ERR_INVALID_REQUEST": Invalid request parameters
-                  - "ERR_AUTH_FAILED": Authentication failed
-                  - "ERR_RATE_LIMITED": Rate limit exceeded
-                  - "ERR_INTERNAL_ERROR": Internal server error
-
-        message (str): Human-readable error message describing the problem.
-                      This message is suitable for display to end users.
-
-        details (Optional[str]): Additional error details or context.
-                               May include specific information about what
-                               parameter caused the error or suggested fixes.
+    Attributes:
+        code (str): Machine-readable error code for programmatic handling.
+            Common error codes include:
+            - "ERR_INVALID_REQUEST": Invalid request parameters or structure
+            - "ERR_AUTH_FAILED": Authentication or authorization failure
+            - "ERR_RATE_LIMITED": Rate limit exceeded or throttled
+            - "ERR_INTERNAL_ERROR": Internal server error or service issue
+        message (str): Human-readable error description.
+            Suitable for display to end users or logging purposes.
+            Provides clear explanation of what went wrong.
 
     Example:
-        ```python
-        error: ErrorResponse = {
-            "code": "ERR_INVALID_REQUEST",
-            "message": "Invalid search query",
-            "details": "The query text is too short (minimum 3 characters)"
-        }
-        ```
+        Authentication error response::
+
+            error: ErrorResponse = {
+                "code": "ERR_AUTH_FAILED",
+                "message": "Invalid authentication credentials"
+            }
+
+        Parameter validation error::
+
+            error: ErrorResponse = {
+                "code": "ERR_INVALID_REQUEST",
+                "message": "Invalid search query parameters"
+            }
     """
 
     code: str
@@ -411,45 +517,37 @@ class ErrorResponse(TypedDict):
 
 
 class SearchResponse(TypedDict):
-    """
-    Parsed XML response structure from the Yandex Search API.
+    """Complete parsed response structure from Yandex Search API.
 
-    This TypedDict represents the complete response from a search request,
-    including metadata about the search and the actual results. The response
-    is parsed from the Base64-encoded XML returned by the API.
+    This TypedDict represents the full response structure from a search request,
+    encompassing search metadata, result statistics, and the actual search results.
+    The response is parsed from the Base64-encoded XML data returned by the API.
 
-    Fields:
-        requestId (str): Unique identifier for this search request.
-                        Useful for debugging and tracking API calls.
-
+    Attributes:
+        requestId (str): Unique identifier for this specific search request.
+            Essential for debugging, tracking, and support inquiries.
         found (int): Total number of results found for the query.
-                    This may be much larger than the number of results returned.
-
-        foundHuman (str): Human-readable representation of the result count.
-                         Examples: "About 1,234 results", "Найдено 567 результатов".
-
-        page (int): Current page number (0-based) for paginated results.
-                   Used with the page parameter in search requests.
-
+            May significantly exceed the number of results actually returned.
+        foundHuman (str): Human-readable formatted result count.
+            Localized string examples: "About 1,234 results", "Найдено 567 результатов".
+        page (int): Current page number in paginated results (0-based indexing).
+            Corresponds to the page parameter used in the search request.
         groups (List[SearchGroup]): List of search result groups.
-                                  The number of groups is controlled by the
-                                  groupsOnPage parameter in the search request.
-                                  Required field, but may be empty list.
-
-        error (Optional[Dict]): Error information if the search failed.
-                               Contains error code, message, and details.
-                               None if the search was successful.
+            Number of groups controlled by groupsOnPage parameter.
+            Required field, but may be empty list if no results found.
+        error (NotRequired[ErrorResponse]): Error information for failed searches.
+            Contains structured error data if search failed, None if successful.
 
     Example:
-        ```python
-        response: SearchResponse = {
-            "requestId": "req-12345678-abcde",
-            "found": 12345,
-            "foundHuman": "Найдено 12 345 результатов",
-            "page": 0,
-            "groups": [
-                {
-                    "group": [
+        Successful search response with results::
+
+            response: SearchResponse = {
+                "requestId": "req-12345678-abcde",
+                "found": 12345,
+                "foundHuman": "Найдено 12 345 результатов",
+                "page": 0,
+                "groups": [
+                    [
                         {
                             "url": "https://example.com/result1",
                             "domain": "example.com",
@@ -458,11 +556,22 @@ class SearchResponse(TypedDict):
                             "hlwords": ["search"]
                         }
                     ]
+                ]
+            }
+
+        Error response::
+
+            response: SearchResponse = {
+                "requestId": "req-87654321-fedcba",
+                "found": 0,
+                "foundHuman": "No results found",
+                "page": 0,
+                "groups": [],
+                "error": {
+                    "code": "ERR_INVALID_REQUEST",
+                    "message": "Invalid search query"
                 }
-            ],
-            "error": None
-        }
-        ```
+            }
     """
 
     requestId: str

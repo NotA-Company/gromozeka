@@ -1,41 +1,42 @@
-"""
-Yandex Search API Async Client
+"""Yandex Search API async client implementation.
+
+This module provides the main YandexSearchClient class for interacting with the
+Yandex Search API v2, featuring XML response format parsing, comprehensive caching,
+and built-in rate limiting capabilities.
 
 API References:
-- https://yandex.cloud/ru/docs/search-api/api-ref/WebSearch/search
-- https://yandex.cloud/ru/docs/search-api/concepts/response
+    - https://yandex.cloud/ru/docs/search-api/api-ref/WebSearch/search
+    - https://yandex.cloud/ru/docs/search-api/concepts/response
 
-This module provides the main YandexSearchClient class for interacting with
-the Yandex Search API v2 with XML response format.
-
-The client supports:
-- IAM token and API key authentication
-- Configurable caching with TTL
-- Rate limiting to prevent API abuse
-- Comprehensive error handling
-- Multiple search domains and languages
+Key Features:
+    - Dual authentication support (IAM token and API key)
+    - Configurable caching with TTL and size limits
+    - Sliding window rate limiting to prevent API abuse
+    - Comprehensive error handling and logging
+    - Support for multiple search domains and languages
+    - Thread-safe async operations with per-request sessions
 
 Example:
-    ```python
-    from lib.yandex_search import YandexSearchClient, DictSearchCache
+    Basic usage with caching enabled::
 
-    # Initialize with cache
-    cache = DictSearchCache(max_size=1000, default_ttl=3600)
-    client = YandexSearchClient(
-        iam_token="your_iam_token",
-        folder_id="your_folder_id",
-        cache=cache
-    )
+        from lib.yandex_search import YandexSearchClient, DictSearchCache
 
-    # Simple search
-    results = await client.search("python programming")
-    if results:
-        print(f"Found {results['found']} results")
-        for group in results['groups']:
-            for doc in group['group']:
-                print(f"Title: {doc['title']}")
-                print(f"URL: {doc['url']}")
-    ```
+        # Initialize cache and client
+        cache = DictSearchCache(maxSize=1000, defaultTtl=3600)
+        client = YandexSearchClient(
+            iamToken="your_iam_token",
+            folderId="your_folder_id",
+            cache=cache
+        )
+
+        # Perform search
+        results = await client.search("python programming")
+        if results:
+            print(f"Found {results['found']} results")
+            for group in results['groups']:
+                for doc in group['group']:
+                    print(f"Title: {doc['title']}")
+                    print(f"URL: {doc['url']}")
 """
 
 import asyncio
@@ -66,49 +67,54 @@ logger = logging.getLogger(__name__)
 
 
 class YandexSearchClient:
-    """
-    Async client for Yandex Search API v2 with XML response format.
+    """Async client for Yandex Search API v2 with XML response format.
 
-    This client provides a high-level interface to the Yandex Search API, supporting
-    various search parameters, caching, and rate limiting. It creates a new HTTP session
-    for each request to support proper concurrent requests without session conflicts.
+    This client provides a comprehensive, high-level interface to the Yandex Search API,
+    supporting extensive search parameters, intelligent caching, and robust rate limiting.
+    The implementation creates a new HTTP session for each request to ensure proper
+    concurrent request handling without session conflicts.
 
-    Features:
-    - Support for both IAM token and API key authentication
-    - Configurable caching with TTL support
-    - Built-in rate limiting to prevent API abuse
-    - Comprehensive error handling and logging
-    - Support for multiple search domains and languages
+    Core Capabilities:
+        - Dual authentication methods (IAM token and API key)
+        - Configurable caching with TTL and size management
+        - Sliding window rate limiting for API abuse prevention
+        - Comprehensive error handling with detailed logging
+        - Multi-domain and multi-language search support
+        - Thread-safe async operations
 
-    Example usage:
-        ```python
-        # Basic usage with IAM token
-        client = YandexSearchClient(
-            iam_token="your_iam_token",
-            folder_id="your_folder_id"
-        )
+    Example:
+        Basic client initialization and usage::
 
-        # Simple search with defaults
-        results = await client.search("python programming")
+            # Simple client with IAM token
+            client = YandexSearchClient(
+                iamToken="your_iam_token",
+                folderId="your_folder_id"
+            )
 
-        # Advanced search with custom parameters
-        results = await client.search(
-            query_text="machine learning",
-            search_type="SEARCH_TYPE_RU",
-            region="225",
-            max_passages=3,
-            groups_on_page=5
-        )
+            # Perform basic search
+            results = await client.search("python programming")
 
-        # With caching
-        from lib.yandex_search import DictSearchCache
-        cache = DictSearchCache(max_size=1000, default_ttl=3600)
-        client = YandexSearchClient(
-            api_key="your_api_key",
-            folder_id="your_folder_id",
-            cache=cache
-        )
-        ```
+        Advanced configuration with caching::
+
+            from lib.yandex_search import DictSearchCache
+
+            cache = DictSearchCache(maxSize=1000, defaultTtl=3600)
+            client = YandexSearchClient(
+                apiKey="your_api_key",
+                folderId="your_folder_id",
+                cache=cache,
+                rateLimitRequests=20,
+                rateLimitWindow=60
+            )
+
+            # Advanced search with custom parameters
+            results = await client.search(
+                queryText="machine learning",
+                searchType=SearchType.SEARCH_TYPE_RU,
+                region="225",
+                maxPassages=3,
+                groupsOnPage=5
+            )
     """
 
     API_ENDPOINT = "https://searchapi.api.cloud.yandex.net/v2/web/search"
@@ -126,46 +132,55 @@ class YandexSearchClient:
         rateLimitRequests: int = 10,
         rateLimitWindow: int = 60,
     ):
-        """
-        Initialize Yandex Search client with authentication and configuration options.
+        """Initialize Yandex Search client with authentication and configuration.
 
         The client requires either an IAM token or API key for authentication.
-        IAM tokens are recommended for production use as they can be automatically
-        refreshed, while API keys are static and suitable for simple applications.
+        IAM tokens are recommended for production environments as they support
+        automatic refresh, while API keys are static and suitable for simple
+        applications or testing scenarios.
 
         Args:
-            iamToken: IAM token for authentication (alternative to apiKey).
-                     Obtain from Yandex Cloud IAM service.
-            apiKey: API key for authentication (alternative to iamToken).
-                   Create in Yandex Cloud console.
-            folderId: Yandex Cloud folder ID (required). Find in Yandex Cloud console.
-            requestTimeout: HTTP request timeout in seconds (default: 30).
-            cache: Optional cache implementation for caching search results.
-                  If None, caching is disabled.
-            cacheTTL: Default cache TTL in seconds (default: 3600 = 1 hour).
-                     Can be overridden per request.
-            useCache: If False, do not use cache for all requests by default.
-                        Can be overridden per request.
-            rateLimitRequests: Maximum requests allowed within the rate limit window
-                              (default: 10 requests).
-            rateLimitWindow: Rate limit time window in seconds (default: 60 seconds).
-                            Uses sliding window algorithm.
+            iamToken (Optional[str]): IAM token for authentication as alternative to apiKey.
+                Obtain from Yandex Cloud IAM service. Recommended for production use.
+            apiKey (Optional[str]): API key for authentication as alternative to iamToken.
+                Create in Yandex Cloud console. Suitable for simple applications.
+            folderId (str): Yandex Cloud folder ID (required). Find in Yandex Cloud console.
+            requestTimeout (int): HTTP request timeout in seconds (default: 30).
+            cache (Optional[SearchCacheInterface]): Cache implementation for result caching.
+                If None, caching is disabled regardless of other cache settings.
+            cacheTTL (Optional[int]): Default cache TTL in seconds (default: 3600 = 1 hour).
+                Can be overridden per request. Ignored if cache is None.
+            useCache (bool): Enable/disable caching for all requests by default.
+                Can be overridden per request. Ignored if cache is None.
+            rateLimitRequests (int): Maximum requests allowed within rate limit window
+                (default: 10 requests). Must be positive integer.
+            rateLimitWindow (int): Rate limit time window in seconds (default: 60 seconds).
+                Uses sliding window algorithm. Must be positive integer.
 
         Raises:
             ValueError: If neither iamToken nor apiKey is provided, or if folderId is empty.
+            ValueError: If rateLimitRequests or rateLimitWindow are not positive.
 
         Example:
-            ```python
-            # With IAM token and caching
-            cache = DictSearchCache(max_size=1000, default_ttl=3600)
-            client = YandexSearchClient(
-                iam_token="your_iam_token",
-                folder_id="your_folder_id",
-                cache=cache,
-                rate_limit_requests=20,
-                rate_limit_window=60
-            )
-            ```
+            Production-ready client with caching and rate limiting::
+
+                from lib.yandex_search import DictSearchCache
+
+                cache = DictSearchCache(maxSize=1000, defaultTtl=3600)
+                client = YandexSearchClient(
+                    iamToken="your_iam_token",
+                    folderId="your_folder_id",
+                    cache=cache,
+                    rateLimitRequests=20,
+                    rateLimitWindow=60
+                )
+
+            Simple client for testing::
+
+                client = YandexSearchClient(
+                    apiKey="your_api_key",
+                    folderId="your_folder_id"
+                )
         """
         if not iamToken and not apiKey:
             raise ValueError("Either iamToken or apiKey must be provided")
@@ -207,102 +222,101 @@ class YandexSearchClient:
         l10n: Localization = Localization.LOCALIZATION_RU,
         useCache: Optional[bool] = None,
     ) -> Optional[SearchResponse]:
-        """
-        Perform search with full parameter control.
+        """Perform search with comprehensive parameter control.
 
-        This method provides access to all Yandex Search API parameters.
-         It provides sensible defaults.
-
-        The method automatically handles caching (if enabled), rate limiting, and
-        error recovery. It creates a new HTTP session for each request to ensure
+        This method provides access to all Yandex Search API parameters with sensible
+        defaults. It automatically handles caching (if enabled), rate limiting,
+        and error recovery. A new HTTP session is created for each request to ensure
         thread safety in concurrent environments.
 
         Args:
-            queryText: Search query text (required). Can contain any characters
-                      supported by the search engine.
-            searchType: Search domain identifier (default: "SEARCH_TYPE_RU").
-                       Valid values:
-                       - SEARCH_TYPE_RU: Russian search (yandex.ru)
-                       - SEARCH_TYPE_TR: Turkish search (yandex.com.tr)
-                       - SEARCH_TYPE_COM: International search (yandex.com)
-                       - SEARCH_TYPE_KK: Kazakh search (yandex.kz)
-                       - SEARCH_TYPE_BE: Belarusian search (yandex.by)
-                       - SEARCH_TYPE_UZ: Uzbek search (yandex.uz)
-            familyMode: Family filter mode for content filtering.
-                       Valid values:
-                       - FAMILY_MODE_MODERATE: Moderate filtering
-                       - FAMILY_MODE_STRICT: Strict filtering
-                       - FAMILY_MODE_OFF: No filtering
-            page: Page number for pagination (0-based, default: 0).
-            fixTypoMode: Typo correction mode.
-                        Valid values:
-                        - FIX_TYPO_MODE_ON: Enable typo correction
-                        - FIX_TYPO_MODE_OFF: Disable typo correction
-            sortMode: Sort mode for results.
-                     Valid values:
-                     - SORT_MODE_BY_RELEVANCE: Sort by relevance (default)
-                     - SORT_MODE_BY_TIME: Sort by date
-            sortOrder: Sort order direction.
-                      Valid values:
-                      - SORT_ORDER_DESC: Descending order (default)
-                      - SORT_ORDER_ASC: Ascending order
-            groupMode: Result grouping mode.
-                      Valid values:
-                      - GROUP_MODE_DEEP: Deep grouping (default)
-                      - GROUP_MODE_FLAT: Flat results
-            groupsOnPage: Number of result groups per page (default: 10).
-                          Valid range: 1-100.
-            docsInGroup: Number of documents in each group (default: 2).
-                         Valid range: 1-10.
-            maxPassages: Maximum number of text passages per document (default: 2).
-                        Valid range: 1-5.
-            region: Region code for localized results (default: "225" for Russia).
-                    See Yandex Search API documentation for region codes.
-            l10n: Localization language (default: "LOCALIZATION_RU").
-                  Valid values:
-                  - LOCALIZATION_RU: Russian
-                  - LOCALIZATION_EN: English
-                  - LOCALIZATION_TR: Turkish
-                  - etc.
-            useCache: If False, do not use cache for this request (overrides client default).
-                        If None, uses client's default useCache setting.
+            queryText (str): Search query text (required). Can contain any characters
+                supported by the search engine. Empty strings will return no results.
+            searchType (SearchType): Search domain identifier (default: SEARCH_TYPE_RU).
+                Determines which Yandex search domain to use:
+                - SEARCH_TYPE_RU: Russian search (yandex.ru)
+                - SEARCH_TYPE_TR: Turkish search (yandex.com.tr)
+                - SEARCH_TYPE_COM: International search (yandex.com)
+                - SEARCH_TYPE_KK: Kazakh search (yandex.kz)
+                - SEARCH_TYPE_BE: Belarusian search (yandex.by)
+                - SEARCH_TYPE_UZ: Uzbek search (yandex.uz)
+            familyMode (FamilyMode): Content filtering mode (default: FAMILY_MODE_MODERATE).
+                Controls family-safe content filtering:
+                - FAMILY_MODE_MODERATE: Moderate filtering
+                - FAMILY_MODE_STRICT: Strict filtering
+                - FAMILY_MODE_OFF: No filtering
+            page (int): Page number for pagination (0-based, default: 0).
+                Must be non-negative integer.
+            fixTypoMode (FixTypoMode): Typo correction mode (default: FIX_TYPO_MODE_ON).
+                Controls automatic typo correction:
+                - FIX_TYPO_MODE_ON: Enable typo correction
+                - FIX_TYPO_MODE_OFF: Disable typo correction
+            sortMode (SortMode): Results sorting mode (default: SORT_MODE_BY_RELEVANCE).
+                Determines primary sort criteria:
+                - SORT_MODE_BY_RELEVANCE: Sort by relevance
+                - SORT_MODE_BY_TIME: Sort by date
+            sortOrder (SortOrder): Sort direction (default: SORT_ORDER_DESC).
+                Controls sort order direction:
+                - SORT_ORDER_DESC: Descending order
+                - SORT_ORDER_ASC: Ascending order
+            groupMode (GroupMode): Result grouping mode (default: GROUP_MODE_DEEP).
+                Controls how results are grouped:
+                - GROUP_MODE_DEEP: Deep grouping with hierarchy
+                - GROUP_MODE_FLAT: Flat results without grouping
+            groupsOnPage (Optional[int]): Number of result groups per page (default: 10).
+                Valid range: 1-100. If None, uses API default.
+            docsInGroup (Optional[int]): Number of documents per group (default: 2).
+                Valid range: 1-10. If None, uses API default.
+            maxPassages (int): Maximum text passages per document (default: 2).
+                Valid range: 1-5. Controls snippet length.
+            region (str): Region code for localized results (default: "225" for Russia).
+                See Yandex Search API documentation for complete region codes list.
+            l10n (Localization): Interface language (default: LOCALIZATION_RU).
+                Controls response language and formatting:
+                - LOCALIZATION_RU: Russian
+                - LOCALIZATION_EN: English
+                - LOCALIZATION_TR: Turkish
+                - Additional languages available
+            useCache (Optional[bool]): Cache override for this request.
+                If False, bypass cache for this request only.
+                If True, force cache usage (if available).
+                If None, uses client's default useCache setting.
 
         Returns:
-            SearchResponse: Dictionary containing search results with the following structure:
+            Optional[SearchResponse]: Search response dictionary with structure:
                 {
-                    'requestId': str,      # Unique request identifier
-                    'found': int,          # Total number of results found
-                    'foundHuman': str,     # Human-readable result count
-                    'page': int,           # Current page number
-                    'groups': List[SearchGroup],  # List of result groups
-                    'error': Optional[Dict]       # Error information if any
+                    'requestId': str,           # Unique request identifier
+                    'found': int,               # Total results found
+                    'foundHuman': str,          # Human-readable result count
+                    'page': int,                # Current page number
+                    'groups': List[SearchGroup], # Result groups with documents
+                    'error': Optional[Dict]     # Error information if any
                 }
-            Returns None if an error occurs and no cached result is available.
+                Returns None if an error occurs and no cached result is available.
 
         Example:
-            ```python
-            # Advanced search with custom parameters
-            results = await client.search(
-                query_text="machine learning tutorials",
-                search_type="SEARCH_TYPE_RU",
-                family_mode="FAMILY_MODE_MODERATE",
-                fix_typo_mode="FIX_TYPO_MODE_ON",
-                sort_mode="SORT_MODE_BY_RELEVANCE",
-                group_mode="GROUP_MODE_DEEP",
-                groups_on_page=5,
-                docs_in_group=3,
-                max_passages=2,
-                region="225",
-                l10n="LOCALIZATION_RU"
-            )
+            Advanced search with custom parameters::
 
-            if results:
-                print(f"Found {results['found']} results")
-                for group in results['groups']:
-                    for doc in group['group']:
-                        print(f"Title: {doc['title']}")
-                        print(f"URL: {doc['url']}")
-            ```
+                results = await client.search(
+                    queryText="machine learning tutorials",
+                    searchType=SearchType.SEARCH_TYPE_RU,
+                    familyMode=FamilyMode.FAMILY_MODE_MODERATE,
+                    fixTypoMode=FixTypoMode.FIX_TYPO_MODE_ON,
+                    sortMode=SortMode.SORT_MODE_BY_RELEVANCE,
+                    groupMode=GroupMode.GROUP_MODE_DEEP,
+                    groupsOnPage=5,
+                    docsInGroup=3,
+                    maxPassages=2,
+                    region="225",
+                    l10n=Localization.LOCALIZATION_RU
+                )
+
+                if results:
+                    print(f"Found {results['found']} results")
+                    for group in results['groups']:
+                        for doc in group['group']:
+                            print(f"Title: {doc['title']}")
+                            print(f"URL: {doc['url']}")
         """
         # Build group specification
         groupSpec: GroupSpec = {"groupMode": groupMode}
@@ -358,16 +372,27 @@ class YandexSearchClient:
         return result
 
     async def _makeRequest(self, request: SearchRequest) -> Optional[SearchResponse]:
-        """
-        Make HTTP request to Yandex Search API
+        """Make HTTP request to Yandex Search API with proper error handling.
 
-        Creates a new session for each request to support proper concurrent requests.
+        This method creates a new HTTP session for each request to ensure proper
+        concurrent request handling without session conflicts. It handles all
+        HTTP status codes and network errors gracefully.
 
         Args:
-            request: Search request structure
+            request (SearchRequest): Complete search request structure with all
+                required parameters and authentication information.
 
         Returns:
-            Parsed SearchResponse or None on error
+            Optional[SearchResponse]: Parsed search response if successful,
+                None if any error occurs during the request.
+
+        Note:
+            The method handles various error conditions:
+            - HTTP 4xx errors (authentication, authorization, rate limiting)
+            - HTTP 5xx errors (server issues)
+            - Network timeouts and connection errors
+            - JSON parsing errors
+            - XML parsing errors (delegated to parseSearchResponse)
         """
         try:
             logger.debug(f"Making search request: {request}")
@@ -436,26 +461,34 @@ class YandexSearchClient:
             return None
 
     async def _applyRateLimit(self) -> None:
-        """
-        Apply rate limiting to prevent API abuse using sliding window algorithm.
+        """Apply rate limiting using sliding window algorithm to prevent API abuse.
 
-        This method implements a sliding window rate limiter that tracks request
-        timestamps and ensures the number of requests doesn't exceed the configured
-        limit within the time window. If the limit is reached, the method will
-        sleep until the oldest request falls outside the window.
+        This method implements a sophisticated sliding window rate limiter that
+        tracks request timestamps and ensures the request count doesn't exceed the
+        configured limit within the specified time window. When the limit is reached,
+        the method automatically sleeps until the oldest request falls outside
+        the window.
 
-        The algorithm works as follows:
-        1. Remove request timestamps that are outside the current time window
-        2. If the number of remaining requests exceeds the limit, calculate wait time
-        3. Sleep if necessary, then clean up old requests again
-        4. Add the current request timestamp to the tracking list
+        Algorithm Implementation:
+            1. Remove request timestamps outside the current time window
+            2. Check if remaining requests exceed the configured limit
+            3. If limit exceeded, calculate required wait time and sleep
+            4. Clean up old requests after waiting period
+            5. Add current request timestamp to tracking list
 
-        This method is thread-safe due to the use of asyncio.Lock().
+        Thread Safety:
+            This method is thread-safe due to asyncio.Lock() usage, ensuring
+            atomic operations on the request tracking list in concurrent environments.
 
         Note:
-            The rate limiting is applied per client instance. If you need global
-            rate limiting across multiple processes, consider implementing an
-            external rate limiter (e.g., Redis-based).
+            Rate limiting is applied per client instance. For global rate limiting
+            across multiple processes or servers, consider implementing an external
+            distributed rate limiter (e.g., Redis-based or database-backed).
+
+        Performance Considerations:
+            - The sliding window provides smooth request distribution
+            - Memory usage scales with request rate, not total requests
+            - Lock contention is minimal due to short critical sections
         """
         async with self._rateLimitLock:
             currentTime = time.time()
@@ -485,27 +518,37 @@ class YandexSearchClient:
             self._requestTimes.append(currentTime)
 
     def getRateLimitStats(self) -> Dict[str, Any]:
-        """
-        Get current rate limiting statistics for monitoring and debugging.
+        """Get current rate limiting statistics for monitoring and debugging.
 
-        This method provides real-time information about the rate limiting
-        status, which can be useful for monitoring API usage or debugging
-        rate limiting issues.
+        This method provides real-time insights into the rate limiting status,
+        useful for monitoring API usage patterns, debugging rate limiting issues,
+        or implementing adaptive request strategies.
 
         Returns:
-            Dict[str, any]: Dictionary containing the following fields:
-                - requests_in_window (int): Number of requests made in the current window
-                - max_requests (int): Maximum allowed requests per window
-                - window_seconds (int): Time window duration in seconds
-                - reset_time (float): Unix timestamp when the window will reset
-                                    (oldest request time + window duration)
+            Dict[str, Any]: Rate limiting statistics dictionary containing:
+                - requestsInWindow (int): Current requests in the active time window
+                - maxRequests (int): Maximum allowed requests per window
+                - windowSeconds (int): Time window duration in seconds
+                - resetTime (float): Unix timestamp when window will reset
+                    (oldest request time + window duration)
 
         Example:
-            ```python
-            stats = client.get_rate_limit_stats()
-            print(f"Used {stats['requests_in_window']}/{stats['max_requests']} requests")
-            print(f"Window resets at: {stats['reset_time']}")
-            ```
+            Monitoring rate limit usage::
+
+                stats = client.getRateLimitStats()
+                print(f"Used {stats['requestsInWindow']}/{stats['maxRequests']} requests")
+                print(f"Window resets at: {stats['resetTime']}")
+                
+                # Calculate remaining requests
+                remaining = stats['maxRequests'] - stats['requestsInWindow']
+                print(f"Remaining requests: {remaining}")
+
+            Implementing adaptive delays::
+
+                stats = client.getRateLimitStats()
+                if stats['requestsInWindow'] >= stats['maxRequests'] * 0.8:
+                    # Approaching limit, add extra delay
+                    await asyncio.sleep(1.0)
         """
         currentTime = time.time()
         recent_requests = [reqTime for reqTime in self._requestTimes if currentTime - reqTime < self.rateLimitWindow]

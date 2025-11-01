@@ -1,7 +1,9 @@
-"""
-Tests for DictSearchCache implementation
+"""Tests for DictSearchCache implementation.
 
-This module contains comprehensive tests for the dictionary-based search cache.
+This module contains comprehensive tests for the dictionary-based search cache,
+covering storage, retrieval, TTL expiration, size limits, thread safety, and
+error handling scenarios. The tests ensure the cache operates correctly under
+various conditions and maintains data integrity.
 """
 
 import asyncio
@@ -13,10 +15,19 @@ from .models import FamilyMode, FixTypoMode, ResponseFormat, SearchRequest, Sear
 
 
 class TestDictSearchCache(unittest.TestCase):
-    """Test cases for DictSearchCache"""
+    """Test cases for DictSearchCache.
+
+    This test class provides comprehensive coverage of the DictSearchCache
+    implementation, including basic operations, TTL management, size limits,
+    thread safety, and edge case handling.
+    """
 
     def setUp(self):
-        """Set up test fixtures"""
+        """Set up test fixtures.
+
+        Initializes a cache instance with short TTL and small size for testing,
+        along with sample request and response data used throughout the test cases.
+        """
         self.cache = DictSearchCache(default_ttl=1, max_size=3)
 
         # Sample search response for testing
@@ -55,27 +66,36 @@ class TestDictSearchCache(unittest.TestCase):
             "responseFormat": ResponseFormat.FORMAT_XML,
         }
 
-    def test_cache_storage_and_retrieval(self):
-        """Test basic cache storage and retrieval"""
+    def testCacheStorageAndRetrieval(self):
+        """Test basic cache storage and retrieval.
 
-        async def run_test():
+        Verifies that data can be successfully stored in the cache and
+        retrieved with the same values, ensuring basic cache functionality
+        works as expected.
+        """
+
+        async def runTest():
             # Store data
             result = await self.cache.setSearch(self.sample_request, self.sample_response)
             self.assertTrue(result)
 
             # Retrieve data
-            cached_data = await self.cache.getSearch(self.sample_request)
-            self.assertIsNotNone(cached_data)
-            if cached_data:
-                self.assertEqual(cached_data["requestId"], "test-request-123")
-                self.assertEqual(cached_data["found"], 10)
+            cachedData = await self.cache.getSearch(self.sample_request)
+            self.assertIsNotNone(cachedData)
+            if cachedData:
+                self.assertEqual(cachedData["requestId"], "test-request-123")
+                self.assertEqual(cachedData["found"], 10)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_cache_miss(self):
-        """Test cache miss scenario"""
+    def testCacheMiss(self):
+        """Test cache miss scenario.
 
-        async def run_test():
+        Verifies that attempting to retrieve a non-existent key from the
+        cache returns None, demonstrating proper handling of cache misses.
+        """
+
+        async def runTest():
             # Try to retrieve non-existent key
             request: SearchRequest = {
                 "query": {
@@ -88,15 +108,19 @@ class TestDictSearchCache(unittest.TestCase):
                 "folderId": "test-folder-id",
                 "responseFormat": ResponseFormat.FORMAT_XML,
             }
-            cached_data = await self.cache.getSearch(request)
-            self.assertIsNone(cached_data)
+            cachedData = await self.cache.getSearch(request)
+            self.assertIsNone(cachedData)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_ttl_expiration(self):
-        """Test TTL expiration functionality"""
+    def testTtlExpiration(self):
+        """Test TTL expiration functionality.
 
-        async def run_test():
+        Verifies that cached items expire after the configured TTL and
+        are no longer retrievable, ensuring proper time-based cache eviction.
+        """
+
+        async def runTest():
             request: SearchRequest = {
                 "query": {
                     "searchType": SearchType.SEARCH_TYPE_RU,
@@ -113,22 +137,26 @@ class TestDictSearchCache(unittest.TestCase):
             await self.cache.setSearch(request, self.sample_response)
 
             # Retrieve immediately (should work)
-            cached_data = await self.cache.getSearch(request)
-            self.assertIsNotNone(cached_data)
+            cachedData = await self.cache.getSearch(request)
+            self.assertIsNotNone(cachedData)
 
             # Wait for expiration
             time.sleep(1.1)
 
             # Try to retrieve after expiration (should fail)
-            cached_data = await self.cache.getSearch(request)
-            self.assertIsNone(cached_data)
+            cachedData = await self.cache.getSearch(request)
+            self.assertIsNone(cachedData)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_custom_ttl(self):
-        """Test custom TTL parameter"""
+    def testCustomTtl(self):
+        """Test custom TTL parameter.
 
-        async def run_test():
+        Verifies that the cache respects the default TTL configuration
+        and properly expires items after the specified time period.
+        """
+
+        async def runTest():
             request: SearchRequest = {
                 "query": {
                     "searchType": SearchType.SEARCH_TYPE_RU,
@@ -145,22 +173,26 @@ class TestDictSearchCache(unittest.TestCase):
             await self.cache.setSearch(request, self.sample_response)
 
             # Retrieve immediately (should work)
-            cached_data = await self.cache.getSearch(request)
-            self.assertIsNotNone(cached_data)
+            cachedData = await self.cache.getSearch(request)
+            self.assertIsNotNone(cachedData)
 
             # Wait for default TTL expiration
             time.sleep(1.1)
 
             # Should be expired with default TTL
-            cached_data = await self.cache.getSearch(request)
-            self.assertIsNone(cached_data)
+            cachedData = await self.cache.getSearch(request)
+            self.assertIsNone(cachedData)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_max_size_enforcement(self):
-        """Test maximum cache size enforcement"""
+    def testMaxSizeEnforcement(self):
+        """Test maximum cache size enforcement.
 
-        async def run_test():
+        Verifies that the cache maintains its configured maximum size by
+        evicting the oldest entries when new items are added beyond the limit.
+        """
+
+        async def runTest():
             # Fill cache to max size
             for i in range(3):
                 request: SearchRequest = {
@@ -199,15 +231,19 @@ class TestDictSearchCache(unittest.TestCase):
             self.assertEqual(stats["search_entries"], 3)  # Should still be max_size
 
             # Check that newest entry exists
-            cached_data = await self.cache.getSearch(request4)
-            self.assertIsNotNone(cached_data)
+            cachedData = await self.cache.getSearch(request4)
+            self.assertIsNotNone(cachedData)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_cache_clear(self):
-        """Test cache clearing functionality"""
+    def testCacheClear(self):
+        """Test cache clearing functionality.
 
-        async def run_test():
+        Verifies that the cache can be completely cleared, removing all
+        stored items and resetting statistics to their initial state.
+        """
+
+        async def runTest():
             # Store some data
             request1: SearchRequest = {
                 "query": {
@@ -246,15 +282,20 @@ class TestDictSearchCache(unittest.TestCase):
             self.assertEqual(stats["search_entries"], 0)
 
             # Verify data is gone
-            cached_data = await self.cache.getSearch(request1)
-            self.assertIsNone(cached_data)
+            cachedData = await self.cache.getSearch(request1)
+            self.assertIsNone(cachedData)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_cache_stats(self):
-        """Test cache statistics"""
+    def testCacheStats(self):
+        """Test cache statistics.
 
-        async def run_test():
+        Verifies that the cache provides accurate statistics about its
+        current state including the number of entries, maximum size,
+        and default TTL configuration.
+        """
+
+        async def runTest():
             # Initial stats
             stats = self.cache.getStats()
             self.assertEqual(stats["search_entries"], 0)
@@ -291,10 +332,15 @@ class TestDictSearchCache(unittest.TestCase):
             stats = self.cache.getStats()
             self.assertEqual(stats["search_entries"], 2)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_cache_key_generation(self):
-        """Test cache key generation from parameters"""
+    def testCacheKeyGeneration(self):
+        """Test cache key generation from parameters.
+
+        Verifies that the cache generates consistent and unique keys based
+        on request parameters, ensuring identical requests produce the same
+        key while different requests produce different keys.
+        """
         # Test with different parameters
         request1: SearchRequest = {
             "query": {
@@ -347,16 +393,21 @@ class TestDictSearchCache(unittest.TestCase):
         self.assertEqual(len(key1), 128)
         self.assertTrue(all(c in "0123456789abcdef" for c in key1))
 
-    def test_thread_safety(self):
-        """Test thread safety of cache operations"""
+    def testThreadSafety(self):
+        """Test thread safety of cache operations.
 
-        async def worker(worker_id: int):
+        Verifies that the cache operates correctly when accessed concurrently
+        by multiple workers, ensuring data integrity and preventing race
+        conditions during simultaneous operations.
+        """
+
+        async def worker(workerId: int):
             # Each worker stores and retrieves data
             for i in range(10):
                 request: SearchRequest = {
                     "query": {
                         "searchType": SearchType.SEARCH_TYPE_RU,
-                        "queryText": f"worker-{worker_id}-query-{i}",
+                        "queryText": f"worker-{workerId}-query-{i}",
                         "familyMode": FamilyMode.FAMILY_MODE_MODERATE,
                         "page": "0",
                         "fixTypoMode": FixTypoMode.FIX_TYPO_MODE_ON,
@@ -365,20 +416,25 @@ class TestDictSearchCache(unittest.TestCase):
                     "responseFormat": ResponseFormat.FORMAT_XML,
                 }
                 await self.cache.setSearch(request, self.sample_response)
-                cached_data = await self.cache.getSearch(request)
-                self.assertIsNotNone(cached_data)
+                cachedData = await self.cache.getSearch(request)
+                self.assertIsNotNone(cachedData)
 
-        async def run_test():
+        async def runTest():
             # Run multiple workers concurrently
             tasks = [worker(i) for i in range(5)]
             await asyncio.gather(*tasks)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_error_handling(self):
-        """Test error handling in cache operations"""
+    def testErrorHandling(self):
+        """Test error handling in cache operations.
 
-        async def run_test():
+        Verifies that the cache handles various error scenarios gracefully,
+        including non-existent keys and normal operations, without raising
+        unexpected exceptions.
+        """
+
+        async def runTest():
             # Test that cache handles normal operations gracefully
             # Store and retrieve data
             request: SearchRequest = {
@@ -395,11 +451,11 @@ class TestDictSearchCache(unittest.TestCase):
             result = await self.cache.setSearch(request, self.sample_response)
             self.assertTrue(result)
 
-            cached_data = await self.cache.getSearch(request)
-            self.assertIsNotNone(cached_data)
+            cachedData = await self.cache.getSearch(request)
+            self.assertIsNotNone(cachedData)
 
             # Test with non-existent key (should return None gracefully)
-            non_existent_request: SearchRequest = {
+            nonExistentRequest: SearchRequest = {
                 "query": {
                     "searchType": SearchType.SEARCH_TYPE_RU,
                     "queryText": "non-existent error test query",
@@ -410,13 +466,18 @@ class TestDictSearchCache(unittest.TestCase):
                 "folderId": "test-folder-id",
                 "responseFormat": ResponseFormat.FORMAT_XML,
             }
-            cached_data = await self.cache.getSearch(non_existent_request)
-            self.assertIsNone(cached_data)
+            cachedData = await self.cache.getSearch(nonExistentRequest)
+            self.assertIsNone(cachedData)
 
-        asyncio.run(run_test())
+        asyncio.run(runTest())
 
-    def test_parameter_order_independence(self):
-        """Test that parameter order doesn't affect cache key generation"""
+    def testParameterOrderIndependence(self):
+        """Test that parameter order doesn't affect cache key generation.
+
+        Verifies that cache key generation is independent of parameter order
+        in the request dictionary, ensuring consistent keys regardless of
+        how the request data is structured.
+        """
         # Create requests with same parameters in different orders
         request1: SearchRequest = {
             "query": {

@@ -1,7 +1,11 @@
-"""
-Tests for Yandex Search API client
+"""Tests for Yandex Search API client.
 
-This module contains unit tests for the YandexSearchClient functionality.
+This module contains comprehensive unit tests for the YandexSearchClient
+functionality, covering authentication, request handling, error scenarios,
+caching, rate limiting, and advanced search parameters.
+
+The test suite uses mocking to simulate HTTP responses and network conditions,
+ensuring reliable and fast test execution without external dependencies.
 """
 
 import base64
@@ -25,10 +29,20 @@ from .models import (
 
 
 class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
-    """Test cases for YandexSearchClient functionality"""
+    """Test cases for YandexSearchClient functionality.
+
+    This test class provides comprehensive coverage of the YandexSearchClient
+    including initialization, authentication, search requests, error handling,
+    caching mechanisms, and rate limiting functionality.
+    """
 
     def setUp(self):
-        """Set up test fixtures"""
+        """Set up test fixtures.
+
+        Initializes common test data including sample XML responses for both
+        successful and error scenarios, along with authentication credentials
+        used throughout the test cases.
+        """
         self.iamToken = "test-iam-token"
         self.apiKey = "test-api-key"
         self.folderId = "test-folder-id"
@@ -67,7 +81,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 </yandexsearch>"""
 
     def testClientInitializationWithIamToken(self):
-        """Test client initialization with IAM token"""
+        """Test client initialization with IAM token.
+
+        Verifies that the client correctly stores IAM token credentials
+        and sets other authentication fields to None when initialized
+        with an IAM token.
+        """
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
 
         self.assertEqual(client.iamToken, self.iamToken)
@@ -75,7 +94,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.folderId, self.folderId)
 
     def testClientInitializationWithApiKey(self):
-        """Test client initialization with API key"""
+        """Test client initialization with API key.
+
+        Verifies that the client correctly stores API key credentials
+        and sets other authentication fields to None when initialized
+        with an API key.
+        """
         client = YandexSearchClient(apiKey=self.apiKey, folderId=self.folderId)
 
         self.assertEqual(client.apiKey, self.apiKey)
@@ -83,14 +107,22 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.folderId, self.folderId)
 
     def testClientInitializationWithoutCredentials(self):
-        """Test client initialization fails without credentials"""
+        """Test client initialization fails without credentials.
+
+        Verifies that the client raises a ValueError when neither IAM token
+        nor API key is provided, ensuring proper authentication validation.
+        """
         with self.assertRaises(ValueError) as context:
             YandexSearchClient(folderId=self.folderId)
 
         self.assertIn("Either iamToken or apiKey must be provided", str(context.exception))
 
     def testClientInitializationWithoutFolderId(self):
-        """Test client initialization fails without folder ID"""
+        """Test client initialization fails without folder ID.
+
+        Verifies that the client raises a ValueError when folder ID is not
+        provided, as this is a required parameter for API requests.
+        """
         with self.assertRaises(ValueError) as context:
             YandexSearchClient(iamToken=self.iamToken)
 
@@ -98,7 +130,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testSuccessfulSearch(self, mockAsyncClient):
-        """Test successful search request"""
+        """Test successful search request.
+
+        Verifies that the client correctly formats and sends search requests,
+        handles successful responses, and properly parses the returned data.
+        Also validates that HTTP headers and request body are correctly formatted.
+        """
         # Mock HTTP response
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -141,7 +178,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testErrorResponse(self, mockAsyncClient):
-        """Test error response handling"""
+        """Test error response handling.
+
+        Verifies that the client correctly handles API error responses,
+        properly extracts error information from the XML response, and
+        uses the correct authentication method (API key in this case).
+        """
         # Mock HTTP response
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -174,7 +216,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testHttpErrorHandling(self, mockAsyncClient):
-        """Test HTTP error handling"""
+        """Test HTTP error handling.
+
+        Verifies that the client gracefully handles various HTTP error
+        status codes including 401 Unauthorized, 429 Rate Limit, and
+        500 Server Error, returning None for failed requests.
+        """
         # Test 401 Unauthorized
         mockResponse = MagicMock()
         mockResponse.status_code = 401
@@ -200,7 +247,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testNetworkErrorHandling(self, mockAsyncClient):
-        """Test network error handling"""
+        """Test network error handling.
+
+        Verifies that the client handles network-related errors such as
+        timeouts and connection failures gracefully, returning None for
+        failed requests without raising exceptions.
+        """
         # Mock network timeout
         mockClient = AsyncMock()
         mockClient.post.side_effect = httpx.TimeoutException("Request timeout")
@@ -218,7 +270,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testInvalidJsonResponse(self, mockAsyncClient):
-        """Test handling of invalid JSON response"""
+        """Test handling of invalid JSON response.
+
+        Verifies that the client handles cases where the API returns
+        invalid JSON data, ensuring graceful error handling without
+        crashing or raising exceptions.
+        """
         # Mock HTTP response with invalid JSON
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -235,7 +292,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testMissingResultField(self, mockAsyncClient):
-        """Test handling of response without result field"""
+        """Test handling of response without result field.
+
+        Verifies that the client handles cases where the API response
+        is missing the expected 'rawData' field, ensuring graceful
+        error handling without crashing.
+        """
         # Mock HTTP response without result field
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -252,7 +314,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testAdvancedSearchParameters(self, mockAsyncClient):
-        """Test search with advanced parameters"""
+        """Test search with advanced parameters.
+
+        Verifies that the client correctly formats and sends requests
+        with all available search parameters including search type,
+        family mode, sorting, grouping, and localization options.
+        """
         # Mock HTTP response
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -313,7 +380,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testSimpleSearchDefaults(self, mockAsyncClient):
-        """Test simple search with default parameters"""
+        """Test simple search with default parameters.
+
+        Verifies that the client uses appropriate default values when
+        making simple search requests without explicitly specifying
+        advanced parameters.
+        """
         # Mock HTTP response
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -362,7 +434,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testCachingFunctionality(self, mockAsyncClient):
-        """Test caching functionality"""
+        """Test caching functionality.
+
+        Verifies that the client properly caches search responses and
+        serves subsequent identical requests from cache, reducing API
+        calls and improving performance.
+        """
         # Mock HTTP response
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -400,7 +477,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testCacheBypass(self, mockAsyncClient):
-        """Test cache bypass functionality"""
+        """Test cache bypass functionality.
+
+        Verifies that the client can completely disable caching when
+        useCache is set to False, ensuring all requests hit the API
+        regardless of previous identical queries.
+        """
         # Mock HTTP response
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -431,7 +513,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testPerRequestCacheBypass(self, mockAsyncClient):
-        """Test per-request cache bypass"""
+        """Test per-request cache bypass.
+
+        Verifies that the client can bypass cache on a per-request basis
+        using the useCache parameter, allowing selective cache control
+        while maintaining caching for other requests.
+        """
         # Mock HTTP response
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -462,7 +549,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     async def testRateLimiting(self, mockAsyncClient):
-        """Test rate limiting functionality"""
+        """Test rate limiting functionality.
+
+        Verifies that the client enforces rate limiting by delaying
+        requests when the configured limit is exceeded within the
+        specified time window.
+        """
         # Mock HTTP response
         mockResponse = MagicMock()
         mockResponse.status_code = 200
@@ -482,25 +574,30 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
         import time
 
-        start_time = time.time()
+        startTime = time.time()
 
         # Make requests up to the limit
         await client.search("rate limit test 1")
         await client.search("rate limit test 2")
 
         # These should be immediate
-        elapsed_time = time.time() - start_time
-        self.assertLess(elapsed_time, 0.5)  # Should be very fast
+        elapsedTime = time.time() - startTime
+        self.assertLess(elapsedTime, 0.5)  # Should be very fast
 
         # Third request should be rate limited
         await client.search("rate limit test 3")
 
         # Should have taken at least 1 second due to rate limiting
-        elapsed_time = time.time() - start_time
-        self.assertGreaterEqual(elapsed_time, 1.0)
+        elapsedTime = time.time() - startTime
+        self.assertGreaterEqual(elapsedTime, 1.0)
 
     def testRateLimitStats(self):
-        """Test rate limiting statistics"""
+        """Test rate limiting statistics.
+
+        Verifies that the client provides accurate statistics about
+        the current rate limiting state including the number of
+        requests in the current window and configured limits.
+        """
         client = YandexSearchClient(
             iamToken=self.iamToken, folderId=self.folderId, rateLimitRequests=5, rateLimitWindow=60
         )
@@ -512,7 +609,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["window_seconds"], 60)
 
     def testCacheKeyGeneration(self):
-        """Test cache key generation in cache"""
+        """Test cache key generation in cache.
+
+        Verifies that the cache generates consistent and unique keys
+        for search requests, properly handling different request
+        parameters while excluding folderId from the key generation.
+        """
         cache = DictSearchCache(default_ttl=3600)
 
         # Create sample requests
@@ -574,7 +676,12 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(c in "0123456789abcdef" for c in key1))
 
     def testClientInitializationWithCache(self):
-        """Test client initialization with cache"""
+        """Test client initialization with cache.
+
+        Verifies that the client correctly initializes with cache
+        configuration including TTL, usage flags, and rate limiting
+        parameters.
+        """
         cache = DictSearchCache(default_ttl=1800)
 
         client = YandexSearchClient(

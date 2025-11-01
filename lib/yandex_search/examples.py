@@ -1,15 +1,37 @@
-"""
-Yandex Search API Client Usage Examples
+"""Comprehensive Yandex Search API client usage examples.
 
-This module demonstrates various usage patterns for the Yandex Search API client,
-including basic searches, advanced configurations, caching, rate limiting,
-and error handling.
+This module provides extensive demonstrations of various usage patterns for the
+Yandex Search API client, covering basic searches, advanced configurations,
+caching strategies, rate limiting implementation, and comprehensive error
+handling scenarios.
 
-Run these examples with:
-    ./venv/bin/python3 lib/yandex_search/examples.py
+Execution:
+    Run these examples using the project's virtual environment::
 
-Note: You need to provide valid Yandex Cloud credentials (IAM token or API key)
-and folder ID for these examples to work.
+        ./venv/bin/python3 lib/yandex_search/examples.py
+
+Prerequisites:
+    Valid Yandex Cloud credentials are required for all examples:
+    - IAM token (recommended for production) OR API key
+    - Yandex Cloud folder ID
+    - Proper authentication permissions for Search API access
+
+Configuration:
+    Credentials can be provided via environment variables:
+        - YANDEX_IAM_TOKEN: Your IAM token
+        - YANDEX_API_KEY: Your API key
+        - YANDEX_FOLDER_ID: Your folder ID
+
+    Alternatively, create a .env file in the project root with these values.
+
+Example Coverage:
+    1. Basic search operations with minimal configuration
+    2. API key authentication patterns
+    3. Advanced search with full parameter control
+    4. Caching implementation and performance optimization
+    5. Rate limiting configuration and monitoring
+    6. Comprehensive error handling scenarios
+    7. Multi-domain search capabilities
 """
 
 import asyncio
@@ -61,7 +83,18 @@ if not FOLDER_ID:
 
 
 async def example_basic_search():
-    """Example 1: Basic search with minimal configuration"""
+    """Demonstrate basic search functionality with minimal configuration.
+
+    This example shows the simplest way to use the YandexSearchClient with
+    API key authentication and default search parameters. It demonstrates
+    basic result parsing and display of search metadata.
+
+    Features demonstrated:
+        - Client initialization with API key
+        - Simple query execution
+        - Result metadata extraction
+        - Basic result display formatting
+    """
     print("\n=== Example 1: Basic Search ===")
     # print(f"apiKey={API_KEY}, folderId={FOLDER_ID}")
     # Initialize client with IAM token
@@ -96,7 +129,18 @@ async def example_basic_search():
 
 
 async def example_search_with_api_key():
-    """Example 2: Search using API key authentication"""
+    """Demonstrate search operations using API key authentication.
+
+    This example showcases API key authentication method and custom search
+    parameters including search type specification, passage limits, and
+    result grouping configuration.
+
+    Features demonstrated:
+        - API key authentication setup
+        - Custom search parameter configuration
+        - Highlighted words extraction from results
+        - Human-readable result count display
+    """
     print("\n=== Example 2: Search with API Key ===")
 
     # Initialize client with API key
@@ -122,7 +166,20 @@ async def example_search_with_api_key():
 
 
 async def example_advanced_search():
-    """Example 3: Advanced search with full parameter control"""
+    """Demonstrate advanced search with comprehensive parameter control.
+
+    This example illustrates the full capabilities of the search API by utilizing
+    all available parameters including family filtering, typo correction, sorting
+    options, result grouping, and localization settings.
+
+    Features demonstrated:
+        - Complete parameter configuration
+        - Family mode content filtering
+        - Typo correction settings
+        - Advanced sorting and grouping options
+        - Detailed result information display
+        - Passage and metadata extraction
+    """
     print("\n=== Example 3: Advanced Search ===")
 
     client = YandexSearchClient(apiKey=API_KEY, folderId=FOLDER_ID)
@@ -165,7 +222,19 @@ async def example_advanced_search():
 
 
 async def example_search_with_cache():
-    """Example 4: Search with caching enabled"""
+    """Demonstrate caching functionality for performance optimization.
+
+    This example shows how to configure and use caching with the search client,
+    including cache statistics monitoring, cache hit verification, and cache
+    bypass functionality for fresh results.
+
+    Features demonstrated:
+        - Cache initialization with custom TTL and size limits
+        - Cache performance comparison (API vs cached)
+        - Cache statistics monitoring and reporting
+        - Cache bypass for fresh results
+        - Cache utilization analysis
+    """
     print("\n=== Example 4: Search with Caching ===")
 
     # Create cache with custom settings
@@ -205,7 +274,19 @@ async def example_search_with_cache():
 
 
 async def example_rate_limiting():
-    """Example 5: Rate limiting demonstration"""
+    """Demonstrate rate limiting configuration and monitoring.
+
+    This example illustrates how to configure strict rate limiting and monitor
+    its behavior in real-time, including automatic delay mechanisms and
+    rate limit statistics tracking.
+
+    Features demonstrated:
+        - Custom rate limiting configuration
+        - Real-time rate limit statistics monitoring
+        - Automatic delay mechanisms
+        - Rate limit threshold behavior
+        - Request timing analysis
+    """
     print("\n=== Example 5: Rate Limiting ===")
 
     # Create client with strict rate limiting
@@ -245,7 +326,19 @@ async def example_rate_limiting():
 
 
 async def example_error_handling():
-    """Example 6: Error handling demonstration"""
+    """Demonstrate comprehensive error handling strategies.
+
+    This example showcases various error scenarios including invalid credentials,
+    empty queries, and API error responses, demonstrating graceful error handling
+    and appropriate fallback behaviors.
+
+    Features demonstrated:
+        - Invalid credential error handling
+        - Empty query validation
+        - API error response parsing
+        - Graceful failure behaviors
+        - Error condition detection and reporting
+    """
     print("\n=== Example 6: Error Handling ===")
 
     # Client with invalid credentials (will fail)
@@ -277,7 +370,19 @@ async def example_error_handling():
 
 
 async def example_different_search_domains():
-    """Example 7: Different search domains"""
+    """Demonstrate multi-domain search capabilities.
+
+    This example illustrates searching across different Yandex search domains
+    including Russian, international, and Turkish search engines, showing
+    how to leverage regional search capabilities.
+
+    Features demonstrated:
+        - Multi-domain search configuration
+        - Regional search engine selection
+        - Localized query handling
+        - Cross-domain result comparison
+        - International search capabilities
+    """
     print("\n=== Example 7: Different Search Domains ===")
 
     client = YandexSearchClient(apiKey=API_KEY, folderId=FOLDER_ID)
@@ -305,7 +410,19 @@ async def example_different_search_domains():
 
 
 async def main():
-    """Run all examples"""
+    """Execute all Yandex Search API client examples.
+
+    This main function orchestrates the execution of all example functions,
+    providing credential validation, error handling, and comprehensive example
+    coverage for the complete API client functionality.
+
+    Features:
+        - Credential validation and warning system
+        - Sequential example execution
+        - Comprehensive error handling
+        - User interruption support
+        - Detailed logging and reporting
+    """
     print("Yandex Search API Client Examples")
     print("=" * 50)
 
