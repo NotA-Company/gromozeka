@@ -1,25 +1,28 @@
 """
-XML parser for Yandex Search API responses
+XML parser for Yandex Search API responses.
 
-This module provides utilities for parsing Base64-encoded XML responses
-from the Yandex Search API and converting them to structured Python objects.
+This module provides utilities for parsing Base64-encoded XML responses from the
+Yandex Search API and converting them to structured Python objects. The Yandex
+Search API returns search results as Base64-encoded XML data, which this module
+handles by decoding, parsing, and converting into the SearchResponse TypedDict
+structure defined in models.py.
 
-The Yandex Search API returns search results as Base64-encoded XML data.
-This module handles the decoding, parsing, and conversion of this data
-into the SearchResponse TypedDict structure defined in models.py.
+The parser handles both successful responses and error responses from the API,
+with comprehensive error handling and logging throughout the process.
 
 Key features:
-- Base64 decoding of API responses
-- XML parsing with error handling
-- Extraction of search results and metadata
-- Handling of highlighted words in passages
-- Graceful error handling for malformed responses
+    - Base64 decoding of API responses
+    - XML parsing with robust error handling
+    - Extraction of search results and metadata
+    - Handling of highlighted words in passages
+    - Graceful error handling for malformed responses
+    - Preservation of document structure and metadata
 
 Example:
     ```python
     # Parse a response from the API
-    base64_xml = "PHhtbC4uLj48L3htbD4="  # Base64-encoded XML
-    response = parseSearchResponse(base64_xml)
+    base64Xml = "PHhtbC4uLj48L3htbD4="  # Base64-encoded XML
+    response = parseSearchResponse(base64Xml)
 
     if response['error']:
         print(f"Search failed: {response['error']['message']}")
@@ -46,23 +49,23 @@ DEBUG_PRINT_FULL = False
 
 
 def parseSearchResponse(base64Xml: str) -> SearchResponse:
-    """
-    Parse Base64-encoded XML response from Yandex Search API.
+    """Parse Base64-encoded XML response from Yandex Search API.
 
-    This function decodes the Base64-encoded XML response from the API,
-    parses it, and converts it into a structured SearchResponse object.
-    It handles both successful responses and error responses from the API.
+    This function decodes the Base64-encoded XML response from the API, parses it,
+    and converts it into a structured SearchResponse object. It handles both
+    successful responses and error responses from the API with comprehensive
+    error handling and logging.
 
     The XML structure from Yandex Search API includes:
-    - Root element with metadata (requestid, found, found-human, page)
-    - Error element (if the search failed)
-    - Multiple group elements containing document results
-    - Document elements with metadata, passages, and highlighted words
+        - Root element with metadata (requestid, found, found-human, page)
+        - Error element (if the search failed)
+        - Multiple group elements containing document results
+        - Document elements with metadata, passages, and highlighted words
 
     Args:
         base64Xml (str): Base64-encoded XML response string from the API.
-                        This is the value found in the 'result' field of
-                        the JSON response from the Yandex Search API.
+            This is the value found in the 'result' field of the JSON response
+            from the Yandex Search API.
 
     Returns:
         SearchResponse: Parsed response structure with the following fields:
@@ -75,7 +78,7 @@ def parseSearchResponse(base64Xml: str) -> SearchResponse:
 
     Raises:
         ValueError: If the Base64 encoding is invalid or XML is malformed.
-                    The error message will contain details about the parsing failure.
+            The error message will contain details about the parsing failure.
 
     Note:
         - Highlighted words in passages are marked with asterisks (*word*)
@@ -87,7 +90,7 @@ def parseSearchResponse(base64Xml: str) -> SearchResponse:
     Example:
         ```python
         try:
-            response = parseSearchResponse(base64_xml_from_api)
+            response = parseSearchResponse(base64XmlFromApi)
             if response['error']:
                 print(f"API Error: {response['error']['message']}")
             else:
@@ -167,21 +170,20 @@ def parseSearchResponse(base64Xml: str) -> SearchResponse:
 
 
 def _parseGroup(groupElement: ET.Element) -> Optional[SearchGroup]:
-    """
-    Parse a group element from the XML response.
+    """Parse a group element from the XML response.
 
-    This helper function extracts all document elements from a group
-    and parses them into SearchResult objects. Groups are used to
-    organize related documents together, typically from the same domain.
+    This helper function extracts all document elements from a group and parses
+    them into SearchResult objects. Groups are used to organize related documents
+    together, typically from the same domain or with similar content.
 
     Args:
         groupElement (ET.Element): XML element representing a group.
-                                  Should contain one or more 'doc' child elements.
+            Should contain one or more 'doc' child elements.
 
     Returns:
         Optional[SearchGroup]: Parsed group structure containing a list of
-                              SearchResult objects. Returns None if parsing
-                              fails or no valid documents are found.
+            SearchResult objects. Returns None if parsing fails or no valid
+            documents are found.
 
     Note:
         - Individual document parsing failures are logged as warnings
@@ -203,26 +205,25 @@ def _parseGroup(groupElement: ET.Element) -> Optional[SearchGroup]:
 
 
 def _parseDocument(docElement: ET.Element) -> Optional[SearchResult]:
-    """
-    Parse a document element from the XML response.
+    """Parse a document element from the XML response.
 
-    This helper function extracts all document metadata and content from
-    a document element, including URL, title, passages, and highlighted
-    words. It handles the complex nested structure of document elements
-    in the Yandex Search API XML format.
+    This helper function extracts all document metadata and content from a
+    document element, including URL, title, passages, and highlighted words.
+    It handles the complex nested structure of document elements in the
+    Yandex Search API XML format.
 
     The document element structure includes:
-    - Attributes: url, domain, title, modtime, size, charset
-    - Child elements: mime-type, passage (with hlword elements)
+        - Attributes: url, domain, title, modtime, size, charset
+        - Child elements: mime-type, passage (with hlword elements)
 
     Args:
         docElement (ET.Element): XML element representing a document.
-                                Should have attributes for basic metadata
-                                and child elements for passages and MIME types.
+            Should have attributes for basic metadata and child elements for
+            passages and MIME types.
 
     Returns:
         Optional[SearchResult]: Parsed document structure with all available
-                              fields populated. Returns None if parsing fails.
+            fields populated. Returns None if parsing fails.
 
     Note:
         - Missing attributes are set to empty strings
@@ -311,31 +312,30 @@ def _parseDocument(docElement: ET.Element) -> Optional[SearchResult]:
 
 
 def _extractPassageText(passageElement: ET.Element) -> str:
-    """
-    Extract text from a passage element, preserving highlighted words.
+    """Extract text from a passage element, preserving highlighted words.
 
     This helper function reconstructs the passage text from the XML element,
     properly handling text nodes, child elements, and highlighted words.
-    Highlighted words (hlword elements) are wrapped in asterisks to
-    maintain the highlighting information in the plain text output.
+    Highlighted words (hlword elements) are wrapped in asterisks to maintain
+    the highlighting information in the plain text output.
 
     The passage element structure:
-    <passage>
-        Text before highlighted word
-        <hlword>highlighted</hlword>
-        Text after highlighted word
-        <hlword>another</hlword>
-        More text
-    </passage>
+        <passage>
+            Text before highlighted word
+            <hlword>highlighted</hlword>
+            Text after highlighted word
+            <hlword>another</hlword>
+            More text
+        </passage>
 
     Args:
         passageElement (ET.Element): XML element representing a passage.
-                                   May contain text nodes and hlword child elements.
+            May contain text nodes and hlword child elements.
 
     Returns:
         str: Reconstructed passage text with highlighted words marked
-             with asterisks (e.g., "This is *highlighted* text").
-             Returns empty string if extraction fails.
+            with asterisks (e.g., "This is *highlighted* text").
+            Returns empty string if extraction fails.
 
     Note:
         - Text before and after child elements is preserved
