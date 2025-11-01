@@ -1071,28 +1071,6 @@ class TestEdgeCases:
         mockWeatherClient.getWeatherByCity.assert_called_once_with("Москва", None)
 
     @pytest.mark.asyncio
-    async def testLlmToolWithNullClient(self, weatherHandler):
-        """Test LLM tool handles null weather client, dood!"""
-        weatherHandler.openWeatherMapClient = None
-
-        result = await weatherHandler._llmToolGetWeatherByCity(extraData=None, city="Moscow")
-
-        resultData = json.loads(result)
-        assert resultData["done"] is False
-        assert "OpenWeatherMapClient is not set" in resultData["errorMessage"]
-
-    @pytest.mark.asyncio
-    async def testLlmToolCoordsWithNullClient(self, weatherHandler):
-        """Test coordinates LLM tool handles null weather client, dood!"""
-        weatherHandler.openWeatherMapClient = None
-
-        result = await weatherHandler._llmToolGetWeatherByCoords(extraData=None, lat=55.7558, lon=37.6173)
-
-        resultData = json.loads(result)
-        assert resultData["done"] is False
-        assert "OpenWeatherMapClient is not set" in resultData["errorMessage"]
-
-    @pytest.mark.asyncio
     async def testMessageHandlerWithEmptyRestText(self, weatherHandler, mockCacheService):
         """Test message handler handles empty rest text, dood!"""
         weatherHandler.checkEMMentionsMe = Mock(

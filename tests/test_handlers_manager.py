@@ -44,6 +44,12 @@ def mockConfigManager():
     mock.getOpenWeatherMapConfig.return_value = {
         "enabled": False,
     }
+    mock.getYandexSearchConfig.return_value = {
+        "enabled": False,
+        "api-key": "test-key",
+        "folder-id": "test-folder",
+        "cache-ttl": 3600,
+    }
     return mock
 
 
