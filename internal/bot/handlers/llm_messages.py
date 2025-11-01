@@ -228,8 +228,9 @@ class LLMMessageHandler(BaseBotHandler):
                     logger.debug("It wasn't JSON...")
                     logger.exception(e)
 
-            if lmRetText.startswith("<media-description>"):
+            if lmRetText.strip().strip("`").strip().startswith("<media-description>"):
                 # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText
+                lmRetText = lmRetText.strip().strip("`").strip()
                 match = re.search(r"^<media-description>(.*?)</media-description>(.*?)", lmRetText, re.DOTALL)
                 if match:
                     imagePrompt = match.group(1).strip()
