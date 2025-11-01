@@ -133,28 +133,36 @@ class BaseBotHandler(CommandHandlerMixin):
         # Init different defaults
         self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
 
-        botDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: ChatSettingsValue(v) for k, v in self.config.get("defaults", {}).items() if k in ChatSettingsKey
-        }
-        botPrivatDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: ChatSettingsValue(v) for k, v in self.config.get("private-defaults", {}).items() if k in ChatSettingsKey
-        }
-        botChatDefaults: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: ChatSettingsValue(v) for k, v in self.config.get("chat-defaults", {}).items() if k in ChatSettingsKey
-        }
-
         self.defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
             k: ChatSettingsValue("") for k in ChatSettingsKey
         }
-
-        self.defaultSettings.update({k: v for k, v in botDefaults.items() if k in ChatSettingsKey})
-
+        self.defaultSettings.update(
+            {
+                ChatSettingsKey(k): ChatSettingsValue(v)
+                for k, v in self.config.get("defaults", {}).items()
+                if k in ChatSettingsKey
+            }
+        )
         self.privateDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: v for k, v in botPrivatDefaults.items() if k in ChatSettingsKey
+            ChatSettingsKey(k): ChatSettingsValue(v)
+            for k, v in self.config.get("private-defaults", {}).items()
+            if k in ChatSettingsKey
         }
         self.chatDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: v for k, v in botChatDefaults.items() if k in ChatSettingsKey
+            ChatSettingsKey(k): ChatSettingsValue(v)
+            for k, v in self.config.get("chat-defaults", {}).items()
+            if k in ChatSettingsKey
         }
+
+        # Debug purposes
+        # logger.debug("Config")
+        # logger.debug(utils.jsonDumps(self.config, indent=2))
+        # logger.debug("defaults")
+        # logger.debug(utils.jsonDumps(self.defaultSettings, indent=2))
+        # logger.debug("private-defaults")
+        # logger.debug(utils.jsonDumps(self.privateDefaultSettings, indent=2))
+        # logger.debug("chat-defaults")
+        # logger.debug(utils.jsonDumps(self.chatDefaultSettings, indent=2))
 
         # Init cache
         self.cache = CacheService.getInstance()

@@ -37,6 +37,9 @@ random-answer-probability = 0.01
 # In case of random answer - answer to chat admin messages?
 random-answer-to-admin = true
 
+# Automatically detect and delete spam messages
+detect-spam = false
+
 [bot.defaults]
 # Can chat admins change channel-specific bot settings?
 admin-can-change-settings = true
@@ -55,9 +58,6 @@ parse-images = true
 # Set to 0 to get largest image possible
 # Set to 1 to get smallest image possible
 optimal-image-size        = 896
-
-# Automatically detect and delete spam messages
-detect-spam = false
 
 # Allow /draw command
 allow-draw = true
