@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 MAX_MEDIA_AWAIT_SECS = 300  # 5 minutes
 MEDIA_AWAIT_DELAY = 2.5
+WORD_BREAKERS = ' \t\n\r\f\v.,;:?!…()[]{}<>«»„“”‘’"-–—+=×*÷=<>=≠≤≥%&|\\/@#$№©™®_.'  # Provided By Alice
 
 
 class MessageSender:
@@ -866,7 +867,7 @@ class EnsuredMessage:
                 continue
             mentionLen = len(mention)
             if messageTextLower.startswith(mention) and (
-                len(messageTextLower) <= mentionLen or messageTextLower[mentionLen] in [" ", ",", "." ":", "\n"]
+                len(messageTextLower) <= mentionLen or messageTextLower[mentionLen] in WORD_BREAKERS
             ):
                 ret.byNick = (offset, offset + mentionLen)
                 # origLen = len(messageText)
@@ -877,7 +878,7 @@ class EnsuredMessage:
                 break
 
         if ret.byName or ret.byNick:
-            ret.restText = messageText.lstrip(".,:").strip()
+            ret.restText = messageText.lstrip(WORD_BREAKERS).strip()
             logger.debug(f"Mention found: {ret}")
 
         self._mentionCheckResult = ret
