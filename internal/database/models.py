@@ -193,3 +193,4 @@ class CacheType(StrEnum):
 
     WEATHER = "weather"  # Weather cache (coordinates -> weather data)
     GEOCODING = "geocoding"  # Geocoding cache (city name -> coordinates)
+    YANDEX_SEARCH = "yandex_search" # Yandex Search API Client cache (request-> Search Result)
