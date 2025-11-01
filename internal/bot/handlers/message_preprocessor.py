@@ -10,16 +10,12 @@ saves messages to the database, dood!
 import logging
 from typing import Optional
 
-from telegram import Chat, Update
+from telegram import Update
 from telegram.ext import ContextTypes
 
 from internal.database.models import MessageCategory
 
-from ..models import (
-    ChatSettingsKey,
-    EnsuredMessage,
-    MessageType,
-)
+from ..models import EnsuredMessage, MessageType
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)

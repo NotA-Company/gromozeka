@@ -222,7 +222,7 @@ class LLMMessageHandler(BaseBotHandler):
                         )
                     logger.debug(f"Extracted text is: {lmRetText}")
                 except ValueError as e:
-                    logger.debug(f"It wasnn't JSON...")
+                    logger.debug("It wasn't JSON...")
                     logger.exception(e)
 
             if lmRetText.startswith("<media-description>"):
