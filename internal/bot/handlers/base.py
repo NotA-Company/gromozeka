@@ -20,9 +20,11 @@ Key Features:
 
 import asyncio
 import datetime
+import inspect
 import json
 import logging
 import re
+import time
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -84,6 +86,60 @@ class HandlerResultStatus(Enum):
     NEXT = "next"  # Processed, need to process further
     ERROR = "error"  # Processing error (can be processed further)
     FATAL = "fatal"  # Fatal error, need to stop processing
+
+
+class TypingStopper:
+    """
+    Helper class to manage continuous typing actions, dood!
+
+    This class is used to control the continuous sending of typing actions
+    while a long-running operation is in progress.
+
+    Attributes:
+        running: Boolean indicating if the typing action is still running
+        task: The asyncio task associated with the typing action
+    """
+
+    def __init__(self, task: Optional[asyncio.Task] = None) -> None:
+        """
+        Initialize the TypingStopper with an asyncio task, dood!
+
+        Args:
+            task: The asyncio task to manage for continuous typing actions
+        """
+        self.running = True
+        self.task = task
+
+    async def setTask(self, task: asyncio.Task) -> None:
+        """
+        Set the asyncio task for this TypingStopper, dood!
+
+        Args:
+            task: The asyncio task to manage for continuous typing actions
+        """
+        self.task = task
+
+    async def stopTask(self) -> None:
+        """
+        Stop the typing task and wait for it to complete, dood!
+
+        Sets the running flag to False and awaits the completion of the typing task.
+        If the task is not awaitable, logs a warning message.
+        """
+        self.running = False
+        if not inspect.isawaitable(self.task):
+            logger.warning(f"TypingStopper: {type(self.task).__name__}({self.task}) is not awaitable")
+        else:
+            await self.task
+
+    async def isRunning(self) -> bool:
+        """
+        Check if the typing task is still running, dood!
+
+        Returns:
+            bool: True if the typing task is running, False otherwise
+        """
+        return self.running
 
 
 class BaseBotHandler(CommandHandlerMixin):
@@ -411,6 +467,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self,
         replyToMessage: EnsuredMessage,
         messageText: Optional[str] = None,
+        *,
         addMessagePrefix: str = "",
         photoData: Optional[bytes] = None,
         photoCaption: Optional[str] = None,
@@ -422,6 +479,7 @@ class BaseBotHandler(CommandHandlerMixin):
         mediaPrompt: Optional[str] = None,
         messageCategory: MessageCategory = MessageCategory.BOT,
         replyMarkup: Optional[ReplyMarkup] = None,
+        stopper: Optional[TypingStopper] = None,
     ) -> Optional[Message]:
         """
         Send a text or photo message as a reply, dood!
@@ -460,6 +518,9 @@ class BaseBotHandler(CommandHandlerMixin):
         chatType = replyToMessage.chat.type
         isPrivate = chatType == Chat.PRIVATE
         isGroupChat = chatType in [Chat.GROUP, Chat.SUPERGROUP]
+
+        if stopper is not None:
+            await stopper.stopTask()
 
         if not isPrivate and not isGroupChat:
             logger.error("Cannot send message to chat type {}".format(chatType))
@@ -796,9 +857,65 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def startTyping(self, ensuredMessage: EnsuredMessage, action: ChatAction = ChatAction.TYPING) -> None:
         """
-        Send typing action
+        Send typing action to the chat, dood!
+
+        Args:
+            ensuredMessage: Message object to send typing action for
+            action: Chat action to send (default: TYPING)
         """
         await ensuredMessage.chat.send_action(action=action, message_thread_id=ensuredMessage.threadId)
+
+    async def startContinousTyping(
+        self,
+        ensuredMessage: EnsuredMessage,
+        *,
+        action: ChatAction = ChatAction.TYPING,
+        maxTimeout: int = 120,
+        repeatTimeout: int = 5,
+    ) -> TypingStopper:
+        """
+        Start continuous typing action, dood!
+
+        Sends a typing action that repeats at regular intervals until stopped.
+        This is useful for long-running operations to show the user that
+        the bot is still working.
+
+        Args:
+            ensuredMessage: Message object to send typing action for
+            action: Chat action to send (default: TYPING)
+            maxTimeout: Maximum time to keep typing (default: 120 seconds)
+            repeatTimeout: Interval between typing actions (default: 5 seconds)
+
+        Returns:
+            TypingStopper instance to control the typing action
+        """
+        startTime = time.time()
+        stopTime = startTime + maxTimeout
+        typingStopper = TypingStopper()
+
+        # logger.debug(f"startContinousTyping(,{action},{maxTimeout},{repeatTimeout}) started...")
+
+        async def _sendTyping() -> None:
+            iteration = 0
+            while time.time() < stopTime:
+                # logger.debug(f"_sendTyping(,{action}), iteration: {iteration}...")
+                if not await typingStopper.isRunning():
+                    return
+
+                if iteration == 0:
+                    await self.startTyping(ensuredMessage, action)
+
+                # Sleep 1 second to faster stop in case of typingStopper activated
+                await asyncio.sleep(1)
+                iteration = (iteration + 1) % repeatTimeout
+
+            logger.warning(f"startContinousTyping({ensuredMessage}) reached timeout, exiting...")
+
+        # Send initial action now as task will start not immediately
+        await self.startTyping(ensuredMessage, action)
+        task = asyncio.create_task(_sendTyping())
+        await typingStopper.setTask(task)
+        return typingStopper
 
     ###
     # Processing media

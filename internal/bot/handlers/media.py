@@ -357,13 +357,14 @@ class MediaHandler(BaseBotHandler):
             logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
             return
 
-        await self.startTyping(ensuredMessage)
+        stopper = await self.startContinousTyping(ensuredMessage)
 
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение с медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return
 
@@ -385,6 +386,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Необходимо указать запрос для анализа медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return
 
@@ -409,6 +411,7 @@ class MediaHandler(BaseBotHandler):
                     ensuredMessage,
                     messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
                     messageCategory=MessageCategory.BOT_ERROR,
+                    stopper=stopper,
                 )
                 return
 
@@ -421,6 +424,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Не удалось получить данные медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return
 
@@ -431,6 +435,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return
 
@@ -453,6 +458,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return
 
@@ -460,6 +466,7 @@ class MediaHandler(BaseBotHandler):
             ensuredMessage,
             messageText=llmRet.resultText,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            stopper=stopper,
         )
 
     @commandHandler(
@@ -542,7 +549,7 @@ class MediaHandler(BaseBotHandler):
                     break
 
         logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
-        await self.startTyping(ensuredMessage, ChatAction.UPLOAD_PHOTO)
+        stopper = await self.startContinousTyping(ensuredMessage, action=ChatAction.UPLOAD_PHOTO)
 
         if not prompt:
             # Fixed f-string missing placeholders
@@ -554,6 +561,7 @@ class MediaHandler(BaseBotHandler):
                     "(можно цитировать при необходимости)."
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return
 
@@ -570,6 +578,7 @@ class MediaHandler(BaseBotHandler):
                     f"{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return
 
@@ -579,6 +588,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Ошибка генерации изображения, попробуйте позже.",
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return
 
@@ -598,4 +608,5 @@ class MediaHandler(BaseBotHandler):
             mediaPrompt=prompt,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             addMessagePrefix=imgAddPrefix,
+            stopper=stopper,
         )
