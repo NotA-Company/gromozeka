@@ -68,13 +68,6 @@ class MessagePreprocessorHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        chat = ensuredMessage.chat
-
-        if chat.type == Chat.PRIVATE:
-            chatSettings = self.getChatSettings(chat.id)
-            if not chatSettings[ChatSettingsKey.ALLOW_PRIVATE].toBool():
-                return HandlerResultStatus.SKIPPED
-
         match ensuredMessage.messageType:
             case MessageType.TEXT:
                 # No special handling for text messages needed

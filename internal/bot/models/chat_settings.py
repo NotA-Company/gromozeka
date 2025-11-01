@@ -63,7 +63,6 @@ class ChatSettingsKey(StrEnum):
     # # Allowing different reactions in chat (to mention/reply/random)
     ALLOW_MENTION = "allow-mention"
     ALLOW_REPLY = "allow-reply"
-    ALLOW_PRIVATE = "allow-private"
     RANDOM_ANSWER_PROBABILITY = "random-answer-probability"
     RANDOM_ANSWER_TO_ADMIN = "random-answer-to-admin"
 
@@ -80,6 +79,7 @@ class ChatSettingsKey(StrEnum):
     BAYES_ENABLED = "bayes-enabled"
     BAYES_MIN_CONFIDENCE = "bayes-min-confidence"
     BAYES_AUTO_LEARN = "bayes-auto-learn"
+    BAYES_USE_TRIGRAMS = "bayes-use-trigrams"
 
     # # Reaction settings
     # JSON-serialized Dict(userID|"username" -> "emoji")

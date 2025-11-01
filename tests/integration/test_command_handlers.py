@@ -391,7 +391,8 @@ async def testSettingsCommand(inMemoryDb, mockBot, devCommandsHandler):
     userId = 123456  # Bot owner
 
     # Set some test settings
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_PRIVATE.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_MENTION.value, "true")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_REPLY.value, "true")
     inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_MENTION.value, "false")
 
     message = createMockMessage(
@@ -429,7 +430,7 @@ async def testSetCommand(inMemoryDb, mockBot, devCommandsHandler):
     """
     chatId = 123
     userId = 123456  # Bot owner
-    settingKey = ChatSettingsKey.ALLOW_PRIVATE.value
+    settingKey = ChatSettingsKey.ALLOW_MENTION.value
     settingValue = "true"
 
     message = createMockMessage(
@@ -472,7 +473,7 @@ async def testUnsetCommand(inMemoryDb, mockBot, devCommandsHandler):
     """
     chatId = 123
     userId = 123456  # Bot owner
-    settingKey = ChatSettingsKey.ALLOW_PRIVATE.value
+    settingKey = ChatSettingsKey.ALLOW_MENTION.value
 
     # Set initial value
     inMemoryDb.setChatSetting(chatId, settingKey, "true")

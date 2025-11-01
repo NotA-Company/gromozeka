@@ -158,9 +158,34 @@ class ConfigureCommandHandler(BaseBotHandler):
             "Закончить настройку",
             callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
         )
+
         action = data.get(ButtonDataKey.ConfigureAction, None)
         # if "k" in data:
         #    action = "set_key"
+
+        isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
+        chatId = data.get(ButtonDataKey.ChatId, None)
+        if chatId is not None:
+            # User configuring some chat, check permissions
+            _chatObj = Chat(
+                id=chatId,
+                type=Chat.PRIVATE if chatId > 0 else Chat.GROUP,
+            )
+            _chatObj.set_bot(message.get_bot())
+
+            targetChatSettings = self.getChatSettings(chatId)
+            # Allow to configure only if:
+            # User is Bot Owner (so can do anything)
+            # Or chat settings can be changed AND user is Admin in chat
+            canChangeSettings = isBotOwner or (
+                targetChatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
+                and await self.isAdmin(user=user, chat=_chatObj)
+            )
+            if not canChangeSettings:
+                logger.error(f"handle_chat_configuration: user#{user.id} is not allowed to configure {chatId}")
+                await message.edit_text(text="Вы не можете настраивать выбранный чат")
+                return False
+
         match action:
             case ButtonConfigureAction.Init:
                 userChats = self.db.getUserChats(user.id)
@@ -177,7 +202,14 @@ class ConfigureCommandHandler(BaseBotHandler):
                     )
                     chatObj.set_bot(message.get_bot())
 
-                    if await self.isAdmin(user=user, chat=chatObj, allowBotOwners=True):
+                    targetChatSettings = self.getChatSettings(chat["chat_id"])
+                    # Show chat only if:
+                    # User is Bot Owner (so can do anything)
+                    # Or chat settings can be changed AND user is Admin in chat
+                    if isBotOwner or (
+                        targetChatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
+                        and await self.isAdmin(user=user, chat=chatObj)
+                    ):
                         buttonTitle: str = f"#{chat['chat_id']}"
                         if chat["title"]:
                             buttonTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
@@ -204,22 +236,14 @@ class ConfigureCommandHandler(BaseBotHandler):
 
                 keyboard.append([exitButton])
                 await message.edit_text(text="Выберите чат для настройки:", reply_markup=InlineKeyboardMarkup(keyboard))
+
             case ButtonConfigureAction.ConfigureChat:
-                chatId = data.get(ButtonDataKey.ChatId, None)
                 if chatId is None:
                     logger.error(f"handle_chat_configuration: chatId is None in {data}")
                     return False
 
                 if not isinstance(chatId, int):
                     logger.error(f"handle_chat_configuration: wrong chatId: {type(chatId).__name__}#{chatId}")
-                    return False
-
-                chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
-                chatObj.set_bot(message.get_bot())
-
-                if not await self.isAdmin(user=user, chat=chatObj):
-                    logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId}")
-                    await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
                 chatInfo = self.getChatInfo(chatId)
@@ -287,7 +311,6 @@ class ConfigureCommandHandler(BaseBotHandler):
                     return False
 
             case ButtonConfigureAction.ConfigureKey:
-                chatId = data.get(ButtonDataKey.ChatId, None)
                 _key = data.get(ButtonDataKey.Key, None)
 
                 if chatId is None or _key is None:
@@ -313,13 +336,6 @@ class ConfigureCommandHandler(BaseBotHandler):
                 if key not in chatOptions:
                     logger.error(f"handle_chat_configuration: wrong key: {key}")
                     await message.edit_text(text=f"Unknown key: {key}")
-                    return False
-
-                chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
-                chatObj.set_bot(message.get_bot())
-                if not await self.isAdmin(user=user, chat=chatObj):
-                    logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId} ({data})")
-                    await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
                 userId = user.id
@@ -424,7 +440,6 @@ class ConfigureCommandHandler(BaseBotHandler):
                 | ButtonConfigureAction.ResetValue
                 | ButtonConfigureAction.SetValue
             ):
-                chatId = data.get(ButtonDataKey.ChatId, None)
                 _key = data.get(ButtonDataKey.Key, None)
 
                 userId = user.id
@@ -449,13 +464,6 @@ class ConfigureCommandHandler(BaseBotHandler):
                 if key not in chatOptions:
                     logger.error(f"handle_chat_configuration: wrong key: {key}")
                     await message.edit_text(text=f"Unknown key: {key}")
-                    return False
-
-                chatObj = Chat(id=chatId, type=Chat.PRIVATE if chatId == user.id else Chat.GROUP)
-                chatObj.set_bot(message.get_bot())
-                if not await self.isAdmin(user=user, chat=chatObj):
-                    logger.error(f"handle_chat_configuration: user#{user.id} is not admin in {chatId} ({data})")
-                    await message.edit_text(text="Вы не являетесь администратором в выбранном чате")
                     return False
 
                 keyboard: List[List[InlineKeyboardButton]] = []

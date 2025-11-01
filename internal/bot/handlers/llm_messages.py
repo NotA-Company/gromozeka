@@ -292,23 +292,9 @@ class LLMMessageHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         chat = ensuredMessage.chat
-        chatType = chat.type
-
-        match chatType:
-            case Chat.PRIVATE:
-                chatSettings = self.getChatSettings(chat.id)
-                if not chatSettings[ChatSettingsKey.ALLOW_PRIVATE].toBool():
-                    return HandlerResultStatus.SKIPPED
-            case Chat.GROUP:
-                pass
-            case Chat.SUPERGROUP:
-                pass
-            case Chat.CHANNEL:
-                logger.error(f"Unsupported chat type: {chatType}")
-                return HandlerResultStatus.SKIPPED
-            case _:
-                logger.error(f"Unsupported chat type: {chatType}")
-                return HandlerResultStatus.ERROR
+        if chat.type not in [Chat.PRIVATE, Chat.GROUP, Chat.SUPERGROUP]:
+            logger.error(f"Unsupported chat type: {chat.type}")
+            return HandlerResultStatus.SKIPPED
 
         message = ensuredMessage.getBaseMessage()
 
@@ -329,16 +315,10 @@ class LLMMessageHandler(BaseBotHandler):
         if await self.handleMention(update, context, ensuredMessage):
             return HandlerResultStatus.FINAL
 
-        if ensuredMessage.chat.type == Chat.PRIVATE:
-            # Private chat - always answer
-            # TODO: Move to separate handler?
-            if await self.handlePrivateMessage(update, context, ensuredMessage):
-                return HandlerResultStatus.FINAL
-        else:
-            # Randomly answer message
-            # TODO: Move to separate handler?
-            if await self.handleRandomMessage(update, context, ensuredMessage):
-                return HandlerResultStatus.FINAL
+        # Randomly answer message
+        # TODO: Move to separate handler?
+        if await self.handleRandomMessage(update, context, ensuredMessage):
+            return HandlerResultStatus.FINAL
 
         return HandlerResultStatus.NEXT
 
@@ -597,69 +577,6 @@ class LLMMessageHandler(BaseBotHandler):
 
         return True
 
-    async def handlePrivateMessage(
-        self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-        ensuredMessage: EnsuredMessage,
-    ) -> bool:
-        """
-        Process messages in private (one-on-one) chats with the bot, dood!
-
-        This method handles all messages in private chats that weren't caught by
-        other handlers (replies, mentions). It retrieves recent message history
-        to provide context and generates an LLM response, dood!
-
-        The method:
-        1. Retrieves last N messages from chat (PRIVATE_CHAT_CONTEXT_LENGTH)
-        2. Converts messages to LLM format with proper roles
-        3. Includes system prompt from chat settings
-        4. Generates contextual response using LLM
-
-        Args:
-            update (Update): Telegram update object
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
-            ensuredMessage (EnsuredMessage): The message to respond to
-
-        Returns:
-            bool: True if message was processed successfully, False on error
-        """
-        # If it message in private chat and no other methods catched message,
-        # then just do LLM answer with context of last constants.PRIVATE_CHAT_CONTEXT_LENGTH messages
-
-        await self.startTyping(ensuredMessage)
-        messages = self.db.getChatMessagesSince(ensuredMessage.chat.id, limit=constants.PRIVATE_CHAT_CONTEXT_LENGTH)
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
-
-        # Handle LLM Action
-        reqMessages = [
-            ModelMessage(
-                role="system",
-                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
-                + "\n"
-                + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
-            ),
-        ]
-
-        for message in reversed(messages):
-            eMessage = EnsuredMessage.fromDBChatMessage(message)
-            self._updateEMessageUserData(eMessage)
-
-            reqMessages.append(
-                await eMessage.toModelMessage(
-                    self.db,
-                    format=llmMessageFormat,
-                    role=("user" if message["message_category"] == "user" else "assistant"),
-                )
-            )
-
-        if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context):
-            logger.error("Failed to send LLM reply")
-            return False
-
-        return True
-
     async def handleRandomMessage(
         self,
         update: Update,
@@ -728,6 +645,8 @@ class LLMMessageHandler(BaseBotHandler):
 
         # TODO: Add method for getting whole discussion
         if parentId is not None:
+            # It's some thread, get whole thread into context
+            # TODO: If thread is too long, compress it somehow
             storedMsg = self.db.getChatMessageByMessageId(
                 chatId=chat.id,
                 messageId=parentId,
@@ -748,7 +667,8 @@ class LLMMessageHandler(BaseBotHandler):
                     self.db.getChatMessagesSince(
                         chatId=ensuredMessage.chat.id,
                         threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
-                        limit=constants.PRIVATE_CHAT_CONTEXT_LENGTH,
+                        limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
+                        # messageCategory=[MessageCategory.USER, MessageCategory.BOT],
                     )
                 )
             )
