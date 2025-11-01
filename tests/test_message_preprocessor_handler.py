@@ -68,7 +68,7 @@ def mockCacheService():
         mockInstance = Mock()
         mockInstance.getChatSettings.return_value = {
             ChatSettingsKey.ALLOW_MENTION: Mock(toBool=Mock(return_value=True)),
-            ChatSettingsKey.ALLOW_REPLY: Mock(toBool=Mock(return_value=True))
+            ChatSettingsKey.ALLOW_REPLY: Mock(toBool=Mock(return_value=True)),
         }
         mockInstance.getChatInfo.return_value = None
         mockInstance.getChatTopicInfo.return_value = None
@@ -272,7 +272,7 @@ class TestSkipProcessingScenarios:
         # Configure cache to return ALLOW_PRIVATE = True
         mockCacheService.getChatSettings.return_value = {
             ChatSettingsKey.ALLOW_MENTION: Mock(toBool=Mock(return_value=True)),
-            ChatSettingsKey.ALLOW_REPLY: Mock(toBool=Mock(return_value=True))
+            ChatSettingsKey.ALLOW_REPLY: Mock(toBool=Mock(return_value=True)),
         }
 
         message = createMockMessage(chatId=456, userId=456, text="Private message")
