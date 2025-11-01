@@ -114,7 +114,7 @@ class TestSearchPerformance:
         """Test response time for a single search request."""
         start_time = time.time()
 
-        result = await mock_client.searchSimple("test query")
+        result = await mock_client.search("test query")
 
         end_time = time.time()
         response_time = end_time - start_time
@@ -134,7 +134,7 @@ class TestSearchPerformance:
         results = []
 
         for query in queries:
-            result = await mock_client.searchSimple(query)
+            result = await mock_client.search(query)
             results.append(result)
 
         end_time = time.time()
@@ -156,7 +156,7 @@ class TestSearchPerformance:
         start_time = time.time()
 
         # Create tasks for concurrent execution
-        tasks = [mock_client.searchSimple(query) for query in queries]
+        tasks = [mock_client.search(query) for query in queries]
         results = await asyncio.gather(*tasks)
 
         end_time = time.time()
@@ -181,12 +181,12 @@ class TestCachePerformance:
 
         # First request - should hit the API
         start_time = time.time()
-        result1 = await cached_client.searchSimple(query)
+        result1 = await cached_client.search(query)
         first_request_time = time.time() - start_time
 
         # Second request - should hit cache
         start_time = time.time()
-        result2 = await cached_client.searchSimple(query)
+        result2 = await cached_client.search(query)
         second_request_time = time.time() - start_time
 
         assert result1 is not None
@@ -196,7 +196,7 @@ class TestCachePerformance:
 
         # Check cache stats
         cache = cached_client.cache
-        stats = cache.get_stats()
+        stats = cache.getStats()
         assert stats["search_entries"] >= 1
 
         logger.info(f"First request (API): {first_request_time:.3f}s")
@@ -211,7 +211,7 @@ class TestCachePerformance:
 
         # Make initial requests to populate cache
         for query in queries:
-            await cached_client.searchSimple(query)
+            await cached_client.search(query)
 
         # Clear cache to start fresh
         cached_client.cache.clear()
@@ -219,10 +219,10 @@ class TestCachePerformance:
         # Repeat queries multiple times
         for _ in range(repeat_count):
             for query in queries:
-                await cached_client.searchSimple(query)
+                await cached_client.search(query)
 
         # Check cache stats
-        stats = cached_client.cache.get_stats()
+        stats = cached_client.cache.getStats()
         # We should have 3 unique queries cached
         assert stats["search_entries"] == 3
 
@@ -276,7 +276,7 @@ class TestRateLimitingPerformance:
 
         tasks = []
         for i in range(6):  # More than rate limit (3)
-            task = rate_limited_client.searchSimple(f"test query {i}")
+            task = rate_limited_client.search(f"test query {i}")
             tasks.append(task)
 
         # Execute all tasks concurrently
@@ -293,7 +293,7 @@ class TestRateLimitingPerformance:
         assert total_time >= 1.0  # Allow some tolerance
 
         # Check rate limit stats
-        stats = rate_limited_client.get_rate_limit_stats()
+        stats = rate_limited_client.getRateLimitStats()
         assert stats["max_requests"] == 3
         assert stats["window_seconds"] == 1
 
@@ -305,20 +305,20 @@ class TestRateLimitingPerformance:
         """Test accuracy of rate limiting statistics."""
         # Make some requests
         for i in range(3):
-            await rate_limited_client.searchSimple(f"test query {i}")
+            await rate_limited_client.search(f"test query {i}")
 
         # Check stats
-        stats = rate_limited_client.get_rate_limit_stats()
+        stats = rate_limited_client.getRateLimitStats()
         assert stats["requests_in_window"] == 3
 
         # Wait for window to reset
         await asyncio.sleep(1.1)
 
         # Make another request
-        await rate_limited_client.searchSimple("new query")
+        await rate_limited_client.search("new query")
 
         # Stats should show only the new request
-        stats = rate_limited_client.get_rate_limit_stats()
+        stats = rate_limited_client.getRateLimitStats()
         assert stats["requests_in_window"] == 1
 
         logger.info(f"Rate limit stats accuracy test passed: {stats}")
@@ -335,13 +335,13 @@ class TestMemoryAndResourceUsage:
 
         # Make many requests
         for i in range(100):
-            await mock_client.searchSimple(f"test query {i}")
+            await mock_client.search(f"test query {i}")
 
         # Force garbage collection after requests
         gc.collect()
 
         # Client should still be functional
-        result = await mock_client.searchSimple("final test")
+        result = await mock_client.search("final test")
         assert result is not None
 
         logger.info("Memory cleanup test passed - no memory leaks detected")
@@ -352,7 +352,7 @@ class TestMemoryAndResourceUsage:
         # Create many concurrent tasks
         tasks = []
         for i in range(50):
-            task = mock_client.searchSimple(f"concurrent test {i}")
+            task = mock_client.search(f"concurrent test {i}")
             tasks.append(task)
 
         # Execute all tasks
@@ -362,7 +362,7 @@ class TestMemoryAndResourceUsage:
         assert all(results)
 
         # Client should still be functional
-        result = await mock_client.searchSimple("post-concurrent test")
+        result = await mock_client.search("post-concurrent test")
         assert result is not None
 
         logger.info("Concurrent resource management test passed")
@@ -379,7 +379,7 @@ class TestPerformanceBenchmarks:
         start_time = time.time()
 
         # Create concurrent tasks
-        tasks = [mock_client.searchSimple(f"benchmark query {i}") for i in range(num_requests)]
+        tasks = [mock_client.search(f"benchmark query {i}") for i in range(num_requests)]
         results = await asyncio.gather(*tasks)
 
         end_time = time.time()
@@ -400,13 +400,13 @@ class TestPerformanceBenchmarks:
         query = "cache benchmark query"
 
         # First request to populate cache
-        await cached_client.searchSimple(query)
+        await cached_client.search(query)
 
         # Benchmark cached requests
         num_requests = 1000
         start_time = time.time()
 
-        tasks = [cached_client.searchSimple(query) for _ in range(num_requests)]
+        tasks = [cached_client.search(query) for _ in range(num_requests)]
         results = await asyncio.gather(*tasks)
 
         end_time = time.time()
