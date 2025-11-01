@@ -141,7 +141,9 @@ class TestXmlParser(unittest.TestCase):
         self.assertEqual(secondDoc["title"], "Another Title")
         self.assertEqual(len(secondDoc["passages"]), 1)
         self.assertEqual(secondDoc["passages"][0], "Another passage without highlighting.")
-        self.assertEqual(secondDoc["hlwords"], [])
+        self.assertIn("hlwords", secondDoc)
+        if "hlwords" in secondDoc:
+            self.assertEqual(secondDoc["hlwords"], [])
 
         # Verify second group
         secondGroup = response["groups"][1]
@@ -154,7 +156,9 @@ class TestXmlParser(unittest.TestCase):
         self.assertEqual(thirdDoc["title"], "Third Title")
         self.assertEqual(len(thirdDoc["passages"]), 1)
         self.assertEqual(thirdDoc["passages"][0], "Third passage with *different* highlighting.")
-        self.assertEqual(thirdDoc["hlwords"], ["different"])
+        self.assertIn("hlwords", thirdDoc)
+        if "hlwords" in thirdDoc:
+            self.assertEqual(thirdDoc["hlwords"], ["different"])
 
     def testParseErrorResponse(self):
         """Test parsing an error response"""

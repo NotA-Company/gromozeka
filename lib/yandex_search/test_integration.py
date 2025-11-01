@@ -16,46 +16,65 @@ from typing import Any, Dict
 import pytest
 
 from lib.yandex_search import DictSearchCache, YandexSearchClient
+from lib.yandex_search.models import (
+    FamilyMode,
+    FixTypoMode,
+    GroupMode,
+    Localization,
+    SearchType,
+    SortMode,
+    SortOrder,
+)
 
 # Mock XML response for testing
 MOCK_XML_RESPONSE = """<?xml version="1.0" encoding="utf-8"?>
-<yandexsearch version="2.0" requestid="1234567890" found="1000" found-human="Найдено 1\xa00000 результатов" page="0">
+<yandexsearch version="2.0">
     <response>
-        <group>
-            <group>
-                <doc url="https://example.com/python" domain="example.com"
-                     title="Python Programming Tutorial" modtime="2023-01-01" size="1024" charset="utf-8">
-                    <mime-type>text/html</mime-type>
-                    <passages>
-                        <passage>
-                            <hlword>Python</hlword> is a powerful programming language for web development.
-                        </passage>
-                    </passages>
-                </doc>
-                <doc url="https://example.org/guide" domain="example.org"
-                     title="Complete Python Guide" modtime="2023-02-01" size="2048" charset="utf-8">
-                    <mime-type>text/html</mime-type>
-                    <passages>
-                        <passage>
-                            Learn <hlword>Python</hlword> from basics to advanced topics.
-                        </passage>
-                    </passages>
-                </doc>
-            </group>
-        </group>
-        <group>
-            <group>
-                <doc url="https://docs.python.org" domain="docs.python.org"
-                     title="Official Python Documentation" modtime="2023-03-01" size="4096" charset="utf-8">
-                    <mime-type>text/html</mime-type>
-                    <passages>
-                        <passage>
-                            The official <hlword>Python</hlword> documentation and reference.
-                        </passage>
-                    </passages>
-                </doc>
-            </group>
-        </group>
+        <reqid>1234567890</reqid>
+        <found priority="all">1000</found>
+        <found-human>Найдено 1\xa00000 результатов</found-human>
+        <results>
+            <grouping>
+                <page>0</page>
+                <group>
+                    <doc modtime="2023-01-01" size="1024" charset="utf-8">
+                        <url>https://example.com/python</url>
+                        <domain>example.com</domain>
+                        <title>Python Programming Tutorial</title>
+                        <mime-type>text/html</mime-type>
+                        <passages>
+                            <passage>
+                                <hlword>Python</hlword> is a powerful programming language for web development.
+                            </passage>
+                        </passages>
+                    </doc>
+                    <doc modtime="2023-02-01" size="2048" charset="utf-8">
+                        <url>https://example.org/guide</url>
+                        <domain>example.org</domain>
+                        <title>Complete Python Guide</title>
+                        <mime-type>text/html</mime-type>
+                        <passages>
+                            <passage>
+                                Learn <hlword>Python</hlword> from basics to advanced topics.
+                            </passage>
+                        </passages>
+                    </doc>
+                </group>
+                <group>
+                    <doc modtime="2023-03-01" size="4096" charset="utf-8">
+                        <url>https://docs.python.org</url>
+                        <domain>docs.python.org</domain>
+                        <title>Official Python Documentation</title>
+                        <mime-type>text/html</mime-type>
+                        <passages>
+                            <passage>
+                                The official <hlword>Python</hlword> documentation and reference.
+                            </passage>
+                        </passages>
+                    </doc>
+                </group>
+            </grouping>
+        </results>
     </response>
 </yandexsearch>"""
 
@@ -118,11 +137,10 @@ class TestEndToEndIntegration:
 
         # Verify first group structure
         first_group = results["groups"][0]
-        assert "group" in first_group
-        assert len(first_group["group"]) == 2
+        assert len(first_group) == 2
 
         # Verify first document structure
-        first_doc = first_group["group"][0]
+        first_doc = first_group[0]
         assert first_doc["url"] == "https://example.com/python"
         assert first_doc["domain"] == "example.com"
         assert first_doc["title"] == "Python Programming Tutorial"
@@ -173,18 +191,18 @@ class TestEndToEndIntegration:
         # Advanced search with all parameters
         results = await client.search(
             queryText="machine learning",
-            searchType="SEARCH_TYPE_RU",
-            familyMode="FAMILY_MODE_MODERATE",
+            searchType=SearchType.SEARCH_TYPE_RU,
+            familyMode=FamilyMode.FAMILY_MODE_MODERATE,
             page=1,
-            fixTypoMode="FIX_TYPO_MODE_ON",
-            sortMode="SORT_MODE_BY_RELEVANCE",
-            sortOrder="SORT_ORDER_DESC",
-            groupMode="GROUP_MODE_DEEP",
+            fixTypoMode=FixTypoMode.FIX_TYPO_MODE_ON,
+            sortMode=SortMode.SORT_MODE_BY_RELEVANCE,
+            sortOrder=SortOrder.SORT_ORDER_DESC,
+            groupMode=GroupMode.GROUP_MODE_DEEP,
             groupsOnPage=5,
             docsInGroup=3,
             maxPassages=2,
             region="225",
-            l10n="LOCALIZATION_RU",
+            l10n=Localization.LOCALIZATION_RU,
         )
 
         # Verify we get results
@@ -207,7 +225,7 @@ class TestEndToEndIntegration:
         assert stats["search_entries"] == 1
 
         # Search with cache bypass
-        results2 = await client.search("test query", bypassCache=True)
+        results2 = await client.search("test query", useCache=False)
         assert results2 is not None
         assert results1["requestId"] == results2["requestId"]
 
