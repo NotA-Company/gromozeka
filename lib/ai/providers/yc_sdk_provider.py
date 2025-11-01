@@ -79,7 +79,7 @@ class YcSdkModel(AbstractModel):
     def _statusToModelRunResultStatus(self, status: int) -> ModelResultStatus:
         return ModelResultStatus(status)
 
-    async def generateText(
+    async def _generateText(
         self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
     ) -> ModelRunResult:
         """Run the YC SDK model with given messages, dood!
