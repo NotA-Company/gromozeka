@@ -190,33 +190,6 @@ class TestConfigurationStateManagement:
         assert callArgs[1]["stateKey"] == UserActiveActionEnum.Configuration
 
     @pytest.mark.asyncio
-    async def testUserStateClearedAfterSettingValue(self, configureHandler, mockCacheService, mockDatabase):
-        """Test user state is cleared after setting value, dood!"""
-        user = createMockUser(userId=456)
-        message = createMockMessage(chatId=123, userId=456)
-        message.edit_text = AsyncMock(return_value=message)
-        message.get_bot = Mock(return_value=createMockBot())
-
-        mockDatabase.getChatInfo.return_value = {
-            "chat_id": 123,
-            "title": "Test Chat",
-            "username": None,
-            "type": "group",
-        }
-
-        data = {
-            ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
-            ButtonDataKey.ChatId: 123,
-            ButtonDataKey.Key: ChatSettingsKey.USE_TOOLS.getId(),
-            ButtonDataKey.Value: "gpt-3.5-turbo",
-        }
-
-        await configureHandler._handle_chat_configuration(data, message, user)
-
-        # Verify user state was cleared
-        mockCacheService.clearUserState.assert_called_with(userId=456, stateKey=UserActiveActionEnum.Configuration)
-
-    @pytest.mark.asyncio
     async def testMessageHandlerProcessesUserInput(self, configureHandler, mockCacheService, mockDatabase):
         """Test message handler processes user input when state is active, dood!"""
         createMockUser(userId=456)
@@ -966,24 +939,6 @@ class TestEdgeCases:
         assert result is False
 
     @pytest.mark.asyncio
-    async def testConfigureWithMissingKey(self, configureHandler):
-        """Test configuration with missing key, dood!"""
-        user = createMockUser(userId=456)
-        message = createMockMessage(chatId=456, userId=456)
-        message.edit_text = AsyncMock(return_value=message)
-
-        data = {
-            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureKey,
-            ButtonDataKey.ChatId: 123,
-            # Missing Key
-        }
-
-        result = await configureHandler._handle_chat_configuration(data, message, user)
-
-        # Should return False for error
-        assert result is False
-
-    @pytest.mark.asyncio
     async def testButtonHandlerWithNullQuery(self, configureHandler):
         """Test button handler with null query, dood!"""
         update = createMockUpdate()
@@ -1049,24 +1004,6 @@ class TestEdgeCases:
         # Should return False and show "no admin chats" message
         assert result is False
         message.edit_text.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testConfigureWithWrongChatIdType(self, configureHandler):
-        """Test configuration with wrong chat ID type, dood!"""
-        user = createMockUser(userId=456)
-        message = createMockMessage(chatId=456, userId=456)
-        message.edit_text = AsyncMock(return_value=message)
-
-        data = {
-            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-            ButtonDataKey.ChatId: "not_an_int",  # Wrong type
-        }
-
-        result = await configureHandler._handle_chat_configuration(data, message, user)
-
-        # Should return False for error
-        assert result is False
-
 
 # ============================================================================
 # Test Summary

@@ -320,20 +320,14 @@ class SpamHandler(BaseBotHandler):
         # Add Bayes filter classification, if message wasn't been marked as spam already (for performance purposes)
         if spamScore < banTreshold and chatSettings[ChatSettingsKey.BAYES_ENABLED].toBool():
             try:
+                useTrigrams = chatSettings[ChatSettingsKey.BAYES_USE_TRIGRAMS].toBool()
                 bayesResult = await self.bayesFilter.classify(
                     messageText=ensuredMessage.messageText,
                     chatId=chatId,
-                    threshold=warnTreshold,  # Use existing threshold
-                    ignoreTrigrams=True,
-                )
-                bayesResultWTrigrams = await self.bayesFilter.classify(
-                    messageText=ensuredMessage.messageText,
-                    chatId=chatId,
-                    threshold=warnTreshold,  # Use existing threshold
-                    ignoreTrigrams=False,
+                    threshold=warnTreshold,  # Use existing threshold (We'll ignore it anyway)
+                    ignoreTrigrams=not useTrigrams,
                 )
                 logger.debug(f"SPAM Bayes: Check result: {bayesResult}")
-                logger.debug(f"SPAM Bayes w3grams: Check result: {bayesResultWTrigrams}")
 
                 # Check minimum confidence requirement
                 minConfidence = chatSettings[ChatSettingsKey.BAYES_MIN_CONFIDENCE].toFloat()

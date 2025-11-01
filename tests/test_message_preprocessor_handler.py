@@ -67,7 +67,8 @@ def mockCacheService():
     with patch("internal.bot.handlers.base.CacheService") as MockCache:
         mockInstance = Mock()
         mockInstance.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_PRIVATE: Mock(toBool=Mock(return_value=True))
+            ChatSettingsKey.ALLOW_MENTION: Mock(toBool=Mock(return_value=True)),
+            ChatSettingsKey.ALLOW_REPLY: Mock(toBool=Mock(return_value=True))
         }
         mockInstance.getChatInfo.return_value = None
         mockInstance.getChatTopicInfo.return_value = None
@@ -262,40 +263,16 @@ class TestSkipProcessingScenarios:
         mockDatabase.saveChatMessage.assert_not_called()
 
     @pytest.mark.asyncio
-    async def testSkipProcessingInPrivateChatWhenDisabled(
-        self, messagePreprocessorHandler, mockBot, mockDatabase, mockCacheService
-    ):
-        """Test skips processing in private chat when ALLOW_PRIVATE is disabled, dood!"""
-        messagePreprocessorHandler.injectBot(mockBot)
-
-        # Configure cache to return ALLOW_PRIVATE = False
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_PRIVATE: Mock(toBool=Mock(return_value=False))
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="Private message")
-        message.chat.type = Chat.PRIVATE
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-
-        result = await messagePreprocessorHandler.messageHandler(
-            createMockUpdate(message=message), createMockContext(), ensuredMessage
-        )
-
-        # Should return SKIPPED
-        assert result.name == "SKIPPED"
-        # Should not save message
-        mockDatabase.saveChatMessage.assert_not_called()
-
-    @pytest.mark.asyncio
     async def testProcessPrivateChatWhenEnabled(
         self, messagePreprocessorHandler, mockBot, mockDatabase, mockCacheService
     ):
-        """Test processes private chat when ALLOW_PRIVATE is enabled, dood!"""
+        """Test processes private chat when ALLOW_MENTION and ALLOW_REPLY are enabled, dood!"""
         messagePreprocessorHandler.injectBot(mockBot)
 
         # Configure cache to return ALLOW_PRIVATE = True
         mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_PRIVATE: Mock(toBool=Mock(return_value=True))
+            ChatSettingsKey.ALLOW_MENTION: Mock(toBool=Mock(return_value=True)),
+            ChatSettingsKey.ALLOW_REPLY: Mock(toBool=Mock(return_value=True))
         }
 
         message = createMockMessage(chatId=456, userId=456, text="Private message")
