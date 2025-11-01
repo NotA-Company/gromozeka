@@ -71,6 +71,12 @@ def mockConfigManager():
     mock.getOpenWeatherMapConfig.return_value = {
         "enabled": False,  # Disable to avoid WeatherHandler initialization
     }
+    mock.getYandexSearchConfig.return_value = {
+        "enabled": False,
+        "api-key": "test-key",
+        "folder-id": "test-folder",
+        "cache-ttl": 3600,
+    }
     return mock
 
 

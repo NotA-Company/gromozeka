@@ -136,9 +136,9 @@ class TestXmlParser(unittest.TestCase):
         firstDoc = firstGroup[0]
         self.assertEqual(firstDoc["url"], "https://example.com")
         self.assertEqual(firstDoc["domain"], "example.com")
-        self.assertEqual(firstDoc["title"], "Example *Title*")
+        self.assertEqual(firstDoc["title"], "Example **Title**")
         self.assertEqual(len(firstDoc["passages"]), 1)
-        self.assertEqual(firstDoc["passages"][0], "This is a *sample* passage.")
+        self.assertEqual(firstDoc["passages"][0], "This is a **sample** passage.")
         hlwords = firstDoc.get("hlwords")
         self.assertIsNotNone(hlwords)
         if hlwords:
@@ -173,7 +173,7 @@ class TestXmlParser(unittest.TestCase):
         self.assertEqual(thirdDoc["domain"], "third.com")
         self.assertEqual(thirdDoc["title"], "Third Title")
         self.assertEqual(len(thirdDoc["passages"]), 1)
-        self.assertEqual(thirdDoc["passages"][0], "Third passage with *different* highlighting.")
+        self.assertEqual(thirdDoc["passages"][0], "Third passage with **different** highlighting.")
         self.assertIn("hlwords", thirdDoc)
         if "hlwords" in thirdDoc:
             self.assertEqual(thirdDoc["hlwords"], ["different"])
@@ -297,8 +297,8 @@ class TestXmlParser(unittest.TestCase):
         # Verify document
         doc = response["groups"][0][0]
         self.assertEqual(len(doc["passages"]), 2)
-        self.assertEqual(doc["passages"][0], "Start *1st* middle *2nd* end.")
-        self.assertEqual(doc["passages"][1], "With *third* and *fourth* words.")
+        self.assertEqual(doc["passages"][0], "Start **1st** middle **2nd** end.")
+        self.assertEqual(doc["passages"][1], "With **third** and **fourth** words.")
         hlwords = doc.get("hlwords")
         self.assertIsNotNone(hlwords)
         if hlwords:
