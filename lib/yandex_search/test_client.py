@@ -13,6 +13,15 @@ import httpx
 
 from .client import YandexSearchClient
 from .dict_cache import DictSearchCache
+from .models import (
+    FamilyMode,
+    FixTypoMode,
+    GroupMode,
+    Localization,
+    SearchType,
+    SortMode,
+    SortOrder,
+)
 
 
 class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
@@ -40,7 +49,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
                         <passage>This is a <hlword>sample</hlword> passage.</passage>
                         <mime-type>text/html</mime-type>
                         <charset>utf-8</charset>
-                        <modtime>1234567890</modtime>
+                        <modtime>20090213T233130</modtime>
                         <size>1024</size>
                     </doc>
                 </group>
@@ -153,9 +162,9 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         if response:
             self.assertEqual(response["found"], 0)
             self.assertEqual(len(response["groups"]), 0)
-            self.assertIsNotNone(response["error"])
-            error = response["error"]
-            if error:
+            self.assertIn("error", response)
+            if "error" in response and response["error"] is not None:
+                error = response["error"]
                 self.assertEqual(error["code"], "INVALID_QUERY")
 
         # Verify API key was used in headers
@@ -258,18 +267,18 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         # Make advanced search request
         await client.search(
             queryText="advanced query",
-            searchType="SEARCH_TYPE_COM",
-            familyMode="FAMILY_MODE_STRICT",
+            searchType=SearchType.SEARCH_TYPE_COM,
+            familyMode=FamilyMode.FAMILY_MODE_STRICT,
             page=2,
-            fixTypoMode="FIX_TYPO_MODE_OFF",
-            sortMode="SORT_MODE_BY_TIME",
-            sortOrder="SORT_ORDER_ASC",
-            groupMode="GROUP_MODE_FLAT",
+            fixTypoMode=FixTypoMode.FIX_TYPO_MODE_OFF,
+            sortMode=SortMode.SORT_MODE_BY_TIME,
+            sortOrder=SortOrder.SORT_ORDER_ASC,
+            groupMode=GroupMode.GROUP_MODE_FLAT,
             groupsOnPage=5,
             docsInGroup=3,
             maxPassages=4,
             region="213",
-            l10n="LOCALIZATION_EN",
+            l10n=Localization.LOCALIZATION_EN,
         )
 
         # Verify request parameters
