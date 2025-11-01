@@ -111,7 +111,7 @@ class LLMMessageHandler(BaseBotHandler):
         """
 
         async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
-            if mRet.resultText and sendIntermediateMessages:
+            if mRet.resultText.strip() and sendIntermediateMessages:
                 try:
                     await self.sendMessage(ensuredMessage, mRet.resultText, messageCategory=MessageCategory.BOT)
                     await self.startTyping(ensuredMessage)
