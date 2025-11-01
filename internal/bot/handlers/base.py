@@ -499,6 +499,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 # Send text
 
                 # If response is json, parse it
+                # TODO: Not sure if it works properly
                 if tryParseInputJSON is None:
                     tryParseInputJSON = re.match(r"^\s*`*\s*{", messageText) is not None
                     if tryParseInputJSON:
