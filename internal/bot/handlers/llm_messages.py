@@ -24,6 +24,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from telegram import Chat, Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from internal.config.manager import ConfigManager
@@ -172,6 +173,7 @@ class LLMMessageHandler(BaseBotHandler):
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
         mlRet: Optional[ModelRunResult] = None
 
+        stopper = await self.startContinousTyping(ensuredMessage)
         try:
             mlRet = await self._generateTextViaLLM(
                 model=llmModel,
@@ -189,6 +191,7 @@ class LLMMessageHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Error while sending LLM request: {type(e).__name__}",
                 messageCategory=MessageCategory.BOT_ERROR,
+                stopper=stopper,
             )
             return False
 
@@ -241,7 +244,8 @@ class LLMMessageHandler(BaseBotHandler):
         if imagePrompt is not None:
             imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
             fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
-
+            await stopper.stopTask()
+            stopper = await self.startContinousTyping(ensuredMessage, action=ChatAction.UPLOAD_PHOTO)
             imgMLRet = await imageGenerationModel.generateImageWithFallBack(
                 [ModelMessage(content=imagePrompt)], fallbackImageLLM
             )
@@ -260,6 +264,7 @@ class LLMMessageHandler(BaseBotHandler):
                         photoCaption=lmRetText,
                         mediaPrompt=imagePrompt,
                         addMessagePrefix=imgAddPrefix,
+                        stopper=stopper,
                     )
                     is not None
                 )
@@ -273,6 +278,7 @@ class LLMMessageHandler(BaseBotHandler):
                 messageText=lmRetText,
                 addMessagePrefix=addPrefix,
                 tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON,
+                stopper=stopper,
             )
             is not None
         )
