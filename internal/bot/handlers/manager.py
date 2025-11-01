@@ -143,11 +143,6 @@ class HandlersManager(CommandHandlerGetterInterface):
             )
         else:
             logger.debug(f"Handled not-a-message: #{update.update_id}, resultSet: {resultSet})")
-        if not expectedFinalResults.intersection(resultSet):
-            logger.error(
-                f"No handler returned any of ({expectedFinalResults}), but only ({resultSet}), something went wrong"
-            )
-            return
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle button presses."""
@@ -203,6 +198,7 @@ class HandlersManager(CommandHandlerGetterInterface):
                     continue
 
         expectedFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
+        logger.debug(f"Handled CallbackQuery, resultsSet: {retSet}")
         if not expectedFinalResults.intersection(retSet):
             logger.error(
                 f"No handler returned any of ({expectedFinalResults}), but only ({retSet}), something went wrong"
