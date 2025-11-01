@@ -160,7 +160,7 @@ class SummarizationHandler(BaseBotHandler):
         if sinceDT is None and maxMessages is None:
             raise ValueError("one of sinceDT or maxMessages MUST be not None")
 
-        await self.startTyping(ensuredMessage)
+        stopper = await self.startContinousTyping(ensuredMessage, maxTimeout=300)  # Up to 10 minutes, lol
 
         messages = self.db.getChatMessagesSince(
             chatId=chatId,
@@ -186,6 +186,7 @@ class SummarizationHandler(BaseBotHandler):
             )
             if cache is not None:
                 resMessages = json.loads(cache["summary"])
+                await stopper.stopTask()
                 for msg in resMessages:
                     await self.sendMessage(
                         ensuredMessage,
@@ -308,13 +309,14 @@ class SummarizationHandler(BaseBotHandler):
                 summary=utils.jsonDumps(resMessages),
             )
 
+        await stopper.stopTask()
         for msg in resMessages:
             await self.sendMessage(
                 ensuredMessage,
                 messageText=msg,
                 messageCategory=MessageCategory.BOT_SUMMARY,
             )
-            time.sleep(1)
+            time.sleep(0.5)
 
     async def _handle_summarization(self, data: Dict[str | int, Any], message: Message, user: User):
         """
