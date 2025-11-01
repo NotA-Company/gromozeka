@@ -145,8 +145,8 @@ class TestInitialization:
         """Test LLM tools are registered during initialization, dood!"""
         CommonHandler(mockConfigManager, mockDatabase, mockLlmManager)
 
-        # Verify tools were registered (at least 2 calls)
-        assert mockLlmService.registerTool.call_count >= 2
+        # Verify tools were registered (at least 1 calls)
+        assert mockLlmService.registerTool.call_count >= 1
 
     def testInitRegistersDelayedTaskHandlers(
         self, mockConfigManager, mockDatabase, mockLlmManager, mockCacheService, mockQueueService, mockLlmService
@@ -266,31 +266,6 @@ class TestDelayedTaskHandlers:
 
 class TestLlmToolHandlers:
     """Test LLM tool handlers, dood!"""
-
-    @pytest.mark.asyncio
-    async def testLlmToolGetUrlContent(self, commonHandler):
-        """Test URL content fetching tool, dood!"""
-        with patch("requests.get") as mockGet:
-            mockResponse = Mock()
-            mockResponse.content = b"Test content from URL"
-            mockGet.return_value = mockResponse
-
-            result = await commonHandler._llmToolGetUrlContent(None, url="https://example.com")
-
-            assert "Test content from URL" in result
-            mockGet.assert_called_once_with("https://example.com")
-
-    @pytest.mark.asyncio
-    async def testLlmToolGetUrlContentHandlesError(self, commonHandler):
-        """Test URL fetching handles errors gracefully, dood!"""
-        with patch("requests.get") as mockGet:
-            mockGet.side_effect = Exception("Network error")
-
-            result = await commonHandler._llmToolGetUrlContent(None, url="https://example.com")
-
-            assert "done" in result
-            assert "false" in result.lower()
-            assert "Network error" in result
 
     @pytest.mark.asyncio
     async def testLlmToolGetCurrentDateTime(self, commonHandler):
@@ -797,17 +772,6 @@ class TestDelayedMessageWorkflow:
 
 class TestEdgeCases:
     """Test edge cases and error handling, dood!"""
-
-    @pytest.mark.asyncio
-    async def testLlmToolGetUrlContentWithTimeout(self, commonHandler):
-        """Test URL fetching handles timeout, dood!"""
-        with patch("requests.get") as mockGet:
-            mockGet.side_effect = Exception("Timeout")
-
-            result = await commonHandler._llmToolGetUrlContent(None, url="https://slow-site.com")
-
-            assert "done" in result
-            assert "false" in result.lower()
 
     @pytest.mark.asyncio
     async def testRemindCommandWithEnsuredMessageError(self, commonHandler, mockBot):
