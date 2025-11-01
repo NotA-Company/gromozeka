@@ -159,6 +159,8 @@ request-timeout = 30
 rate-limit-requests = 10  # Maximum requests per time window
 rate-limit-window = 60    # Time window in seconds
 
+dump-full-xml = false     # If we need to dump whole XML in xml_parser debug logging 
+
 # Default search parameters. Will be passed to search as `**kwargs`
 [yandex-search.defaults]
 # By default empty, use client defaults
