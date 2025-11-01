@@ -55,6 +55,12 @@ def mockConfigManager():
         },
     }
     config.getOpenWeatherMapConfig.return_value = {"enabled": False}
+    config.getYandexSearchConfig.return_value = {
+        "enabled": False,
+        "api-key": "test-key",
+        "folder-id": "test-folder",
+        "cache-ttl": 3600,
+    }
     return config
 
 

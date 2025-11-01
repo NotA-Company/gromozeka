@@ -178,6 +178,7 @@ class WeatherHandler(BaseBotHandler):
         try:
             ret = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
             if ret is None:
+                logger.error(f"Weather API returned None for city: {city}, country: {countryCode}")
                 return utils.jsonDumps({"done": False, "errorMessage": "Failed to get weather"})
 
             # Drop useless local_names to decrease context

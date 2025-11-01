@@ -69,6 +69,12 @@ def mockConfigManager():
         "bot_owners": ["testuser"],  # Add bot_owners as usernames
     }
     mock.getOpenWeatherMapConfig.return_value = {"enabled": False}
+    mock.getYandexSearchConfig.return_value = {
+        "enabled": False,
+        "api-key": "test-key",
+        "folder-id": "test-folder",
+        "cache-ttl": 3600,
+    }
     return mock
 
 
