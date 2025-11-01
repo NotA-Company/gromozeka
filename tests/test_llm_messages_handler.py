@@ -899,7 +899,6 @@ async def testHandleUnsupportedChatType(llmHandler, mockContext):
     assert result == HandlerResultStatus.SKIPPED
 
 
-
 @pytest.mark.asyncio
 async def testHandleMissingParentMessage(llmHandler, mockContext, mockDatabase, mockLlmService, groupChat, testUser):
     """Test handling reply when parent message not found, dood!"""
