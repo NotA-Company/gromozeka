@@ -167,7 +167,9 @@ class YandexSearchHandler(BaseBotHandler):
                 return utils.jsonDumps({"done": False, "errorMessage": "Failed to perform web search"})
 
             # Drop useless things
-            # TODO
+            ret.pop("requestId", None)
+            ret.pop("foundHuman", None)
+            ret.pop("page", None)
 
             return utils.jsonDumps({**ret, "done": "error" not in ret})
         except Exception as e:
