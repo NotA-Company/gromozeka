@@ -244,7 +244,7 @@ class YandexSearchClient:
                 Controls family-safe content filtering:
                 - FAMILY_MODE_MODERATE: Moderate filtering
                 - FAMILY_MODE_STRICT: Strict filtering
-                - FAMILY_MODE_OFF: No filtering
+                - FAMILY_MODE_NONE: No filtering
             page (int): Page number for pagination (0-based, default: 0).
                 Must be non-negative integer.
             fixTypoMode (FixTypoMode): Typo correction mode (default: FIX_TYPO_MODE_ON).
@@ -415,7 +415,7 @@ class YandexSearchClient:
                     # Parse JSON response
                     responseData = response.json()
                     logger.debug(f"API request successful: {response.status_code}")
-                    logger.debug(f"API response: {responseData}")
+                    logger.debug(f"API response: {str(responseData)[:50]}...")
 
                     # Extract Base64-encoded XML
                     if "rawData" not in responseData:

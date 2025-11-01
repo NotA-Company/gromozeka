@@ -10,7 +10,7 @@ result filtering. Built-in caching and rate limiting help optimize performance
 and prevent API abuse.
 
 Example:
-    Basic search usage with API key authentication::
+    Basic search usage with API key authentication:
 
         from lib.yandex_search import YandexSearchClient
 
@@ -31,7 +31,7 @@ Example:
 
     Advanced search with custom parameters::
 
-        from lib.yandex_search.models import SearchType
+        from lib.yandex_search import SearchType
 
         results = await client.search(
             queryText="machine learning",
@@ -71,30 +71,43 @@ from .client import YandexSearchClient
 from .dict_cache import DictSearchCache
 from .models import (
     ErrorResponse,
+    FamilyMode,
+    FixTypoMode,
+    GroupMode,
     GroupSpec,
+    Localization,
+    ResponseFormat,
     SearchGroup,
     SearchQuery,
     SearchRequest,
     SearchResponse,
     SearchResult,
+    SearchType,
+    SortMode,
+    SortOrder,
     SortSpec,
 )
-from .xml_parser import parseSearchResponse
 
 __all__ = [
     # Client
     "YandexSearchClient",
     # Models
     "ErrorResponse",
+    "FamilyMode",
+    "FixTypoMode",
+    "GroupMode",
     "GroupSpec",
+    "Localization",
+    "ResponseFormat",
+    "SearchGroup",
     "SearchQuery",
     "SearchRequest",
     "SearchResponse",
     "SearchResult",
-    "SearchGroup",
+    "SearchType",
+    "SortMode",
+    "SortOrder",
     "SortSpec",
-    # XML Parser
-    "parseSearchResponse",
     # Cache
     "SearchCacheInterface",
     "DictSearchCache",

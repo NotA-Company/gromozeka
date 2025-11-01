@@ -58,6 +58,7 @@ class ChatSettingsKey(StrEnum):
     ALLOW_ANALYZE = "allow-analyze"
     ALLOW_SUMMARY = "allow-summary"
     ALLOW_WEATHER = "allow-weather"
+    ALLOW_WEB_SEARCH = "allow-web-search"
 
     # # Allowing different reactions in chat (to mention/reply/random)
     ALLOW_MENTION = "allow-mention"
@@ -194,6 +195,11 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.BOOL,
         "short": "Разрешить узнавать погоду (`/weather`)",
         "long": "Разрешить команду `/weather` для получения погоды в указанном городе",
+    },
+    ChatSettingsKey.ALLOW_WEB_SEARCH: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Разрешить искать в Интернете (`/web_search`)",
+        "long": "Разрешить команду `/web_search` для поиска в Интернете",
     },
     ChatSettingsKey.ALLOW_SUMMARY: {
         "type": ChatSettingsType.BOOL,

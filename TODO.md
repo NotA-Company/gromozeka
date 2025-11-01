@@ -1,4 +1,6 @@
 # Our TODO list
+- [ ] Add extended command decorator (to ensure message, chec is admin and so on + delete called command if needed)
+- [ ] Add different defaults for Private and Group chats
 - [x] Add support of reading and saving all messages from chat
 - [x] Add plugins support (not plugins, but extensible handlers support)
 - [x] Add support for direct mesages
@@ -6,7 +8,7 @@
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
-- [ ] Add Search support
+- [x] Add Search support
 - [ ] Add Better geocoder
 - [ ] Add support of choosing models via configure
 - [ ] Add Per PR tests (make lint + make test)

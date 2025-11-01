@@ -29,6 +29,7 @@ from .spam import SpamHandler
 from .summarization import SummarizationHandler
 from .user_data import UserDataHandler
 from .weather import WeatherHandler
+from .yandex_search import YandexSearchHandler
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,9 @@ class HandlersManager(CommandHandlerGetterInterface):
         openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
         if openWeatherMapConfig.get("enabled", False):
             self.handlers.append(WeatherHandler(configManager, database, llmManager))
+        yandexSearchConfig = self.configManager.getYandexSearchConfig()
+        if yandexSearchConfig.get("enabled", False):
+            self.handlers.append(YandexSearchHandler(configManager, database, llmManager))
 
         self.handlers.append(
             # Should be last messageHandler as it can handle any message
