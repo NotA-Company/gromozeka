@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] Add commands for listing topics and renaming topics in DB
 - [x] Add support json-logging of LLM responses for debug purposes (looks like it sometimes response with weird format)
 - [ ] Run LLM and other requests in separate thread
 - [ ] Add cache for isAdmin (with short TTL like 10 minutes)
