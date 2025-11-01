@@ -538,7 +538,7 @@ class YandexSearchClient:
                 stats = client.getRateLimitStats()
                 print(f"Used {stats['requestsInWindow']}/{stats['maxRequests']} requests")
                 print(f"Window resets at: {stats['resetTime']}")
-                
+
                 # Calculate remaining requests
                 remaining = stats['maxRequests'] - stats['requestsInWindow']
                 print(f"Remaining requests: {remaining}")

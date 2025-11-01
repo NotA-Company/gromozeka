@@ -432,7 +432,7 @@ class DictSearchCache(SearchCacheInterface):
 
                 utilization = stats['searchEntries'] / stats['maxSize'] * 100
                 print(f"Cache utilization: {utilization:.1f}%")
-                
+
                 if utilization > 80:
                     logger.warning("Cache approaching capacity limit")
         """
