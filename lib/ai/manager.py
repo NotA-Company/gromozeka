@@ -59,6 +59,12 @@ class LLMManager:
         """Initialize models from config, dood!"""
         modelsConfig: Dict[str, Dict[str, Any]] = self.config.get("models", {})
 
+        jsonLogSettings = self.config.get("json-logging", {})
+        enableJsonLog = bool(jsonLogSettings.get("enabled", False))
+        jsonLogFile = jsonLogSettings.get("file", "")
+        jsonLogAddDateSuffix = bool(jsonLogSettings.get("add-date-suffix", True))
+        # logger.debug(f"{jsonLogSettings}, {enableJsonLog}, {jsonLogFile}, {jsonLogAddDateSuffix}")
+
         for modelName, modelConfig in modelsConfig.items():
             try:
                 if modelConfig.get("enabled", True) is False:
@@ -76,7 +82,7 @@ class LLMManager:
                     continue
 
                 provider = self.providers[providerName]
-                provider.addModel(
+                model = provider.addModel(
                     name=modelName,
                     modelId=modelId,
                     modelVersion=modelVersion,
@@ -84,6 +90,9 @@ class LLMManager:
                     contextSize=contextSize,
                     extraConfig=modelConfig,
                 )
+
+                if enableJsonLog:
+                    model.setupJSONLogging(jsonLogFile, jsonLogAddDateSuffix)
 
                 self.modelRegistry[modelName] = providerName
                 logger.info(f"Added model {modelName} to provider {providerName}, dood!")

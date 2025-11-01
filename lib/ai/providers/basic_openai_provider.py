@@ -52,7 +52,7 @@ class BasicOpenAIModel(AbstractModel):
         """Get extra parameters for the API call. Override in subclasses, dood!"""
         return {}
 
-    async def generateText(
+    async def _generateText(
         self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
     ) -> ModelRunResult:
         """Run the OpenAI-compatible model with given messages, dood!

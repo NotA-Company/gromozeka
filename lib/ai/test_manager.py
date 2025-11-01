@@ -23,7 +23,7 @@ from lib.ai.models import ModelResultStatus, ModelRunResult
 class MockModel(AbstractModel):
     """Mock model for testing, dood!"""
 
-    async def generateText(self, messages, tools=[]):
+    async def _generateText(self, messages, tools=[]):
         """Mock text generation, dood!"""
         return ModelRunResult(
             rawResult={"mock": "response"},

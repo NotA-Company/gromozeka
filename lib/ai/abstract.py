@@ -2,10 +2,13 @@
 Abstract base class for LLM models, dood!
 """
 
+import datetime
 import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterable, List, Optional
+
+from lib import utils
 
 from .models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
 
@@ -44,8 +47,13 @@ class AbstractModel(ABC):
         self.tiktokenEncoding = "o200k_base"
         self.tokensCountCoeff = 1.1
 
+        # JSON-logging is off by default
+        self.enableJSONLog = False
+        self.jsonLogFile = ""
+        self.jsonLogAddDateSuffix = True
+
     @abstractmethod
-    async def generateText(
+    async def _generateText(
         self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
     ) -> ModelRunResult:
         """Run the model with given messages, dood!
@@ -57,6 +65,27 @@ class AbstractModel(ABC):
             Model response (type depends on implementation)
         """
         raise NotImplementedError
+
+    async def generateText(
+        self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
+    ) -> ModelRunResult:
+        """Generate text using the model with optional tools, dood!
+
+        This method calls the internal _generateText method and optionally logs the
+        request/response in JSON format if JSON logging is enabled.
+
+        Args:
+            messages: List of message dictionaries with role and content
+            tools: Optional list of tools available to the model
+
+        Returns:
+            ModelRunResult containing the generated text and metadata
+        """
+        ret = await self._generateText(messages=messages, tools=tools)
+
+        if self.enableJSONLog:
+            self.printJSONLog(messages, ret)
+        return ret
 
     @abstractmethod
     async def generateImage(self, messages: Iterable[ModelMessage]) -> ModelRunResult:
@@ -111,7 +140,18 @@ class AbstractModel(ABC):
             return ret
 
     def getEstimateTokensCount(self, data: Any) -> int:
-        """Get estimate number of tokens in given data, dood!"""
+        """Get estimated number of tokens in given data, dood!
+
+        This method estimates the token count by converting the data to a string
+        and using a simple heuristic: average token length is 4 characters.
+        The result is multiplied by a coefficient to ensure we don't underestimate.
+
+        Args:
+            data: Data to estimate token count for (string or object convertible to JSON)
+
+        Returns:
+            Estimated number of tokens in the data
+        """
         text = ""
         if isinstance(data, str):
             text = data
@@ -143,6 +183,52 @@ class AbstractModel(ABC):
     def __str__(self) -> str:
         """String representation of the model, dood!"""
         return f"{self.modelId}@{self.modelVersion} (provider: {self.provider.__class__.__name__})"
+
+    def setupJSONLogging(self, file: str, addDateSuffix: bool) -> None:
+        """Setup JSON logging of request-response pairs, dood!
+
+        Configure the model to log requests and responses in JSON format to a file.
+        When enabled, each request-response pair will be written as a JSON object
+        to the specified log file.
+
+        Args:
+            file: Path to the log file where JSON entries will be written
+            addDateSuffix: If True, append the current date (YYYY-MM-DD) to the filename
+        """
+        self.enableJSONLog = True
+        self.jsonLogFile = file
+        self.jsonLogAddDateSuffix = addDateSuffix
+
+    def printJSONLog(self, messages: Iterable[ModelMessage], result: ModelRunResult) -> None:
+        """Write a request-response pair to the JSON log file, dood!
+
+        This method writes the conversation history (messages) and model response
+        to a JSON log file. Each entry contains the timestamp, status, request,
+        and response. Empty responses are not logged.
+
+        Args:
+            messages: List of messages that were sent to the model
+            result: The model's response result
+        """
+        if not result.resultText:
+            # Do not log empty results
+            return
+
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+
+        filename = self.jsonLogFile
+        if self.jsonLogAddDateSuffix:
+            todayStr = now.strftime("%Y-%m-%d")
+            filename = filename + "." + todayStr
+
+        data = {
+            "date": now.isoformat(),
+            "status": result.status,
+            "request": [message.toDict("content") for message in messages],
+            "response": result.resultText,
+        }
+        with open(filename, "a") as f:
+            f.write(utils.jsonDumps(data) + "\n")
 
 
 class AbstractLLMProvider(ABC):
