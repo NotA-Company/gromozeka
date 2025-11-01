@@ -334,7 +334,7 @@ def _extractPassageText(passageElement: ET.Element) -> str:
 
     Returns:
         str: Reconstructed passage text with highlighted words marked
-            with asterisks (e.g., "This is *highlighted* text").
+            with double asterisks (e.g., "This is **highlighted** text").
             Returns empty string if extraction fails.
 
     Note:
@@ -354,7 +354,7 @@ def _extractPassageText(passageElement: ET.Element) -> str:
         for child in passageElement:
             if child.tag == "hlword":
                 # Mark highlighted words with asterisks
-                textParts.append(f"*{child.text}*")
+                textParts.append(f"**{child.text}**")
                 if child.tail:
                     textParts.append(child.tail)
             else:

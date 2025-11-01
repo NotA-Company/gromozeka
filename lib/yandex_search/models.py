@@ -91,14 +91,14 @@ class FamilyMode(StrEnum):
             Filters explicit content while allowing most general content
         FAMILY_MODE_STRICT: Strict content filtering
             Applies comprehensive filtering for maximum family safety
-        FAMILY_MODE_OFF: No content filtering
-            Disables all content filtering, showing all available results
+        FAMILY_MODE_NONE: No content filtering
+            Filtering is disabled. Search results include any documents regardless of their contents.
     """
 
     FAMILY_MODE_UNSPECIFIED = "FAMILY_MODE_UNSPECIFIED"
     FAMILY_MODE_MODERATE = "FAMILY_MODE_MODERATE"
     FAMILY_MODE_STRICT = "FAMILY_MODE_STRICT"
-    FAMILY_MODE_OFF = "FAMILY_MODE_OFF"
+    FAMILY_MODE_NONE = "FAMILY_MODE_NONE"
 
 
 class FixTypoMode(StrEnum):
