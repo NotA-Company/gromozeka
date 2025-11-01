@@ -5,6 +5,7 @@ Common utilities for Gromozeka bot.
 import datetime
 import json
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
@@ -272,3 +273,29 @@ def dumpMessage(message: "Message") -> str:
     modifiedRepr = originalRepr.replace(f"reply_to_message={replyRepr}", f"reply_to_message={compactReply}")
 
     return modifiedRepr
+
+
+def load_dotenv(path: str = ".env", populateEnv: bool = True) -> Dict[str, str]:
+    """
+    Simple dotenv file loader.
+    Just read file line by line and put key-value pairs into dictionary.
+
+    Args:
+        path: Path to .env file (default ".env")
+        populateEnv: Whether to populate environment variables (default True)
+
+    Returns:
+        Dictionary of key-value pairs from .env file
+    """
+    ret: Dict[str, str] = {}
+    with open(path, "rt") as f:
+        for line in f:
+            splitted_line = line.split("=")
+            if len(splitted_line) == 2:
+                key, value = splitted_line
+                ret[key.strip()] = value.strip().strip('"')
+
+    if populateEnv:
+        for k, v in ret.items():
+            os.putenv(k, v)
+    return ret
