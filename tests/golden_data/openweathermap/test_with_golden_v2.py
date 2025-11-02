@@ -6,6 +6,7 @@ to test OpenWeatherMap client methods with replayed HTTP calls.
 """
 
 import pytest
+
 from lib.openweathermap.client import OpenWeatherMapClient
 from lib.openweathermap.null_cache import NullWeatherCache
 from tests.golden_data.openweathermap.provider import GoldenDataProvider
@@ -16,11 +17,11 @@ async def test_get_weather_by_city_minsk():
     """Test getting weather for Minsk using golden data."""
     provider = GoldenDataProvider()
     owm = OpenWeatherMapClient(apiKey="dummy_key", cache=NullWeatherCache())
-    
+
     async with provider.patchClient(owm) as client:
         # Call the method - it will use golden data
         result = await client.getWeatherByCity("Minsk", "BY")
-        
+
         # Verify results
         assert result is not None
         assert result["location"]["name"] == "Minsk"
@@ -35,11 +36,11 @@ async def test_get_weather_by_city_london():
     """Test getting weather for London using golden data."""
     provider = GoldenDataProvider()
     owm = OpenWeatherMapClient(apiKey="dummy_key", cache=NullWeatherCache())
-    
+
     async with provider.patchClient(owm) as client:
         # Call the method - it will use golden data
         result = await client.getWeatherByCity("London", "GB")
-        
+
         # Verify results
         assert result is not None
         assert result["location"]["name"] == "London"
@@ -54,11 +55,11 @@ async def test_get_weather_by_city_sao_paulo():
     """Test getting weather for São Paulo using golden data."""
     provider = GoldenDataProvider()
     owm = OpenWeatherMapClient(apiKey="dummy_key", cache=NullWeatherCache())
-    
+
     async with provider.patchClient(owm) as client:
         # Call the method - it will use golden data
         result = await client.getWeatherByCity("São Paulo", "BR")
-        
+
         # Verify results
         assert result is not None
         assert result["location"]["name"] == "São Paulo"
@@ -73,12 +74,12 @@ async def test_get_weather_by_coordinates_minsk():
     """Test getting weather by coordinates for Minsk using golden data."""
     provider = GoldenDataProvider()
     owm = OpenWeatherMapClient(apiKey="dummy_key", cache=NullWeatherCache())
-    
+
     async with provider.patchClient(owm) as client:
         # Call the method with Minsk coordinates - it will use golden data
         # Minsk coordinates from the golden data: lat=53.9024716, lon=27.5618225
         result = await client.getWeather(53.9024716, 27.5618225)
-        
+
         # Verify results
         assert result is not None
         assert "current" in result
@@ -93,11 +94,11 @@ async def test_get_coordinates_minsk():
     """Test getting coordinates for Minsk using golden data."""
     provider = GoldenDataProvider()
     owm = OpenWeatherMapClient(apiKey="dummy_key", cache=NullWeatherCache())
-    
+
     async with provider.patchClient(owm) as client:
         # Call the method - it will use golden data
         result = await client.getCoordinates("Minsk", "BY")
-        
+
         # Verify results
         assert result is not None
         assert result["name"] == "Minsk"
