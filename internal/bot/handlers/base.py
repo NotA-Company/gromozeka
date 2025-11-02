@@ -601,8 +601,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 maxMessageLength = constants.TELEGRAM_MAX_MESSAGE_LENGTH - len(addMessagePrefix)
                 if splitIfTooLong and len(messageText) > maxMessageLength:
                     messageTextList = [
-                        messageText[i : i + maxMessageLength]
-                        for i in range(0, len(messageText), maxMessageLength)
+                        messageText[i : i + maxMessageLength] for i in range(0, len(messageText), maxMessageLength)
                     ]
                 for _messageText in messageTextList:
                     replyMessage: Optional[Message] = None
