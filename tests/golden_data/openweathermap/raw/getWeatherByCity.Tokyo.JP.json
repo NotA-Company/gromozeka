@@ -1,0 +1,464 @@
+[
+  {
+    "call": {
+      "date": "2025-11-01T23:58:40.872607+00:00",
+      "method": "getCurrentWeatherByCity",
+      "params": {
+        "city": "Tokyo",
+        "countryCode": "JP"
+      }
+    },
+    "request": {
+      "params": {
+        "appid": "REDACTED_API_KEY",
+        "limit": "1",
+        "q": "Tokyo,JP"
+      },
+      "url": "http://api.openweathermap.org/geo/1.0/direct"
+    },
+    "response": {
+      "json": [
+        {
+          "country": "JP",
+          "lat": 35.6768601,
+          "local_names": {
+            "ar": "طوكيو",
+            "be": "Токіа",
+            "bg": "Токио",
+            "ca": "Tòquio",
+            "cs": "Tokio",
+            "cy": "Tokyo",
+            "da": "Tokyo",
+            "de": "Tokio",
+            "el": "Τόκιο",
+            "en": "Tokyo",
+            "eo": "Tokio",
+            "es": "Tokio",
+            "et": "Tōkyō",
+            "eu": "Tokio",
+            "fa": "توکیو",
+            "fi": "Tokio",
+            "fr": "Tokyo",
+            "ga": "Tóiceo",
+            "he": "טוקיו",
+            "hr": "Tokio",
+            "hu": "Tokió",
+            "ia": "Tokyo",
+            "id": "Tokyo",
+            "io": "Tokyo",
+            "is": "Tókýó",
+            "it": "Tokyo",
+            "ja": "東京都",
+            "kn": "ಟೋಕ್ಯೊ",
+            "ko": "도쿄도",
+            "ku": "Tokyo",
+            "la": "Tokium",
+            "lb": "Tokio",
+            "lt": "Tokijas",
+            "lv": "Tokija",
+            "mi": "Tōkio",
+            "mr": "तोक्यो",
+            "nl": "Tokio",
+            "no": "Tokyo",
+            "oc": "Tòquio",
+            "pl": "Tokio",
+            "pt": "Tóquio",
+            "ru": "Токио",
+            "sk": "Tokio",
+            "sl": "Tokio",
+            "sr": "Токио",
+            "sv": "Tokyo",
+            "ta": "டோக்கியோ",
+            "tg": "Токио",
+            "th": "โตเกียว",
+            "tr": "Tokyo",
+            "uk": "Токіо",
+            "vi": "Tokyo",
+            "zh": "东京都"
+          },
+          "lon": 139.7638947,
+          "name": "Tokyo"
+        }
+      ],
+      "raw": "[{\"name\":\"Tokyo\",\"local_names\":{\"ja\":\"東京都\",\"fr\":\"Tokyo\",\"be\":\"Токіа\",\"et\":\"Tōkyō\",\"bg\":\"Токио\",\"tr\":\"Tokyo\",\"sr\":\"Токио\",\"uk\":\"Токіо\",\"tg\":\"Токио\",\"ga\":\"Tóiceo\",\"lb\":\"Tokio\",\"es\":\"Tokio\",\"ia\":\"Tokyo\",\"zh\":\"东京都\",\"pl\":\"Tokio\",\"id\":\"Tokyo\",\"el\":\"Τόκιο\",\"oc\":\"Tòquio\",\"lt\":\"Tokijas\",\"eo\":\"Tokio\",\"ta\":\"டோக்கியோ\",\"ku\":\"Tokyo\",\"da\":\"Tokyo\",\"en\":\"Tokyo\",\"cy\":\"Tokyo\",\"hr\":\"Tokio\",\"nl\":\"Tokio\",\"th\":\"โตเกียว\",\"no\":\"Tokyo\",\"hu\":\"Tokió\",\"ru\":\"Токио\",\"kn\":\"ಟೋಕ್ಯೊ\",\"is\":\"Tókýó\",\"sk\":\"Tokio\",\"cs\":\"Tokio\",\"sl\":\"Tokio\",\"ca\":\"Tòquio\",\"io\":\"Tokyo\",\"ko\":\"도쿄도\",\"fa\":\"توکیو\",\"vi\":\"Tokyo\",\"sv\":\"Tokyo\",\"lv\":\"Tokija\",\"it\":\"Tokyo\",\"de\":\"Tokio\",\"ar\":\"طوكيو\",\"mi\":\"Tōkio\",\"eu\":\"Tokio\",\"la\":\"Tokium\",\"he\":\"טוקיו\",\"pt\":\"Tóquio\",\"mr\":\"तोक्यो\",\"fi\":\"Tokio\"},\"lat\":35.6768601,\"lon\":139.7638947,\"country\":\"JP\"}]",
+      "status_code": 200
+    }
+  },
+  {
+    "call": {
+      "date": "2025-11-01T23:58:41.058323+00:00",
+      "method": "getCurrentWeatherByCity",
+      "params": {
+        "city": "Tokyo",
+        "countryCode": "JP"
+      }
+    },
+    "request": {
+      "params": {
+        "appid": "REDACTED_API_KEY",
+        "exclude": "minutely,hourly,alerts",
+        "lang": "ru",
+        "lat": "35.6768601",
+        "lon": "139.7638947",
+        "units": "metric"
+      },
+      "url": "https://api.openweathermap.org/data/3.0/onecall"
+    },
+    "response": {
+      "json": {
+        "current": {
+          "clouds": 75,
+          "dew_point": 10.01,
+          "dt": 1762041505,
+          "feels_like": 14.88,
+          "humidity": 70,
+          "pressure": 1012,
+          "sunrise": 1762031011,
+          "sunset": 1762069524,
+          "temp": 15.45,
+          "uvi": 0.97,
+          "visibility": 10000,
+          "weather": [
+            {
+              "description": "облачно с прояснениями",
+              "icon": "04d",
+              "id": 803,
+              "main": "Clouds"
+            }
+          ],
+          "wind_deg": 60,
+          "wind_speed": 1.54
+        },
+        "daily": [
+          {
+            "clouds": 85,
+            "dew_point": 9.36,
+            "dt": 1762048800,
+            "feels_like": {
+              "day": 16.01,
+              "eve": 18.87,
+              "morn": 15.46,
+              "night": 16.83
+            },
+            "humidity": 62,
+            "moon_phase": 0.37,
+            "moonrise": 1762061820,
+            "moonset": 1762015800,
+            "pop": 0,
+            "pressure": 1012,
+            "summary": "Expect a day of partly cloudy with clear spells",
+            "sunrise": 1762031011,
+            "sunset": 1762069524,
+            "temp": {
+              "day": 16.67,
+              "eve": 19.48,
+              "max": 19.7,
+              "min": 15.45,
+              "morn": 16.26,
+              "night": 17.32
+            },
+            "uvi": 2.68,
+            "weather": [
+              {
+                "description": "пасмурно",
+                "icon": "04d",
+                "id": 804,
+                "main": "Clouds"
+              }
+            ],
+            "wind_deg": 346,
+            "wind_gust": 7.03,
+            "wind_speed": 4.15
+          },
+          {
+            "clouds": 23,
+            "dew_point": 0.58,
+            "dt": 1762135200,
+            "feels_like": {
+              "day": 17.42,
+              "eve": 14.59,
+              "morn": 15.1,
+              "night": 12.01
+            },
+            "humidity": 30,
+            "moon_phase": 0.41,
+            "moonrise": 1762149900,
+            "moonset": 1762106340,
+            "pop": 0,
+            "pressure": 1013,
+            "summary": "Expect a day of partly cloudy with clear spells",
+            "sunrise": 1762117470,
+            "sunset": 1762155865,
+            "temp": {
+              "day": 18.71,
+              "eve": 15.92,
+              "max": 20.27,
+              "min": 13.39,
+              "morn": 15.56,
+              "night": 13.39
+            },
+            "uvi": 3.35,
+            "weather": [
+              {
+                "description": "небольшая облачность",
+                "icon": "02d",
+                "id": 801,
+                "main": "Clouds"
+              }
+            ],
+            "wind_deg": 309,
+            "wind_gust": 18.89,
+            "wind_speed": 14.51
+          },
+          {
+            "clouds": 0,
+            "dew_point": -0.34,
+            "dt": 1762221600,
+            "feels_like": {
+              "day": 13.24,
+              "eve": 14.77,
+              "morn": 10.96,
+              "night": 13.1
+            },
+            "humidity": 35,
+            "moon_phase": 0.44,
+            "moonrise": 1762238100,
+            "moonset": 1762197060,
+            "pop": 0,
+            "pressure": 1029,
+            "summary": "You can expect clear sky in the morning, with partly cloudy in the afternoon",
+            "sunrise": 1762203929,
+            "sunset": 1762242208,
+            "temp": {
+              "day": 14.79,
+              "eve": 16.37,
+              "max": 16.51,
+              "min": 12.23,
+              "morn": 12.36,
+              "night": 14.4
+            },
+            "uvi": 3.51,
+            "weather": [
+              {
+                "description": "ясно",
+                "icon": "01d",
+                "id": 800,
+                "main": "Clear"
+              }
+            ],
+            "wind_deg": 347,
+            "wind_gust": 11.31,
+            "wind_speed": 7.83
+          },
+          {
+            "clouds": 93,
+            "dew_point": 0.33,
+            "dt": 1762308000,
+            "feels_like": {
+              "day": 15.49,
+              "eve": 15.38,
+              "morn": 12.24,
+              "night": 14.76
+            },
+            "humidity": 33,
+            "moon_phase": 0.5,
+            "moonrise": 1762326600,
+            "moonset": 1762288020,
+            "pop": 0,
+            "pressure": 1028,
+            "summary": "There will be partly cloudy today",
+            "sunrise": 1762290388,
+            "sunset": 1762328553,
+            "temp": {
+              "day": 16.88,
+              "eve": 16.43,
+              "max": 18.42,
+              "min": 13.29,
+              "morn": 13.53,
+              "night": 15.79
+            },
+            "uvi": 3.37,
+            "weather": [
+              {
+                "description": "пасмурно",
+                "icon": "04d",
+                "id": 804,
+                "main": "Clouds"
+              }
+            ],
+            "wind_deg": 64,
+            "wind_gust": 6.32,
+            "wind_speed": 6.03
+          },
+          {
+            "clouds": 100,
+            "dew_point": 6.89,
+            "dt": 1762394400,
+            "feels_like": {
+              "day": 13.99,
+              "eve": 14.27,
+              "morn": 13.51,
+              "night": 13.22
+            },
+            "humidity": 58,
+            "moon_phase": 0.52,
+            "moonrise": 1762415520,
+            "moonset": 1762379100,
+            "pop": 0.28,
+            "pressure": 1022,
+            "rain": 0.11,
+            "summary": "Expect a day of partly cloudy with rain",
+            "sunrise": 1762376848,
+            "sunset": 1762414898,
+            "temp": {
+              "day": 14.93,
+              "eve": 15.25,
+              "max": 16.07,
+              "min": 14.32,
+              "morn": 14.54,
+              "night": 14.32
+            },
+            "uvi": 1.47,
+            "weather": [
+              {
+                "description": "небольшой дождь",
+                "icon": "10d",
+                "id": 500,
+                "main": "Rain"
+              }
+            ],
+            "wind_deg": 2,
+            "wind_gust": 8.5,
+            "wind_speed": 6.37
+          },
+          {
+            "clouds": 0,
+            "dew_point": 3.12,
+            "dt": 1762480800,
+            "feels_like": {
+              "day": 16.42,
+              "eve": 15.97,
+              "morn": 11.2,
+              "night": 15.17
+            },
+            "humidity": 38,
+            "moon_phase": 0.56,
+            "moonrise": 1762504980,
+            "moonset": 1762470240,
+            "pop": 0,
+            "pressure": 1025,
+            "summary": "You can expect clear sky in the morning, with partly cloudy in the afternoon",
+            "sunrise": 1762463308,
+            "sunset": 1762501246,
+            "temp": {
+              "day": 17.61,
+              "eve": 16.94,
+              "max": 18.42,
+              "min": 12.44,
+              "morn": 12.44,
+              "night": 16.14
+            },
+            "uvi": 2,
+            "weather": [
+              {
+                "description": "ясно",
+                "icon": "01d",
+                "id": 800,
+                "main": "Clear"
+              }
+            ],
+            "wind_deg": 73,
+            "wind_gust": 7.32,
+            "wind_speed": 5.29
+          },
+          {
+            "clouds": 2,
+            "dew_point": 4.53,
+            "dt": 1762567200,
+            "feels_like": {
+              "day": 16.93,
+              "eve": 17.47,
+              "morn": 13.05,
+              "night": 17.09
+            },
+            "humidity": 41,
+            "moon_phase": 0.6,
+            "moonrise": 1762595040,
+            "moonset": 1762561140,
+            "pop": 0,
+            "pressure": 1022,
+            "summary": "The day will start with partly cloudy through the late morning hours, transitioning to clearing",
+            "sunrise": 1762549768,
+            "sunset": 1762587595,
+            "temp": {
+              "day": 18,
+              "eve": 18.07,
+              "max": 19.1,
+              "min": 14.17,
+              "morn": 14.17,
+              "night": 17.65
+            },
+            "uvi": 2,
+            "weather": [
+              {
+                "description": "ясно",
+                "icon": "01d",
+                "id": 800,
+                "main": "Clear"
+              }
+            ],
+            "wind_deg": 175,
+            "wind_gust": 5.11,
+            "wind_speed": 3.89
+          },
+          {
+            "clouds": 78,
+            "dew_point": 9.18,
+            "dt": 1762653600,
+            "feels_like": {
+              "day": 19.99,
+              "eve": 19.4,
+              "morn": 14.98,
+              "night": 18.71
+            },
+            "humidity": 48,
+            "moon_phase": 0.64,
+            "moonrise": 1762685580,
+            "moonset": 1762651440,
+            "pop": 0,
+            "pressure": 1010,
+            "summary": "There will be clear sky until morning, then partly cloudy",
+            "sunrise": 1762636228,
+            "sunset": 1762673945,
+            "temp": {
+              "day": 20.62,
+              "eve": 19.63,
+              "max": 20.62,
+              "min": 15.83,
+              "morn": 15.83,
+              "night": 19
+            },
+            "uvi": 2,
+            "weather": [
+              {
+                "description": "облачно с прояснениями",
+                "icon": "04d",
+                "id": 803,
+                "main": "Clouds"
+              }
+            ],
+            "wind_deg": 214,
+            "wind_gust": 12.52,
+            "wind_speed": 9.66
+          }
+        ],
+        "lat": 35.6769,
+        "lon": 139.7639,
+        "timezone": "Asia/Tokyo",
+        "timezone_offset": 32400
+      },
+      "raw": "{\"lat\":35.6769,\"lon\":139.7639,\"timezone\":\"Asia/Tokyo\",\"timezone_offset\":32400,\"current\":{\"dt\":1762041505,\"sunrise\":1762031011,\"sunset\":1762069524,\"temp\":15.45,\"feels_like\":14.88,\"pressure\":1012,\"humidity\":70,\"dew_point\":10.01,\"uvi\":0.97,\"clouds\":75,\"visibility\":10000,\"wind_speed\":1.54,\"wind_deg\":60,\"weather\":[{\"id\":803,\"main\":\"Clouds\",\"description\":\"облачно с прояснениями\",\"icon\":\"04d\"}]},\"daily\":[{\"dt\":1762048800,\"sunrise\":1762031011,\"sunset\":1762069524,\"moonrise\":1762061820,\"moonset\":1762015800,\"moon_phase\":0.37,\"summary\":\"Expect a day of partly cloudy with clear spells\",\"temp\":{\"day\":16.67,\"min\":15.45,\"max\":19.7,\"night\":17.32,\"eve\":19.48,\"morn\":16.26},\"feels_like\":{\"day\":16.01,\"night\":16.83,\"eve\":18.87,\"morn\":15.46},\"pressure\":1012,\"humidity\":62,\"dew_point\":9.36,\"wind_speed\":4.15,\"wind_deg\":346,\"wind_gust\":7.03,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":85,\"pop\":0,\"uvi\":2.68},{\"dt\":1762135200,\"sunrise\":1762117470,\"sunset\":1762155865,\"moonrise\":1762149900,\"moonset\":1762106340,\"moon_phase\":0.41,\"summary\":\"Expect a day of partly cloudy with clear spells\",\"temp\":{\"day\":18.71,\"min\":13.39,\"max\":20.27,\"night\":13.39,\"eve\":15.92,\"morn\":15.56},\"feels_like\":{\"day\":17.42,\"night\":12.01,\"eve\":14.59,\"morn\":15.1},\"pressure\":1013,\"humidity\":30,\"dew_point\":0.58,\"wind_speed\":14.51,\"wind_deg\":309,\"wind_gust\":18.89,\"weather\":[{\"id\":801,\"main\":\"Clouds\",\"description\":\"небольшая облачность\",\"icon\":\"02d\"}],\"clouds\":23,\"pop\":0,\"uvi\":3.35},{\"dt\":1762221600,\"sunrise\":1762203929,\"sunset\":1762242208,\"moonrise\":1762238100,\"moonset\":1762197060,\"moon_phase\":0.44,\"summary\":\"You can expect clear sky in the morning, with partly cloudy in the afternoon\",\"temp\":{\"day\":14.79,\"min\":12.23,\"max\":16.51,\"night\":14.4,\"eve\":16.37,\"morn\":12.36},\"feels_like\":{\"day\":13.24,\"night\":13.1,\"eve\":14.77,\"morn\":10.96},\"pressure\":1029,\"humidity\":35,\"dew_point\":-0.34,\"wind_speed\":7.83,\"wind_deg\":347,\"wind_gust\":11.31,\"weather\":[{\"id\":800,\"main\":\"Clear\",\"description\":\"ясно\",\"icon\":\"01d\"}],\"clouds\":0,\"pop\":0,\"uvi\":3.51},{\"dt\":1762308000,\"sunrise\":1762290388,\"sunset\":1762328553,\"moonrise\":1762326600,\"moonset\":1762288020,\"moon_phase\":0.5,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":16.88,\"min\":13.29,\"max\":18.42,\"night\":15.79,\"eve\":16.43,\"morn\":13.53},\"feels_like\":{\"day\":15.49,\"night\":14.76,\"eve\":15.38,\"morn\":12.24},\"pressure\":1028,\"humidity\":33,\"dew_point\":0.33,\"wind_speed\":6.03,\"wind_deg\":64,\"wind_gust\":6.32,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":93,\"pop\":0,\"uvi\":3.37},{\"dt\":1762394400,\"sunrise\":1762376848,\"sunset\":1762414898,\"moonrise\":1762415520,\"moonset\":1762379100,\"moon_phase\":0.52,\"summary\":\"Expect a day of partly cloudy with rain\",\"temp\":{\"day\":14.93,\"min\":14.32,\"max\":16.07,\"night\":14.32,\"eve\":15.25,\"morn\":14.54},\"feels_like\":{\"day\":13.99,\"night\":13.22,\"eve\":14.27,\"morn\":13.51},\"pressure\":1022,\"humidity\":58,\"dew_point\":6.89,\"wind_speed\":6.37,\"wind_deg\":2,\"wind_gust\":8.5,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":100,\"pop\":0.28,\"rain\":0.11,\"uvi\":1.47},{\"dt\":1762480800,\"sunrise\":1762463308,\"sunset\":1762501246,\"moonrise\":1762504980,\"moonset\":1762470240,\"moon_phase\":0.56,\"summary\":\"You can expect clear sky in the morning, with partly cloudy in the afternoon\",\"temp\":{\"day\":17.61,\"min\":12.44,\"max\":18.42,\"night\":16.14,\"eve\":16.94,\"morn\":12.44},\"feels_like\":{\"day\":16.42,\"night\":15.17,\"eve\":15.97,\"morn\":11.2},\"pressure\":1025,\"humidity\":38,\"dew_point\":3.12,\"wind_speed\":5.29,\"wind_deg\":73,\"wind_gust\":7.32,\"weather\":[{\"id\":800,\"main\":\"Clear\",\"description\":\"ясно\",\"icon\":\"01d\"}],\"clouds\":0,\"pop\":0,\"uvi\":2},{\"dt\":1762567200,\"sunrise\":1762549768,\"sunset\":1762587595,\"moonrise\":1762595040,\"moonset\":1762561140,\"moon_phase\":0.6,\"summary\":\"The day will start with partly cloudy through the late morning hours, transitioning to clearing\",\"temp\":{\"day\":18,\"min\":14.17,\"max\":19.1,\"night\":17.65,\"eve\":18.07,\"morn\":14.17},\"feels_like\":{\"day\":16.93,\"night\":17.09,\"eve\":17.47,\"morn\":13.05},\"pressure\":1022,\"humidity\":41,\"dew_point\":4.53,\"wind_speed\":3.89,\"wind_deg\":175,\"wind_gust\":5.11,\"weather\":[{\"id\":800,\"main\":\"Clear\",\"description\":\"ясно\",\"icon\":\"01d\"}],\"clouds\":2,\"pop\":0,\"uvi\":2},{\"dt\":1762653600,\"sunrise\":1762636228,\"sunset\":1762673945,\"moonrise\":1762685580,\"moonset\":1762651440,\"moon_phase\":0.64,\"summary\":\"There will be clear sky until morning, then partly cloudy\",\"temp\":{\"day\":20.62,\"min\":15.83,\"max\":20.62,\"night\":19,\"eve\":19.63,\"morn\":15.83},\"feels_like\":{\"day\":19.99,\"night\":18.71,\"eve\":19.4,\"morn\":14.98},\"pressure\":1010,\"humidity\":48,\"dew_point\":9.18,\"wind_speed\":9.66,\"wind_deg\":214,\"wind_gust\":12.52,\"weather\":[{\"id\":803,\"main\":\"Clouds\",\"description\":\"облачно с прояснениями\",\"icon\":\"04d\"}],\"clouds\":78,\"pop\":0,\"uvi\":2}]}",
+      "status_code": 200
+    }
+  }
+]
