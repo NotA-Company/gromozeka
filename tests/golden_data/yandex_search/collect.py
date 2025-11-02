@@ -19,8 +19,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlencode
+from typing import List, Optional
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -76,8 +75,6 @@ class GoldenDataCollector:
 
         async def patched_make_request(request: SearchRequest) -> Optional[SearchResponse]:
             """Patched version of _makeRequest that captures raw responses."""
-            import base64
-
             import httpx
 
             # Build URL and parameters for logging
