@@ -14,16 +14,21 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import List
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
 from lib import utils  # noqa: E402
 from lib.aurumentation.collector import sanitizeFilename, substituteEnvVars  # noqa: E402
 from lib.aurumentation.recorder import GoldenDataRecorder  # noqa: E402
+from lib.aurumentation.types import ScenarioDict  # noqa: E402
+
+INPUT_DIR = "input"
+OUTPUT_DIR = "data"
 
 
-async def collectGoldenData(scenarios: List[Dict[str, Any]], outputDir: Path, secrets: List[str]) -> None:
+async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secrets: List[str]) -> None:
     """
     Collect golden data for multiple scenarios.
 
@@ -89,17 +94,25 @@ async def collectGoldenData(scenarios: List[Dict[str, Any]], outputDir: Path, se
 
 async def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Generic Golden Data Collector v2 for OpenWeatherMap")
-    parser.add_argument("--input", default="scenarios_v2.json", help="Input JSON file with test scenarios")
-    parser.add_argument("--output", default="golden_v2", help="Output directory for golden data")
-    parser.add_argument("--secrets", help="Comma-separated list of environment variables containing secrets")
+    parser = argparse.ArgumentParser(
+        description="Generic Golden Data Collector v2 for OpenWeatherMap",
+        usage="\n"
+        "Put OpenWeatherMap API Key into OPENWEATHERMAP_API_KEY environment variable\n"
+        " or into .env file (to preserve it for future) and run it with:\n"
+        "./venv/bin/python3 ./tests/openweathermap/golden/collect.py",
+    )
+    parser.add_argument("--input", default="scenarios.json", help="Input JSON file with test scenarios")
+    parser.add_argument("--output", default=OUTPUT_DIR, help="Output directory for golden data")
+    parser.add_argument("--secrets", help="Comma-separated list of environment variables containing secret")
 
     args = parser.parse_args()
 
     # Resolve paths
     scriptDir = Path(__file__).parent
-    inputPath = scriptDir / "inputs" / args.input
+    inputPath = scriptDir / INPUT_DIR / args.input
     outputPath = scriptDir / args.output
+
+    scenarios: List[ScenarioDict] = []
 
     # Load scenarios
     with open(inputPath) as f:

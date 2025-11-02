@@ -4,6 +4,7 @@ This module implements custom httpx transports that can intercept HTTP
 recordings for recording or replay previously recorded recordings.
 """
 
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -99,6 +100,57 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
         self.recordings = recordings
         self.call_index = 0
 
+    def _urlsMatch(self, recorded_url: str, request_url: str) -> bool:
+        """Check if two URLs match, handling masked API keys.
+
+        Args:
+            recorded_url: The URL from the recorded data (may have masked API key)
+            request_url: The URL from the current request
+
+        Returns:
+            True if the URLs match, False otherwise
+        """
+        # If the recorded URL doesn't have a masked API key, do exact match
+        if "***MASKED***" not in recorded_url:
+            return recorded_url == request_url
+
+        # If the recorded URL has a masked API key, do pattern matching
+        # Replace the masked API key with a regex pattern
+        pattern = re.escape(recorded_url).replace(r"\*\*\*MASKED\*\*\*", r"[^&]*")
+
+        # Also handle URL-encoded masked key
+        pattern = pattern.replace(r"\*\*\*MASKED\*\*\*", r"[^&]*")
+
+        # Match the pattern against the request URL
+        return bool(re.match(pattern, request_url))
+
+    def _paramsMatch(self, recorded_params: dict, request_params: dict) -> bool:
+        """Check if two parameter dictionaries match, handling masked API keys.
+
+        Args:
+            recorded_params: Parameters from the recorded data (may have masked API key)
+            request_params: Parameters from the current request
+
+        Returns:
+            True if the parameters match, False otherwise
+        """
+        # If the recorded params don't have a masked API key, do exact match
+        if "appid" in recorded_params and "***MASKED***" not in recorded_params["appid"]:
+            return recorded_params == request_params
+
+        # Create a copy of the recorded params
+        recorded_params_copy = recorded_params.copy()
+
+        # If the recorded appid is masked, match any appid in the request
+        if "appid" in recorded_params_copy and "***MASKED***" in recorded_params_copy["appid"]:
+            # Remove appid from both for comparison
+            recorded_params_no_appid = {k: v for k, v in recorded_params_copy.items() if k != "appid"}
+            request_params_no_appid = {k: v for k, v in request_params.items() if k != "appid"}
+            return recorded_params_no_appid == request_params_no_appid
+
+        # Otherwise do exact match
+        return recorded_params_copy == request_params
+
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         """Return a recorded response for a matching request.
 
@@ -122,8 +174,8 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
             # Match by method, URL, params, and body
             if (
                 call["request"]["method"] == method
-                and call["request"]["url"] == url
-                and call["request"].get("params") == params
+                and self._urlsMatch(call["request"]["url"], url)
+                and self._paramsMatch(call["request"].get("params", {}), params)
                 and call["request"].get("body") == body
             ):
                 # Create response from recorded data
@@ -135,4 +187,4 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
                 return response
 
         # No matching call found
-        raise ValueError(f"No recorded call found for {method} {url}")
+        raise ValueError(f"No recorded call found for {method} {url} {params} {body}")

@@ -4,11 +4,12 @@ This module implements a provider that can load golden data scenarios from JSON 
 and create httpx clients that replay recorded responses during testing.
 """
 
+import copy
 import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import httpx
 
@@ -31,8 +32,12 @@ class GoldenDataProvider:
         """
         self.goldenDataDir = Path(goldenDataDir)
         self.scenarios: Dict[str, GoldenDataScenarioDict] = {}
-        self.replayers: Dict[str, GoldenDataReplayer] = {}
+        self.replayers: Dict[str | None, GoldenDataReplayer] = {}
         self.usedScenarios: set = set()
+
+        # Scenario with All known recordings (for those, who do not want to care about scenarios)
+        # Metadata will be filled with first scenario data (Because nobody care)
+        self.metaScenario: Optional[GoldenDataScenarioDict] = None
 
     def loadScenario(self, filename: str) -> "GoldenDataScenarioDict":
         """Load a specific scenario file.
@@ -62,6 +67,11 @@ class GoldenDataProvider:
         scenarioName = filename[:-5]  # Remove .json extension
         self.scenarios[scenarioName] = scenario
 
+        if self.metaScenario is None:
+            self.metaScenario = copy.deepcopy(scenario)
+        else:
+            self.metaScenario["recordings"].extend(scenario["recordings"])
+
         return scenario
 
     def loadAllScenarios(self) -> Dict[str, "GoldenDataScenarioDict"]:
@@ -84,7 +94,7 @@ class GoldenDataProvider:
 
         return self.scenarios
 
-    def getScenario(self, name: str) -> "GoldenDataScenarioDict":
+    def getScenario(self, name: Optional[str]) -> "GoldenDataScenarioDict":
         """Get a loaded scenario by name.
 
         Args:
@@ -96,13 +106,18 @@ class GoldenDataProvider:
         Raises:
             KeyError: If scenario is not loaded
         """
+        if name is None:
+            if self.metaScenario is None:
+                raise ValueError("No scenarios loaded")
+            return self.metaScenario
+
         if name not in self.scenarios:
             raise KeyError(f"Scenario '{name}' not loaded. Call loadScenario() or loadAllScenarios() first.")
 
         self.usedScenarios.add(name)
         return self.scenarios[name]
 
-    def createClient(self, scenarioName: str) -> httpx.AsyncClient:
+    def createClient(self, scenarioName: Optional[str]) -> httpx.AsyncClient:
         """Create an httpx client that replays the specified scenario.
 
         Args:
