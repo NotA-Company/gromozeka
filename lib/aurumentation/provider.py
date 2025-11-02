@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import httpx
 
@@ -24,13 +24,15 @@ class GoldenDataProvider:
     methods to create httpx clients that replay recorded HTTP responses.
     """
 
-    def __init__(self, goldenDataDir: str):
+    def __init__(self, goldenDataDirs: str | Sequence[str]):
         """Initialize the GoldenDataProvider with a directory containing golden data files.
 
         Args:
-            goldenDataDir: Path to directory containing golden data JSON files
+            goldenDataDirs: list of Paths to directories containing golden data JSON files
         """
-        self.goldenDataDir = Path(goldenDataDir)
+        if not isinstance(goldenDataDirs, list):
+            goldenDataDirs = [str(goldenDataDirs)]
+        self.goldenDataDirs = [Path(v) for v in goldenDataDirs]
         self.scenarios: Dict[str, GoldenDataScenarioDict] = {}
         self.replayers: Dict[str | None, GoldenDataReplayer] = {}
         self.usedScenarios: set = set()
@@ -39,7 +41,7 @@ class GoldenDataProvider:
         # Metadata will be filled with first scenario data (Because nobody care)
         self.metaScenario: Optional[GoldenDataScenarioDict] = None
 
-    def loadScenario(self, filename: str) -> "GoldenDataScenarioDict":
+    def loadScenario(self, filename: str, basePath: Path) -> "GoldenDataScenarioDict":
         """Load a specific scenario file.
 
         Args:
@@ -57,7 +59,7 @@ class GoldenDataProvider:
             raise ValueError("Only json files allowed")
 
         # Handle scenario names with directory paths
-        filepath = self.goldenDataDir / filename
+        filepath = basePath / filename
 
         if not filepath.exists():
             raise FileNotFoundError(f"Golden data file not found: {filepath}")
@@ -82,15 +84,16 @@ class GoldenDataProvider:
         """
         self.scenarios.clear()
 
-        files = findGoldenDataFiles(str(self.goldenDataDir))
-        for filepath in files:
-            try:
-                # Get relative path from golden data directory
-                relPath = os.path.relpath(filepath, str(self.goldenDataDir))
-                self.loadScenario(relPath)
-            except Exception as e:
-                # Log error but continue loading other files
-                print(f"Warning: Failed to load golden data file {filepath}: {e}")
+        for basePath in self.goldenDataDirs:
+            files = findGoldenDataFiles(str(basePath))
+            for filepath in files:
+                try:
+                    # Get relative path from golden data directory
+                    relPath = os.path.relpath(filepath, str(basePath))
+                    self.loadScenario(relPath, basePath)
+                except Exception as e:
+                    # Log error but continue loading other files
+                    print(f"Warning: Failed to load golden data file {filepath}: {e}")
 
         return self.scenarios
 
