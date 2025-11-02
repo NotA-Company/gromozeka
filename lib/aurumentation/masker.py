@@ -21,7 +21,16 @@ class SecretMasker:
     - Recursive dict/list structures
     """
 
-    DEFAULT_PATTERNS = [r"api[_-]?key", r"api[key]", r"token", r"auth", r"password", r"secret", r"key"]
+    DEFAULT_PATTERNS = [
+        r"api[_-]?key",
+        r"api[key]",
+        r"token",
+        r"auth",
+        r"password",
+        r"secret",
+        r"key",
+        r"x-server-trace-id",
+    ]
 
     MASKED_PLACEHOLDER = "***MASKED***"
 
