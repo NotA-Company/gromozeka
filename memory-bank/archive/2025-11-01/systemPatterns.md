@@ -107,11 +107,12 @@ The project uses a multi-layered test organization pattern with different test r
 ### Test Locations and Runners
 
 1. **Markdown Parser Tests** (`lib/markdown/test/`)
-   - Test files run individually with Python interpreter
+   - Custom test runner: `run_all_tests.py`
+   - Discovers and categorizes all test files automatically
+   - Supports both unittest and script-based tests
    - Shell wrapper: `run_tests.sh` for easy execution
-   - Contains 20+ test files covering various markdown features
 
-2. **Bayes Filter Tests** (`lib/bayes_filter/`)
+2. **Bayes Filter Tests** (`lib/spam/`)
    - Standalone test file: `test_bayes_filter.py`
    - Direct execution with Python interpreter
 
@@ -134,12 +135,10 @@ The project uses a multi-layered test organization pattern with different test r
 ### Unified Test Execution
 
 All tests are executed via `make test` command, which:
-- Uses pytest to run all tests in the project
-- Automatically discovers and runs tests from tests/ directory
-- Shows duration of slowest tests with `--durations=4`
-- Provides colored output and detailed failure information
-- Supports re-running failed tests with `make test-failed`
-- Coverage reporting available via `make coverage`
+- Runs each test suite in sequence
+- Provides clear section headers for each test category
+- Uses appropriate test runner for each suite
+- Reports overall success/failure
 
 ### Test Maintenance Guidelines
 
@@ -193,86 +192,5 @@ make test
 
 * **Before committing:** Always run `make format` → `make lint` → `make test`
 * **After task completion:** Include formatting and linting in the completion checklist
-
-[2025-11-02 22:09:00] - Golden Data Testing Pattern
-
-## Golden Data Testing Architecture
-
-The project uses a sophisticated golden data testing framework for API interactions:
-
-### Aurumentation Framework (`lib/aurumentation/`)
-
-* **Purpose**: Record and replay API interactions for deterministic testing
-* **Components**:
-  - `collector.py`: Collects API responses for golden data generation
-  - `recorder.py`: Records live API interactions
-  - `replayer.py`: Replays recorded interactions during tests
-  - `masker.py`: Masks sensitive data (API keys, tokens) in recordings
-  - `provider.py`: Manages test data provisioning
-  - `test_helpers.py`: Testing utility functions
-  - `transports.py`: Abstract transport layer for different protocols
-  - `cli.py`: Command-line interface for managing recordings
-
-### Golden Test Data Storage
-
-* **Location**: `tests/{service}/golden/` directories
-* **Format**: JSON files with request/response pairs
-* **Coverage**: OpenWeatherMap and Yandex Search APIs
-* **Benefits**:
-  - Deterministic test execution without API calls
-  - Protection of API quotas during testing
-  - Consistent test results across environments
-  - Ability to test error scenarios
-
-## Service-Oriented Architecture
-
-### Core Services (`internal/services/`)
-
-* **Cache Service** (`cache/`):
-  - Singleton pattern implementation
-  - Namespace-based organization
-  - Selective persistence strategies
-  - Thread-safe operations with RLock
-  
-* **Queue Service** (`queue_service/`):
-  - Delayed task execution
-  - Message scheduling
-  - Asynchronous task handling
-
-### Library Modules (`lib/`)
-
-* **AI Management** (`ai/`): Multi-provider LLM integration
-* **Markdown Processing** (`markdown/`): Custom markdown parser with MarkdownV2 support
-* **Weather Integration** (`openweathermap/`): Async weather API client
-* **Search Integration** (`yandex_search/`): Yandex Search API client
-* **Bayes Filter** (`bayes_filter/`): Machine learning spam detection
-* **Aurumentation** (`aurumentation/`): Golden data testing framework
-
-## Database Architecture
-
-### Migration System
-* Auto-discovery pattern for migrations
-* Version tracking in settings table
-* Rollback support with transaction safety
-* Migration generator script for consistency
-
-### TypedDict Models (`internal/database/models.py`)
-* Strongly typed database row representations
-* Validation methods for runtime type safety
-* Enum conversions for categorical data
-* Consistent interface across all database operations
-
-## Configuration Management
-
-### Hierarchical Configuration
-* Base defaults in `configs/00-defaults/`
-* Environment-specific overrides
-* TOML format for human readability
-* Merged configuration from multiple sources
-
-### Provider Configurations
-* Separate config files for different model providers
-* Dynamic model loading based on configuration
-* Support for multiple LLM backends simultaneously
 * **During code review:** Ensure all code passes formatting and linting checks
 * **CI/CD Integration:** These checks should be automated in the deployment pipeline
