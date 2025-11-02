@@ -63,8 +63,9 @@ def sanitizeFilename(text: str) -> str:
     # Replace special characters
     safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in text)
     # Remove multiple underscores
-    while "__" in safe:
-        safe = safe.replace("__", "_")
+    # TODO: It would be easier to do with regexp
+    while ("__" in safe) or ("_ " in safe) or (" _" in safe):
+        safe = safe.replace("__", "_").replace("_ ", "_").replace(" _", "_")
     # Limit length
     return safe[:100].strip("_ ")
 

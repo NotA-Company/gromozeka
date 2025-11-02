@@ -9,7 +9,7 @@ from .collector import collectGoldenData, sanitizeFilename
 from .provider import GoldenDataProvider, findGoldenDataFiles, loadGoldenData
 from .recorder import GoldenDataRecorder
 from .replayer import GoldenDataReplayer
-from .test_helpers import goldenClient, goldenDataProvider, useGoldenData
+from .test_helpers import baseGoldenDataProvider, baseGoldenClient
 from .types import (
     CollectorInputDict,
     GoldenDataScenarioDict,
@@ -32,9 +32,8 @@ __all__ = [
     "GoldenDataRecorder",
     "GoldenDataReplayer",
     # Test helpers
-    "goldenClient",
-    "goldenDataProvider",
-    "useGoldenData",
+    "baseGoldenClient",
+    "baseGoldenDataProvider",
     # Data models
     "CollectorInputDict",
     "GoldenDataScenarioDict",
