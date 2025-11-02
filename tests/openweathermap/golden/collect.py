@@ -49,6 +49,7 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
         kwargs = scenario["kwargs"]
         initKwargs = scenario.get("init_kwargs", {})
         description = scenario["description"]
+        scenarioName = scenario.get("name", description)
 
         # Substitute environment variables in init_kwargs
         substitutedInitKwargs = substituteEnvVars(initKwargs)
@@ -68,7 +69,7 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
                 result = method(**kwargs)
 
             # Generate filename from description
-            filename = sanitizeFilename(description) + ".json"
+            filename = sanitizeFilename(scenarioName) + ".json"
             filepath = outputDir / filename
 
             # Get recordings before saving
@@ -79,6 +80,7 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
             recorder.saveGoldenData(
                 filepath=str(filepath),
                 metadata={
+                    "name": scenarioName,
                     "description": description,
                     "module": modulePath,
                     "class": className,

@@ -1,5 +1,6 @@
 [
   {
+    "name": "English query",
     "description": "Simple query in English",
     "module": "lib.yandex_search.client",
     "class": "YandexSearchClient",
@@ -14,6 +15,7 @@
     }
   },
   {
+    "name": "Russian query",
     "description": "Query in Russian (Cyrillic)",
     "module": "lib.yandex_search.client",
     "class": "YandexSearchClient",
@@ -28,6 +30,7 @@
     }
   },
   {
+    "name": "Numbers query",
     "description": "Query with numbers",
     "module": "lib.yandex_search.client",
     "class": "YandexSearchClient",
@@ -42,6 +45,7 @@
     }
   },
   {
+    "name": "Special characters query",
     "description": "Query with special characters",
     "module": "lib.yandex_search.client",
     "class": "YandexSearchClient",

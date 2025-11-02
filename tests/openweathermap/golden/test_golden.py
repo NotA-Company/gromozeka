@@ -10,21 +10,23 @@ from lib.aurumentation import baseGoldenDataProvider
 from lib.aurumentation.provider import GoldenDataProvider
 from lib.openweathermap.client import OpenWeatherMapClient
 
+
 @pytest.fixture(scope="session")
 def owmGoldenDataProvider() -> GoldenDataProvider:
     """Fixture that provides a GoldenDataProvider for OpenWeatherMap tests."""
     return baseGoldenDataProvider("tests/openweathermap/golden/data")
 
+
 @pytest.fixture
 async def owmGoldenClient(owmGoldenDataProvider):
-    """Fixture that provides an httpx client with OWM golden data replay for.
-    """
+    """Fixture that provides an httpx client with OWM golden data replay for."""
     # Create client that replays the specified scenario
     client = owmGoldenDataProvider.createClient(None)
     yield client
 
     # Clean up client
     await client.aclose()
+
 
 @pytest.mark.asyncio
 async def testOpenweathermapClientInitialization():
@@ -35,12 +37,15 @@ async def testOpenweathermapClientInitialization():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("city,country_code,expected_name,expected_country", [
-    ("London", "GB", "London", "GB"),
-    ("Minsk", "BY", "Minsk", "BY"),
-    ("Tokyo", "JP", "Tokyo", "JP"),
-    ("São Paulo", "BR", "São Paulo", "BR"),
-])
+@pytest.mark.parametrize(
+    "city,country_code,expected_name,expected_country",
+    [
+        ("London", "GB", "London", "GB"),
+        ("Minsk", "BY", "Minsk", "BY"),
+        ("Tokyo", "JP", "Tokyo", "JP"),
+        ("São Paulo", "BR", "São Paulo", "BR"),
+    ],
+)
 async def testGetWeatherForCity(owmGoldenClient, city, country_code, expected_name, expected_country):
     """Test getting weather for different cities using golden data."""
     # Create the client with the golden data replay client

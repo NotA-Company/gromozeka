@@ -1,5 +1,6 @@
 [
   {
+    "name": "Minsk,Belarus Weather",
     "description": "Get weather for Minsk, Belarus",
     "module": "lib.openweathermap.client",
     "class": "OpenWeatherMapClient",
@@ -16,6 +17,7 @@
     }
   },
   {
+    "name": "London,UK Weather",
     "description": "Get weather for London, UK",
     "module": "lib.openweathermap.client",
     "class": "OpenWeatherMapClient",
@@ -32,6 +34,7 @@
     }
   },
   {
+    "name": "Tokyo,Japan Weather",
     "description": "Get weather for Tokyo, Japan",
     "module": "lib.openweathermap.client",
     "class": "OpenWeatherMapClient",
@@ -48,6 +51,7 @@
     }
   },
   {
+    "name": "San Paulo,Brazil Weather",
     "description": "Get weather for São Paulo, Brazil",
     "module": "lib.openweathermap.client",
     "class": "OpenWeatherMapClient",

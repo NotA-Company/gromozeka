@@ -1,0 +1,93 @@
+{
+  "metadata": {
+    "name": "Tokyo,Japan Weather",
+    "description": "Get weather for Tokyo, Japan",
+    "module": "lib.openweathermap.client",
+    "class": "OpenWeatherMapClient",
+    "method": "getWeatherByCity",
+    "init_kwargs": {
+      "apiKey": "${OPENWEATHERMAP_API_KEY}",
+      "cache": null,
+      "geocodingTTL": 0,
+      "weatherTTL": 0
+    },
+    "kwargs": {
+      "city": "Tokyo",
+      "country": "JP"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "http://api.openweathermap.org/geo/1.0/direct?q=Tokyo%2CJP&limit=1&appid=***MASKED***",
+        "headers": {
+          "host": "api.openweathermap.org",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1"
+        },
+        "params": {
+          "q": "Tokyo,JP",
+          "limit": "1",
+          "appid": "***MASKED***"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 02 Nov 2025 21:21:20 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "content-length": "915",
+          "connection": "keep-alive",
+          "x-cache-key": "***MASKED***",
+          "access-control-allow-origin": "*",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET, POST"
+        },
+        "content": "[{\"name\":\"Tokyo\",\"local_names\":{\"pl\":\"Tokio\",\"lb\":\"Tokio\",\"eo\":\"Tokio\",\"th\":\"โตเกียว\",\"id\":\"Tokyo\",\"is\":\"Tókýó\",\"ta\":\"டோக்கியோ\",\"es\":\"Tokio\",\"da\":\"Tokyo\",\"kn\":\"ಟೋಕ್ಯೊ\",\"sr\":\"Токио\",\"ar\":\"طوكيو\",\"et\":\"Tōkyō\",\"lt\":\"Tokijas\",\"io\":\"Tokyo\",\"la\":\"Tokium\",\"sk\":\"Tokio\",\"ja\":\"東京都\",\"sv\":\"Tokyo\",\"pt\":\"Tóquio\",\"fa\":\"توکیو\",\"mr\":\"तोक्यो\",\"tg\":\"Токио\",\"en\":\"Tokyo\",\"he\":\"טוקיו\",\"de\":\"Tokio\",\"lv\":\"Tokija\",\"ru\":\"Токио\",\"ko\":\"도쿄도\",\"vi\":\"Tokyo\",\"fi\":\"Tokio\",\"ia\":\"Tokyo\",\"zh\":\"东京都\",\"be\":\"Токіа\",\"nl\":\"Tokio\",\"sl\":\"Tokio\",\"it\":\"Tokyo\",\"hr\":\"Tokio\",\"fr\":\"Tokyo\",\"mi\":\"Tōkio\",\"ga\":\"Tóiceo\",\"ku\":\"Tokyo\",\"hu\":\"Tokió\",\"el\":\"Τόκιο\",\"tr\":\"Tokyo\",\"oc\":\"Tòquio\",\"cs\":\"Tokio\",\"eu\":\"Tokio\",\"no\":\"Tokyo\",\"bg\":\"Токио\",\"uk\":\"Токіо\",\"cy\":\"Tokyo\",\"ca\":\"Tòquio\"},\"lat\":35.6768601,\"lon\":139.7638947,\"country\":\"JP\"}]"
+      },
+      "timestamp": "2025-11-02T21:21:20.088668+00:00"
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://api.openweathermap.org/data/3.0/onecall?lat=35.6768601&lon=139.7638947&exclude=minutely%2Chourly%2Calerts&units=metric&lang=ru&appid=***MASKED***",
+        "headers": {
+          "host": "api.openweathermap.org",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1"
+        },
+        "params": {
+          "lat": "35.6768601",
+          "lon": "139.7638947",
+          "exclude": "minutely,hourly,alerts",
+          "units": "metric",
+          "lang": "ru",
+          "appid": "***MASKED***"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 02 Nov 2025 21:21:20 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "content-length": "4948",
+          "connection": "keep-alive",
+          "x-cache-key": "***MASKED***",
+          "access-control-allow-origin": "*",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET, POST"
+        },
+        "content": "{\"lat\":35.6769,\"lon\":139.7639,\"timezone\":\"Asia/Tokyo\",\"timezone_offset\":32400,\"current\":{\"dt\":1762118480,\"sunrise\":1762117470,\"sunset\":1762155865,\"temp\":12.58,\"feels_like\":12.01,\"pressure\":1011,\"humidity\":81,\"dew_point\":9.41,\"uvi\":0,\"clouds\":20,\"visibility\":10000,\"wind_speed\":2.57,\"wind_deg\":300,\"weather\":[{\"id\":801,\"main\":\"Clouds\",\"description\":\"небольшая облачность\",\"icon\":\"02d\"}]},\"daily\":[{\"dt\":1762135200,\"sunrise\":1762117470,\"sunset\":1762155865,\"moonrise\":1762149900,\"moonset\":1762106340,\"moon_phase\":0.41,\"summary\":\"The day will start with partly cloudy through the late morning hours, transitioning to clearing\",\"temp\":{\"day\":18.5,\"min\":12.58,\"max\":19.06,\"night\":13.23,\"eve\":15.79,\"morn\":13.18},\"feels_like\":{\"day\":17.16,\"night\":11.84,\"eve\":14.47,\"morn\":12.59},\"pressure\":1014,\"humidity\":29,\"dew_point\":0.15,\"wind_speed\":12.22,\"wind_deg\":323,\"wind_gust\":15.4,\"weather\":[{\"id\":800,\"main\":\"Clear\",\"description\":\"ясно\",\"icon\":\"01d\"}],\"clouds\":1,\"pop\":0,\"uvi\":3.37},{\"dt\":1762221600,\"sunrise\":1762203929,\"sunset\":1762242208,\"moonrise\":1762238100,\"moonset\":1762197060,\"moon_phase\":0.44,\"summary\":\"The day will start with clear sky through the late morning hours, transitioning to partly cloudy\",\"temp\":{\"day\":14.36,\"min\":11.95,\"max\":15.85,\"night\":14.4,\"eve\":15.85,\"morn\":12.26},\"feels_like\":{\"day\":12.84,\"night\":13.18,\"eve\":14.33,\"morn\":10.77},\"pressure\":1029,\"humidity\":38,\"dew_point\":0.02,\"wind_speed\":7.01,\"wind_deg\":347,\"wind_gust\":10.86,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":99,\"pop\":0,\"uvi\":3.22},{\"dt\":1762308000,\"sunrise\":1762290388,\"sunset\":1762328553,\"moonrise\":1762326600,\"moonset\":1762288020,\"moon_phase\":0.5,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":15.72,\"min\":13.06,\"max\":18.08,\"night\":15.7,\"eve\":17.94,\"morn\":13.52},\"feels_like\":{\"day\":14.39,\"night\":14.66,\"eve\":16.63,\"morn\":12.23},\"pressure\":1028,\"humidity\":40,\"dew_point\":2.04,\"wind_speed\":5.1,\"wind_deg\":69,\"wind_gust\":5.24,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":100,\"pop\":0,\"uvi\":3.47},{\"dt\":1762394400,\"sunrise\":1762376848,\"sunset\":1762414898,\"moonrise\":1762415520,\"moonset\":1762379100,\"moon_phase\":0.52,\"summary\":\"You can expect partly cloudy in the morning, with clearing in the afternoon\",\"temp\":{\"day\":17.94,\"min\":14.93,\"max\":19.19,\"night\":16.7,\"eve\":18.22,\"morn\":15.14},\"feels_like\":{\"day\":17.07,\"night\":16.12,\"eve\":17.51,\"morn\":14.02},\"pressure\":1023,\"humidity\":49,\"dew_point\":7.19,\"wind_speed\":5.55,\"wind_deg\":354,\"wind_gust\":6.58,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":100,\"pop\":0,\"uvi\":3.38},{\"dt\":1762480800,\"sunrise\":1762463308,\"sunset\":1762501246,\"moonrise\":1762504980,\"moonset\":1762470240,\"moon_phase\":0.56,\"summary\":\"You can expect clear sky in the morning, with partly cloudy in the afternoon\",\"temp\":{\"day\":18.27,\"min\":13.92,\"max\":19.37,\"night\":16.3,\"eve\":17.7,\"morn\":13.92},\"feels_like\":{\"day\":17.14,\"night\":15.19,\"eve\":16.62,\"morn\":12.73},\"pressure\":1024,\"humidity\":38,\"dew_point\":3.58,\"wind_speed\":5.01,\"wind_deg\":342,\"wind_gust\":8.71,\"weather\":[{\"id\":800,\"main\":\"Clear\",\"description\":\"ясно\",\"icon\":\"01d\"}],\"clouds\":0,\"pop\":0,\"uvi\":3.41},{\"dt\":1762567200,\"sunrise\":1762549768,\"sunset\":1762587595,\"moonrise\":1762595040,\"moonset\":1762561140,\"moon_phase\":0.6,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":17.48,\"min\":15.49,\"max\":18.82,\"night\":17.78,\"eve\":17.87,\"morn\":15.51},\"feels_like\":{\"day\":16.54,\"night\":17.18,\"eve\":17.17,\"morn\":14.53},\"pressure\":1026,\"humidity\":48,\"dew_point\":6.42,\"wind_speed\":3.29,\"wind_deg\":167,\"wind_gust\":5.04,\"weather\":[{\"id\":803,\"main\":\"Clouds\",\"description\":\"облачно с прояснениями\",\"icon\":\"04d\"}],\"clouds\":75,\"pop\":0,\"uvi\":4},{\"dt\":1762653600,\"sunrise\":1762636228,\"sunset\":1762673945,\"moonrise\":1762685580,\"moonset\":1762651440,\"moon_phase\":0.64,\"summary\":\"The day will start with rain through the late morning hours, transitioning to partly cloudy\",\"temp\":{\"day\":19.27,\"min\":17.05,\"max\":20.43,\"night\":20.43,\"eve\":19.96,\"morn\":17.79},\"feels_like\":{\"day\":19,\"night\":20.57,\"eve\":20.18,\"morn\":17.48},\"pressure\":1010,\"humidity\":67,\"dew_point\":12.96,\"wind_speed\":11.68,\"wind_deg\":208,\"wind_gust\":18.96,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":100,\"pop\":0.88,\"rain\":1.59,\"uvi\":4},{\"dt\":1762740000,\"sunrise\":1762722689,\"sunset\":1762760297,\"moonrise\":1762776240,\"moonset\":1762741080,\"moon_phase\":0.68,\"summary\":\"Expect a day of partly cloudy with clear spells\",\"temp\":{\"day\":19.97,\"min\":14.03,\"max\":19.97,\"night\":14.03,\"eve\":15.4,\"morn\":16.4},\"feels_like\":{\"day\":19.01,\"night\":12.43,\"eve\":14.14,\"morn\":15.95},\"pressure\":1001,\"humidity\":38,\"dew_point\":5.41,\"wind_speed\":13.76,\"wind_deg\":344,\"wind_gust\":17.27,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":98,\"pop\":0,\"uvi\":4}]}"
+      },
+      "timestamp": "2025-11-02T21:21:20.384617+00:00"
+    }
+  ]
+}

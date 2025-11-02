@@ -38,12 +38,15 @@ async def testYandexSearchClientInitialization():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("query", [
-    "python programming",
-    "программирование на Python",
-    "python 3.9 tutorial",
-    "python programming & \"machine learning\""
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "python programming",
+        "программирование на Python",
+        "python 3.9 tutorial",
+        'python programming & "machine learning"',
+    ],
+)
 async def testSearchWithGoldenData(yandexSearchGoldenClient, query):
     """Test searching with different queries using golden data."""
     # Create the client with the golden data replay client
@@ -54,13 +57,13 @@ async def testSearchWithGoldenData(yandexSearchGoldenClient, query):
         # Convert the request to the format expected by the golden client
         # The Yandex Search API expects a POST request with JSON body
         response = await yandexSearchGoldenClient.post(
-            "https://searchapi.api.cloud.yandex.net/v2/web/search",
-            json=request
+            "https://searchapi.api.cloud.yandex.net/v2/web/search", json=request
         )
         # Parse the JSON response and extract the rawData field
         json_response = response.json()
         # Return the parsed XML response
         from lib.yandex_search.xml_parser import parseSearchResponse
+
         return parseSearchResponse(json_response["rawData"])
 
     yandex_client._makeRequest = makeRequestWrapper

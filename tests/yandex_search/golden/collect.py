@@ -20,10 +20,10 @@ from typing import List
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from lib import utils  # noqa: E402
+from lib.aurumentation.collector import sanitizeFilename  # noqa: E402
 from lib.aurumentation.collector import substituteEnvVars  # noqa: E402
 from lib.aurumentation.recorder import GoldenDataRecorder  # noqa: E402
 from lib.aurumentation.types import ScenarioDict  # noqa: E402
-from lib.aurumentation.collector import sanitizeFilename  # noqa: E402
 
 INPUT_DIR = "input"
 OUTPUT_DIR = "data"
@@ -51,6 +51,7 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
             kwargs = scenario["kwargs"]
             initKwargs = scenario.get("init_kwargs", {})
             description = scenario["description"]
+            scenarioName = scenario.get("name", description)
 
             # Substitute environment variables in init_kwargs
             substitutedInitKwargs = {k: substituteEnvVars(v) for k, v in initKwargs.items()}
@@ -70,7 +71,7 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
                     result = method(**kwargs)
 
                 # Generate filename from description
-                filename = sanitizeFilename(description) + ".json"
+                filename = sanitizeFilename(scenarioName) + ".json"
                 filepath = outputDir / filename
 
                 # Get recordings before saving
@@ -81,6 +82,7 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
                 recorder.saveGoldenData(
                     filepath=str(filepath),
                     metadata={
+                        "name": scenarioName,
                         "description": description,
                         "module": modulePath,
                         "class": className,
@@ -145,7 +147,7 @@ async def main():
     if not os.getenv("YANDEX_SEARCH_API_KEY"):
         print("Error: YANDEX_SEARCH_API_KEY environment variable is required")
         sys.exit(1)
-        
+
     if not os.getenv("YANDEX_SEARCH_FOLDER_ID"):
         print("Error: YANDEX_SEARCH_FOLDER_ID environment variable is required")
         sys.exit(1)

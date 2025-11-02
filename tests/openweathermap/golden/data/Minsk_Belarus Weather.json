@@ -1,0 +1,93 @@
+{
+  "metadata": {
+    "name": "Minsk,Belarus Weather",
+    "description": "Get weather for Minsk, Belarus",
+    "module": "lib.openweathermap.client",
+    "class": "OpenWeatherMapClient",
+    "method": "getWeatherByCity",
+    "init_kwargs": {
+      "apiKey": "${OPENWEATHERMAP_API_KEY}",
+      "cache": null,
+      "geocodingTTL": 0,
+      "weatherTTL": 0
+    },
+    "kwargs": {
+      "city": "Minsk",
+      "country": "BY"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "http://api.openweathermap.org/geo/1.0/direct?q=Minsk%2CBY&limit=1&appid=***MASKED***",
+        "headers": {
+          "host": "api.openweathermap.org",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1"
+        },
+        "params": {
+          "q": "Minsk,BY",
+          "limit": "1",
+          "appid": "***MASKED***"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 02 Nov 2025 21:21:19 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "content-length": "1228",
+          "connection": "keep-alive",
+          "x-cache-key": "***MASKED***",
+          "access-control-allow-origin": "*",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET, POST"
+        },
+        "content": "[{\"name\":\"Minsk\",\"local_names\":{\"pt\":\"Minsk\",\"la\":\"Minscum\",\"pl\":\"Mińsk\",\"io\":\"Minsk\",\"fr\":\"Minsk\",\"lv\":\"Minska\",\"ar\":\"مينسك\",\"kv\":\"Минск\",\"cs\":\"Minsk\",\"cv\":\"Минск\",\"ky\":\"Минск\",\"fi\":\"Minsk\",\"ka\":\"მინსკი\",\"zh\":\"明斯克\",\"ascii\":\"Minsk\",\"th\":\"มินสก์\",\"no\":\"Minsk\",\"feature_name\":\"Minsk\",\"vi\":\"Minxcơ\",\"ja\":\"ミンスク\",\"vo\":\"Minsk\",\"is\":\"Minsk\",\"mk\":\"Минск\",\"cu\":\"Мѣньскъ\",\"gl\":\"Minsk\",\"sl\":\"Minsk\",\"ia\":\"Minsk\",\"uk\":\"Мінськ\",\"os\":\"Минск\",\"ko\":\"민스크\",\"ta\":\"மின்ஸ்க்\",\"yi\":\"מינסק\",\"bo\":\"མིན་སིཀ།\",\"ml\":\"മിൻസ്ക്\",\"kk\":\"Минск\",\"fa\":\"مینسک\",\"nl\":\"Minsk\",\"sk\":\"Minsk\",\"hi\":\"मिन्‍स्‍क\",\"ga\":\"Minsc\",\"it\":\"Minsk\",\"hu\":\"Minszk\",\"de\":\"Minsk\",\"sv\":\"Minsk\",\"es\":\"Minsk\",\"lt\":\"Minskas\",\"he\":\"מינסק\",\"ku\":\"Mînsk\",\"sr\":\"Минск\",\"tg\":\"Минск\",\"el\":\"Μινσκ\",\"hr\":\"Minsk\",\"oc\":\"Minsk\",\"tt\":\"Минск\",\"ur\":\"منسک\",\"et\":\"Minsk\",\"en\":\"Minsk\",\"ug\":\"مىنىسكى\",\"mr\":\"मिन्‍स्‍क\",\"eo\":\"Minsko\",\"bg\":\"Минск\",\"be\":\"Мінск\",\"ru\":\"Минск\",\"kn\":\"ಮಿನ್ಸ್ಕ್\",\"hy\":\"Մինսկ\"},\"lat\":53.9024716,\"lon\":27.5618225,\"country\":\"BY\"}]"
+      },
+      "timestamp": "2025-11-02T21:21:19.062968+00:00"
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://api.openweathermap.org/data/3.0/onecall?lat=53.9024716&lon=27.5618225&exclude=minutely%2Chourly%2Calerts&units=metric&lang=ru&appid=***MASKED***",
+        "headers": {
+          "host": "api.openweathermap.org",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1"
+        },
+        "params": {
+          "lat": "53.9024716",
+          "lon": "27.5618225",
+          "exclude": "minutely,hourly,alerts",
+          "units": "metric",
+          "lang": "ru",
+          "appid": "***MASKED***"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 02 Nov 2025 21:21:19 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "content-length": "4744",
+          "connection": "keep-alive",
+          "x-cache-key": "***MASKED***",
+          "access-control-allow-origin": "*",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET, POST"
+        },
+        "content": "{\"lat\":53.9025,\"lon\":27.5618,\"timezone\":\"Europe/Minsk\",\"timezone_offset\":10800,\"current\":{\"dt\":1762118479,\"sunrise\":1762146830,\"sunset\":1762180363,\"temp\":7.79,\"feels_like\":4.91,\"pressure\":1015,\"humidity\":86,\"dew_point\":5.6,\"uvi\":0,\"clouds\":100,\"visibility\":10000,\"wind_speed\":4.8,\"wind_deg\":158,\"wind_gust\":10.76,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04n\"}]},\"daily\":[{\"dt\":1762160400,\"sunrise\":1762146830,\"sunset\":1762180363,\"moonrise\":1762176180,\"moonset\":1762135260,\"moon_phase\":0.42,\"summary\":\"You can expect partly cloudy in the morning, with rain in the afternoon\",\"temp\":{\"day\":9.98,\"min\":7.78,\"max\":12.27,\"night\":9.04,\"eve\":10.87,\"morn\":7.96},\"feels_like\":{\"day\":7.66,\"night\":6.34,\"eve\":10.34,\"morn\":5.52},\"pressure\":1012,\"humidity\":88,\"dew_point\":8.15,\"wind_speed\":5.12,\"wind_deg\":332,\"wind_gust\":10.9,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":100,\"pop\":1,\"rain\":0.57,\"uvi\":0.78},{\"dt\":1762246800,\"sunrise\":1762233348,\"sunset\":1762266648,\"moonrise\":1762263240,\"moonset\":1762227300,\"moon_phase\":0.45,\"summary\":\"There will be rain until morning, then partly cloudy\",\"temp\":{\"day\":7.96,\"min\":6.15,\"max\":8.9,\"night\":7.14,\"eve\":7.06,\"morn\":8.24},\"feels_like\":{\"day\":5.37,\"night\":5.14,\"eve\":5.61,\"morn\":6.47},\"pressure\":1024,\"humidity\":82,\"dew_point\":5,\"wind_speed\":4.41,\"wind_deg\":303,\"wind_gust\":9.31,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":100,\"pop\":1,\"rain\":1.21,\"uvi\":0.5},{\"dt\":1762333200,\"sunrise\":1762319865,\"sunset\":1762352934,\"moonrise\":1762350600,\"moonset\":1762319640,\"moon_phase\":0.5,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":9.75,\"min\":5.9,\"max\":11.28,\"night\":7.01,\"eve\":8.45,\"morn\":6.91},\"feels_like\":{\"day\":7.78,\"night\":4.71,\"eve\":6.59,\"morn\":4.66},\"pressure\":1027,\"humidity\":78,\"dew_point\":5.96,\"wind_speed\":4.02,\"wind_deg\":238,\"wind_gust\":8.66,\"weather\":[{\"id\":802,\"main\":\"Clouds\",\"description\":\"переменная облачность\",\"icon\":\"03d\"}],\"clouds\":41,\"pop\":0,\"uvi\":0.97},{\"dt\":1762419600,\"sunrise\":1762406383,\"sunset\":1762439223,\"moonrise\":1762438440,\"moonset\":1762412160,\"moon_phase\":0.53,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":8.16,\"min\":5.01,\"max\":9.95,\"night\":5.87,\"eve\":7.29,\"morn\":5.67},\"feels_like\":{\"day\":5.47,\"night\":3.43,\"eve\":5.17,\"morn\":3.05},\"pressure\":1023,\"humidity\":66,\"dew_point\":2.05,\"wind_speed\":4.57,\"wind_deg\":212,\"wind_gust\":10.35,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":89,\"pop\":0,\"uvi\":0.92},{\"dt\":1762506000,\"sunrise\":1762492900,\"sunset\":1762525513,\"moonrise\":1762527060,\"moonset\":1762504380,\"moon_phase\":0.57,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":7.74,\"min\":4.41,\"max\":9.71,\"night\":5.7,\"eve\":6.99,\"morn\":4.41},\"feels_like\":{\"day\":5.48,\"night\":3.43,\"eve\":4.88,\"morn\":1.83},\"pressure\":1022,\"humidity\":81,\"dew_point\":4.67,\"wind_speed\":3.53,\"wind_deg\":187,\"wind_gust\":7.67,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":98,\"pop\":0,\"uvi\":0.94},{\"dt\":1762592400,\"sunrise\":1762579417,\"sunset\":1762611805,\"moonrise\":1762617000,\"moonset\":1762595580,\"moon_phase\":0.61,\"summary\":\"You can expect partly cloudy in the morning, with clearing in the afternoon\",\"temp\":{\"day\":8.2,\"min\":4.52,\"max\":10.44,\"night\":6.74,\"eve\":7.75,\"morn\":4.52},\"feels_like\":{\"day\":6.05,\"night\":4.79,\"eve\":6.05,\"morn\":2.32},\"pressure\":1023,\"humidity\":83,\"dew_point\":5.39,\"wind_speed\":3.5,\"wind_deg\":182,\"wind_gust\":6.66,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":91,\"pop\":0,\"uvi\":1},{\"dt\":1762678800,\"sunrise\":1762665934,\"sunset\":1762698099,\"moonrise\":1762708140,\"moonset\":1762685280,\"moon_phase\":0.65,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":7.89,\"min\":5.75,\"max\":8.3,\"night\":6.15,\"eve\":7.29,\"morn\":5.75},\"feels_like\":{\"day\":5.55,\"night\":3.83,\"eve\":5.15,\"morn\":3.36},\"pressure\":1020,\"humidity\":87,\"dew_point\":5.73,\"wind_speed\":3.73,\"wind_deg\":141,\"wind_gust\":8.26,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":100,\"pop\":0,\"uvi\":1},{\"dt\":1762765200,\"sunrise\":1762752451,\"sunset\":1762784395,\"moonrise\":1762799880,\"moonset\":1762773720,\"moon_phase\":0.68,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":7.57,\"min\":4.46,\"max\":7.92,\"night\":6.01,\"eve\":6.92,\"morn\":5.77},\"feels_like\":{\"day\":4.69,\"night\":2.83,\"eve\":3.95,\"morn\":3.09},\"pressure\":1015,\"humidity\":77,\"dew_point\":3.78,\"wind_speed\":4.67,\"wind_deg\":226,\"wind_gust\":10.88,\"weather\":[{\"id\":801,\"main\":\"Clouds\",\"description\":\"небольшая облачность\",\"icon\":\"02d\"}],\"clouds\":20,\"pop\":0,\"uvi\":1}]}"
+      },
+      "timestamp": "2025-11-02T21:21:19.365607+00:00"
+    }
+  ]
+}

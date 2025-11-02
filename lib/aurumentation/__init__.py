@@ -9,7 +9,7 @@ from .collector import collectGoldenData, sanitizeFilename
 from .provider import GoldenDataProvider, findGoldenDataFiles, loadGoldenData
 from .recorder import GoldenDataRecorder
 from .replayer import GoldenDataReplayer
-from .test_helpers import baseGoldenDataProvider, baseGoldenClient
+from .test_helpers import baseGoldenClient, baseGoldenDataProvider
 from .types import (
     CollectorInputDict,
     GoldenDataScenarioDict,

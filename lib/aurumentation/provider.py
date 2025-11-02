@@ -206,8 +206,10 @@ def loadGoldenData(filepath: str) -> "GoldenDataScenarioDict":
             recordings.append(call)
 
         # Create scenario with metadata
+        description = metadata.get("description", "Unknown scenario")
         scenario: GoldenDataScenarioDict = {
-            "description": metadata.get("description", "Unknown scenario"),
+            "name": metadata.get("name", description),
+            "description": description,
             "functionName": f"{metadata.get('class', 'Unknown')}.{metadata.get('method', 'unknown')}",
             "metadata": metadata,
             "recordings": recordings,

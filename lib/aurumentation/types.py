@@ -28,9 +28,10 @@ class ScenarioInitKwargs(TypedDict, total=False):
 ScenarioDict = TypedDict(
     "ScenarioDict",
     {
+        "name": str,
         "description": str,
         "module": str,
-        "class": str,
+        "class": str,  # Can't be declared via class syntax
         "method": str,
         "init_kwargs": NotRequired[Dict[str, Any]],
         "kwargs": Dict[str, Any],
@@ -42,16 +43,16 @@ ScenarioDict = TypedDict(
 MetadataDict = TypedDict(
     "MetadataDict",
     {
+        "name": str,
         "description": str,
         "module": str,
-        "class": str,
+        "class": str,  # Can't be declared via class syntax
         "method": str,
         "init_kwargs": Dict[str, Any],
         "kwargs": Dict[str, Any],
-        "createdAt": str,
+        "createdAt": NotRequired[str],
         "result_type": NotRequired[str],
     },
-    total=False,
 )
 """TypedDict for metadata structure."""
 
@@ -99,6 +100,7 @@ class GoldenDataFileFormat(TypedDict):
 class GoldenDataScenarioDict(TypedDict):
     """TypedDict for complete test scenario with metadata."""
 
+    name: str
     description: str
     functionName: str
     metadata: MetadataDict
