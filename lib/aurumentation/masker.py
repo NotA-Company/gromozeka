@@ -4,10 +4,11 @@ This module implements secret masking for HTTP requests and responses
 to ensure sensitive data is not stored in golden data files.
 """
 
+import copy
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
-from .types import HttpCall
+from .types import HttpCallDict
 
 
 class SecretMasker:
@@ -91,33 +92,36 @@ class SecretMasker:
                 masked[key] = value
         return masked
 
-    def maskHttpCall(self, call: HttpCall) -> HttpCall:
+    def maskHttpCall(self, call: HttpCallDict) -> HttpCallDict:
         """Mask secrets in an HTTP call (request and response).
 
         Args:
-            call: HttpCall to mask secrets in
+            call: HttpCallDict to mask secrets in
 
         Returns:
-            HttpCall with secrets masked
+            HttpCallDict with secrets masked
         """
         # Mask request
-        # masked_request = call.request.copy() # Deprecated
-        masked_request = call.request.model_copy()
-        masked_request.url = self.maskText(call.request.url)
-        masked_request.headers = self.maskDict(call.request.headers)
-        if call.request.params:
-            masked_request.params = self.maskDict(call.request.params)
-        if call.request.body:
-            masked_request.body = self.maskText(call.request.body)
+        masked_request = copy.deepcopy(call["request"])
+        masked_request["url"] = self.maskText(call["request"]["url"])
+        masked_request["headers"] = self.maskDict(call["request"]["headers"])
+        if "params" in call["request"]:
+            masked_request["params"] = self.maskDict(call["request"]["params"])
+        if "body" in call["request"] and call["request"]["body"] is not None:
+            masked_request["body"] = self.maskText(call["request"]["body"])
 
         # Mask response
-        # masked_response = call.response.copy() # Deprecated
-        masked_response = call.response.model_copy()
-        masked_response.headers = self.maskDict(call.response.headers)
-        masked_response.content = self.maskText(call.response.content)
+        masked_response = copy.deepcopy(call["response"])
+        masked_response["headers"] = self.maskDict(call["response"]["headers"])
+        masked_response["content"] = self.maskText(call["response"]["content"])
 
         # Create new HttpCall with masked data
-        return call.model_copy(update={"request": masked_request, "response": masked_response})
+        masked_call: HttpCallDict = {
+            "request": masked_request,
+            "response": masked_response,
+            "timestamp": call["timestamp"],
+        }
+        return masked_call
 
     def _isSecretKey(self, key: str) -> bool:
         """Check if a key name indicates it contains a secret.

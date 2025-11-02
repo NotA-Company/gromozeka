@@ -6,15 +6,14 @@ and create httpx clients that replay recorded responses during testing.
 
 import json
 import os
-from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import httpx
 
 from .replayer import GoldenDataReplayer
-from .types import GoldenDataScenario, HttpCall, HttpRequest, HttpResponse
+from .types import GoldenDataFormat, GoldenDataScenarioDict, HttpCallDict
 
 
 class GoldenDataProvider:
@@ -31,18 +30,18 @@ class GoldenDataProvider:
             goldenDataDir: Path to directory containing golden data JSON files
         """
         self.goldenDataDir = Path(goldenDataDir)
-        self.scenarios: Dict[str, GoldenDataScenario] = {}
+        self.scenarios: Dict[str, GoldenDataScenarioDict] = {}
         self.replayers: Dict[str, GoldenDataReplayer] = {}
         self.usedScenarios: set = set()
 
-    def loadScenario(self, filename: str) -> "GoldenDataScenario":
+    def loadScenario(self, filename: str) -> "GoldenDataScenarioDict":
         """Load a specific scenario file.
 
         Args:
             filename: Name of the JSON file to load (with or without .json extension)
 
         Returns:
-            Loaded GoldenDataScenario object
+            Loaded GoldenDataScenarioDict object
 
         Raises:
             FileNotFoundError: If the file doesn't exist
@@ -65,11 +64,11 @@ class GoldenDataProvider:
 
         return scenario
 
-    def loadAllScenarios(self) -> Dict[str, "GoldenDataScenario"]:
+    def loadAllScenarios(self) -> Dict[str, "GoldenDataScenarioDict"]:
         """Load all scenarios from the golden data directory.
 
         Returns:
-            Dictionary mapping scenario names to GoldenDataScenario objects
+            Dictionary mapping scenario names to GoldenDataScenarioDict objects
         """
         self.scenarios.clear()
 
@@ -85,14 +84,14 @@ class GoldenDataProvider:
 
         return self.scenarios
 
-    def getScenario(self, name: str) -> "GoldenDataScenario":
+    def getScenario(self, name: str) -> "GoldenDataScenarioDict":
         """Get a loaded scenario by name.
 
         Args:
             name: Name of the scenario to retrieve
 
         Returns:
-            GoldenDataScenario object
+            GoldenDataScenarioDict object
 
         Raises:
             KeyError: If scenario is not loaded
@@ -140,14 +139,14 @@ class GoldenDataProvider:
         pass
 
 
-def loadGoldenData(filepath: str) -> "GoldenDataScenario":
+def loadGoldenData(filepath: str) -> "GoldenDataScenarioDict":
     """Load and parse a single golden data JSON file.
 
     Args:
         filepath: Path to the JSON file to load
 
     Returns:
-        GoldenDataScenario object with the loaded data
+        GoldenDataScenarioDict object with the loaded data
 
     Raises:
         FileNotFoundError: If the file doesn't exist
@@ -157,7 +156,7 @@ def loadGoldenData(filepath: str) -> "GoldenDataScenario":
         raise FileNotFoundError(f"Golden data file not found: {filepath}")
 
     with open(filepath, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        data: GoldenDataFormat = json.load(f)
 
     # Check if this is the new format with metadata and recordings
     if isinstance(data, dict) and "metadata" in data and "recordings" in data:
@@ -165,8 +164,8 @@ def loadGoldenData(filepath: str) -> "GoldenDataScenario":
         metadata = data["metadata"]
         recordings_data = data["recordings"]
 
-        # Convert recordings data to HttpCall objects
-        recordings = []
+        # Convert recordings data to HttpCallDict objects
+        recordings: List[HttpCallDict] = []
         for call_data in recordings_data:
             # Convert timestamp string to datetime
             timestamp_str = call_data.get("timestamp", "")
@@ -183,103 +182,27 @@ def loadGoldenData(filepath: str) -> "GoldenDataScenario":
             else:
                 timestamp = datetime.now(timezone.utc)
 
-            # Create HttpCall object
-            call = HttpCall(
-                request=HttpRequest(**call_data["request"]),
-                response=HttpResponse(**call_data["response"]),
-                timestamp=timestamp,
-            )
+            # Create HttpCallDict object
+            call: HttpCallDict = {
+                "request": call_data["request"],
+                "response": call_data["response"],
+                "timestamp": timestamp.isoformat(),
+            }
             recordings.append(call)
 
         # Create scenario with metadata
-        scenario = GoldenDataScenario(
-            description=metadata.get("description", "Unknown scenario"),
-            functionName=f"{metadata.get('class', 'Unknown')}.{metadata.get('method', 'unknown')}",
-            kwargs=metadata,
-            recordings=recordings,
-            createdAt=datetime.now(timezone.utc),  # TODO: Store createdAt in metadata
-        )
-
-        return scenario
-
-    # Check if this is the old format (list of recordings)
-    elif isinstance(data, list) and len(data) > 0:
-        # TODO: Delete this branch, we need to support only new format
-        # Old format - convert as before
-        # Extract information from the first call for metadata
-        firstCall = data[0]
-        callInfo = firstCall.get("call", {})
-
-        # Process each call in the data
-
-        recordings = []
-        createdAt = None
-
-        for entry in data:
-            callData = entry.get("call", {})
-            requestData = entry.get("request", {})
-            responseData = entry.get("response", {})
-
-            # Create HttpRequest
-            # Extract method from the recorded data if available
-            method = "GET"  # Default method
-            # In the current format, method is not directly captured
-            # We could infer it from the URL or other data if needed
-
-            http_request = HttpRequest(
-                method=method,
-                url=requestData.get("url", ""),
-                headers={},  # Headers not captured in current format
-                params=requestData.get("params", {}),
-                body=None,
-            )
-
-            # Create HttpResponse
-            http_response = HttpResponse(
-                status_code=responseData.get("status_code", 200),
-                headers={},  # Headers not captured in current format
-                content=responseData.get("raw", ""),
-            )
-
-            # Create HttpCall
-            timestamp_str = str(callData.get("date", ""))
-            # Handle different timestamp formats
-            if timestamp_str:
-                try:
-                    # Try to parse with timezone
-                    if "+" in timestamp_str or "Z" in timestamp_str:
-                        timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-                    else:
-                        timestamp = datetime.fromisoformat(timestamp_str)
-                except ValueError:
-                    # Fallback to current time if parsing fails
-                    timestamp = datetime.now(timezone.utc)
-                else:
-                    timestamp = datetime.now(timezone.utc)
-
-            call = HttpCall(request=http_request, response=http_response, timestamp=timestamp)
-
-            recordings.append(call)
-
-            # Set created_at from first call if not set
-            if createdAt is None:
-                createdAt = timestamp
-
-        # Create scenario with recordings
-        scenario = GoldenDataScenario(
-            description=callInfo.get("method", "Unknown method"),
-            functionName=callInfo.get("method", "unknown"),
-            kwargs=callInfo.get("params", {}),
-            recordings=recordings,
-            createdAt=createdAt or timestamp,
-        )
+        scenario: GoldenDataScenarioDict = {
+            "description": metadata.get("description", "Unknown scenario"),
+            "functionName": f"{metadata.get('class', 'Unknown')}.{metadata.get('method', 'unknown')}",
+            "metadata": metadata,
+            "recordings": recordings,
+            "createdAt": (metadata["createdAt"] if "createdAt" in metadata else datetime.now(timezone.utc).isoformat()),
+        }
 
         return scenario
 
     else:
-        raise ValueError(
-            f"Invalid golden data format in {filepath}: expected dict with metadata/recordings or list of recordings"
-        )
+        raise ValueError(f"Invalid golden data format in {filepath}: expected dict with metadata/recordings")
 
 
 def findGoldenDataFiles(directory: str) -> List[str]:

@@ -6,7 +6,7 @@ with recorded HTTP traffic.
 
 import pytest
 
-from lib.aurumentation import GoldenDataProvider, goldenClient, goldenDataProvider, useGoldenData
+from lib.aurumentation import GoldenDataProvider, useGoldenData
 
 
 def test_load_scenario():
@@ -18,8 +18,8 @@ def test_load_scenario():
 
     # Verify the scenario was loaded correctly
     assert scenario is not None
-    assert len(scenario.recordings) > 0
-    assert scenario.functionName == "getCurrentWeatherByCity"
+    assert len(scenario["recordings"]) > 0
+    assert scenario["functionName"] == "getCurrentWeatherByCity"
 
 
 def test_load_all_scenarios():
@@ -46,7 +46,7 @@ def test_get_scenario():
 
     # Verify the scenario was retrieved correctly
     assert scenario is not None
-    assert len(scenario.recordings) > 0
+    assert len(scenario["recordings"]) > 0
 
 
 def test_create_client():
@@ -88,22 +88,22 @@ async def test_async_context_manager():
 # Test using the pytest fixtures
 
 
-def test_golden_data_provider_fixture(goldenDataProvider):
+def test_golden_data_provider_fixture(provider: GoldenDataProvider):
     """Test the goldenDataProvider pytest fixture."""
     # The fixture should provide a GoldenDataProvider instance
-    assert isinstance(goldenDataProvider, GoldenDataProvider)
+    assert isinstance(provider, GoldenDataProvider)
 
     # Load all scenarios using the fixture
-    scenarios = goldenDataProvider.loadAllScenarios()
+    scenarios = provider.loadAllScenarios()
     assert len(scenarios) > 0
 
 
 @pytest.mark.golden("openweathermap/raw/getWeatherByCity.London.GB")
 @pytest.mark.asyncio
-async def test_golden_client_fixture(goldenClient):
+async def test_golden_client_fixture(client):
     """Test the goldenClient pytest fixture with a marker."""
     # The fixture should provide an httpx client
-    assert goldenClient is not None
+    assert client is not None
 
     # The client should be configured to replay the specified scenario
     # (In a real test, you would make HTTP requests here)
@@ -120,16 +120,22 @@ async def test_use_golden_data_decorator():
 
 # Example of how to use the provider in a real test with a client that makes HTTP requests
 
-# @pytest.mark.golden("openweathermap/raw/getWeatherByCity.London.GB")
-# @pytest.mark.asyncio
-# async def test_openweathermap_client_with_golden_data(goldenClient):
-#     """Test OpenWeatherMap client with golden data."""
-#     # Create the client with the golden data replay client
-#     owm_client = OpenWeatherMapClient(apiKey="test", httpClient=goldenClient)
-#
-#     # Make a request - this will be replayed from the golden data
-#     result = await owm_client.getWeatherByCity("London", "GB")
-#
-#     # Verify the result
-#     assert result is not None
-#     assert result.city == "London"
+
+@pytest.mark.golden("openweathermap/raw/getWeatherByCity.London.GB")
+@pytest.mark.asyncio
+async def test_openweathermap_client_with_golden_data(goldenClient):
+    """Test OpenWeatherMap client with golden data."""
+    # Import OpenWeatherMapClient here to avoid circular imports
+    from lib.openweathermap.client import OpenWeatherMapClient
+
+    # Create the client with the golden data replay client
+    # We need to patch the _makeRequest method to use our golden client
+    owm_client = OpenWeatherMapClient(apiKey="test")
+    owm_client._makeRequest = goldenClient.get
+
+    # Make a request - this will be replayed from the golden data
+    result = await owm_client.getWeatherByCity("London", "GB")
+
+    # Verify the result
+    assert result is not None
+    assert result["location"]["name"] == "London"

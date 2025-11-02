@@ -4,8 +4,6 @@ This module provides pytest fixtures and decorators for easily using
 golden data in tests.
 """
 
-from typing import Optional
-
 import pytest
 
 from .provider import GoldenDataProvider
