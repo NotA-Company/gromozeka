@@ -1,0 +1,18 @@
+[
+  {
+    "query": "python programming",
+    "description": "Simple query in English"
+  },
+  {
+    "query": "python programming !@#$%^&*()",
+    "description": "Query with special characters"
+  },
+  {
+    "query": "программирование на Python",
+    "description": "Query in Russian (Cyrillic)"
+  },
+  {
+    "query": "python 3.9 tutorial",
+    "description": "Query with numbers"
+  }
+]
