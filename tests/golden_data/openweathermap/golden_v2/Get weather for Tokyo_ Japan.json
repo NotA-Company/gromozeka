@@ -1,0 +1,92 @@
+{
+  "metadata": {
+    "description": "Get weather for Tokyo, Japan",
+    "module": "lib.openweathermap.client",
+    "class": "OpenWeatherMapClient",
+    "method": "getWeatherByCity",
+    "init_kwargs": {
+      "apiKey": "${OPENWEATHERMAP_API_KEY}",
+      "cache": null,
+      "geocodingTTL": 0,
+      "weatherTTL": 0
+    },
+    "kwargs": {
+      "city": "Tokyo",
+      "country": "JP"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "http://api.openweathermap.org/geo/1.0/direct?q=Tokyo%2CJP&limit=1&appid=***MASKED***",
+        "headers": {
+          "host": "api.openweathermap.org",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1"
+        },
+        "params": {
+          "q": "Tokyo,JP",
+          "limit": "1",
+          "appid": "***MASKED***"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 02 Nov 2025 13:01:49 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "content-length": "915",
+          "connection": "keep-alive",
+          "x-cache-key": "***MASKED***",
+          "access-control-allow-origin": "*",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET, POST"
+        },
+        "content": "[{\"name\":\"Tokyo\",\"local_names\":{\"he\":\"\u05d8\u05d5\u05e7\u05d9\u05d5\",\"tg\":\"\u0422\u043e\u043a\u0438\u043e\",\"lv\":\"Tokija\",\"bg\":\"\u0422\u043e\u043a\u0438\u043e\",\"cy\":\"Tokyo\",\"pl\":\"Tokio\",\"lb\":\"Tokio\",\"sr\":\"\u0422\u043e\u043a\u0438\u043e\",\"zh\":\"\u4e1c\u4eac\u90fd\",\"eo\":\"Tokio\",\"is\":\"T\u00f3k\u00fd\u00f3\",\"ar\":\"\u0637\u0648\u0643\u064a\u0648\",\"lt\":\"Tokijas\",\"vi\":\"Tokyo\",\"ga\":\"T\u00f3iceo\",\"eu\":\"Tokio\",\"hr\":\"Tokio\",\"ru\":\"\u0422\u043e\u043a\u0438\u043e\",\"fr\":\"Tokyo\",\"ca\":\"T\u00f2quio\",\"uk\":\"\u0422\u043e\u043a\u0456\u043e\",\"ko\":\"\ub3c4\ucfc4\ub3c4\",\"da\":\"Tokyo\",\"la\":\"Tokium\",\"sk\":\"Tokio\",\"cs\":\"Tokio\",\"oc\":\"T\u00f2quio\",\"kn\":\"\u0c9f\u0ccb\u0c95\u0ccd\u0caf\u0cca\",\"el\":\"\u03a4\u03cc\u03ba\u03b9\u03bf\",\"id\":\"Tokyo\",\"pt\":\"T\u00f3quio\",\"it\":\"Tokyo\",\"ku\":\"Tokyo\",\"ja\":\"\u6771\u4eac\u90fd\",\"hu\":\"Toki\u00f3\",\"nl\":\"Tokio\",\"es\":\"Tokio\",\"fa\":\"\u062a\u0648\u06a9\u06cc\u0648\",\"th\":\"\u0e42\u0e15\u0e40\u0e01\u0e35\u0e22\u0e27\",\"sv\":\"Tokyo\",\"fi\":\"Tokio\",\"sl\":\"Tokio\",\"mi\":\"T\u014dkio\",\"ia\":\"Tokyo\",\"de\":\"Tokio\",\"io\":\"Tokyo\",\"mr\":\"\u0924\u094b\u0915\u094d\u092f\u094b\",\"et\":\"T\u014dky\u014d\",\"tr\":\"Tokyo\",\"be\":\"\u0422\u043e\u043a\u0456\u0430\",\"ta\":\"\u0b9f\u0bcb\u0b95\u0bcd\u0b95\u0bbf\u0baf\u0bcb\",\"en\":\"Tokyo\",\"no\":\"Tokyo\"},\"lat\":35.6768601,\"lon\":139.7638947,\"country\":\"JP\"}]"
+      },
+      "timestamp": "2025-11-02 13:01:49.204221"
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://api.openweathermap.org/data/3.0/onecall?lat=35.6768601&lon=139.7638947&exclude=minutely%2Chourly%2Calerts&units=metric&lang=ru&appid=***MASKED***",
+        "headers": {
+          "host": "api.openweathermap.org",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1"
+        },
+        "params": {
+          "lat": "35.6768601",
+          "lon": "139.7638947",
+          "exclude": "minutely,hourly,alerts",
+          "units": "metric",
+          "lang": "ru",
+          "appid": "***MASKED***"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 02 Nov 2025 13:01:49 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "content-length": "4868",
+          "connection": "keep-alive",
+          "x-cache-key": "***MASKED***",
+          "access-control-allow-origin": "*",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET, POST"
+        },
+        "content": "{\"lat\":35.6769,\"lon\":139.7639,\"timezone\":\"Asia/Tokyo\",\"timezone_offset\":32400,\"current\":{\"dt\":1762088509,\"sunrise\":1762031011,\"sunset\":1762069524,\"temp\":17.01,\"feels_like\":16.46,\"pressure\":1011,\"humidity\":65,\"dew_point\":10.39,\"uvi\":0,\"clouds\":0,\"visibility\":10000,\"wind_speed\":6.17,\"wind_deg\":210,\"weather\":[{\"id\":800,\"main\":\"Clear\",\"description\":\"\u044f\u0441\u043d\u043e\",\"icon\":\"01n\"}]},\"daily\":[{\"dt\":1762048800,\"sunrise\":1762031011,\"sunset\":1762069524,\"moonrise\":1762061820,\"moonset\":1762015800,\"moon_phase\":0.37,\"summary\":\"Expect a day of partly cloudy with clear spells\",\"temp\":{\"day\":18.43,\"min\":16.29,\"max\":19.86,\"night\":17.16,\"eve\":19.74,\"morn\":16.46},\"feels_like\":{\"day\":17.61,\"night\":16.58,\"eve\":19.1,\"morn\":15.62},\"pressure\":1012,\"humidity\":49,\"dew_point\":7.56,\"wind_speed\":4.15,\"wind_deg\":346,\"wind_gust\":7.03,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"\u043f\u0430\u0441\u043c\u0443\u0440\u043d\u043e\",\"icon\":\"04d\"}],\"clouds\":100,\"pop\":0,\"uvi\":2.68},{\"dt\":1762135200,\"sunrise\":1762117470,\"sunset\":1762155865,\"moonrise\":1762149900,\"moonset\":1762106340,\"moon_phase\":0.41,\"summary\":\"Expect a day of partly cloudy with clear spells\",\"temp\":{\"day\":18.07,\"min\":12.81,\"max\":18.68,\"night\":12.81,\"eve\":16.32,\"morn\":15.82},\"feels_like\":{\"day\":16.9,\"night\":11.48,\"eve\":15,\"morn\":15.26},\"pressure\":1014,\"humidity\":37,\"dew_point\":3.14,\"wind_speed\":11.76,\"wind_deg\":326,\"wind_gust\":14.5,\"weather\":[{\"id\":802,\"main\":\"Clouds\",\"description\":\"\u043f\u0435\u0440\u0435\u043c\u0435\u043d\u043d\u0430\u044f \u043e\u0431\u043b\u0430\u0447\u043d\u043e\u0441\u0442\u044c\",\"icon\":\"03d\"}],\"clouds\":43,\"pop\":0,\"uvi\":3.35},{\"dt\":1762221600,\"sunrise\":1762203929,\"sunset\":1762242208,\"moonrise\":1762238100,\"moonset\":1762197060,\"moon_phase\":0.44,\"summary\":\"Expect a day of partly cloudy with clear spells\",\"temp\":{\"day\":14.46,\"min\":12,\"max\":16.43,\"night\":14.37,\"eve\":16.39,\"morn\":12.15},\"feels_like\":{\"day\":12.93,\"night\":13.04,\"eve\":14.84,\"morn\":10.73},\"pressure\":1029,\"humidity\":37,\"dew_point\":-0.14,\"wind_speed\":7.15,\"wind_deg\":357,\"wind_gust\":10.06,\"weather\":[{\"id\":801,\"main\":\"Clouds\",\"description\":\"\u043d\u0435\u0431\u043e\u043b\u044c\u0448\u0430\u044f \u043e\u0431\u043b\u0430\u0447\u043d\u043e\u0441\u0442\u044c\",\"icon\":\"02d\"}],\"clouds\":21,\"pop\":0,\"uvi\":3.51},{\"dt\":1762308000,\"sunrise\":1762290388,\"sunset\":1762328553,\"moonrise\":1762326600,\"moonset\":1762288020,\"moon_phase\":0.5,\"summary\":\"There will be partly cloudy today\",\"temp\":{\"day\":16.14,\"min\":13.21,\"max\":18.39,\"night\":16.11,\"eve\":18.23,\"morn\":13.39},\"feels_like\":{\"day\":14.78,\"night\":15,\"eve\":16.97,\"morn\":12.06},\"pressure\":1028,\"humidity\":37,\"dew_point\":1.36,\"wind_speed\":4.97,\"wind_deg\":86,\"wind_gust\":4.98,\"weather\":[{\"id\":803,\"main\":\"Clouds\",\"description\":\"\u043e\u0431\u043b\u0430\u0447\u043d\u043e \u0441 \u043f\u0440\u043e\u044f\u0441\u043d\u0435\u043d\u0438\u044f\u043c\u0438\",\"icon\":\"04d\"}],\"clouds\":64,\"pop\":0,\"uvi\":3.37},{\"dt\":1762394400,\"sunrise\":1762376848,\"sunset\":1762414898,\"moonrise\":1762415520,\"moonset\":1762379100,\"moon_phase\":0.52,\"summary\":\"You can expect partly cloudy in the morning, with clearing in the afternoon\",\"temp\":{\"day\":17.27,\"min\":14.02,\"max\":18.79,\"night\":16.11,\"eve\":17.63,\"morn\":14.02},\"feels_like\":{\"day\":16.36,\"night\":15.26,\"eve\":16.65,\"morn\":12.86},\"pressure\":1023,\"humidity\":50,\"dew_point\":6.79,\"wind_speed\":4.96,\"wind_deg\":3,\"wind_gust\":6.37,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"\u043f\u0430\u0441\u043c\u0443\u0440\u043d\u043e\",\"icon\":\"04d\"}],\"clouds\":100,\"pop\":0,\"uvi\":1.47},{\"dt\":1762480800,\"sunrise\":1762463308,\"sunset\":1762501246,\"moonrise\":1762504980,\"moonset\":1762470240,\"moon_phase\":0.56,\"summary\":\"You can expect clear sky in the morning, with partly cloudy in the afternoon\",\"temp\":{\"day\":18.4,\"min\":14.06,\"max\":19.79,\"night\":16.33,\"eve\":17.59,\"morn\":14.06},\"feels_like\":{\"day\":17.29,\"night\":15.3,\"eve\":16.45,\"morn\":13.01},\"pressure\":1023,\"humidity\":38,\"dew_point\":3.7,\"wind_speed\":5.19,\"wind_deg\":113,\"wind_gust\":6.27,\"weather\":[{\"id\":800,\"main\":\"Clear\",\"description\":\"\u044f\u0441\u043d\u043e\",\"icon\":\"01d\"}],\"clouds\":0,\"pop\":0,\"uvi\":2},{\"dt\":1762567200,\"sunrise\":1762549768,\"sunset\":1762587595,\"moonrise\":1762595040,\"moonset\":1762561140,\"moon_phase\":0.6,\"summary\":\"Expect a day of partly cloudy with clear spells\",\"temp\":{\"day\":18.56,\"min\":15.57,\"max\":19.44,\"night\":18.25,\"eve\":18.67,\"morn\":15.57},\"feels_like\":{\"day\":17.59,\"night\":17.65,\"eve\":17.95,\"morn\":14.62},\"pressure\":1023,\"humidity\":43,\"dew_point\":5.58,\"wind_speed\":4.54,\"wind_deg\":345,\"wind_gust\":5.47,\"weather\":[{\"id\":801,\"main\":\"Clouds\",\"description\":\"\u043d\u0435\u0431\u043e\u043b\u044c\u0448\u0430\u044f \u043e\u0431\u043b\u0430\u0447\u043d\u043e\u0441\u0442\u044c\",\"icon\":\"02d\"}],\"clouds\":11,\"pop\":0,\"uvi\":2},{\"dt\":1762653600,\"sunrise\":1762636228,\"sunset\":1762673945,\"moonrise\":1762685580,\"moonset\":1762651440,\"moon_phase\":0.64,\"summary\":\"There will be rain until morning, then partly cloudy\",\"temp\":{\"day\":20.57,\"min\":17.03,\"max\":20.57,\"night\":19.08,\"eve\":19.19,\"morn\":17.03},\"feels_like\":{\"day\":20.22,\"night\":19.18,\"eve\":19.18,\"morn\":16.51},\"pressure\":1010,\"humidity\":59,\"dew_point\":12.38,\"wind_speed\":10.26,\"wind_deg\":209,\"wind_gust\":15.29,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"\u043d\u0435\u0431\u043e\u043b\u044c\u0448\u043e\u0439 \u0434\u043e\u0436\u0434\u044c\",\"icon\":\"10d\"}],\"clouds\":96,\"pop\":0.2,\"rain\":0.18,\"uvi\":2}]}"
+      },
+      "timestamp": "2025-11-02 13:01:49.483913"
+    }
+  ]
+}

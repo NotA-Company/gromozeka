@@ -1,0 +1,66 @@
+[
+  {
+    "description": "Get weather for Minsk, Belarus",
+    "module": "lib.openweathermap.client",
+    "class": "OpenWeatherMapClient",
+    "init_kwargs": {
+      "apiKey": "${OPENWEATHERMAP_API_KEY}",
+      "cache": null,
+      "geocodingTTL": 0,
+      "weatherTTL": 0
+    },
+    "method": "getWeatherByCity",
+    "kwargs": {
+      "city": "Minsk",
+      "country": "BY"
+    }
+  },
+  {
+    "description": "Get weather for London, UK",
+    "module": "lib.openweathermap.client",
+    "class": "OpenWeatherMapClient",
+    "init_kwargs": {
+      "apiKey": "${OPENWEATHERMAP_API_KEY}",
+      "cache": null,
+      "geocodingTTL": 0,
+      "weatherTTL": 0
+    },
+    "method": "getWeatherByCity",
+    "kwargs": {
+      "city": "London",
+      "country": "GB"
+    }
+  },
+  {
+    "description": "Get weather for Tokyo, Japan",
+    "module": "lib.openweathermap.client",
+    "class": "OpenWeatherMapClient",
+    "init_kwargs": {
+      "apiKey": "${OPENWEATHERMAP_API_KEY}",
+      "cache": null,
+      "geocodingTTL": 0,
+      "weatherTTL": 0
+    },
+    "method": "getWeatherByCity",
+    "kwargs": {
+      "city": "Tokyo",
+      "country": "JP"
+    }
+  },
+  {
+    "description": "Get weather for São Paulo, Brazil",
+    "module": "lib.openweathermap.client",
+    "class": "OpenWeatherMapClient",
+    "init_kwargs": {
+      "apiKey": "${OPENWEATHERMAP_API_KEY}",
+      "cache": null,
+      "geocodingTTL": 0,
+      "weatherTTL": 0
+    },
+    "method": "getWeatherByCity",
+    "kwargs": {
+      "city": "São Paulo",
+      "country": "BR"
+    }
+  }
+]
