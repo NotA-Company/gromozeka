@@ -77,6 +77,7 @@ class GoldenDataCollector:
         async def patched_make_request(request: SearchRequest) -> Optional[SearchResponse]:
             """Patched version of _makeRequest that captures raw responses."""
             import base64
+
             import httpx
 
             # Build URL and parameters for logging
@@ -95,7 +96,7 @@ class GoldenDataCollector:
                     "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 },
                 "request": {
-                    "json": params, # pyright: ignore[reportAssignmentType]
+                    "json": params,  # pyright: ignore[reportAssignmentType]
                 },
                 "response": {
                     "raw": "",
@@ -105,10 +106,11 @@ class GoldenDataCollector:
 
             # Make the actual request
             async with httpx.AsyncClient(timeout=client.requestTimeout) as session:
-                response = await session.post(url, headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Api-Key {self.apiKey}"
-                }, json=request)
+                response = await session.post(
+                    url,
+                    headers={"Content-Type": "application/json", "Authorization": f"Api-Key {self.apiKey}"},
+                    json=request,
+                )
                 raw_response = response.text
                 data["response"]["raw"] = raw_response
                 data["response"]["status_code"] = response.status_code
@@ -128,6 +130,7 @@ class GoldenDataCollector:
 
                     # Parse XML response (this is what the real client does)
                     from lib.yandex_search.xml_parser import parseSearchResponse
+
                     result = parseSearchResponse(base64Xml)
                     return result  # pyright: ignore[reportReturnType]
                 else:
@@ -136,7 +139,7 @@ class GoldenDataCollector:
                     return None
 
         # Apply the patch
-        client._makeRequest = patched_make_request # pyright: ignore[reportAttributeAccessIssue]
+        client._makeRequest = patched_make_request  # pyright: ignore[reportAttributeAccessIssue]
 
         try:
             # Call the client method - this will use our patched _makeRequest
@@ -144,7 +147,7 @@ class GoldenDataCollector:
 
             # Sanitize query for filename
             filenameQuery = self._sanitize_filename(queryText)
-            
+
             filename = f"search.{filenameQuery}.json"
             if description:
                 filenameQueryDesc = self._sanitize_filename(description)
@@ -162,10 +165,10 @@ class GoldenDataCollector:
     def _sanitize_filename(self, text: str) -> str:
         """
         Sanitize text for use in filename.
-        
+
         Args:
             text: Text to sanitize
-            
+
         Returns:
             Sanitized text suitable for filename
         """
@@ -188,11 +191,11 @@ async def main():
     utils.load_dotenv()
     apiKey = os.getenv("YANDEX_SEARCH_API_KEY")
     folderId = os.getenv("YANDEX_SEARCH_FOLDER_ID")
-    
+
     if not apiKey:
         print("Error: YANDEX_SEARCH_API_KEY not found in .env or .env.test file")
         return
-        
+
     if not folderId:
         print("Error: YANDEX_SEARCH_FOLDER_ID not found in .env or .env.test file")
         return

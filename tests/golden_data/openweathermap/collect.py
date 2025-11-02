@@ -275,8 +275,8 @@ class GoldenDataCollector:
             _ = await client.getWeather(lat, lon)
 
             # Create filename with coordinates
-            latStr = f"{lat:.7f}".rstrip('0').rstrip('.')
-            lonStr = f"{lon:.7f}".rstrip('0').rstrip('.')
+            latStr = f"{lat:.7f}".rstrip("0").rstrip(".")
+            lonStr = f"{lon:.7f}".rstrip("0").rstrip(".")
             filename = f"getWeatherByCoordinates.{latStr}.{lonStr}.json"
             if description:
                 filename = f"getWeatherByCoordinates.{description}.{latStr}.{lonStr}.json"
@@ -339,16 +339,17 @@ async def main():
 
     # Collect data for specific coordinates that are used in tests
     print("\n  Collecting golden data for specific coordinates...\n")
-    
+
     # São Paulo coordinates from the test
     await collector.collectWeatherByCoordinates(-23.5505199, -46.6333094, "SaoPaulo")
-    
+
     # Other coordinates from the test
     await collector.collectWeatherByCoordinates(53.9024716, 27.5618225, "Minsk")
     await collector.collectWeatherByCoordinates(51.5073219, -0.1276474, "London")
     await collector.collectWeatherByCoordinates(35.689487, 139.691711, "Tokyo")
 
     print("\nAdditional golden data collection complete!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
