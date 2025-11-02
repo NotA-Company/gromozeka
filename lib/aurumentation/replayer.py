@@ -17,6 +17,8 @@ class GoldenDataReplayer:
 
     This class manages the replay process by creating httpx clients
     with ReplayTransport, using recorded recordings from a scenario.
+
+    Can be used as a context manager to patch httpx globally, similar to GoldenDataRecorder.
     """
 
     def __init__(self, scenario: GoldenDataScenarioDict):
@@ -28,6 +30,43 @@ class GoldenDataReplayer:
         self.scenario = scenario
         self.transport: Optional[ReplayTransport] = None
         self.usedRecordings: List[int] = []  # Indices of recordings that have been used
+        self.originalClientClass = None
+
+    async def __aenter__(self) -> "GoldenDataReplayer":
+        """Enter the async context manager and patch httpx globally.
+
+        Returns:
+            The replayer instance
+        """
+        # Create replay transport with scenario recordings
+        self.transport = ReplayTransport(recordings=self.scenario["recordings"])
+
+        # Store reference to self for use in the class
+        replayer_self = self
+
+        # Patch httpx.AsyncClient to use our transport
+        self.originalClientClass = httpx.AsyncClient
+
+        class PatchedAsyncClient(httpx.AsyncClient):
+            def __init__(self, *args, **kwargs):
+                # Force our replay transport to be used
+                kwargs["transport"] = replayer_self.transport
+                super().__init__(*args, **kwargs)
+
+        httpx.AsyncClient = PatchedAsyncClient
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit the async context manager and restore httpx.
+
+        Args:
+            exc_type: Exception type if an exception occurred
+            exc_val: Exception value if an exception occurred
+            exc_tb: Exception traceback if an exception occurred
+        """
+        # Restore original httpx.AsyncClient
+        if self.originalClientClass:
+            httpx.AsyncClient = self.originalClientClass
 
     def createClient(self) -> httpx.AsyncClient:
         """Create an httpx client with ReplayTransport.

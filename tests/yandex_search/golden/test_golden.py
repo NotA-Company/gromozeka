@@ -8,24 +8,16 @@ import pytest
 
 from lib.aurumentation import baseGoldenDataProvider
 from lib.aurumentation.provider import GoldenDataProvider
+from lib.aurumentation.replayer import GoldenDataReplayer
 from lib.yandex_search.client import YandexSearchClient
+
+from . import GOLDEN_DATA_PATH
 
 
 @pytest.fixture(scope="session")
 def yandexSearchGoldenDataProvider() -> GoldenDataProvider:
     """Fixture that provides a GoldenDataProvider for Yandex Search tests."""
-    return baseGoldenDataProvider("tests/yandex_search/golden/data")
-
-
-@pytest.fixture
-async def yandexSearchGoldenClient(yandexSearchGoldenDataProvider: GoldenDataProvider):
-    """Fixture that provides an httpx client with Yandex Search golden data replay."""
-    # Create client that replays the specified scenario
-    client = yandexSearchGoldenDataProvider.createClient(None)
-    yield client
-
-    # Clean up client
-    await client.aclose()
+    return baseGoldenDataProvider(GOLDEN_DATA_PATH)
 
 
 @pytest.mark.asyncio
@@ -47,48 +39,37 @@ async def testYandexSearchClientInitialization():
         'python programming & "machine learning"',
     ],
 )
-async def testSearchWithGoldenData(yandexSearchGoldenClient, query):
+async def testSearchWithGoldenData(yandexSearchGoldenDataProvider, query):
     """Test searching with different queries using golden data."""
-    # Create the client with the golden data replay client
-    yandex_client = YandexSearchClient(apiKey="test", folderId="test-folder")
+    # Get the scenario with all golden data
+    scenario = yandexSearchGoldenDataProvider.getScenario(None)
 
-    # Create a wrapper function that matches the expected signature
-    async def makeRequestWrapper(request):
-        # Convert the request to the format expected by the golden client
-        # The Yandex Search API expects a POST request with JSON body
-        response = await yandexSearchGoldenClient.post(
-            "https://searchapi.api.cloud.yandex.net/v2/web/search", json=request
-        )
-        # Parse the JSON response and extract the rawData field
-        json_response = response.json()
-        # Return the parsed XML response
-        from lib.yandex_search.xml_parser import parseSearchResponse
+    # Use GoldenDataReplayer as context manager to patch httpx globally
+    async with GoldenDataReplayer(scenario):
+        # Create the YandexSearchClient - it will automatically use the patched httpx
+        yandexClient = YandexSearchClient(apiKey="test", folderId="test-folder")
 
-        return parseSearchResponse(json_response["rawData"])
+        # Make a request - this will be replayed from the golden data
+        result = await yandexClient.search(query)
 
-    yandex_client._makeRequest = makeRequestWrapper
+        # Verify the result
+        assert result is not None
+        assert "found" in result
+        assert "groups" in result
+        assert isinstance(result["found"], int)
+        assert isinstance(result["groups"], list)
 
-    # Make a request - this will be replayed from the golden data
-    result = await yandex_client.search(query)
+        # Verify groups structure
+        if result["groups"]:
+            group = result["groups"][0]
+            assert isinstance(group, list)
 
-    # Verify the result
-    assert result is not None
-    assert "found" in result
-    assert "groups" in result
-    assert isinstance(result["found"], int)
-    assert isinstance(result["groups"], list)
-
-    # Verify groups structure
-    if result["groups"]:
-        group = result["groups"][0]
-        assert isinstance(group, list)
-
-        # Verify first result has required fields
-        if group:
-            doc = group[0]
-            assert "url" in doc
-            assert "title" in doc
-            assert "domain" in doc
-            assert isinstance(doc["url"], str)
-            assert isinstance(doc["title"], str)
-            assert isinstance(doc["domain"], str)
+            # Verify first result has required fields
+            if group:
+                doc = group[0]
+                assert "url" in doc
+                assert "title" in doc
+                assert "domain" in doc
+                assert isinstance(doc["url"], str)
+                assert isinstance(doc["title"], str)
+                assert isinstance(doc["domain"], str)
