@@ -126,12 +126,14 @@ class ModelMessage:
         contentKey: str = "content",
         toolCalls: List[LLMToolCall] = [],
         toolCallId: Optional[Any] = None,
+        weight: Optional[int] = None,
     ):
         self.role = role
         self.content = content
         self.contentKey = contentKey
         self.toolCalls = toolCalls
         self.toolCallId = toolCallId
+        self.weight = weight
 
     @classmethod
     def fromDict(cls, d: Dict[str, Any]) -> "ModelMessage":
@@ -164,6 +166,10 @@ class ModelMessage:
         }
         if not skipRole:
             ret["role"] = self.role
+
+        # Add weight if present
+        if self.weight is not None:
+            ret["weight"] = self.weight
 
         if self.toolCalls:
             ret["tool_calls"] = [
