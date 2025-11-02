@@ -5,15 +5,17 @@ This module provides a GoldenDataProvider class that can patch the OpenWeatherMa
 to use golden data instead of making real API calls during testing.
 """
 
-import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 
+import httpx
+
+from lib.aurumentation import GoldenDataProvider as AurumentationProvider
 from lib.openweathermap.client import OpenWeatherMapClient
-from tests.golden_data.openweathermap.types import GoldenDataFile
+from tests.golden_data.openweathermap.custom_transport import OpenWeatherMapReplayTransport
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +24,8 @@ class GoldenDataProvider:
     """
     Provider for OpenWeatherMap golden data testing.
 
-    Loads all golden data files from the raw/ directory and provides
-    a method to patch the OpenWeatherMapClient to return golden data
+    Uses the aurumentation GoldenDataProvider to load scenarios from the golden_v2 directory
+    and provides a method to patch the OpenWeatherMapClient to return golden data
     instead of making real API calls.
     """
 
@@ -31,118 +33,61 @@ class GoldenDataProvider:
         """
         Initialize the GoldenDataProvider.
 
-        Loads all golden data files from the raw/ directory into memory
-        for quick lookup during testing.
+        Loads all golden data scenarios from the golden_v2/ directory.
         """
         self.scriptDir = Path(__file__).parent
-        self.rawDir = self.scriptDir / "raw"
+        self.goldenV2Dir = self.scriptDir / "golden_v2"
         self.inputsDir = self.scriptDir / "inputs"
         self.missingDataLog = self.inputsDir / "missing_data.log"
 
         # Ensure inputs directory exists
         self.inputsDir.mkdir(parents=True, exist_ok=True)
 
-        # Load all golden data files
-        self.goldenData: Dict[str, str] = {}
-        self._loadGoldenData()
+        # Load all golden data scenarios
+        self.provider = AurumentationProvider(str(self.goldenV2Dir))
+        self.scenarios = self.provider.loadAllScenarios()
 
-    def _loadGoldenData(self) -> None:
+        # Map of city/country to scenario names
+        self.cityToScenarioMap = {
+            ("Minsk", "BY"): "Get weather for Minsk_ Belarus",
+            ("London", "GB"): "Get weather for London_ UK",
+            ("São Paulo", "BR"): "Get weather for São Paulo_ Brazil",
+            ("Tokyo", "JP"): "Get weather for Tokyo_ Japan",
+        }
+
+    def _getScenarioName(self, url: str, params: Dict[str, str]) -> Optional[str]:
         """
-        Load all golden data files from the raw/ directory.
-
-        Parses each file as GoldenDataFile and creates lookup keys
-        from URL and parameters in the request section.
-        """
-        if not self.rawDir.exists():
-            logger.warning(f"Raw directory not found: {self.rawDir}")
-            return
-
-        for filePath in self.rawDir.glob("*.json"):
-            try:
-                with open(filePath, "r", encoding="utf-8") as f:
-                    data: GoldenDataFile = json.load(f)
-
-                # Process each entry in the file
-                for entry in data:
-                    requestInfo = entry["request"]
-                    url = requestInfo["url"]
-                    params = requestInfo["params"]
-
-                    # Create lookup key from URL and parameters
-                    key = self._createLookupKey(url, params)
-
-                    # Store the raw response
-                    self.goldenData[key] = entry["response"]["raw"]
-
-            except Exception as e:
-                logger.error(f"Error loading golden data from {filePath}: {e}")
-
-    def _createLookupKey(self, url: str, params: Dict[str, str]) -> str:
-        """
-        Create a unique key for lookup based on URL and parameters.
-
-        Args:
-            url: API endpoint URL
-            params: Dictionary of query parameters (as strings)
-
-        Returns:
-            String key for lookup
-        """
-        # Remove apikey from parameters as it's redacted in golden data
-        cleanParams = {k: v for k, v in params.items() if k != "appid"}
-
-        # Sort parameters for consistent ordering
-        sortedParams = sorted(cleanParams.items())
-
-        # Create key parts
-        keyParts = [url]
-        for key, value in sortedParams:
-            keyParts.append(f"{key}={value}")
-
-        return "|".join(keyParts)
-
-    def _findGoldenData(self, url: str, params: Dict[str, str]) -> str:
-        """
-        Find and return raw response for the given URL and parameters.
+        Get the scenario name for the given URL and parameters.
 
         Args:
             url: API endpoint URL
             params: Dictionary of query parameters
 
         Returns:
-            Raw response string from golden data
-
-        Raises:
-            KeyError: If golden data is not found for the request
+            Scenario name string or None if not found
         """
-        key = self._createLookupKey(url, params)
+        # Handle geocoding requests
+        if "q" in params:
+            # Format: "City,CountryCode"
+            city_country = params["q"]
+            if "," in city_country:
+                city, country_code = city_country.split(",", 1)
+                return self.cityToScenarioMap.get((city, country_code))
+        elif "lat" in params and "lon" in params:
+            # For coordinates, we need to find the right scenario
+            # This is a simplified approach - in reality, we'd need to match coordinates to cities
+            lat = float(params["lat"])
+            lon = float(params["lon"])
+            if abs(lat - 53.9025) < 0.1 and abs(lon - 27.5618) < 0.1:
+                return "Get weather for Minsk_ Belarus"
+            elif abs(lat - 51.5073) < 0.1 and abs(lon - -0.1276) < 0.1:
+                return "Get weather for London_ UK"
+            elif abs(lat - -23.5505) < 0.1 and abs(lon - -46.6333) < 0.1:
+                return "Get weather for São Paulo_ Brazil"
+            elif abs(lat - 35.6895) < 0.1 and abs(lon - 139.6917) < 0.1:
+                return "Get weather for Tokyo_ Japan"
 
-        if key in self.goldenData:
-            return self.goldenData[key]
-        else:
-            # Log missing data and raise exception
-            self._logMissingData(url, params)
-            raise KeyError(f"Golden data not found for URL {url} with params {params}")
-
-    def _logMissingData(self, url: str, params: Dict[str, str]) -> None:
-        """
-        Log missing golden data to a file.
-
-        Args:
-            url: API endpoint URL
-            params: Dictionary of query parameters
-        """
-        timestamp = datetime.now().isoformat()
-        logEntry = {"timestamp": timestamp, "url": url, "params": params}
-
-        # Append to missing data log
-        try:
-            with open(self.missingDataLog, "a", encoding="utf-8") as f:
-                f.write(json.dumps(logEntry, ensure_ascii=False) + "\n")
-        except Exception as e:
-            logger.error(f"Error writing to missing data log: {e}")
-
-        logger.warning(f"Missing golden data logged: {url} with params {params}")
+        return None
 
     @asynccontextmanager
     async def patchClient(self, client: OpenWeatherMapClient):
@@ -179,21 +124,36 @@ class GoldenDataProvider:
                 Parsed JSON response from golden data
             """
             try:
-                # Convert all parameters to strings as they appear in golden data
-                stringParams = {k: str(v) for k, v in params.items()}
+                # Get scenario name for this request
+                scenarioName = self._getScenarioName(url, params)
 
-                # Find golden data
-                rawData = self._findGoldenData(url, stringParams)
+                if scenarioName is None or scenarioName not in self.scenarios:
+                    logger.error(f"No scenario found for URL {url} with params {params}")
+                    return None
 
-                # Parse and return JSON data
-                return json.loads(rawData)
+                # Get the scenario
+                scenario = self.scenarios[scenarioName]
 
-            except KeyError:
-                # Golden data not found - return None to match client behavior
+                # Create custom transport that replays the scenario
+                transport = OpenWeatherMapReplayTransport(recordings=scenario["recordings"])
+
+                # Create client with custom transport
+                replayClient = httpx.AsyncClient(transport=transport)
+
+                # Make the request using the replay client
+                full_url = f"{url}?{urlencode(params)}"
+                response = await replayClient.get(full_url)
+
+                # Clean up the replay client
+                await replayClient.aclose()
+
+                # Return the JSON response
+                return response.json()
+
+            except Exception as e:
+                # Log error and return None to match client behavior
+                logger.error(f"Error replaying golden data for URL {url}: {e}")
                 return None
-            except json.JSONDecodeError as e:
-                # Invalid JSON in golden data
-                raise Exception(f"Invalid JSON in golden data for URL {url}: {e}")
 
         # Apply patch
         client._makeRequest = patchedMakeRequest
