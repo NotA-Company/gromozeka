@@ -104,7 +104,9 @@ class GoldenDataRecorder:
 
     def createScenario(
         self,
+        *,
         description: str,
+        scenarioName: Optional[str],
         module: str,
         className: str,
         method: str,
@@ -129,23 +131,30 @@ class GoldenDataRecorder:
         if recordings is None:
             recordings = self.getRecordedRecordings()
 
+        if scenarioName is None:
+            scenarioName = description
+
+        nowStr = datetime.now(timezone.utc).isoformat()
         # Create metadata
         metadata: MetadataDict = {
+            "name": scenarioName,
             "description": description,
             "module": module,
             "class": className,
             "method": method,
             "init_kwargs": initKwargs or {},
             "kwargs": kwargs,
+            "createdAt": nowStr,
         }
 
         # Create a scenario-like object with the metadata
         return {
+            "name": scenarioName,
             "description": description,
             "functionName": f"{className}.{method}",
             "metadata": metadata,  # Store the full metadata
             "recordings": recordings,
-            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "createdAt": nowStr,
         }
 
     def saveGoldenData(self, filepath: str, metadata: MetadataDict) -> None:

@@ -1,5 +1,4 @@
-"""Pytest helper functions for golden data testing.
-"""
+"""Pytest helper functions for golden data testing."""
 
 from .provider import GoldenDataProvider
 
@@ -13,10 +12,9 @@ def baseGoldenDataProvider(path: str):
     return provider
 
 
-#@pytest.fixture
+# @pytest.fixture
 async def baseGoldenClient(goldenDataProvider: GoldenDataProvider):
-    """Fixture template that provides an httpx client with golden data replay.
-    """
+    """Fixture template that provides an httpx client with golden data replay."""
     # Create client that replays the specified scenario
     client = goldenDataProvider.createClient(None)
     yield client
