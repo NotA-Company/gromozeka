@@ -1,0 +1,93 @@
+{
+  "metadata": {
+    "name": "London,UK Weather",
+    "description": "Get weather for London, UK",
+    "module": "lib.openweathermap.client",
+    "class": "OpenWeatherMapClient",
+    "method": "getWeatherByCity",
+    "init_kwargs": {
+      "apiKey": "${OPENWEATHERMAP_API_KEY}",
+      "cache": null,
+      "geocodingTTL": 0,
+      "weatherTTL": 0
+    },
+    "kwargs": {
+      "city": "London",
+      "country": "GB"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "http://api.openweathermap.org/geo/1.0/direct?q=London%2CGB&limit=1&appid=***MASKED***",
+        "headers": {
+          "host": "api.openweathermap.org",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1"
+        },
+        "params": {
+          "q": "London,GB",
+          "limit": "1",
+          "appid": "***MASKED***"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 02 Nov 2025 21:21:19 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "content-length": "2650",
+          "connection": "keep-alive",
+          "x-cache-key": "***MASKED***",
+          "access-control-allow-origin": "*",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET, POST"
+        },
+        "content": "[{\"name\":\"London\",\"local_names\":{\"bs\":\"London\",\"he\":\"לונדון\",\"ne\":\"लन्डन\",\"lt\":\"Londonas\",\"is\":\"London\",\"eo\":\"Londono\",\"na\":\"London\",\"br\":\"Londrez\",\"av\":\"Лондон\",\"jv\":\"London\",\"fo\":\"London\",\"feature_name\":\"London\",\"qu\":\"London\",\"kl\":\"London\",\"bn\":\"লন্ডন\",\"ee\":\"London\",\"ku\":\"London\",\"mi\":\"Rānana\",\"gd\":\"Lunnainn\",\"om\":\"Landan\",\"nn\":\"London\",\"sn\":\"London\",\"co\":\"Londra\",\"ie\":\"London\",\"mk\":\"Лондон\",\"et\":\"London\",\"be\":\"Лондан\",\"vi\":\"Luân Đôn\",\"si\":\"ලන්ඩන්\",\"km\":\"ឡុងដ៍\",\"ms\":\"London\",\"pl\":\"Londyn\",\"se\":\"London\",\"tk\":\"London\",\"my\":\"လန်ဒန်မြို့\",\"bm\":\"London\",\"sd\":\"لنڊن\",\"tl\":\"Londres\",\"ps\":\"لندن\",\"sc\":\"Londra\",\"ab\":\"Лондон\",\"nl\":\"Londen\",\"ba\":\"Лондон\",\"sh\":\"London\",\"af\":\"Londen\",\"ko\":\"런던\",\"sm\":\"Lonetona\",\"oc\":\"Londres\",\"hu\":\"London\",\"kv\":\"Лондон\",\"sw\":\"London\",\"wo\":\"Londar\",\"vo\":\"London\",\"de\":\"London\",\"wa\":\"Londe\",\"gv\":\"Lunnin\",\"ro\":\"Londra\",\"ka\":\"ლონდონი\",\"fj\":\"Lodoni\",\"uk\":\"Лондон\",\"te\":\"లండన్\",\"mt\":\"Londra\",\"ay\":\"London\",\"ga\":\"Londain\",\"ur\":\"علاقہ لندن\",\"sv\":\"London\",\"hi\":\"लंदन\",\"yo\":\"Lọndọnu\",\"ny\":\"London\",\"no\":\"London\",\"so\":\"London\",\"lo\":\"ລອນດອນ\",\"or\":\"ଲଣ୍ଡନ\",\"ha\":\"Landan\",\"gl\":\"Londres\",\"ml\":\"ലണ്ടൻ\",\"ff\":\"London\",\"am\":\"ለንደን\",\"pa\":\"ਲੰਡਨ\",\"an\":\"Londres\",\"ca\":\"Londres\",\"sl\":\"London\",\"ig\":\"London\",\"lb\":\"London\",\"to\":\"Lonitoni\",\"id\":\"London\",\"cu\":\"Лондонъ\",\"sq\":\"Londra\",\"ce\":\"Лондон\",\"az\":\"London\",\"es\":\"Londres\",\"rm\":\"Londra\",\"kw\":\"Loundres\",\"sk\":\"Londýn\",\"th\":\"ลอนดอน\",\"ja\":\"ロンドン\",\"cs\":\"Londýn\",\"ta\":\"இலண்டன்\",\"eu\":\"Londres\",\"tt\":\"Лондон\",\"tg\":\"Лондон\",\"da\":\"London\",\"ht\":\"Lonn\",\"mg\":\"Lôndôna\",\"bi\":\"London\",\"ln\":\"Lóndɛlɛ\",\"en\":\"London\",\"ia\":\"London\",\"bo\":\"ལོན་ཊོན།\",\"ug\":\"لوندۇن\",\"ru\":\"Лондон\",\"mr\":\"लंडन\",\"fa\":\"لندن\",\"ky\":\"Лондон\",\"kn\":\"ಲಂಡನ್\",\"zh\":\"伦敦\",\"st\":\"London\",\"bg\":\"Лондон\",\"el\":\"Λονδίνο\",\"pt\":\"Londres\",\"zu\":\"ILondon\",\"bh\":\"लंदन\",\"su\":\"London\",\"tr\":\"Londra\",\"sr\":\"Лондон\",\"ascii\":\"London\",\"os\":\"Лондон\",\"li\":\"Londe\",\"gu\":\"લંડન\",\"nv\":\"Tooh Dineʼé Bikin Haalʼá\",\"ar\":\"لندن\",\"cy\":\"Llundain\",\"lv\":\"Londona\",\"fi\":\"Lontoo\",\"hy\":\"Լոնդոն\",\"it\":\"Londra\",\"tw\":\"London\",\"mn\":\"Лондон\",\"yi\":\"לאנדאן\",\"hr\":\"London\",\"fr\":\"Londres\",\"kk\":\"Лондон\",\"io\":\"London\",\"cv\":\"Лондон\",\"fy\":\"Londen\",\"sa\":\"लन्डन्\",\"uz\":\"London\",\"gn\":\"Lóndyre\"},\"lat\":51.5073219,\"lon\":-0.1276474,\"country\":\"GB\",\"state\":\"England\"}]"
+      },
+      "timestamp": "2025-11-02T21:21:19.578373+00:00"
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://api.openweathermap.org/data/3.0/onecall?lat=51.5073219&lon=-0.1276474&exclude=minutely%2Chourly%2Calerts&units=metric&lang=ru&appid=***MASKED***",
+        "headers": {
+          "host": "api.openweathermap.org",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1"
+        },
+        "params": {
+          "lat": "51.5073219",
+          "lon": "-0.1276474",
+          "exclude": "minutely,hourly,alerts",
+          "units": "metric",
+          "lang": "ru",
+          "appid": "***MASKED***"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 02 Nov 2025 21:21:19 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "content-length": "4796",
+          "connection": "keep-alive",
+          "x-cache-key": "***MASKED***",
+          "access-control-allow-origin": "*",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET, POST"
+        },
+        "content": "{\"lat\":51.5073,\"lon\":-0.1276,\"timezone\":\"Europe/London\",\"timezone_offset\":0,\"current\":{\"dt\":1762118480,\"sunrise\":1762066549,\"sunset\":1762101133,\"temp\":8.01,\"feels_like\":5.5,\"pressure\":1013,\"humidity\":85,\"dew_point\":5.65,\"uvi\":0,\"clouds\":0,\"visibility\":10000,\"wind_speed\":4.12,\"wind_deg\":240,\"weather\":[{\"id\":800,\"main\":\"Clear\",\"description\":\"ясно\",\"icon\":\"01n\"}]},\"daily\":[{\"dt\":1762081200,\"sunrise\":1762066549,\"sunset\":1762101133,\"moonrise\":1762095900,\"moonset\":1762050600,\"moon_phase\":0.38,\"summary\":\"Expect a day of partly cloudy with rain\",\"temp\":{\"day\":11.59,\"min\":6.9,\"max\":12.38,\"night\":7.54,\"eve\":8.67,\"morn\":7.83},\"feels_like\":{\"day\":10.89,\"night\":5.44,\"eve\":6.62,\"morn\":5.4},\"pressure\":1007,\"humidity\":80,\"dew_point\":6.28,\"wind_speed\":4.94,\"wind_deg\":275,\"wind_gust\":11.96,\"weather\":[{\"id\":501,\"main\":\"Rain\",\"description\":\"дождь\",\"icon\":\"10d\"}],\"clouds\":82,\"pop\":1,\"rain\":4.91,\"uvi\":1.1},{\"dt\":1762167600,\"sunrise\":1762153056,\"sunset\":1762187428,\"moonrise\":1762183080,\"moonset\":1762142220,\"moon_phase\":0.42,\"summary\":\"There will be clear sky until morning, then partly cloudy\",\"temp\":{\"day\":15.31,\"min\":7.03,\"max\":17.51,\"night\":14.93,\"eve\":14.9,\"morn\":9.6},\"feels_like\":{\"day\":14.83,\"night\":14.36,\"eve\":14.38,\"morn\":7.07},\"pressure\":1013,\"humidity\":74,\"dew_point\":10.63,\"wind_speed\":7.04,\"wind_deg\":225,\"wind_gust\":14.99,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":99,\"pop\":0,\"uvi\":1.25},{\"dt\":1762254000,\"sunrise\":1762239563,\"sunset\":1762273724,\"moonrise\":1762270440,\"moonset\":1762234020,\"moon_phase\":0.46,\"summary\":\"Expect a day of partly cloudy with rain\",\"temp\":{\"day\":14.99,\"min\":13.37,\"max\":15.56,\"night\":14.72,\"eve\":14.57,\"morn\":14.29},\"feels_like\":{\"day\":14.56,\"night\":14.52,\"eve\":13.78,\"morn\":13.89},\"pressure\":1012,\"humidity\":77,\"dew_point\":10.83,\"wind_speed\":7.62,\"wind_deg\":198,\"wind_gust\":17.23,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":93,\"pop\":1,\"rain\":0.98,\"uvi\":1.07},{\"dt\":1762340400,\"sunrise\":1762326069,\"sunset\":1762360021,\"moonrise\":1762358040,\"moonset\":1762326120,\"moon_phase\":0.5,\"summary\":\"Expect a day of partly cloudy with rain\",\"temp\":{\"day\":14.94,\"min\":14.42,\"max\":15.37,\"night\":15.18,\"eve\":14.87,\"morn\":14.96},\"feels_like\":{\"day\":14.53,\"night\":14.69,\"eve\":14.42,\"morn\":14.76},\"pressure\":1007,\"humidity\":78,\"dew_point\":11.16,\"wind_speed\":6.42,\"wind_deg\":201,\"wind_gust\":14.02,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":100,\"pop\":1,\"rain\":0.53,\"uvi\":0.47},{\"dt\":1762426800,\"sunrise\":1762412576,\"sunset\":1762446321,\"moonrise\":1762446120,\"moonset\":1762418340,\"moon_phase\":0.54,\"summary\":\"Expect a day of partly cloudy with rain\",\"temp\":{\"day\":13.91,\"min\":11.55,\"max\":16.2,\"night\":11.55,\"eve\":11.75,\"morn\":14.02},\"feels_like\":{\"day\":13.13,\"night\":10.64,\"eve\":10.81,\"morn\":13.75},\"pressure\":1004,\"humidity\":68,\"dew_point\":7.98,\"wind_speed\":5.46,\"wind_deg\":213,\"wind_gust\":12.91,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":100,\"pop\":1,\"rain\":1.77,\"uvi\":0.88},{\"dt\":1762513200,\"sunrise\":1762499083,\"sunset\":1762532622,\"moonrise\":1762535100,\"moonset\":1762510260,\"moon_phase\":0.58,\"summary\":\"Expect a day of partly cloudy with rain\",\"temp\":{\"day\":12.13,\"min\":10.4,\"max\":14.53,\"night\":12.81,\"eve\":12.9,\"morn\":10.4},\"feels_like\":{\"day\":11.77,\"night\":12.47,\"eve\":12.54,\"morn\":9.48},\"pressure\":1004,\"humidity\":91,\"dew_point\":10.67,\"wind_speed\":7.16,\"wind_deg\":175,\"wind_gust\":16.58,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":100,\"pop\":1,\"rain\":3.19,\"uvi\":0.19},{\"dt\":1762599600,\"sunrise\":1762585589,\"sunset\":1762618925,\"moonrise\":1762625160,\"moonset\":1762601340,\"moon_phase\":0.62,\"summary\":\"There will be rain until morning, then partly cloudy\",\"temp\":{\"day\":11.59,\"min\":9.52,\"max\":12.4,\"night\":9.61,\"eve\":10.9,\"morn\":9.52},\"feels_like\":{\"day\":10.84,\"night\":8.1,\"eve\":10.13,\"morn\":7.56},\"pressure\":1013,\"humidity\":78,\"dew_point\":7.73,\"wind_speed\":4.74,\"wind_deg\":261,\"wind_gust\":11.03,\"weather\":[{\"id\":500,\"main\":\"Rain\",\"description\":\"небольшой дождь\",\"icon\":\"10d\"}],\"clouds\":28,\"pop\":0.71,\"rain\":0.33,\"uvi\":1},{\"dt\":1762686000,\"sunrise\":1762672095,\"sunset\":1762705230,\"moonrise\":1762716300,\"moonset\":1762690980,\"moon_phase\":0.65,\"summary\":\"Expect a day of partly cloudy with clear spells\",\"temp\":{\"day\":11.57,\"min\":8.11,\"max\":13.06,\"night\":10.52,\"eve\":11.91,\"morn\":9.12},\"feels_like\":{\"day\":11.16,\"night\":10.03,\"eve\":11.25,\"morn\":8.45},\"pressure\":1017,\"humidity\":91,\"dew_point\":10.13,\"wind_speed\":3.58,\"wind_deg\":273,\"wind_gust\":7.96,\"weather\":[{\"id\":804,\"main\":\"Clouds\",\"description\":\"пасмурно\",\"icon\":\"04d\"}],\"clouds\":96,\"pop\":0,\"uvi\":1}]}"
+      },
+      "timestamp": "2025-11-02T21:21:19.871618+00:00"
+    }
+  ]
+}
