@@ -11,9 +11,36 @@ from .recorder import GoldenDataRecorder
 from .replayer import GoldenDataReplayer
 from .test_helpers import goldenClient, goldenDataProvider, useGoldenData
 from .types import (
-    CollectorInput,
-    GoldenDataScenario,
-    HttpCall,
-    HttpRequest,
-    HttpResponse,
+    CollectorInputDict,
+    GoldenDataScenarioDict,
+    HttpCallDict,
+    HttpRequestDict,
+    HttpResponseDict,
+    ScenarioDict,
+    ScenarioInitKwargs,
 )
+
+__all__ = [
+    # Collector functions
+    "collectGoldenData",
+    "sanitizeFilename",
+    # Provider classes and functions
+    "GoldenDataProvider",
+    "findGoldenDataFiles",
+    "loadGoldenData",
+    # Recorder and replayer classes
+    "GoldenDataRecorder",
+    "GoldenDataReplayer",
+    # Test helpers
+    "goldenClient",
+    "goldenDataProvider",
+    "useGoldenData",
+    # Data models
+    "CollectorInputDict",
+    "GoldenDataScenarioDict",
+    "HttpCallDict",
+    "HttpRequestDict",
+    "HttpResponseDict",
+    "ScenarioDict",
+    "ScenarioInitKwargs",
+]

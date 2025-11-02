@@ -12,11 +12,9 @@ from typing import Dict, List, Optional
 
 import httpx
 
-from lib import utils
-
 from .masker import SecretMasker
 from .transports import RecordingTransport
-from .types import CollectorInput, GoldenDataScenario, HttpCall
+from .types import GoldenDataFileFormat, GoldenDataScenarioDict, HttpCallDict, MetadataDict
 
 
 class GoldenDataRecorder:
@@ -36,7 +34,7 @@ class GoldenDataRecorder:
         self.secrets = secrets or []
         self.transport: Optional[RecordingTransport] = None
         self.originalTransportClass = None
-        self.recordings: List[HttpCall] = []
+        self.recordings: List[HttpCallDict] = []
 
     async def __aenter__(self) -> "GoldenDataRecorder":
         """Enter the async context manager and patch httpx globally.
@@ -79,11 +77,11 @@ class GoldenDataRecorder:
             httpx.AsyncClient = self.originalClientClass
             print("HttpxRecorder: Restored original httpx.AsyncClient")
 
-    def getRecordedRecordings(self) -> List[HttpCall]:
+    def getRecordedRecordings(self) -> List[HttpCallDict]:
         """Get all recorded recordings, with secrets masked.
 
         Returns:
-            List of recorded HttpCall objects with secrets masked
+            List of recorded HttpCallDict objects with secrets masked
         """
         if not self.transport:
             return []
@@ -112,8 +110,8 @@ class GoldenDataRecorder:
         method: str,
         kwargs: Dict,
         initKwargs: Optional[Dict] = None,
-        recordings: Optional[List[HttpCall]] = None,
-    ) -> GoldenDataScenario:
+        recordings: Optional[List[HttpCallDict]] = None,
+    ) -> GoldenDataScenarioDict:
         """Create a complete scenario with metadata.
 
         Args:
@@ -123,16 +121,16 @@ class GoldenDataRecorder:
             method: Name of the method being tested
             kwargs: Keyword arguments for the method
             init_kwargs: Keyword arguments for class initialization
-            recordings: List of HttpCall objects. If None, uses recorded recordings.
+            recordings: List of HttpCallDict objects. If None, uses recorded recordings.
 
         Returns:
-            A complete GoldenDataScenario with metadata
+            A complete GoldenDataScenarioDict with metadata
         """
         if recordings is None:
             recordings = self.getRecordedRecordings()
 
         # Create metadata
-        metadata = {
+        metadata: MetadataDict = {
             "description": description,
             "module": module,
             "class": className,
@@ -142,15 +140,15 @@ class GoldenDataRecorder:
         }
 
         # Create a scenario-like object with the metadata
-        return GoldenDataScenario(
-            description=description,
-            functionName=f"{className}.{method}",
-            kwargs=metadata,  # Store the full metadata
-            recordings=recordings,
-            createdAt=datetime.now(timezone.utc),
-        )
+        return {
+            "description": description,
+            "functionName": f"{className}.{method}",
+            "metadata": metadata,  # Store the full metadata
+            "recordings": recordings,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
 
-    def saveGoldenData(self, filepath: str, metadata: Dict) -> None:
+    def saveGoldenData(self, filepath: str, metadata: MetadataDict) -> None:
         """Save recorded recordings as golden data with metadata.
 
         Args:
@@ -161,7 +159,10 @@ class GoldenDataRecorder:
         recordings = self.getRecordedRecordings()
 
         # Create the golden data structure
-        golden_data = {"metadata": metadata, "recordings": [call.model_dump() for call in recordings]}
+        golden_data: GoldenDataFileFormat = {
+            "metadata": metadata,
+            "recordings": recordings,
+        }
 
         # Save to file
         path = Path(filepath)

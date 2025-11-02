@@ -11,11 +11,12 @@ import importlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypeVar
+from typing import Any, List
 
 from lib import utils
 
 from .recorder import GoldenDataRecorder
+from .types import ScenarioDict
 
 
 def substituteEnvVars(value: Any, loadDotenv: bool = True) -> Any:
@@ -68,9 +69,7 @@ def sanitizeFilename(text: str) -> str:
     return safe[:100].strip("_ ")
 
 
-async def collectGoldenData(
-    scenarios: List[Dict[str, Any]], outputDir: Path, secrets: List[str]  # TODO: Use typed dict
-) -> None:
+async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secrets: List[str]) -> None:
     """
     Collect golden data for multiple scenarios using global httpx patching.
 

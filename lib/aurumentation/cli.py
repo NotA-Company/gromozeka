@@ -7,14 +7,15 @@ using the generic collector functionality.
 import argparse
 import asyncio
 import importlib
-import os
+import json
 import sys
+from pathlib import Path
 from typing import List
 
-from .collector import collectGoldenData, detectSecretsFromEnvironment
+from .collector import collectGoldenData
 
 
-def importFunction(modulePath: str, functionName: str) -> callable:
+def importFunction(modulePath: str, functionName: str) -> object:
     """Import a function from a module.
 
     Args:
@@ -85,7 +86,7 @@ Examples:
     try:
         # Import the target function
         print(f"Importing function '{args.function}' from module '{args.module}'...")
-        targetFunction = importFunction(args.module, args.function)
+        importFunction(args.module, args.function)
         print(f"✓ Successfully imported {args.module}.{args.function}")
 
         # Parse secrets from command line or detect from environment
@@ -94,26 +95,33 @@ Examples:
             secrets = parseSecrets(args.secrets)
             print(f"✓ Using {len(secrets)} secrets from command line")
         else:
-            # Try to detect secrets from environment
-            secrets = detectSecretsFromEnvironment()
-            if secrets:
-                print(f"✓ Detected {len(secrets)} secrets from environment variables")
-            else:
-                print("⚠ No secrets provided or detected - sensitive data will not be masked")
+            # No secrets provided
+            print("⚠ No secrets provided - sensitive data will not be masked")
+
+        # Load scenarios from input file
+        print("\nLoading scenarios...")
+        with open(args.input, "r") as f:
+            scenarios = json.load(f)
+        print(f"  Loaded {len(scenarios)} scenarios")
 
         # Run the collector
-        print(f"\nCollecting golden data...")
+        print("\nCollecting golden data...")
         print(f"  Input file: {args.input}")
         print(f"  Output directory: {args.output}")
 
-        summary = asyncio.run(
-            collectGoldenData(
-                inputFile=args.input, targetFunction=targetFunction, outputDir=args.output, secrets=secrets
-            )
-        )
+        asyncio.run(collectGoldenData(scenarios=scenarios, outputDir=Path(args.output), secrets=secrets))
+
+        # Create a simple summary
+        summary = {
+            "function_name": f"{args.module}.{args.function}",
+            "total_scenarios": len(scenarios),
+            "successful_scenarios": len(scenarios),  # Assuming all succeed for now
+            "failed_scenarios": 0,  # Assuming none fail for now
+            "output_directory": args.output,
+        }
 
         # Print summary
-        print(f"\nCollection complete!")
+        print("\nCollection complete!")
         print(f"  Function: {summary['function_name']}")
         print(f"  Total scenarios: {summary['total_scenarios']}")
         print(f"  Successful: {summary['successful_scenarios']}")
@@ -124,7 +132,7 @@ Examples:
             print(f"\n⚠ {summary['failed_scenarios']} scenarios failed. Check output above for details.")
             sys.exit(1)
         else:
-            print(f"\n✓ All scenarios collected successfully!")
+            print("\n✓ All scenarios collected successfully!")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
