@@ -8,24 +8,16 @@ import pytest
 
 from lib.aurumentation import baseGoldenDataProvider
 from lib.aurumentation.provider import GoldenDataProvider
+from lib.aurumentation.replayer import GoldenDataReplayer
 from lib.openweathermap.client import OpenWeatherMapClient
+
+from . import GOLDEN_DATA_PATH
 
 
 @pytest.fixture(scope="session")
 def owmGoldenDataProvider() -> GoldenDataProvider:
     """Fixture that provides a GoldenDataProvider for OpenWeatherMap tests."""
-    return baseGoldenDataProvider("tests/openweathermap/golden/data")
-
-
-@pytest.fixture
-async def owmGoldenClient(owmGoldenDataProvider):
-    """Fixture that provides an httpx client with OWM golden data replay for."""
-    # Create client that replays the specified scenario
-    client = owmGoldenDataProvider.createClient(None)
-    yield client
-
-    # Clean up client
-    await client.aclose()
+    return baseGoldenDataProvider(GOLDEN_DATA_PATH)
 
 
 @pytest.mark.asyncio
@@ -46,39 +38,35 @@ async def testOpenweathermapClientInitialization():
         ("São Paulo", "BR", "São Paulo", "BR"),
     ],
 )
-async def testGetWeatherForCity(owmGoldenClient, city, country_code, expected_name, expected_country):
+async def testGetWeatherForCity(owmGoldenDataProvider, city, country_code, expected_name, expected_country):
     """Test getting weather for different cities using golden data."""
-    # Create the client with the golden data replay client
-    owm_client = OpenWeatherMapClient(apiKey="test")
+    # Get the scenario with all golden data
+    scenario = owmGoldenDataProvider.getScenario(None)
 
-    # Create a wrapper function that matches the expected signature
-    async def makeRequestWrapper(url, params):
-        # Convert params to query string format for the golden client
-        response = await owmGoldenClient.get(url, params=params)
-        # Return the JSON response
-        return response.json()
+    # Use GoldenDataReplayer as context manager to patch httpx globally
+    async with GoldenDataReplayer(scenario):
+        # Create the OpenWeatherMapClient - it will automatically use the patched httpx
+        owmClient = OpenWeatherMapClient(apiKey="test")
 
-    owm_client._makeRequest = makeRequestWrapper
+        # Make a request - this will be replayed from the golden data
+        result = await owmClient.getWeatherByCity(city, country_code)
 
-    # Make a request - this will be replayed from the golden data
-    result = await owm_client.getWeatherByCity(city, country_code)
+        # Verify the result
+        assert result is not None
+        assert result["location"]["name"] == expected_name
+        assert result["location"]["country"] == expected_country
+        assert "weather" in result
+        assert "current" in result["weather"]
+        assert "daily" in result["weather"]
 
-    # Verify the result
-    assert result is not None
-    assert result["location"]["name"] == expected_name
-    assert result["location"]["country"] == expected_country
-    assert "weather" in result
-    assert "current" in result["weather"]
-    assert "daily" in result["weather"]
+        # Verify current weather data
+        current = result["weather"]["current"]
+        assert "temp" in current
+        assert "weather_main" in current
+        assert "weather_description" in current
 
-    # Verify current weather data
-    current = result["weather"]["current"]
-    assert "temp" in current
-    assert "weather_main" in current
-    assert "weather_description" in current
-
-    # Verify daily forecast data
-    daily = result["weather"]["daily"]
-    assert len(daily) > 0
-    assert "temp_day" in daily[0]
-    assert "weather_main" in daily[0]
+        # Verify daily forecast data
+        daily = result["weather"]["daily"]
+        assert len(daily) > 0
+        assert "temp_day" in daily[0]
+        assert "weather_main" in daily[0]
