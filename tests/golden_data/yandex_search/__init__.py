@@ -4,6 +4,7 @@ Golden Data Provider for YandexSearchClient testing.
 This module provides a GoldenDataProvider class that can patch the YandexSearchClient
 to use golden data instead of making real API calls during testing.
 """
+
 from .provider import GoldenDataProvider
 
 # Export types

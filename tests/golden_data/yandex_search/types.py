@@ -4,6 +4,7 @@ TypedDicts for Yandex Search golden data structure.
 This module defines TypedDicts that match the golden data structure
 based on the actual data collected from Yandex Search API.
 """
+
 from typing import Any, Dict, List, TypeAlias, TypedDict
 
 

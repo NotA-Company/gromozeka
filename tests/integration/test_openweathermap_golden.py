@@ -17,7 +17,7 @@ async def testGetWeatherByCity():
     """Test getting weather by city using golden data."""
     provider = GoldenDataProvider()
     cache = DictWeatherCache()
-    
+
     async with provider.patchClient(OpenWeatherMapClient(apiKey="test_key", cache=cache)) as client:
         # Test Minsk
         result = await client.getWeatherByCity("Minsk", "BY")
@@ -32,7 +32,7 @@ async def testGetWeatherByCity():
         assert isinstance(result["weather"]["current"]["temp"], float)
         assert result["weather"]["current"]["weather_description"] is not None
         assert isinstance(result["weather"]["daily"], list)
-        
+
         # Test London
         result = await client.getWeatherByCity("London", "GB")
         assert result is not None
@@ -46,7 +46,7 @@ async def testGetWeatherByCity():
         assert isinstance(result["weather"]["current"]["temp"], float)
         assert result["weather"]["current"]["weather_description"] is not None
         assert isinstance(result["weather"]["daily"], list)
-        
+
         # Test São Paulo
         result = await client.getWeatherByCity("São Paulo", "BR")
         assert result is not None
@@ -60,7 +60,7 @@ async def testGetWeatherByCity():
         assert isinstance(result["weather"]["current"]["temp"], float)
         assert result["weather"]["current"]["weather_description"] is not None
         assert isinstance(result["weather"]["daily"], list)
-        
+
         # Test Tokyo
         result = await client.getWeatherByCity("Tokyo", "JP")
         assert result is not None
@@ -81,7 +81,7 @@ async def testGetCoordinates():
     """Test getting coordinates by city name using golden data."""
     provider = GoldenDataProvider()
     cache = DictWeatherCache()
-    
+
     async with provider.patchClient(OpenWeatherMapClient(apiKey="test_key", cache=cache)) as client:
         # Test Minsk
         result = await client.getCoordinates("Minsk", "BY")
@@ -92,7 +92,7 @@ async def testGetCoordinates():
         assert isinstance(result["lon"], float)
         assert "local_names" in result
         assert isinstance(result["local_names"], dict)
-        
+
         # Test London
         result = await client.getCoordinates("London", "GB")
         assert result is not None
@@ -102,7 +102,7 @@ async def testGetCoordinates():
         assert isinstance(result["lon"], float)
         assert "local_names" in result
         assert isinstance(result["local_names"], dict)
-        
+
         # Test São Paulo
         result = await client.getCoordinates("São Paulo", "BR")
         assert result is not None
@@ -112,7 +112,7 @@ async def testGetCoordinates():
         assert isinstance(result["lon"], float)
         assert "local_names" in result
         assert isinstance(result["local_names"], dict)
-        
+
         # Test Tokyo
         result = await client.getCoordinates("Tokyo", "JP")
         assert result is not None
@@ -129,7 +129,7 @@ async def testGetWeatherByCoordinates():
     """Test getting weather by coordinates using golden data."""
     provider = GoldenDataProvider()
     cache = DictWeatherCache()
-    
+
     async with provider.patchClient(OpenWeatherMapClient(apiKey="test_key", cache=cache)) as client:
         # Test Minsk coordinates from golden data
         result = await client.getWeather(53.9024716, 27.5618225)
@@ -142,7 +142,7 @@ async def testGetWeatherByCoordinates():
         assert result["current"]["weather_description"] is not None
         assert isinstance(result["daily"], list)
         assert len(result["daily"]) > 0
-        
+
         # Test London coordinates
         result = await client.getWeather(51.5073219, -0.1276474)
         assert result is not None
@@ -154,7 +154,7 @@ async def testGetWeatherByCoordinates():
         assert result["current"]["weather_description"] is not None
         assert isinstance(result["daily"], list)
         assert len(result["daily"]) > 0
-        
+
         # Test São Paulo coordinates
         result = await client.getWeather(-23.5505199, -46.6333094)
         assert result is not None
@@ -166,7 +166,7 @@ async def testGetWeatherByCoordinates():
         assert result["current"]["weather_description"] is not None
         assert isinstance(result["daily"], list)
         assert len(result["daily"]) > 0
-        
+
         # Test Tokyo coordinates
         result = await client.getWeather(35.689487, 139.691711)
         assert result is not None
@@ -185,18 +185,18 @@ async def testClientWithMissingData():
     """Test that missing data raises appropriate exception."""
     provider = GoldenDataProvider()
     cache = DictWeatherCache()
-    
+
     async with provider.patchClient(OpenWeatherMapClient(apiKey="test_key", cache=cache)) as client:
         # Test with a city that's not in our golden data
         result = await client.getWeatherByCity("NonExistentCity", "XX")
         # Should return None when data is not found
         assert result is None
-        
+
         # Test coordinates that are not in our golden data
         result = await client.getWeather(0.0, 0.0)
         # Should return None when data is not found
         assert result is None
-        
+
         # Test geocoding for a city not in our golden data
         result = await client.getCoordinates("NonExistentCity", "XX")
         # Should return None when data is not found
