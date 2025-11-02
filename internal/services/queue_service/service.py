@@ -400,6 +400,7 @@ class QueueService:
             try:
                 # logger.debug("_pDQ(): Iteration...")
                 delayedTask = await self.delayedActionsQueue.get()
+                tasksCount = self.delayedActionsQueue.qsize()
 
                 if not isinstance(delayedTask, DelayedTask):
                     self.delayedActionsQueue.task_done()
@@ -411,8 +412,14 @@ class QueueService:
                 if delayedTask.delayedUntil > time.time():
                     self.delayedActionsQueue.task_done()
                     await self.delayedActionsQueue.put(delayedTask)
-                    # TODO: Add some configured delay, maybe
-                    await asyncio.sleep(min(10, delayedTask.delayedUntil - time.time()))
+                    tasksCount += 1  # As we've added task back
+                    maxSleepIterations = min(10, int(delayedTask.delayedUntil - time.time()))
+                    iteration = 0
+                    # In case of queueLen change - stop sleeping
+                    while iteration < maxSleepIterations and tasksCount == self.delayedActionsQueue.qsize():
+                        await asyncio.sleep(1)
+                        iteration = iteration + 1
+                        # logger.debug(f"Iteration: {iteration}, taskCount={tasksCount}:{self.delayedActionsQueue.qsize()}...")
                     continue
 
                 logger.debug(f"Got {delayedTask}...")
