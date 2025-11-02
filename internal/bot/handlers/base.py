@@ -480,6 +480,7 @@ class BaseBotHandler(CommandHandlerMixin):
         messageCategory: MessageCategory = MessageCategory.BOT,
         replyMarkup: Optional[ReplyMarkup] = None,
         stopper: Optional[TypingStopper] = None,
+        splitIfTooLong: bool = True,
     ) -> Optional[Message]:
         """
         Send a text or photo message as a reply, dood!
@@ -501,7 +502,8 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaPrompt: Optional prompt for media processing
             messageCategory: Category for database storage (from [`MessageCategory`](internal/database/models.py))
             replyMarkup: Optional reply markup (keyboard/buttons)
-
+            stopper: Optional `TypingStopper` object for stoping typing action if any
+            splitIfTooLong: If True (default) - will split long messages to smaller ones
         Returns:
             Sent Message object, or None if sending failed
 
@@ -513,7 +515,7 @@ class BaseBotHandler(CommandHandlerMixin):
             logger.error("No message text or photo data provided")
             raise ValueError("No message text or photo data provided")
 
-        replyMessage: Optional[Message] = None
+        replyMessageList: List[Message] = []
         message = replyToMessage.getBaseMessage()
         chatType = replyToMessage.chat.type
         isPrivate = chatType == Chat.PRIVATE
@@ -547,6 +549,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     }
                 )
 
+                replyMessage: Optional[Message] = None
                 if tryMarkdownV2 and photoCaption is not None:
                     try:
                         messageTextParsed = markdown_to_markdownv2(addMessagePrefix + photoCaption)
@@ -563,6 +566,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 if replyMessage is None:
                     _photoCaption = photoCaption if photoCaption is not None else ""
                     replyMessage = await message.reply_photo(caption=addMessagePrefix + _photoCaption, **replyKwargs)
+                if replyMessage is not None:
+                    replyMessageList.append(replyMessage)
 
             elif messageText is not None:
                 # Send text
@@ -591,51 +596,65 @@ class BaseBotHandler(CommandHandlerMixin):
 
                 if not skipLogs:
                     logger.debug(f"Sending reply to {replyToMessage}")
-                # Try to send Message as MarkdownV2 first
-                if tryMarkdownV2:
-                    try:
-                        messageTextParsed = markdown_to_markdownv2(addMessagePrefix + messageText)
-                        # logger.debug(f"Sending MarkdownV2: {replyText}")
-                        replyMessage = await message.reply_text(
-                            text=messageTextParsed,
-                            parse_mode="MarkdownV2",
-                            **replyKwargs,
-                        )
-                    except Exception as e:
-                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                        # Probably error in markdown formatting, fallback to raw text
 
-                if replyMessage is None:
-                    replyMessage = await message.reply_text(text=addMessagePrefix + messageText, **replyKwargs)
+                messageTextList: List[str] = [messageText]
+                maxMessageLength = constants.TELEGRAM_MAX_MESSAGE_LENGTH - len(addMessagePrefix)
+                if splitIfTooLong and len(messageText) > maxMessageLength:
+                    messageTextList = [
+                        messageText[i : i + maxMessageLength]
+                        for i in range(0, len(messageText), maxMessageLength)
+                    ]
+                for _messageText in messageTextList:
+                    replyMessage: Optional[Message] = None
+                    # Try to send Message as MarkdownV2 first
+                    if tryMarkdownV2:
+                        try:
+                            messageTextParsed = markdown_to_markdownv2(addMessagePrefix + _messageText)
+                            # logger.debug(f"Sending MarkdownV2: {replyText}")
+                            replyMessage = await message.reply_text(
+                                text=messageTextParsed,
+                                parse_mode="MarkdownV2",
+                                **replyKwargs,
+                            )
+                        except Exception as e:
+                            logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
+                            # Probably error in markdown formatting, fallback to raw text
+
+                    if replyMessage is None:
+                        replyMessage = await message.reply_text(text=addMessagePrefix + _messageText, **replyKwargs)
+
+                    if replyMessage is not None:
+                        replyMessageList.append(replyMessage)
 
             try:
-                if replyMessage is None:
-                    raise ValueError("No reply message")
+                if not replyMessageList:
+                    raise ValueError("No reply messages")
 
                 if not skipLogs:
-                    logger.debug(f"Sent message: {utils.dumpMessage(replyMessage)}")
+                    logger.debug(f"Sent messages: {[utils.dumpMessage(msg) for msg in replyMessageList]}")
 
                 # Save message
-                ensuredReplyMessage = EnsuredMessage.fromMessage(replyMessage)
-                if addMessagePrefix:
-                    replyText = ensuredReplyMessage.messageText
-                    if replyText.startswith(addMessagePrefix):
-                        replyText = replyText[len(addMessagePrefix) :]
-                        ensuredReplyMessage.messageText = replyText
-                if replyMessage.photo:
-                    media = await self.processImage(ensuredReplyMessage, mediaPrompt)
-                    ensuredReplyMessage.setMediaProcessingInfo(media)
+                for replyMessage in replyMessageList:
+                    ensuredReplyMessage = EnsuredMessage.fromMessage(replyMessage)
+                    if addMessagePrefix:
+                        replyText = ensuredReplyMessage.messageText
+                        if replyText.startswith(addMessagePrefix):
+                            replyText = replyText[len(addMessagePrefix) :]
+                            ensuredReplyMessage.messageText = replyText
+                    if replyMessage.photo:
+                        media = await self.processImage(ensuredReplyMessage, mediaPrompt)
+                        ensuredReplyMessage.setMediaProcessingInfo(media)
 
-                if isGroupChat or isPrivate:
-                    self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
-                else:
-                    raise ValueError("Unknown chat type")
+                    if isGroupChat or isPrivate:
+                        self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
+                    else:
+                        raise ValueError("Unknown chat type")
 
             except Exception as e:
                 logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
                 logger.exception(e)
                 # Message was sent, so return True anyway
-                return replyMessage
+                return replyMessageList[-1] if replyMessageList else None
 
         except Exception as e:
             logger.error(f"Error while sending message: {type(e).__name__}#{e}")
