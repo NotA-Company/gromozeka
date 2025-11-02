@@ -6,7 +6,7 @@ Bot Models: Export all models
 from ...models import MessageType
 
 # Chat Settings (already exists)
-from .chat_settings import ChatSettingsKey, ChatSettingsValue, getChatSettingsInfo
+from .chat_settings import ChatSettingsKey, ChatSettingsType, ChatSettingsValue, getChatSettingsInfo
 
 # Command Handlers
 from .command_handlers import (
@@ -61,6 +61,7 @@ __all__ = [
     "CallbackDataDict",
     # Chat Settings
     "ChatSettingsKey",
+    "ChatSettingsType",
     "ChatSettingsValue",
     "getChatSettingsInfo",
     # Ensured Message

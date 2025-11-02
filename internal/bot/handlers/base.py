@@ -32,7 +32,7 @@ import magic
 from telegram import Chat, Message, Update, User
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ChatType
 from telegram.ext import ContextTypes, ExtBot
 
 import lib.utils as utils
@@ -254,7 +254,11 @@ class BaseBotHandler(CommandHandlerMixin):
     ###
 
     def getChatSettings(
-        self, chatId: Optional[int], returnDefault: bool = True
+        self,
+        chatId: Optional[int],
+        *,
+        returnDefault: bool = True,
+        chatType: Optional[ChatType] = None,
     ) -> Dict[ChatSettingsKey, ChatSettingsValue]:
         """
         Get chat settings with optional default fallback, dood!
@@ -265,17 +269,28 @@ class BaseBotHandler(CommandHandlerMixin):
         Args:
             chatId: Telegram chat ID, or None for defaults only
             returnDefault: If True, merge with default settings; if False, return only custom settings
+            chatType: Chat type to get defaults for (usefull only if chatId is None)
 
         Returns:
             Dictionary mapping [`ChatSettingsKey`](internal/bot/models/chat_settings.py)
                             to [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
         """
         defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {}
+        if chatId is None and chatType is None:
+            raise ValueError("Either chatId or chatType shoul be not None")
+
+        # TODO: Currently we support only Private and Groups
+        # In case of Channels support, we need to think something
+        if chatId is not None:
+            chatType = ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
+        if chatType != ChatType.PRIVATE:
+            chatType = ChatType.GROUP
+
         if returnDefault:
             defaultSettings = self.defaultSettings.copy()
-            if chatId is not None and chatId > 0:  # it's Private Chat
+            if chatType == ChatType.PRIVATE:  # it's Private Chat
                 defaultSettings.update(self.privateDefaultSettings)
-            elif chatId is not None and chatId < 0:  # it's Group Chat
+            elif chatType == ChatType.GROUP:  # it's Group Chat
                 defaultSettings.update(self.chatDefaultSettings)
 
         if chatId is None:
