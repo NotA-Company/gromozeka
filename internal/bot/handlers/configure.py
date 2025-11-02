@@ -16,11 +16,16 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, User
+from telegram.constants import ChatType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
+from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache.types import UserActiveActionEnum
+from lib.ai.abstract import AbstractModel
+from lib.ai.manager import LLMManager
 from lib.markdown import markdown_to_markdownv2
 
 from .. import constants
@@ -29,6 +34,7 @@ from ..models import (
     ButtonDataKey,
     CallbackDataDict,
     ChatSettingsKey,
+    ChatSettingsType,
     ChatSettingsValue,
     CommandCategory,
     CommandHandlerOrder,
@@ -58,6 +64,18 @@ class ConfigureCommandHandler(BaseBotHandler):
     - SetTrue/SetFalse/ResetValue/SetValue: Update setting values
     - Cancel: Exit configuration wizard
     """
+
+    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+        super().__init__(configManager, database, llmManager)
+
+        selectableModels: List[str] = []
+
+        for modelName in llmManager.listModels():
+            modelInfo = llmManager.getModelInfo(modelName)
+            if modelInfo and modelInfo.get("extra", {}).get("can_be_choosen", False):
+                selectableModels.append(modelName)
+        self.selectableModels = selectableModels
+        logger.debug(f"Selectable models are: {selectableModels}")
 
     async def messageHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
@@ -254,7 +272,9 @@ class ConfigureCommandHandler(BaseBotHandler):
                 logger.debug(f"handle_chat_configuration: chatInfo: {chatInfo}")
                 resp = f"Настраиваем чат **{chatInfo['title'] or chatInfo['username']}#{chatId}**:\n"
                 chatSettings = self.getChatSettings(chatId)
-                defaultChatSettings = self.getChatSettings(None)
+                defaultChatSettings = self.getChatSettings(
+                    None, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
+                )
 
                 chatOptions = getChatSettingsInfo()
                 keyboard: List[List[InlineKeyboardButton]] = []
@@ -323,7 +343,9 @@ class ConfigureCommandHandler(BaseBotHandler):
                     return False
 
                 chatSettings = self.getChatSettings(chatId)
-                defaultChatSettings = self.getChatSettings(None)
+                defaultChatSettings = self.getChatSettings(
+                    None, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
+                )
 
                 chatOptions = getChatSettingsInfo()
 
@@ -353,17 +375,20 @@ class ConfigureCommandHandler(BaseBotHandler):
                 wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
 
                 resp = (
-                    f"Настройка ключа **{chatOptions[key]['short']}** (`{key}`) в чате "
+                    f"Настройка параметра **{chatOptions[key]['short']}** (`{key}`) в чате "
                     f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}):\n\n"
                     f"Описание: \n{chatOptions[key]['long']}\n\n"
                     f"Тип: **{chatOptions[key]['type']}**\n"
                     f"Был ли изменён: **{'Да' if wasChanged else 'Нет'}**\n"
                     f"Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
                     f"Значение по умолчанию:\n```\n{defaultChatSettings[key].toStr()}\n```\n\n"
-                    "Введите новое значение или нажмите нужную кнопку под сообщением"
                 )
+                if chatOptions[key]["type"] not in [ChatSettingsType.MODEL, ChatSettingsType.BOOL]:
+                    resp += "Введите новое значение или нажмите нужную кнопку под сообщением"
+                else:
+                    resp += "Нажмите нужную кнопку под сообщением"
 
-                if chatOptions[key]["type"] == "bool":
+                if chatOptions[key]["type"] == ChatSettingsType.BOOL:
                     keyboard.append(
                         [
                             InlineKeyboardButton(
@@ -392,6 +417,26 @@ class ConfigureCommandHandler(BaseBotHandler):
                             )
                         ]
                     )
+                elif chatOptions[key]["type"] == ChatSettingsType.MODEL:
+                    for modelIdx, modelName in enumerate(self.selectableModels):
+                        buttonText = modelName
+                        if modelName == chatSettings[key].toStr():
+                            buttonText += " (*)"
+                        keyboard.append(
+                            [
+                                InlineKeyboardButton(
+                                    buttonText,
+                                    callback_data=utils.packDict(
+                                        {
+                                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
+                                            ButtonDataKey.ChatId: chatId,
+                                            ButtonDataKey.Key: _key,
+                                            ButtonDataKey.Value: modelIdx,
+                                        }
+                                    ),
+                                )
+                            ]
+                        )
 
                 keyboard.append(
                     [
@@ -477,7 +522,21 @@ class ConfigureCommandHandler(BaseBotHandler):
                 elif action == ButtonConfigureAction.ResetValue:
                     self.unsetChatSetting(chatId, key)
                 elif action == ButtonConfigureAction.SetValue:
-                    self.setChatSetting(chatId, key, ChatSettingsValue(data.get(ButtonDataKey.Value, None)))
+                    value = data.get(ButtonDataKey.Value, None)
+                    chatSettings = self.getChatSettings(chatId)
+                    currentValue = chatSettings[key].toStr()
+                    if chatOptions[key]["type"] == ChatSettingsType.MODEL:
+                        # Validate And get ModelName bu index from selectable models list
+                        if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
+                            value = int(value)
+                            if value < 0 or value > len(self.selectableModels) - 1:
+                                value = currentValue
+                            else:
+                                value = self.selectableModels[value]
+                        else:
+                            value = currentValue
+
+                    self.setChatSetting(chatId, key, ChatSettingsValue(value))
                 else:
                     logger.error(f"handle_chat_configuration: wrong action: {action}")
                     raise RuntimeError(f"handle_chat_configuration: wrong action: {action}")
@@ -485,8 +544,8 @@ class ConfigureCommandHandler(BaseBotHandler):
                 chatSettings = self.getChatSettings(chatId)
 
                 resp = (
-                    f"Ключ **{chatOptions[key]['short']}** (`{key}`) в чате "
-                    f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}) успешно изменён:\n\n"
+                    f"Параметр **{chatOptions[key]['short']}** (`{key}`) в чате "
+                    f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}) успешно изменён.\n\n"
                     f"Новое значение:\n```\n{chatSettings[key].toStr()}\n```\n"
                 )
 

@@ -19,6 +19,7 @@ class ChatSettingsType(StrEnum):
     INT = "int"
     FLOAT = "float"
     BOOL = "bool"
+    MODEL = "model"  # Model Name, can be choosen from list of choosable models
 
 
 class ChatSettingsKey(StrEnum):
@@ -153,6 +154,16 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Системный промпт для чата",
         "long": 'Влияет на "личность" бота.',
     },
+    ChatSettingsKey.CHAT_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "LLM-Модель для общения в чате",
+        "long": "Какую LLM модель использовать для общения в чате",
+    },
+    ChatSettingsKey.SUMMARY_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "LLM-Модель для суммаризации",
+        "long": "Какую LLM модель использовать для суммаризации сообщений",
+    },
     ChatSettingsKey.BOT_NICKNAMES: {
         "type": ChatSettingsType.STRING,
         "short": "Список никнеймов бота",
@@ -169,6 +180,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "3. Запоминение информации о пользователе\n"
             "4. Прогноз погоды\n"
             "5. Получение текущего времени\n"
+            "6. Поиск по Интернету через Yandex Search API"
         ),
     },
     ChatSettingsKey.SAVE_IMAGES: {

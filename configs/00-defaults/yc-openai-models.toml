@@ -8,6 +8,7 @@ context = 32768
 support_tools = true
 support_text = true
 support_images = false
+can_be_choosen = true
 
 [models.models.yandexgpt-lite]
 provider = "yc-openai"
@@ -18,6 +19,7 @@ context = 32768
 support_tools = false
 support_text = true
 support_images = false
+can_be_choosen = true
 
 [models.models."yc/gpt-oss-120b"]
 provider = "yc-openai"
@@ -28,6 +30,7 @@ context = 128000
 support_tools = true
 support_text = true
 support_images = false
+can_be_choosen = true
 
 [models.models."yc/llama"]
 provider = "yc-openai"
@@ -48,6 +51,7 @@ context = 256000
 support_tools = true
 support_text = true
 support_images = false
+can_be_choosen = true
 
 [models.models."yc/gemma-3-27b-it"]
 provider = "yc-openai"

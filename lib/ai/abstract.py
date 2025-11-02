@@ -178,6 +178,7 @@ class AbstractModel(ABC):
             "support_tools": self._config.get("support_tools", False),
             "support_text": self._config.get("support_text", True),
             "support_images": self._config.get("support_images", False),
+            "extra": self._config.copy(),
         }
 
     def __str__(self) -> str:

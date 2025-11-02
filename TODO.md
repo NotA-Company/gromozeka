@@ -5,7 +5,7 @@
 - [ ] Add cache for isAdmin (with short TTL like 10 minutes)
 - [ ] Add extended command decorator (to ensure message, chec is admin and so on + delete called command if needed)
 - [ ] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
-- [ ] Bug: /configure get wrong default (from default, not chat-type specific defaults)
+- [x] Bug: /configure get wrong default (from default, not chat-type specific defaults)
 - [x] Add different defaults for Private and Group chats
 - [x] Add support of reading and saving all messages from chat
 - [x] Add plugins support (not plugins, but extensible handlers support)
