@@ -8,8 +8,8 @@ import asyncio
 
 import httpx
 
-from .recorder import GoldenDataRecorder
-from .replayer import GoldenDataReplayer
+from ..recorder import GoldenDataRecorder
+from ..replayer import GoldenDataReplayer
 
 
 async def makeTestCalls(client: httpx.AsyncClient):
