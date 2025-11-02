@@ -1,0 +1,100 @@
+[
+  {
+    "call": {
+      "date": "2025-11-01T23:58:41.979822+00:00",
+      "method": "getCoordinates",
+      "params": {
+        "city": "São Paulo",
+        "countryCode": "BR"
+      }
+    },
+    "request": {
+      "params": {
+        "appid": "REDACTED_API_KEY",
+        "limit": "1",
+        "q": "São Paulo,BR"
+      },
+      "url": "http://api.openweathermap.org/geo/1.0/direct"
+    },
+    "response": {
+      "json": [
+        {
+          "country": "BR",
+          "lat": -23.5506507,
+          "local_names": {
+            "ab": "Сан-Паулу",
+            "am": "ሳው ፓውሉ",
+            "ar": "ساو باولو",
+            "ay": "San Pauluw",
+            "az": "San Paulo",
+            "ba": "Сан-Паулу",
+            "be": "Сан-Паўлу",
+            "bg": "Сао Пауло",
+            "bn": "সাঁউ পাউলু",
+            "ce": "Сан-Паулу",
+            "cv": "Сан-Паулу",
+            "de": "São Paulo",
+            "dv": "ސައޮ ޕައުލޯ",
+            "el": "Σάο Πάολο",
+            "en": "São Paulo",
+            "eo": "San-Paŭlo",
+            "es": "San Pablo",
+            "fa": "سائوپائولو",
+            "fr": "São Paulo",
+            "gl": "San Paulo",
+            "he": "סאו פאולו",
+            "hi": "साओ पाउलो",
+            "hy": "Սան Պաուլո",
+            "io": "Sao Paulo",
+            "it": "San Paolo",
+            "ja": "サンパウロ",
+            "ka": "სან-პაულუ",
+            "kk": "Сан-Паулу",
+            "kn": "ಸಾವೊ ಪೌಲೊ",
+            "ko": "상파울루",
+            "kv": "Сан-Паулу",
+            "la": "Paulopolis",
+            "lt": "San Paulas",
+            "lv": "Sanpaulu",
+            "mk": "Сао Паоло",
+            "ml": "സാവോ പോളോ",
+            "mn": "Сан-Паулу",
+            "mr": "साओ पाउलो",
+            "ne": "साओ पाउलो",
+            "nl": "São Paulo",
+            "no": "São Paulo",
+            "oc": "São Paulo",
+            "os": "Сан-Паулу",
+            "pa": "ਸਾਓ ਪਾਓਲੋ",
+            "pl": "São Paulo",
+            "pt": "São Paulo",
+            "ru": "Сан-Паулу",
+            "sa": "साओ पाओलो",
+            "sh": "Sao Paulo",
+            "sr": "Сао Пауло",
+            "sv": "São Paulo",
+            "ta": "சாவோ பாவுலோ",
+            "tg": "Сан-Паулу",
+            "th": "เซาเปาลู",
+            "tk": "San-Paulu",
+            "tr": "Сан Паулу",
+            "tt": "Сан-Паулу",
+            "ug": "San Pawlo",
+            "uk": "Сан-Паулу",
+            "ur": "ساؤ پالو",
+            "uz": "San-Paulu",
+            "wa": "Sawo Pålo",
+            "yi": "סאו פאולא",
+            "yo": "Sao Paulo",
+            "zh": "聖保羅"
+          },
+          "lon": -46.6333824,
+          "name": "São Paulo",
+          "state": "São Paulo"
+        }
+      ],
+      "raw": "[{\"name\":\"São Paulo\",\"local_names\":{\"wa\":\"Sawo Pålo\",\"bg\":\"Сао Пауло\",\"pl\":\"São Paulo\",\"hy\":\"Սան Պաուլո\",\"ab\":\"Сан-Паулу\",\"ja\":\"サンパウロ\",\"io\":\"Sao Paulo\",\"tg\":\"Сан-Паулу\",\"pa\":\"ਸਾਓ ਪਾਓਲੋ\",\"nl\":\"São Paulo\",\"hi\":\"साओ पाउलो\",\"yo\":\"Sao Paulo\",\"sr\":\"Сао Пауло\",\"ka\":\"სან-პაულუ\",\"th\":\"เซาเปาลู\",\"sv\":\"São Paulo\",\"kn\":\"ಸಾವೊ ಪೌಲೊ\",\"fr\":\"São Paulo\",\"no\":\"São Paulo\",\"de\":\"São Paulo\",\"he\":\"סאו פאולו\",\"kv\":\"Сан-Паулу\",\"fa\":\"سائوپائولو\",\"mk\":\"Сао Паоло\",\"ml\":\"സാവോ പോളോ\",\"la\":\"Paulopolis\",\"zh\":\"聖保羅\",\"ur\":\"ساؤ پالو\",\"mn\":\"Сан-Паулу\",\"gl\":\"San Paulo\",\"sa\":\"साओ पाओलो\",\"az\":\"San Paulo\",\"cv\":\"Сан-Паулу\",\"ru\":\"Сан-Паулу\",\"en\":\"São Paulo\",\"tt\":\"Сан-Паулу\",\"it\":\"San Paolo\",\"pt\":\"São Paulo\",\"ar\":\"ساو باولو\",\"lv\":\"Sanpaulu\",\"lt\":\"San Paulas\",\"ce\":\"Сан-Паулу\",\"bn\":\"সাঁউ পাউলু\",\"ba\":\"Сан-Паулу\",\"tr\":\"Сан Паулу\",\"be\":\"Сан-Паўлу\",\"tk\":\"San-Paulu\",\"ne\":\"साओ पाउलो\",\"mr\":\"साओ पाउलो\",\"uk\":\"Сан-Паулу\",\"eo\":\"San-Paŭlo\",\"kk\":\"Сан-Паулу\",\"ko\":\"상파울루\",\"ay\":\"San Pauluw\",\"ta\":\"சாவோ பாவுலோ\",\"es\":\"San Pablo\",\"sh\":\"Sao Paulo\",\"os\":\"Сан-Паулу\",\"oc\":\"São Paulo\",\"ug\":\"San Pawlo\",\"uz\":\"San-Paulu\",\"el\":\"Σάο Πάολο\",\"dv\":\"ސައޮ ޕައުލޯ\",\"yi\":\"סאו פאולא\",\"am\":\"ሳው ፓውሉ\"},\"lat\":-23.5506507,\"lon\":-46.6333824,\"country\":\"BR\",\"state\":\"São Paulo\"}]",
+      "status_code": 200
+    }
+  }
+]

@@ -297,5 +297,6 @@ def load_dotenv(path: str = ".env", populateEnv: bool = True) -> Dict[str, str]:
 
     if populateEnv:
         for k, v in ret.items():
-            os.putenv(k, v)
+            # os.putenv(k, v)
+            os.environ[k] = v
     return ret
