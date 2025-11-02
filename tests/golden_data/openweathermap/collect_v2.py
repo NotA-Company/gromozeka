@@ -18,10 +18,9 @@ from typing import Any, Dict, List
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-
-from lib import utils
-from lib.aurumentation.collector import sanitizeFilename, substituteEnvVars
-from lib.aurumentation.recorder import GoldenDataRecorder
+from lib import utils  # noqa: E402
+from lib.aurumentation.collector import sanitizeFilename, substituteEnvVars  # noqa: E402
+from lib.aurumentation.recorder import GoldenDataRecorder  # noqa: E402
 
 
 async def collectGoldenData(scenarios: List[Dict[str, Any]], outputDir: Path, secrets: List[str]) -> None:

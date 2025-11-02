@@ -5,13 +5,11 @@ with a simple httpx client making recordings to httpbin.org.
 """
 
 import asyncio
-from datetime import datetime
 
 import httpx
 
 from .recorder import GoldenDataRecorder
 from .replayer import GoldenDataReplayer
-from .types import CollectorInput
 
 
 async def makeTestCalls(client: httpx.AsyncClient):
@@ -51,57 +49,33 @@ async def testRecording():
         try:
             # Make test recordings
             await makeTestCalls(client)
+
+            # Get recorded recordings
+            recordings = recorder.getRecordedRecordings()
+            print(f"Recorded {len(recordings)} recordings")
+
+            # Create scenario
+            scenario = recorder.createScenario(
+                description="Test HTTP recordings to httpbin.org",
+                module="test_infrastructure",
+                className="test_recording",
+                method="makeTestCalls",
+                kwargs={},
+            )
+
+            print(f"Created scenario with {len(scenario['recordings'])} recordings")
+            print(f"Scenario created at: {scenario['createdAt']}")
+
+            return scenario
         finally:
             await client.aclose()
-
-        # Get recorded recordings
-        recordings = recorder.getRecordedRecordings()
-        print(f"Recorded {len(recordings)} recordings")
-
-        # Create scenario
-        scenario = recorder.createScenario(
-            description="Test HTTP recordings to httpbin.org",
-            module="test_infrastructure",
-            className="test_recording",
-            method="makeTestCalls",
-            kwargs={},
-        )
-
-        print(f"Created scenario with {len(scenario.recordings)} recordings")
-        print(f"Scenario created at: {scenario.createdAt}")
-
-        return scenario
-
-    try:
-        # Make test recordings
-        await makeTestCalls(client)
-
-        # Get recorded recordings
-        recordings = recorder.getRecordedRecordings()
-        print(f"Recorded {len(recordings)} recordings")
-
-        # Create scenario
-        input_data = CollectorInput(description="Test HTTP recordings to httpbin.org", kwargs={"test": True})
-
-        scenario = recorder.createScenario(
-            description="Test HTTP recordings to httpbin.org",
-            function_name="make_test_recordings",
-            kwargs={"test": True},
-        )
-
-        print(f"Created scenario with {len(scenario.recordings)} recordings")
-        print(f"Scenario created at: {scenario.created_at}")
-
-        return scenario
-    finally:
-        await client.aclose()
 
 
 async def test_replaying(scenario):
     """Test the replaying functionality.
 
     Args:
-        scenario: GoldenDataScenario to replay
+        scenario: GoldenDataScenarioDict to replay
     """
     print("\n=== Testing Replaying ===")
 

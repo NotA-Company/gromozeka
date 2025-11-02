@@ -4,12 +4,12 @@ This module implements custom httpx transports that can intercept HTTP
 recordings for recording or replay previously recorded recordings.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import httpx
 
-from .types import HttpCall, HttpRequest, HttpResponse
+from .types import HttpCallDict, HttpRequestDict, HttpResponseDict
 
 
 class RecordingTransport(httpx.AsyncHTTPTransport):
@@ -30,7 +30,7 @@ class RecordingTransport(httpx.AsyncHTTPTransport):
         """
         super().__init__(*args, **kwargs)
         self.wrapped = wrapped or httpx.AsyncHTTPTransport(*args, **kwargs)
-        self.recordings: List[HttpCall] = []
+        self.recordings: List[HttpCallDict] = []
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         """Intercept, record, and forward an HTTP request.
@@ -45,13 +45,13 @@ class RecordingTransport(httpx.AsyncHTTPTransport):
         print(f"Recording HTTP call: {request.method} {request.url}")
 
         # Capture request details
-        request_data = HttpRequest(
-            method=request.method,
-            url=str(request.url),
-            headers=dict(request.headers),
-            params=dict(request.url.params),
-            body=request.content.decode() if request.content else None,
-        )
+        request_data: HttpRequestDict = {
+            "method": request.method,
+            "url": str(request.url),
+            "headers": dict(request.headers),
+            "params": dict(request.url.params),
+            "body": request.content.decode() if request.content else None,
+        }
 
         # Make actual HTTP call
         response = await self.wrapped.handle_async_request(request)
@@ -61,14 +61,18 @@ class RecordingTransport(httpx.AsyncHTTPTransport):
             await response.aread()
 
         # Capture response details
-        response_data = HttpResponse(
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            content=response.content.decode() if response.content else "",
-        )
+        response_data: HttpResponseDict = {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "content": response.content.decode() if response.content else "",
+        }
 
         # Store recording with timestamp
-        call = HttpCall(request=request_data, response=response_data, timestamp=datetime.utcnow())
+        call: HttpCallDict = {
+            "request": request_data,
+            "response": response_data,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
         self.recordings.append(call)
         print(f"RecordingTransport: Recorded call to {request.url}, now have {len(self.recordings)} recordings")
 
@@ -78,16 +82,16 @@ class RecordingTransport(httpx.AsyncHTTPTransport):
 class ReplayTransport(httpx.AsyncHTTPTransport):
     """Custom httpx transport that replays recorded HTTP traffic.
 
-    This transport takes a list of recorded HttpCall objects and matches
+    This transport takes a list of recorded HttpCallDict objects and matches
     incoming requests to recorded recordings, returning recorded responses
     without making real HTTP recordings.
     """
 
-    def __init__(self, recordings: List[HttpCall], *args, **kwargs):
+    def __init__(self, recordings: List[HttpCallDict], *args, **kwargs):
         """Initialize the replay transport.
 
         Args:
-            recordings: List of recorded HttpCall objects to replay.
+            recordings: List of recorded HttpCallDict objects to replay.
             *args: Additional arguments passed to the parent class.
             **kwargs: Additional keyword arguments passed to the parent class.
         """
@@ -111,16 +115,22 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
         method = request.method
         url = str(request.url)
         params = dict(request.url.params)
+        body = request.content.decode() if request.content else None
 
         # Find matching call
         for call in self.recordings:
-            # Match by method and URL
-            if call.request.method == method and call.request.url == url:
+            # Match by method, URL, params, and body
+            if (
+                call["request"]["method"] == method
+                and call["request"]["url"] == url
+                and call["request"].get("params") == params
+                and call["request"].get("body") == body
+            ):
                 # Create response from recorded data
                 response = httpx.Response(
-                    status_code=call.response.status_code,
-                    headers=call.response.headers,
-                    content=call.response.content.encode() if call.response.content else b"",
+                    status_code=call["response"]["status_code"],
+                    headers=call["response"]["headers"],
+                    content=call["response"]["content"].encode() if call["response"]["content"] else b"",
                 )
                 return response
 

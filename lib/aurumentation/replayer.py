@@ -9,7 +9,7 @@ from typing import List, Optional
 import httpx
 
 from .transports import ReplayTransport
-from .types import GoldenDataScenario
+from .types import GoldenDataScenarioDict
 
 
 class GoldenDataReplayer:
@@ -19,11 +19,11 @@ class GoldenDataReplayer:
     with ReplayTransport, using recorded recordings from a scenario.
     """
 
-    def __init__(self, scenario: GoldenDataScenario):
+    def __init__(self, scenario: GoldenDataScenarioDict):
         """Initialize the replayer with a scenario.
 
         Args:
-            scenario: GoldenDataScenario containing recorded recordings to replay
+            scenario: GoldenDataScenarioDict containing recorded recordings to replay
         """
         self.scenario = scenario
         self.transport: Optional[ReplayTransport] = None
@@ -36,7 +36,7 @@ class GoldenDataReplayer:
             An httpx.AsyncClient configured with ReplayTransport
         """
         # Create replay transport with scenario recordings
-        self.transport = ReplayTransport(recordings=self.scenario.recordings)
+        self.transport = ReplayTransport(recordings=self.scenario["recordings"])
 
         # Create client with replay transport
         return httpx.AsyncClient(transport=self.transport)
