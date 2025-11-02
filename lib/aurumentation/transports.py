@@ -151,6 +151,31 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
         # Otherwise do exact match
         return recorded_params_copy == request_params
 
+    def _bodyMatch(self, recorded_body: Optional[str], request_body: Optional[str]) -> bool:
+        """Check if two request bodies match, handling masked values.
+        
+        Args:
+            recorded_body: Body from the recorded data (may have masked values)
+            request_body: Body from the current request
+            
+        Returns:
+            True if the bodies match, False otherwise
+        """
+        # If either body is None, they must both be None to match
+        if recorded_body is None or request_body is None:
+            return recorded_body == request_body
+            
+        # If the recorded body doesn't have masked values, do exact match
+        if "***MASKED***" not in recorded_body:
+            return recorded_body == request_body
+            
+        # If the recorded body has masked values, do pattern matching
+        # Replace the masked values with a regex pattern
+        pattern = re.escape(recorded_body).replace(r"\*\*\*MASKED\*\*\*", r"[^&]*")
+        
+        # Match the pattern against the request body
+        return bool(re.match(pattern, request_body))
+
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         """Return a recorded response for a matching request.
 
@@ -176,7 +201,7 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
                 call["request"]["method"] == method
                 and self._urlsMatch(call["request"]["url"], url)
                 and self._paramsMatch(call["request"].get("params", {}), params)
-                and call["request"].get("body") == body
+                and self._bodyMatch(call["request"].get("body"), body)
             ):
                 # Create response from recorded data
                 response = httpx.Response(

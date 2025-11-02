@@ -1,0 +1,58 @@
+[
+  {
+    "description": "Simple query in English",
+    "module": "lib.yandex_search.client",
+    "class": "YandexSearchClient",
+    "init_kwargs": {
+      "apiKey": "${YANDEX_SEARCH_API_KEY}",
+      "folderId": "${YANDEX_SEARCH_FOLDER_ID}",
+      "cache": null
+    },
+    "method": "search",
+    "kwargs": {
+      "queryText": "python programming"
+    }
+  },
+  {
+    "description": "Query in Russian (Cyrillic)",
+    "module": "lib.yandex_search.client",
+    "class": "YandexSearchClient",
+    "init_kwargs": {
+      "apiKey": "${YANDEX_SEARCH_API_KEY}",
+      "folderId": "${YANDEX_SEARCH_FOLDER_ID}",
+      "cache": null
+    },
+    "method": "search",
+    "kwargs": {
+      "queryText": "программирование на Python"
+    }
+  },
+  {
+    "description": "Query with numbers",
+    "module": "lib.yandex_search.client",
+    "class": "YandexSearchClient",
+    "init_kwargs": {
+      "apiKey": "${YANDEX_SEARCH_API_KEY}",
+      "folderId": "${YANDEX_SEARCH_FOLDER_ID}",
+      "cache": null
+    },
+    "method": "search",
+    "kwargs": {
+      "queryText": "python 3.9 tutorial"
+    }
+  },
+  {
+    "description": "Query with special characters",
+    "module": "lib.yandex_search.client",
+    "class": "YandexSearchClient",
+    "init_kwargs": {
+      "apiKey": "${YANDEX_SEARCH_API_KEY}",
+      "folderId": "${YANDEX_SEARCH_FOLDER_ID}",
+      "cache": null
+    },
+    "method": "search",
+    "kwargs": {
+      "queryText": "python programming & \"machine learning\""
+    }
+  }
+]

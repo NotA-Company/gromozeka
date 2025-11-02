@@ -169,7 +169,7 @@ class GoldenDataRecorder:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(golden_data, f, indent=2, default=str)
+            json.dump(golden_data, f, indent=2, default=str, ensure_ascii=False)
 
     def _substituteEnvVars(self, value: str) -> str:
         """Substitute environment variables in a string.
