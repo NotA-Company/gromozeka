@@ -33,9 +33,8 @@ from ..models import (
     DelayedTask,
     DelayedTaskFunction,
     EnsuredMessage,
-    commandHandler,
 )
-from .base import BaseBotHandler
+from .base import BaseBotHandler, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -225,14 +224,17 @@ class CommonHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("start",),
         shortDescription="Start bot interaction",
         helpMessage=": Начать работу с ботом.",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.FIRST,
+        suggestCategories={CommandCategory.PRIVATE},
+        availableFor={CommandCategory.PRIVATE},
+        helpOrder=CommandHandlerOrder.FIRST,
     )
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def start_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle the /start command to welcome new users, dood!
 
@@ -251,29 +253,27 @@ class CommonHandler(BaseBotHandler):
             Only works in private chats (enforced by CommandCategory.PRIVATE).
             Logs user interaction for monitoring purposes.
         """
-        user = update.effective_user
-        if not user or not update.message:
-            logger.error("User or message undefined")
-            return
-
-        welcome_message = (
-            f"Привет! {user.first_name}! 👋\n\n"
+        sender = ensuredMessage.sender
+        await self.sendMessage(
+            ensuredMessage,
+            f"Привет! {sender.name}! 👋\n\n"
             "Я Громозека: лучший бот для Телеграма, что когда либо был, есть или будет.\n\n"
-            "Что бы узнать, что я умею, можешь отправить команду /help"
+            "Что бы узнать, что я умею, можешь отправить команду /help",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
+        logger.info(f"User {sender} started the bot")
 
-        await update.message.reply_text(welcome_message)
-        logger.info(f"User {user.id} ({user.username}) started the bot")
-
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("remind",),
         shortDescription="<delay> [<message>] - Remind me after given delay with message or replied message/quote",
         helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через указанное время "
         "(можно использовать цитирование или ответ на сообщение).",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandCategory.PRIVATE},
+        helpOrder=CommandHandlerOrder.NORMAL,
     )
-    async def remind_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def remind_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle the /remind command to schedule reminder messages, dood!
 
@@ -301,19 +301,6 @@ class CommonHandler(BaseBotHandler):
             Saves the command message to database for tracking.
             Sends confirmation message with scheduled time in UTC.
         """
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
 
         delaySecs: int = 0
         try:
@@ -366,14 +353,17 @@ class CommonHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("list_chats",),
         shortDescription="[all] - List chats, where bot seen you",
         helpMessage=": Вывести список чатов, где бот вас видел.",
-        categories={CommandCategory.PRIVATE},
-        order=CommandHandlerOrder.TECHNICAL,
+        suggestCategories={CommandCategory.PRIVATE},
+        availableFor={CommandCategory.PRIVATE},
+        helpOrder=CommandHandlerOrder.TECHNICAL,
     )
-    async def list_chats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def list_chats_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle the /list_chats command to display known chats, dood!
 
@@ -394,26 +384,7 @@ class CommonHandler(BaseBotHandler):
             The 'all' parameter requires admin privileges.
             Chat information includes ID, title/username, and type.
         """
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
         listAll = context.args and context.args[0].strip().lower() == "all"
-
-        chatType = ensuredMessage.chat.type
-        if chatType != Chat.PRIVATE:
-            logger.error(f"Unsupported chat type for /list_chats command: {chatType}")
-            return
 
         if listAll:
             listAll = await self.isAdmin(ensuredMessage.user, None, True)
@@ -425,9 +396,13 @@ class CommonHandler(BaseBotHandler):
         for chat in knownChats:
             chatTitle: str = f"#{chat['chat_id']}"
             if chat["title"]:
-                chatTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
+                chatTitle = chat["title"]
             elif chat["username"]:
-                chatTitle = f"{constants.PRIVATE_ICON} {chat['username']} ({chat["type"]})"
-            resp += f"* ID: #`{chat['chat_id']}`, Name: `{chatTitle}`\n"
+                chatTitle = chat["username"]
+            if chat["type"] == Chat.PRIVATE:
+                chatTitle = f"{constants.PRIVATE_ICON} **{chatTitle}**"
+            else:
+                chatTitle = f"{constants.CHAT_ICON} **{chatTitle}**"
+            resp += f"* #`{chat['chat_id']}`, {chatTitle} ({chat["type"]})\n"
 
         await self.sendMessage(ensuredMessage, resp, messageCategory=MessageCategory.BOT_COMMAND_REPLY)
