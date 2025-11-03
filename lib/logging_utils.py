@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 def getLogLevelByStr(levelStr: str, default: Optional[int] = None) -> Optional[int]:
     """Get log level by string."""
+    if not levelStr:
+        return default
     try:
         return getattr(logging, levelStr.upper())
     except AttributeError:
@@ -58,7 +60,7 @@ def configureLogger(localLogger: logging.Logger, config: Dict[str, Any]) -> None
     if "file" in config:
         fileLogs["file"] = {
             "file": config["file"],
-            "level": config.get("file-level", None),
+            "level": config.get("file-level", ""),
         }
     if "error-file" in config:
         fileLogs["error-file"] = {
