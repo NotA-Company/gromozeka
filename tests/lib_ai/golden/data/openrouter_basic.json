@@ -1,0 +1,83 @@
+{
+  "metadata": {
+    "name": "openrouter_basic",
+    "description": "Basic text generation with OpenRouter provider",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "OpenrouterModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelArgs": {
+        "model_id": "mistralai/mistral-7b-instruct",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 32768
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Hello, how are you?"
+          }
+        }
+      ]
+    },
+    "result_type": "ModelRunResult"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headers": {
+          "host": "openrouter.ai",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.6.1",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.6.1",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "http-referer": "https://sourcecraft.dev/notacompany/gromozeka",
+          "x-title": "Gromozeka AI Bot",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "120"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Hello, how are you?\",\"role\":\"user\"}],\"model\":\"mistralai/mistral-7b-instruct\",\"temperature\":0.7}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Mon, 03 Nov 2025 11:46:23 GMT",
+          "content-type": "application/json",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "content-encoding": "gzip",
+          "access-control-allow-origin": "*",
+          "vary": "Accept-Encoding",
+          "permissions-policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+          "referrer-policy": "no-referrer, strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "server": "cloudflare",
+          "cf-ray": "998ba17d4d4b9704-AMS"
+        },
+        "content": "{\"id\":\"gen-1762170383-RT019CsGxSxWhQEqzFxS\",\"provider\":\"DeepInfra\",\"model\":\"mistralai/mistral-7b-instruct\",\"object\":\"chat.completion\",\"created\":1762170383,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\" \",\"refusal\":null,\"reasoning\":null}}],\"usage\":{\"prompt_tokens\":19,\"completion_tokens\":3,\"total_tokens\":22,\"prompt_tokens_details\":null}}"
+      },
+      "timestamp": "2025-11-03T11:46:23.154383+00:00"
+    }
+  ]
+}

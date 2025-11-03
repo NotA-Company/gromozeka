@@ -1,0 +1,95 @@
+[
+  {
+    "name": "yc_openai_basic",
+    "description": "Basic text generation with YC OpenAI provider",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "YcOpenaiModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${YC_API_KEY}",
+        "folder_id": "${YC_FOLDER_ID}"
+      },
+      "modelArgs": {
+        "model_id": "yandexgpt",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 8192
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Hello, how are you?"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "yc_openai_with_folder",
+    "description": "YC OpenAI with specific folder ID",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "YcOpenaiModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${YC_API_KEY}",
+        "folder_id": "${YC_FOLDER_ID}"
+      },
+      "modelArgs": {
+        "model_id": "yandexgpt-lite",
+        "model_version": "latest",
+        "temperature": 0.5,
+        "context_size": 4096
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "What is the weather like today?"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "yc_openai_streaming",
+    "description": "Streaming response from YC OpenAI",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "YcOpenaiModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${YC_API_KEY}",
+        "folder_id": "${YC_FOLDER_ID}"
+      },
+      "modelArgs": {
+        "model_id": "yandexgpt",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 8192
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Tell me a story about a brave knight."
+          }
+        }
+      ]
+    }
+  }
+]
