@@ -122,9 +122,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         await self._handle_chat_configuration(
             data={
-                ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
-                ButtonDataKey.ChatId: activeConfigureId["chatId"],
-                ButtonDataKey.Key: ChatSettingsKey(activeConfigureId["key"]).getId(),
+                **activeConfigureId["data"],
                 ButtonDataKey.Value: messageText,
             },
             message=activeConfigureId["message"],
@@ -132,7 +130,443 @@ class ConfigureCommandHandler(BaseBotHandler):
         )
         return HandlerResultStatus.FINAL
 
-    async def _handle_chat_configuration(self, data: Dict[str | int, Any], message: Message, user: User) -> bool:
+    async def chatConfiguration_Init(
+        self, data: Dict[str | int, Any], message: Message, user: User, chatId: Optional[int]
+    ) -> None:
+        """Draw list on configurable chats"""
+        if chatId is not None:
+            raise RuntimeError("Init: chatId should be None in Init action")
+
+        exitButton = InlineKeyboardButton(
+            "Закончить настройку",
+            callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+        )
+        userChats = self.db.getUserChats(user.id)
+        keyboard: List[List[InlineKeyboardButton]] = []
+        isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
+
+        for chat in userChats:
+            chatObj = Chat(
+                id=chat["chat_id"],
+                type=chat["type"],
+                title=chat["title"],
+                username=chat["username"],
+                is_forum=chat["is_forum"],
+            )
+            chatObj.set_bot(message.get_bot())
+
+            targetChatSettings = self.getChatSettings(chat["chat_id"])
+            # Show chat only if:
+            # User is Bot Owner (so can do anything)
+            # Or chat settings can be changed AND user is Admin in chat
+            if isBotOwner or (
+                targetChatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
+                and await self.isAdmin(user=user, chat=chatObj)
+            ):
+                buttonTitle: str = f"#{chat['chat_id']}"
+                if chat["title"]:
+                    buttonTitle = f"{chat['title']}"
+                elif chat["username"]:
+                    buttonTitle = f"{chat['username']}"
+                if chat["type"] == Chat.PRIVATE:
+                    buttonTitle = f"{constants.PRIVATE_ICON} {buttonTitle}"
+                else:
+                    # TODO: Different icons for other types?
+                    buttonTitle = f"{constants.CHAT_ICON} {buttonTitle}"
+                buttonTitle += f" ({chat["type"]})"
+
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            buttonTitle,
+                            callback_data=utils.packDict(
+                                {
+                                    ButtonDataKey.ChatId: chat["chat_id"],
+                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                                }
+                            ),
+                        )
+                    ]
+                )
+
+        if not keyboard:
+            await message.edit_text("Вы не являетесь администратором ни в одном чате.")
+            return
+
+        keyboard.append([exitButton])
+        await message.edit_text(text="Выберите чат для настройки:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def chatConfiguration_ConfigureChat(
+        self, data: Dict[str | int, Any], message: Message, user: User, chatId: Optional[int]
+    ) -> None:
+        if chatId is None:
+            logger.error(f"ConfigureChat: chatId is None in {data}")
+            await message.edit_text("Ошибка: Чат не выбран")
+            return
+
+        if not isinstance(chatId, int):
+            logger.error(f"ConfigureChat: wrong chatId: {type(chatId).__name__}#{chatId}")
+            await message.edit_text("Ошибка: некорректный идентификатор чата")
+            return
+
+        page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
+
+        chatInfo = self.getChatInfo(chatId)
+        if chatInfo is None:
+            logger.error(f"ConfigureChat: chatInfo is None in {chatId}")
+            await message.edit_text("Ошибка: Выбран неизвестный чат")
+            return
+
+        logger.debug(f"ConfigureChat: chatInfo: {chatInfo}")
+        resp = (
+            f"Настраиваем чат **{chatInfo['title'] or chatInfo['username']}#{chatId}**:\n"
+            "\n"
+            f"**{page.getName()}**\n"
+            "\n"
+        )
+        chatSettings = self.getChatSettings(chatId)
+        defaultChatSettings = self.getChatSettings(None, chatType=ChatType(chatInfo["type"]))
+
+        chatOptions = {k: v for k, v in getChatSettingsInfo().items() if v["page"] == page}
+        keyboard: List[List[InlineKeyboardButton]] = []
+
+        for key, option in chatOptions.items():
+            wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
+            resp += (
+                "\n\n\n"
+                f"## **{option['short']}** (`{key}`):\n"
+                # f" {option['long']}\n"
+                f" Тип: **{option['type']}**\n"
+                f" Изменено: **{'Да' if wasChanged else 'Нет'}**\n"
+                # f" Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
+                # f" Значение по умолчанию:\n```\n{defaultChatSettings[key].toStr()}\n```\n"
+            )
+            keyTitle = option["short"]
+            if wasChanged:
+                keyTitle += " (*)"
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        keyTitle,
+                        callback_data=utils.packDict(
+                            {
+                                ButtonDataKey.ChatId: chatId,
+                                ButtonDataKey.Key: key.getId(),
+                                ButtonDataKey.ConfigureAction: "sk",
+                            }
+                        ),
+                    )
+                ]
+            )
+
+        for pageElem in ChatSettingsPage:
+            if pageElem == page:
+                continue
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        f"📂 {pageElem.getName()}",
+                        callback_data=utils.packDict(
+                            {
+                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                                ButtonDataKey.ChatId: chatId,
+                                ButtonDataKey.Page: pageElem.value,
+                            }
+                        ),
+                    )
+                ]
+            )
+
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "<< Назад",
+                    callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init}),
+                )
+            ]
+        )
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "Закончить настройку",
+                    callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+                )
+            ]
+        )
+
+        respMD = markdown_to_markdownv2(resp)
+        # logger.debug(resp)
+        # logger.debug(respMD)
+        try:
+            await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception as e:
+            logger.exception(e)
+            await message.edit_text(text=f"Error while editing message: {e}")
+            return
+
+    async def chatConfiguration_ConfigureKey(
+        self, data: Dict[str | int, Any], message: Message, user: User, chatId: Optional[int]
+    ) -> None:
+        keyId = data.get(ButtonDataKey.Key, None)
+
+        if chatId is None or keyId is None:
+            logger.error(f"ConfigureKey: chatId or key is None in {data}")
+            await message.edit_text("Ошибка: Чат или настройка не выбрана.")
+            return
+
+        chatInfo = self.getChatInfo(chatId)
+        if chatInfo is None:
+            logger.error(f"ConfigureKey: chatInfo is None in {chatId}")
+            await message.edit_text("Ошибка: Выбран неизвестный чат.")
+            return
+
+        chatSettings = self.getChatSettings(chatId)
+        defaultChatSettings = self.getChatSettings(None, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP)
+
+        chatOptions = getChatSettingsInfo()
+
+        try:
+            key = ChatSettingsKey.fromId(keyId)
+        except ValueError:
+            logger.error(f"ConfigureKey: wrong key: {keyId}")
+            await message.edit_text("Ошибка: Неизвестная настройка.")
+            return
+
+        if key not in chatOptions:
+            logger.error(f"ConfigureKey: wrong key: {key}")
+            await message.edit_text("Ошибка: Неверная настройка.")
+            return
+
+        self.cache.setUserState(
+            userId=user.id,
+            stateKey=UserActiveActionEnum.Configuration,
+            value={
+                "data": {
+                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
+                    ButtonDataKey.ChatId: chatId,
+                    ButtonDataKey.Key: keyId,
+                },
+                "message": message,
+            },
+        )
+
+        keyboard: List[List[InlineKeyboardButton]] = []
+        wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
+
+        resp = (
+            f"Настройка параметра **{chatOptions[key]['short']}** (`{key}`) в чате "
+            f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}):\n\n"
+            f"Описание: \n{chatOptions[key]['long']}\n\n"
+            f"Тип: **{chatOptions[key]['type']}**\n"
+            f"Был ли изменён: **{'Да' if wasChanged else 'Нет'}**\n"
+            f"Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
+            f"Значение по умолчанию:\n```\n{defaultChatSettings[key].toStr()}\n```\n\n"
+        )
+        if chatOptions[key]["type"] in [ChatSettingsType.MODEL, ChatSettingsType.BOOL]:
+            resp += "Нажмите нужную кнопку под сообщением"
+        else:
+            resp += "Введите новое значение или нажмите нужную кнопку под сообщением"
+
+        if chatOptions[key]["type"] == ChatSettingsType.BOOL:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        "Включить (True)",
+                        callback_data=utils.packDict(
+                            {
+                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetTrue,
+                                ButtonDataKey.ChatId: chatId,
+                                ButtonDataKey.Key: keyId,
+                            }
+                        ),
+                    )
+                ]
+            )
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        "Выключить (False)",
+                        callback_data=utils.packDict(
+                            {
+                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetFalse,
+                                ButtonDataKey.ChatId: chatId,
+                                ButtonDataKey.Key: keyId,
+                            }
+                        ),
+                    )
+                ]
+            )
+        elif chatOptions[key]["type"] == ChatSettingsType.MODEL:
+            for modelIdx, modelName in enumerate(self.selectableModels):
+                buttonText = modelName
+                if modelName == chatSettings[key].toStr():
+                    buttonText += " (*)"
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            buttonText,
+                            callback_data=utils.packDict(
+                                {
+                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
+                                    ButtonDataKey.ChatId: chatId,
+                                    ButtonDataKey.Key: keyId,
+                                    ButtonDataKey.Value: modelIdx,
+                                }
+                            ),
+                        )
+                    ]
+                )
+
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "Сбросить в значение по умолчанию",
+                    callback_data=utils.packDict(
+                        {
+                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ResetValue,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Key: keyId,
+                        }
+                    ),
+                )
+            ]
+        )
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "<< Назад",
+                    callback_data=utils.packDict(
+                        {
+                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Page: chatOptions[key]["page"],
+                        }
+                    ),
+                )
+            ]
+        )
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "Закончить настройку",
+                    callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+                )
+            ]
+        )
+
+        respMD = markdown_to_markdownv2(resp)
+        # logger.debug(resp)
+        # logger.debug(respMD)
+        try:
+            await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception as e:
+            logger.exception(e)
+            await message.edit_text(text=f"Error while editing message: {e}")
+
+    async def chatConfiguration_SetValue(
+        self, data: Dict[str | int, Any], message: Message, user: User, chatId: Optional[int]
+    ) -> None:
+        keyId = data.get(ButtonDataKey.Key, None)
+        action = data.get(ButtonDataKey.ConfigureAction, None)
+
+        if chatId is None or keyId is None:
+            logger.error(f"[Re]SetValue: chatId or key is None in {data}")
+            await message.edit_text("Ошибка: Не выбран чат или настройка")
+            return
+
+        chatInfo = self.getChatInfo(chatId)
+        if chatInfo is None:
+            logger.error(f"[Re]SetValue: chatInfo is None for {chatId}")
+            await message.edit_text("Ошибка: Выбран неизвестный чат")
+            return
+
+        chatOptions = getChatSettingsInfo()
+
+        try:
+            key = ChatSettingsKey.fromId(keyId)
+        except ValueError:
+            logger.error(f"[Re]SetValue: wrong key: {keyId}")
+            await message.edit_text("Ошибка: Выбрана несуществующая настройка")
+            return
+
+        if key not in chatOptions:
+            logger.error(f"[Re]SetValue: wrong key: {key}")
+            await message.edit_text("Ошибка: Ввбрана некорректная настройка")
+            return
+
+        keyboard: List[List[InlineKeyboardButton]] = []
+
+        resp = ""
+
+        if action == ButtonConfigureAction.SetTrue:
+            self.setChatSetting(chatId, key, ChatSettingsValue(True))
+        elif action == ButtonConfigureAction.SetFalse:
+            self.setChatSetting(chatId, key, ChatSettingsValue(False))
+        elif action == ButtonConfigureAction.ResetValue:
+            self.unsetChatSetting(chatId, key)
+        elif action == ButtonConfigureAction.SetValue:
+            value = data.get(ButtonDataKey.Value, None)
+            chatSettings = self.getChatSettings(chatId)
+            currentValue = chatSettings[key].toStr()
+            if chatOptions[key]["type"] == ChatSettingsType.MODEL:
+                # Validate And get ModelName bu index from selectable models list
+                if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
+                    value = int(value)
+                    if value < 0 or value > len(self.selectableModels) - 1:
+                        value = currentValue
+                    else:
+                        value = self.selectableModels[value]
+                else:
+                    value = currentValue
+            # TODO: Validate other ChatSettingsType as well
+
+            self.setChatSetting(chatId, key, ChatSettingsValue(value))
+        else:
+            logger.error(f"[Re]SetValue: wrong action: {action}")
+            raise RuntimeError(f"[Re]SetValue: wrong action: {action}")
+
+        chatSettings = self.getChatSettings(chatId)
+
+        resp = (
+            f"Параметр **{chatOptions[key]['short']}** (`{key}`) в чате "
+            f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}) успешно изменён.\n\n"
+            f"Новое значение:\n```\n{chatSettings[key].toStr()}\n```\n"
+        )
+
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "<< К настройкам чата",
+                    callback_data=utils.packDict(
+                        {
+                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Page: chatOptions[key]["page"],
+                        }
+                    ),
+                )
+            ]
+        )
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "Закончить настройку",
+                    callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+                )
+            ]
+        )
+
+        respMD = markdown_to_markdownv2(resp)
+        # logger.debug(resp)
+        # logger.debug(respMD)
+        try:
+            await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception as e:
+            logger.exception(e)
+            await message.edit_text(text=f"Error while editing message: {e}")
+            return
+
+    async def _handle_chat_configuration(self, data: Dict[str | int, Any], message: Message, user: User) -> None:
         """
         Process chat configuration actions and update the interface, dood!
 
@@ -169,24 +603,17 @@ class ConfigureCommandHandler(BaseBotHandler):
         userId = user.id
         self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
 
-        exitButton = InlineKeyboardButton(
-            "Закончить настройку",
-            callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
-        )
-
         action = data.get(ButtonDataKey.ConfigureAction, None)
-        # if "k" in data:
-        #    action = "set_key"
 
         isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
         chatId = data.get(ButtonDataKey.ChatId, None)
         if chatId is not None:
             # User configuring some chat, check permissions
-            _chatObj = Chat(
+            chatObj = Chat(
                 id=chatId,
                 type=Chat.PRIVATE if chatId > 0 else Chat.GROUP,
             )
-            _chatObj.set_bot(message.get_bot())
+            chatObj.set_bot(message.get_bot())
 
             targetChatSettings = self.getChatSettings(chatId)
             # Allow to configure only if:
@@ -194,317 +621,22 @@ class ConfigureCommandHandler(BaseBotHandler):
             # Or chat settings can be changed AND user is Admin in chat
             canChangeSettings = isBotOwner or (
                 targetChatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
-                and await self.isAdmin(user=user, chat=_chatObj)
+                and await self.isAdmin(user=user, chat=chatObj)
             )
             if not canChangeSettings:
                 logger.error(f"handle_chat_configuration: user#{user.id} is not allowed to configure {chatId}")
                 await message.edit_text(text="Вы не можете настраивать выбранный чат")
-                return False
+                return
 
         match action:
             case ButtonConfigureAction.Init:
-                userChats = self.db.getUserChats(user.id)
-                keyboard: List[List[InlineKeyboardButton]] = []
-                # chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-
-                for chat in userChats:
-                    chatObj = Chat(
-                        id=chat["chat_id"],
-                        type=chat["type"],
-                        title=chat["title"],
-                        username=chat["username"],
-                        is_forum=chat["is_forum"],
-                    )
-                    chatObj.set_bot(message.get_bot())
-
-                    targetChatSettings = self.getChatSettings(chat["chat_id"])
-                    # Show chat only if:
-                    # User is Bot Owner (so can do anything)
-                    # Or chat settings can be changed AND user is Admin in chat
-                    if isBotOwner or (
-                        targetChatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
-                        and await self.isAdmin(user=user, chat=chatObj)
-                    ):
-                        buttonTitle: str = f"#{chat['chat_id']}"
-                        if chat["title"]:
-                            buttonTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
-                        elif chat["username"]:
-                            buttonTitle = f"{constants.PRIVATE_ICON} {chat['username']} ({chat["type"]})"
-
-                        keyboard.append(
-                            [
-                                InlineKeyboardButton(
-                                    buttonTitle,
-                                    callback_data=utils.packDict(
-                                        {
-                                            ButtonDataKey.ChatId: chat["chat_id"],
-                                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-                                        }
-                                    ),
-                                )
-                            ]
-                        )
-
-                if not keyboard:
-                    await message.edit_text("Вы не являетесь администратором ни в одном чате.")
-                    return False
-
-                keyboard.append([exitButton])
-                await message.edit_text(text="Выберите чат для настройки:", reply_markup=InlineKeyboardMarkup(keyboard))
+                await self.chatConfiguration_Init(data=data, message=message, user=user, chatId=chatId)
 
             case ButtonConfigureAction.ConfigureChat:
-                if chatId is None:
-                    logger.error(f"handle_chat_configuration: chatId is None in {data}")
-                    return False
-
-                if not isinstance(chatId, int):
-                    logger.error(f"handle_chat_configuration: wrong chatId: {type(chatId).__name__}#{chatId}")
-                    return False
-
-                page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
-
-                chatInfo = self.getChatInfo(chatId)
-                if chatInfo is None:
-                    logger.error(f"handle_chat_configuration: chatInfo is None in {chatId}")
-                    return False
-
-                logger.debug(f"handle_chat_configuration: chatInfo: {chatInfo}")
-                resp = f"Настраиваем чат **{chatInfo['title'] or chatInfo['username']}#{chatId}**:\n"
-                chatSettings = self.getChatSettings(chatId)
-                defaultChatSettings = self.getChatSettings(
-                    None, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
-                )
-
-                chatOptions = {k: v for k, v in getChatSettingsInfo().items() if v["page"] == page}
-                keyboard: List[List[InlineKeyboardButton]] = []
-
-                for key, option in chatOptions.items():
-                    wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
-                    resp += (
-                        "\n\n\n"
-                        f"## **{option['short']}** (`{key}`):\n"
-                        # f" {option['long']}\n"
-                        f" Тип: **{option['type']}**\n"
-                        f" Изменено: **{'Да' if wasChanged else 'Нет'}**\n"
-                        # f" Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
-                        # f" Значение по умолчанию:\n```\n{defaultChatSettings[key].toStr()}\n```\n"
-                    )
-                    keyTitle = option["short"]
-                    if wasChanged:
-                        keyTitle += " (*)"
-                    keyboard.append(
-                        [
-                            InlineKeyboardButton(
-                                keyTitle,
-                                callback_data=utils.packDict(
-                                    {
-                                        ButtonDataKey.ChatId: chatId,
-                                        ButtonDataKey.Key: key.getId(),
-                                        ButtonDataKey.ConfigureAction: "sk",
-                                    }
-                                ),
-                            )
-                        ]
-                    )
-
-                for pageElem in ChatSettingsPage:
-                    if pageElem == page:
-                        continue
-
-                    buttonText = f"{pageElem.value}: {pageElem.name}"
-                    match pageElem:
-                        case ChatSettingsPage.STANDART:
-                            buttonText = "Стандартные настройки"
-                        case ChatSettingsPage.EXTENDED:
-                            buttonText = "Расширенные настройки"
-
-                    buttonText = f"📂 {buttonText}"
-
-                    keyboard.append(
-                        [
-                            InlineKeyboardButton(
-                                buttonText,
-                                callback_data=utils.packDict(
-                                    {
-                                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-                                        ButtonDataKey.ChatId: chatId,
-                                        ButtonDataKey.Page: pageElem.value,
-                                    }
-                                ),
-                            )
-                        ]
-                    )
-
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            "<< Назад",
-                            callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init}),
-                        )
-                    ]
-                )
-                keyboard.append([exitButton])
-
-                respMD = markdown_to_markdownv2(resp)
-                # logger.debug(resp)
-                # logger.debug(respMD)
-                try:
-                    await message.edit_text(
-                        text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
-                except Exception as e:
-                    logger.exception(e)
-                    await message.edit_text(text=f"Error while editing message: {e}")
-                    return False
+                await self.chatConfiguration_ConfigureChat(data=data, message=message, user=user, chatId=chatId)
 
             case ButtonConfigureAction.ConfigureKey:
-                _key = data.get(ButtonDataKey.Key, None)
-
-                if chatId is None or _key is None:
-                    logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
-                    return False
-
-                chatInfo = self.getChatInfo(chatId)
-                if chatInfo is None:
-                    logger.error(f"handle_chat_configuration: chatInfo is None in {chatId}")
-                    return False
-
-                chatSettings = self.getChatSettings(chatId)
-                defaultChatSettings = self.getChatSettings(
-                    None, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
-                )
-
-                chatOptions = getChatSettingsInfo()
-
-                try:
-                    key = ChatSettingsKey.fromId(_key)
-                except ValueError:
-                    logger.error(f"handle_chat_configuration: wrong key: {_key}")
-                    return False
-
-                if key not in chatOptions:
-                    logger.error(f"handle_chat_configuration: wrong key: {key}")
-                    await message.edit_text(text=f"Unknown key: {key}")
-                    return False
-
-                self.cache.setUserState(
-                    userId=userId,
-                    stateKey=UserActiveActionEnum.Configuration,
-                    value={
-                        "chatId": chatId,
-                        "key": key,
-                        "message": message,
-                    },
-                )
-
-                keyboard: List[List[InlineKeyboardButton]] = []
-                wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
-
-                resp = (
-                    f"Настройка параметра **{chatOptions[key]['short']}** (`{key}`) в чате "
-                    f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}):\n\n"
-                    f"Описание: \n{chatOptions[key]['long']}\n\n"
-                    f"Тип: **{chatOptions[key]['type']}**\n"
-                    f"Был ли изменён: **{'Да' if wasChanged else 'Нет'}**\n"
-                    f"Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
-                    f"Значение по умолчанию:\n```\n{defaultChatSettings[key].toStr()}\n```\n\n"
-                )
-                if chatOptions[key]["type"] not in [ChatSettingsType.MODEL, ChatSettingsType.BOOL]:
-                    resp += "Введите новое значение или нажмите нужную кнопку под сообщением"
-                else:
-                    resp += "Нажмите нужную кнопку под сообщением"
-
-                if chatOptions[key]["type"] == ChatSettingsType.BOOL:
-                    keyboard.append(
-                        [
-                            InlineKeyboardButton(
-                                "Включить (True)",
-                                callback_data=utils.packDict(
-                                    {
-                                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetTrue,
-                                        ButtonDataKey.ChatId: chatId,
-                                        ButtonDataKey.Key: _key,
-                                    }
-                                ),
-                            )
-                        ]
-                    )
-                    keyboard.append(
-                        [
-                            InlineKeyboardButton(
-                                "Выключить (False)",
-                                callback_data=utils.packDict(
-                                    {
-                                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetFalse,
-                                        ButtonDataKey.ChatId: chatId,
-                                        ButtonDataKey.Key: _key,
-                                    }
-                                ),
-                            )
-                        ]
-                    )
-                elif chatOptions[key]["type"] == ChatSettingsType.MODEL:
-                    for modelIdx, modelName in enumerate(self.selectableModels):
-                        buttonText = modelName
-                        if modelName == chatSettings[key].toStr():
-                            buttonText += " (*)"
-                        keyboard.append(
-                            [
-                                InlineKeyboardButton(
-                                    buttonText,
-                                    callback_data=utils.packDict(
-                                        {
-                                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
-                                            ButtonDataKey.ChatId: chatId,
-                                            ButtonDataKey.Key: _key,
-                                            ButtonDataKey.Value: modelIdx,
-                                        }
-                                    ),
-                                )
-                            ]
-                        )
-
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            "Сбросить в значение по умолчанию",
-                            callback_data=utils.packDict(
-                                {
-                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.ResetValue,
-                                    ButtonDataKey.ChatId: chatId,
-                                    ButtonDataKey.Key: _key,
-                                }
-                            ),
-                        )
-                    ]
-                )
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            "<< Назад",
-                            callback_data=utils.packDict(
-                                {
-                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-                                    ButtonDataKey.ChatId: chatId,
-                                    ButtonDataKey.Page: chatOptions[key]["page"],
-                                }
-                            ),
-                        )
-                    ]
-                )
-                keyboard.append([exitButton])
-
-                respMD = markdown_to_markdownv2(resp)
-                # logger.debug(resp)
-                # logger.debug(respMD)
-                try:
-                    await message.edit_text(
-                        text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
-                except Exception as e:
-                    logger.exception(e)
-                    await message.edit_text(text=f"Error while editing message: {e}")
-                    return False
+                await self.chatConfiguration_ConfigureKey(data=data, message=message, user=user, chatId=chatId)
 
             case (
                 ButtonConfigureAction.SetTrue
@@ -512,103 +644,16 @@ class ConfigureCommandHandler(BaseBotHandler):
                 | ButtonConfigureAction.ResetValue
                 | ButtonConfigureAction.SetValue
             ):
-                _key = data.get(ButtonDataKey.Key, None)
-
-                if chatId is None or _key is None:
-                    logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
-                    return False
-
-                chatInfo = self.getChatInfo(chatId)
-                if chatInfo is None:
-                    logger.error(f"handle_chat_configuration: chatInfo is None for {chatId}")
-                    return False
-                chatOptions = getChatSettingsInfo()
-
-                try:
-                    key = ChatSettingsKey.fromId(_key)
-                except ValueError:
-                    logger.error(f"handle_chat_configuration: wrong key: {_key}")
-                    return False
-
-                if key not in chatOptions:
-                    logger.error(f"handle_chat_configuration: wrong key: {key}")
-                    await message.edit_text(text=f"Unknown key: {key}")
-                    return False
-
-                keyboard: List[List[InlineKeyboardButton]] = []
-
-                resp = ""
-
-                if action == ButtonConfigureAction.SetTrue:
-                    self.setChatSetting(chatId, key, ChatSettingsValue(True))
-                elif action == ButtonConfigureAction.SetFalse:
-                    self.setChatSetting(chatId, key, ChatSettingsValue(False))
-                elif action == ButtonConfigureAction.ResetValue:
-                    self.unsetChatSetting(chatId, key)
-                elif action == ButtonConfigureAction.SetValue:
-                    value = data.get(ButtonDataKey.Value, None)
-                    chatSettings = self.getChatSettings(chatId)
-                    currentValue = chatSettings[key].toStr()
-                    if chatOptions[key]["type"] == ChatSettingsType.MODEL:
-                        # Validate And get ModelName bu index from selectable models list
-                        if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
-                            value = int(value)
-                            if value < 0 or value > len(self.selectableModels) - 1:
-                                value = currentValue
-                            else:
-                                value = self.selectableModels[value]
-                        else:
-                            value = currentValue
-
-                    self.setChatSetting(chatId, key, ChatSettingsValue(value))
-                else:
-                    logger.error(f"handle_chat_configuration: wrong action: {action}")
-                    raise RuntimeError(f"handle_chat_configuration: wrong action: {action}")
-
-                chatSettings = self.getChatSettings(chatId)
-
-                resp = (
-                    f"Параметр **{chatOptions[key]['short']}** (`{key}`) в чате "
-                    f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}) успешно изменён.\n\n"
-                    f"Новое значение:\n```\n{chatSettings[key].toStr()}\n```\n"
-                )
-
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            "<< К настройкам чата",
-                            callback_data=utils.packDict(
-                                {
-                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-                                    ButtonDataKey.ChatId: chatId,
-                                    ButtonDataKey.Page: chatOptions[key]["page"],
-                                }
-                            ),
-                        )
-                    ]
-                )
-                keyboard.append([exitButton])
-
-                respMD = markdown_to_markdownv2(resp)
-                # logger.debug(resp)
-                # logger.debug(respMD)
-                try:
-                    await message.edit_text(
-                        text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
-                except Exception as e:
-                    logger.exception(e)
-                    await message.edit_text(text=f"Error while editing message: {e}")
-                    return False
+                await self.chatConfiguration_SetValue(data=data, message=message, user=user, chatId=chatId)
 
             case ButtonConfigureAction.Cancel:
                 await message.edit_text(text="Настройка закончена, буду ждать вас снова")
             case _:
                 logger.error(f"handle_chat_configuration: unknown action: {data}")
                 await message.edit_text(text=f"Unknown action: {action}")
-                return False
+                return
 
-        return True
+        return
 
     @commandHandler(
         commands=("configure",),
