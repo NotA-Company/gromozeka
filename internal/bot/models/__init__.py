@@ -6,7 +6,7 @@ Bot Models: Export all models
 from ...models import MessageType
 
 # Chat Settings (already exists)
-from .chat_settings import ChatSettingsKey, ChatSettingsType, ChatSettingsValue, getChatSettingsInfo
+from .chat_settings import ChatSettingsKey, ChatSettingsPage, ChatSettingsType, ChatSettingsValue, getChatSettingsInfo
 
 # Command Handlers
 from .command_handlers import (
@@ -64,6 +64,7 @@ __all__ = [
     "ChatSettingsType",
     "ChatSettingsValue",
     "getChatSettingsInfo",
+    "ChatSettingsPage",
     # Ensured Message
     "EnsuredMessage",
     "MentionCheckResult",

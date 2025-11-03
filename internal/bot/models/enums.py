@@ -19,7 +19,8 @@ class ButtonDataKey(StrEnum):
     ChatId = "c"
     TopicId = "t"
     MaxMessages = "m"
-    Prompt = "p"
+    Prompt = "prompt"
+    Page = "p"
 
     Key = "k"
     Value = "v"
