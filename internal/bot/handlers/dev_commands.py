@@ -523,7 +523,10 @@ class DevCommandsHandler(BaseBotHandler):
                 for ns in CacheNamespace:
                     await self.sendMessage(
                         ensuredMessage,
-                        messageText=f"`{ns}`: \n```json\n{utils.jsonDumps(self.cache._caches[ns], indent=2)}\n```\n",
+                        messageText=f"**{ns}**: \n"
+                        f"```json\n{utils.jsonDumps(self.cache._caches[ns], indent=2)}\n```\n\n"
+                        "Dirty keys: \n"
+                        f"```\n{self.cache.dirtyKeys[ns]}\n```\n",
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     )
                     await asyncio.sleep(0.5)
