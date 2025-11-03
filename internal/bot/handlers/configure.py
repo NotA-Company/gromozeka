@@ -36,8 +36,8 @@ from ..models import (
     ChatSettingsPage,
     ChatSettingsType,
     ChatSettingsValue,
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     commandHandler,
     getChatSettingsInfo,
@@ -659,7 +659,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         commands=("configure",),
         shortDescription="Start chat configuration wizard",
         helpMessage=": Настроить поведение бота в одном из чатов, где вы админ",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def configure_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

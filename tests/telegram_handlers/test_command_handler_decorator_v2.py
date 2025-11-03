@@ -9,7 +9,7 @@ import sys
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from internal.bot.models import CommandCategory, CommandHandlerMixin, commandHandler  # noqa: E402
+from internal.bot.models import CommandHandlerMixin, CommandPermission, commandHandler  # noqa: E402
 
 
 class _TestHandlers(CommandHandlerMixin):
@@ -23,7 +23,7 @@ class _TestHandlers(CommandHandlerMixin):
         commands=("test1",),
         shortDescription="Test command 1",
         helpMessage=": Test help 1",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
     )
     async def test1_handler(self, update, context):
         """Test handler 1"""
@@ -33,7 +33,7 @@ class _TestHandlers(CommandHandlerMixin):
         commands=("test2", "test2_alias"),
         shortDescription="Test command 2",
         helpMessage=": Test help 2",
-        categories={CommandCategory.PRIVATE, CommandCategory.GROUP},
+        categories={CommandPermission.PRIVATE, CommandPermission.GROUP},
     )
     async def test2_handler(self, update, context):
         """Test handler 2"""

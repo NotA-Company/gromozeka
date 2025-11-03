@@ -28,8 +28,8 @@ from lib.ai import LLMManager
 
 from .. import constants
 from ..models import (
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     DelayedTask,
     DelayedTaskFunction,
     EnsuredMessage,
@@ -228,8 +228,8 @@ class CommonHandler(BaseBotHandler):
         commands=("start",),
         shortDescription="Start bot interaction",
         helpMessage=": Начать работу с ботом.",
-        suggestCategories={CommandCategory.PRIVATE},
-        availableFor={CommandCategory.PRIVATE},
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.FIRST,
     )
     async def start_command(
@@ -268,7 +268,7 @@ class CommonHandler(BaseBotHandler):
         shortDescription="<delay> [<message>] - Remind me after given delay with message or replied message/quote",
         helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через указанное время "
         "(можно использовать цитирование или ответ на сообщение).",
-        suggestCategories={CommandCategory.PRIVATE},
+        suggestCategories={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.NORMAL,
     )
     async def remind_command(
@@ -357,8 +357,8 @@ class CommonHandler(BaseBotHandler):
         commands=("list_chats",),
         shortDescription="[all] - List chats, where bot seen you",
         helpMessage=": Вывести список чатов, где бот вас видел.",
-        suggestCategories={CommandCategory.PRIVATE},
-        availableFor={CommandCategory.PRIVATE},
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.TECHNICAL,
     )
     async def list_chats_command(

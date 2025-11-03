@@ -36,8 +36,8 @@ from lib.ai import (
 from .. import constants
 from ..models import (
     ChatSettingsKey,
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     MessageType,
     commandHandler,
@@ -305,7 +305,7 @@ class MediaHandler(BaseBotHandler):
         shortDescription="<prompt> - Analyse answered media with given prompt",
         helpMessage=" `<prompt>`: Проанализировать медиа используя указанный промпт "
         "(на данный момент доступен только анализ картинок и статических стикеров).",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def analyze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -474,7 +474,7 @@ class MediaHandler(BaseBotHandler):
         shortDescription="[<prompt>] - Draw image with given prompt " "(use qoute or replied message as prompt if any)",
         helpMessage=" `[<prompt>]`: Сгенерировать изображение, используя указанный промпт. "
         "Так же может быть ответом на сообщение или цитированием.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def draw_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

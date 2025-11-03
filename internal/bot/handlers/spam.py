@@ -41,8 +41,8 @@ from ..models import (
     ButtonDataKey,
     CallbackDataDict,
     ChatSettingsKey,
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     DelayedTaskFunction,
     EnsuredMessage,
     commandHandler,
@@ -913,7 +913,7 @@ class SpamHandler(BaseBotHandler):
         commands=("test_spam",),
         shortDescription="<Test suite> [<args>] - Run some spam-related tests",
         helpMessage=" `<test_name>` `[<test_args>]`: Запустить тест (используется для тестирования).",
-        categories={CommandCategory.BOT_OWNER, CommandCategory.HIDDEN},
+        categories={CommandPermission.BOT_OWNER, CommandPermission.HIDDEN},
         order=CommandHandlerOrder.TEST,
     )
     async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -992,7 +992,7 @@ class SpamHandler(BaseBotHandler):
         commands=("spam",),
         shortDescription="Mark answered message as spam",
         helpMessage=": Указать боту на сообщение со спамом (должно быть ответом на спам-сообщение).",
-        categories={CommandCategory.ADMIN},
+        categories={CommandPermission.ADMIN},
         order=CommandHandlerOrder.SPAM,
     )
     async def spam_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1067,7 +1067,7 @@ class SpamHandler(BaseBotHandler):
         commands=("pretrain_bayes",),
         shortDescription="[<chatId>] - initially train bayes filter with up to 1000 last messages",
         helpMessage=" `[<chatId>]`: Предобучить Баесовский антиспам фильтр на последних 1000 сообщениях.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.SPAM,
     )
     async def pretrain_bayes_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1147,7 +1147,7 @@ class SpamHandler(BaseBotHandler):
         commands=("learn_spam", "learn_ham"),
         shortDescription="[<chatId>] - learn answered message (or quote) as spam/ham for given chat",
         helpMessage=" `[<chatId>]`: Обучить баесовский фильтр на указанным сообщении (или цитате) как спам/не-спам.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.SPAM,
     )
     async def learn_spam_ham_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1271,7 +1271,7 @@ class SpamHandler(BaseBotHandler):
         commands=("get_spam_score",),
         shortDescription="[<chatId>] - Analyze answered (or qoted) message for spam and print result",
         helpMessage=" `[<chatId>]`: Выдать результат проверки указанного сообщения (или цитаты) на спам.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.SPAM,
     )
     async def get_spam_score_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1363,7 +1363,7 @@ class SpamHandler(BaseBotHandler):
         shortDescription="[<username>] - Unban user from current chat",
         helpMessage="[@<username>]: Разбанить пользователя в данном чате. "
         "Так же может быть ответом на сообщение забаненного пользователя.",
-        categories={CommandCategory.ADMIN},
+        categories={CommandPermission.ADMIN},
         order=CommandHandlerOrder.SPAM,
     )
     async def unban_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

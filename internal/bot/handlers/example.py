@@ -23,8 +23,8 @@ from lib.ai import LLMFunctionParameter, LLMManager, LLMParameterType
 
 from ..models import (
     CallbackDataDict,
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     DelayedTaskFunction,
     EnsuredMessage,
     commandHandler,
@@ -173,7 +173,7 @@ class ExampleHandler(BaseBotHandler):
         commands=("example",),
         shortDescription="- example command",
         helpMessage=" Пример команды.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.TEST,
     )
     async def example_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

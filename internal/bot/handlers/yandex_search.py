@@ -46,8 +46,8 @@ from lib.yandex_search import YandexSearchClient
 
 from ..models import (
     ChatSettingsKey,
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     commandHandler,
 )
@@ -268,7 +268,7 @@ class YandexSearchHandler(BaseBotHandler):
         commands=("web_search",),
         shortDescription="<query> - Search Web for given query using Yandex",
         helpMessage=" `<query>`: Поискать в интернете используя Yandex Search API",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def web_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

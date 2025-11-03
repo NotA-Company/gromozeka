@@ -19,7 +19,7 @@ from telegram.ext import (
     filters,
 )
 
-from internal.bot.models import CommandCategory
+from internal.bot.models import CommandPermission
 from internal.services.queue_service.service import QueueService
 from lib.ai.manager import LLMManager
 
@@ -152,7 +152,7 @@ class BotApplication:
         sortedHandlers = sorted(self.handlerManager.getCommandHandlers(), key=lambda h: (h.order, h.commands[0]))
 
         for commandInfo in sortedHandlers:
-            if CommandCategory.HIDDEN in commandInfo.categories:
+            if CommandPermission.HIDDEN in commandInfo.categories:
                 continue
 
             botCommandList: List[telegram.BotCommand] = []
@@ -162,14 +162,14 @@ class BotApplication:
             for command in commandInfo.commands:
                 botCommandList.append(telegram.BotCommand(command, description))
 
-            if CommandCategory.DEFAULT in commandInfo.categories:
+            if CommandPermission.DEFAULT in commandInfo.categories:
                 DefaultCommands.extend(botCommandList)
                 continue
-            if CommandCategory.PRIVATE in commandInfo.categories:
+            if CommandPermission.PRIVATE in commandInfo.categories:
                 PrivateCommands.extend(botCommandList)
-            if CommandCategory.GROUP in commandInfo.categories:
+            if CommandPermission.GROUP in commandInfo.categories:
                 ChatCommands.extend(botCommandList)
-            if CommandCategory.ADMIN in commandInfo.categories:
+            if CommandPermission.ADMIN in commandInfo.categories:
                 ChatAdminCommands.extend(botCommandList)
 
         logger.debug(
