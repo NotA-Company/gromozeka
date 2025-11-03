@@ -1,4 +1,6 @@
 # Our TODO list
+- [ ] Add support for embeddings + Vector search oon chat's database
+- [ ] Add support for local LLM-providers (Like Ollama or LLama.cpp)
 - [ ] Less granular command enabling\disabling (after extended command decorator)
 - [ ] Add commands for listing topics and renaming topics in DB
 - [x] Add support json-logging of LLM responses for debug purposes (looks like it sometimes response with weird format)
