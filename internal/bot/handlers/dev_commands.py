@@ -520,15 +520,13 @@ class DevCommandsHandler(BaseBotHandler):
                 )
 
             case "dumpCache":
-                ret = ""
                 for ns in CacheNamespace:
-                    ret += f"`{ns}`: \n```json\n{utils.jsonDumps(self.cache._caches[ns], indent=2)}\n```\n"
-
-                await self.sendMessage(
-                    ensuredMessage,
-                    messageText=ret,
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                )
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=f"`{ns}`: \n```json\n{utils.jsonDumps(self.cache._caches[ns], indent=2)}\n```\n",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    )
+                    await asyncio.sleep(0.5)
 
             case "dumpEntities":
                 if message.reply_to_message is None:
