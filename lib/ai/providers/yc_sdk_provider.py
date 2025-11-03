@@ -25,7 +25,7 @@ class YcSdkModel(AbstractModel):
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        ycSDK: Any,
+        ycSDK: Any,  # Actually YCloudML, but it isn't class
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize YC SDK model, dood!"""
@@ -94,6 +94,7 @@ class YcSdkModel(AbstractModel):
             raise RuntimeError("Model not initialized, dood!")
 
         if tools:
+            # TODO: Add tools support somehow
             raise NotImplementedError("Tools not supported by YC SDK models for now, dood!")
 
         if not self.supportText:

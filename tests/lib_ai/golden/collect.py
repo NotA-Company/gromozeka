@@ -147,6 +147,10 @@ async def collectProviderData(providerName: str, outputDir: Optional[Path] = Non
     """
     if providerName not in PROVIDERS:
         raise ValueError(f"Unknown provider: {providerName}")
+    
+    if providerName == "yc_sdk":
+        logger.warning("YC SDK Recording isn't supported yet, skipping")
+        return
 
     providerInfo = PROVIDERS[providerName]
     logger.info(f"Collecting golden data for {providerInfo['description']}")
@@ -217,6 +221,7 @@ async def main():
         description="AI Providers Golden Data Collector",
         usage="""
 Collect golden data for AI providers. Set required environment variables before running.
+ATTENTION: YC SDK Models recording isn't supported yet
 
 Required environment variables:
   OPENAI_API_KEY          - For BasicOpenAIProvider
