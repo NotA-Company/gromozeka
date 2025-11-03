@@ -121,9 +121,21 @@ class GoldenDataRecorder:
 
         # Mask secrets in recordings
         masker = SecretMasker(secrets=self.secrets)
-        maskedCalls = [masker.maskHttpCall(call) for call in rawCalls]
+        processedCalls: List[HttpCallDict] = []
+        for call in rawCalls:
+            _call = masker.maskHttpCall(call)
+            headers = _call["response"]["headers"]
 
-        return maskedCalls
+            # Remove compression-related headers since we're providing uncompressed content
+            # This prevents httpx from trying to decompress content that isn't actually compressed
+            compressionHeaders = ["content-encoding", "content-length"]
+            for header in compressionHeaders:
+                headers.pop(header, None)
+            _call["response"]["headers"] = headers
+
+            processedCalls.append(_call)
+
+        return processedCalls
 
     def clearRecordedCalls(self) -> None:
         """Clear the recording buffer."""

@@ -27,6 +27,7 @@ import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from telegram.constants import ChatType
 from telegram.error import BadRequest, TelegramError
 
 from internal.bot.handlers.base import BaseBotHandler, HandlerResultStatus
@@ -244,7 +245,7 @@ class TestChatSettings:
 
     def testGetChatSettingsWithNoneChatId(self, baseHandler):
         """Test getting settings with None chatId returns only defaults, dood!"""
-        settings = baseHandler.getChatSettings(chatId=None)
+        settings = baseHandler.getChatSettings(chatId=None, chatType=ChatType.PRIVATE)
 
         assert ChatSettingsKey.CHAT_MODEL in settings
         assert settings[ChatSettingsKey.CHAT_MODEL].toStr() == "gpt-4"
