@@ -65,22 +65,21 @@
       "response": {
         "status_code": 200,
         "headers": {
-          "date": "Mon, 03 Nov 2025 12:36:32 GMT",
+          "date": "Mon, 03 Nov 2025 14:31:07 GMT",
           "content-type": "application/json",
           "transfer-encoding": "chunked",
           "connection": "keep-alive",
-          "content-encoding": "gzip",
           "access-control-allow-origin": "*",
           "vary": "Accept-Encoding",
           "permissions-policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
           "referrer-policy": "no-referrer, strict-origin-when-cross-origin",
           "x-content-type-options": "nosniff",
           "server": "cloudflare",
-          "cf-ray": "998beaf33b181348-ARN"
+          "cf-ray": "998c92cb4db83ccd-ARN"
         },
-        "content": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1762173392-c9nwMmgnmqhQoKA9MPPL\",\"provider\":\"DeepInfra\",\"model\":\"meta-llama/llama-3.2-1b-instruct\",\"object\":\"chat.completion\",\"created\":1762173392,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"I'm just a language model, so I don't have feelings or emotions like humans do, but I'm functioning properly and ready to help you with any questions or tasks you have! How about you? How's your day going so far?\",\"refusal\":null,\"reasoning\":null}}],\"usage\":{\"prompt_tokens\":16,\"completion_tokens\":50,\"total_tokens\":66,\"prompt_tokens_details\":null}}"
+        "content": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1762180266-wzvHyRNYV68zgk8xJfEg\",\"provider\":\"DeepInfra\",\"model\":\"meta-llama/llama-3.2-1b-instruct\",\"object\":\"chat.completion\",\"created\":1762180266,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"I'm just a language model, so I don't have feelings or emotions like humans do, but I'm functioning properly and ready to help you with any questions or tasks you have! How about you? How's your day going so far?\",\"refusal\":null,\"reasoning\":null}}],\"usage\":{\"prompt_tokens\":16,\"completion_tokens\":50,\"total_tokens\":66,\"prompt_tokens_details\":null}}"
       },
-      "timestamp": "2025-11-03T12:36:34.622217+00:00"
+      "timestamp": "2025-11-03T14:31:10.326241+00:00"
     }
   ]
 }

@@ -4,12 +4,18 @@ This module implements the replay coordinator that manages the
 replay process using custom httpx transports.
 """
 
-from typing import List, Optional
+import asyncio
+from collections.abc import Callable
+from typing import Awaitable, List, Optional, TypeAlias
 
 import httpx
 
 from .transports import ReplayTransport
 from .types import GoldenDataScenarioDict
+
+PatchingReplayerCallback: TypeAlias = (
+    Callable[["GoldenDataReplayer"], None] | Callable[["GoldenDataReplayer"], Awaitable[None]]
+)
 
 
 class GoldenDataReplayer:
@@ -21,16 +27,25 @@ class GoldenDataReplayer:
     Can be used as a context manager to patch httpx globally, similar to GoldenDataRecorder.
     """
 
-    def __init__(self, scenario: GoldenDataScenarioDict):
+    def __init__(
+        self,
+        scenario: GoldenDataScenarioDict,
+        aenterCallback: Optional[PatchingReplayerCallback] = None,
+        aexitCallback: Optional[PatchingReplayerCallback] = None,
+    ):
         """Initialize the replayer with a scenario.
 
         Args:
             scenario: GoldenDataScenarioDict containing recorded recordings to replay
+            aenterCallback: Optional callback to call in __aenter__
+            aexitCallback: Optional callback to call in __aexit__
         """
         self.scenario = scenario
         self.transport: Optional[ReplayTransport] = None
         self.usedRecordings: List[int] = []  # Indices of recordings that have been used
         self.originalClientClass = None
+        self.aenterCallback: Optional[PatchingReplayerCallback] = aenterCallback
+        self.aexitCallback: Optional[PatchingReplayerCallback] = aexitCallback
 
     async def __aenter__(self) -> "GoldenDataReplayer":
         """Enter the async context manager and patch httpx globally.
@@ -54,6 +69,14 @@ class GoldenDataReplayer:
                 super().__init__(*args, **kwargs)
 
         httpx.AsyncClient = PatchedAsyncClient
+
+        # Call aenterCallback if provided
+        if self.aenterCallback:
+            if asyncio.iscoroutinefunction(self.aenterCallback):
+                await self.aenterCallback(self)
+            else:
+                self.aenterCallback(self)
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -64,6 +87,13 @@ class GoldenDataReplayer:
             exc_val: Exception value if an exception occurred
             exc_tb: Exception traceback if an exception occurred
         """
+        # Call aexitCallback if provided
+        if self.aexitCallback:
+            if asyncio.iscoroutinefunction(self.aexitCallback):
+                await self.aexitCallback(self)
+            else:
+                self.aexitCallback(self)
+
         # Restore original httpx.AsyncClient
         if self.originalClientClass:
             httpx.AsyncClient = self.originalClientClass

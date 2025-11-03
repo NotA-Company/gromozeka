@@ -22,15 +22,13 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-import openai._base_client
-
 # Add project root to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from lib import utils  # noqa: E402
 from lib.aurumentation.collector import collectGoldenData  # noqa: E402
-from lib.aurumentation.recorder import GoldenDataRecorder  # noqa: E402
 from lib.aurumentation.types import ScenarioDict  # noqa: E402
+from tests.lib_ai.golden.openai_patcher import OpenAIRecorderPatcher  # noqa: E402
 
 # Directory structure
 INPUT_DIR = "input"
@@ -53,43 +51,6 @@ PROVIDER_ENV_VARS = {
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-
-class OpenAIRecorderPatcher:
-    def __init__(self):
-        self.originalOpenAIClientClass: Optional[type] = None
-        self.openaiClientClass: Optional[type] = None
-
-    async def patchOpenAI(self, recorder: GoldenDataRecorder) -> None:
-        # Also patch OpenAI's AsyncHttpxClientWrapper if it exists
-        try:
-
-            class PatchedOpenAIClient(openai._base_client.AsyncHttpxClientWrapper):
-                def __init__(self, *args, **kwargs):
-                    logger.info("Patching openai.AsyncHttpxClientWrapper...")
-                    # Force our transport to be used
-                    kwargs["transport"] = recorder.transport
-                    super().__init__(*args, **kwargs)
-
-            self.originalOpenAIClientClass = openai._base_client.AsyncHttpxClientWrapper
-            self.openaiClientClass = PatchedOpenAIClient
-            # Patch the class in the openai module
-            openai._base_client.AsyncHttpxClientWrapper = PatchedOpenAIClient
-            logger.info("HttpxRecorder: Patched openai.AsyncHttpxClientWrapper")
-        except Exception as e:
-            logger.error("HttpxRecorder: OpenAI patch failed, skipping OpenAI client patching")
-            logger.exception(e)
-            if self.originalOpenAIClientClass is not None:
-                openai._base_client.AsyncHttpxClientWrapper = self.originalOpenAIClientClass
-            self.originalOpenAIClientClass = None
-            self.openaiClientClass = None
-
-    async def unpatchOpenAI(self, recorder: GoldenDataRecorder) -> None:
-        if self.openaiClientClass is not None:
-            openai._base_client.AsyncHttpxClientWrapper = self.originalOpenAIClientClass
-            self.originalOpenAIClientClass = None
-            self.openaiClientClass = None
-            logger.info("HttpxRecorder: Unpatched openai.AsyncHttpxClientWrapper")
 
 
 def getAllSecrets() -> List[str]:
@@ -147,7 +108,7 @@ async def collectProviderData(providerName: str, outputDir: Optional[Path] = Non
     """
     if providerName not in PROVIDERS:
         raise ValueError(f"Unknown provider: {providerName}")
-    
+
     if providerName == "yc_sdk":
         logger.warning("YC SDK Recording isn't supported yet, skipping")
         return
