@@ -24,7 +24,7 @@ class OpenAIReplayerPatcher:
 
     def __init__(self):
         """Patcher for OpenAI library that enables replaying recorded HTTP traffic.
-    
+
         This class patches the OpenAI library's AsyncHttpxClientWrapper to use a
         ReplayTransport instead of making actual HTTP requests. This allows tests
         to replay previously recorded golden data scenarios without making real
