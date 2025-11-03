@@ -1,6 +1,6 @@
 [
   {
-    "name": "yc_sdk_text_generation",
+    "name": "YcSDK Text",
     "description": "Text generation with YC SDK provider",
     "module": "tests.lib_ai.model_wrappers",
     "class": "YcSdkModelWrapper",
@@ -11,10 +11,14 @@
         "yc_profile": "${YC_PROFILE}"
       },
       "modelArgs": {
-        "model_id": "yandexgpt",
-        "model_version": "latest",
-        "temperature": 0.7,
-        "context_size": 8192
+        "model_id": "yandexgpt-lite",
+        "model_version": "rc",
+        "temperature": 0.5,
+        "context_size": 32768,
+        "support_tools": false,
+        "support_text": true,
+        "support_images": false,
+        "can_be_choosen": true
       }
     },
     "kwargs": {
@@ -31,7 +35,7 @@
     }
   },
   {
-    "name": "yc_sdk_image_generation",
+    "name": "ycSDK Image",
     "description": "Image generation with YC SDK provider",
     "module": "tests.lib_ai.model_wrappers",
     "class": "YcSdkModelWrapper",
@@ -44,8 +48,11 @@
       "modelArgs": {
         "model_id": "yandex-art",
         "model_version": "latest",
-        "temperature": 0.7,
-        "context_size": 4096
+        "temperature": 1,
+        "context_size": 32768,
+        "support_tools": false,
+        "support_text": false,
+        "support_images": true
       }
     },
     "kwargs": {
@@ -56,37 +63,6 @@
           "init_kwargs": {
             "role": "user",
             "content": "Create an image of a beautiful sunset."
-          }
-        }
-      ]
-    }
-  },
-  {
-    "name": "yc_sdk_text_with_folder",
-    "description": "YC SDK text generation with specific folder",
-    "module": "tests.lib_ai.model_wrappers",
-    "class": "YcSdkModelWrapper",
-    "method": "generateText",
-    "init_kwargs": {
-      "providerConfig": {
-        "api_key": "${YC_API_KEY}",
-        "folder_id": "${YC_FOLDER_ID}"
-      },
-      "modelArgs": {
-        "model_id": "yandexgpt-lite",
-        "model_version": "latest",
-        "temperature": 0.5,
-        "context_size": 4096
-      }
-    },
-    "kwargs": {
-      "messages": [
-        {
-          "module": "lib.ai.models",
-          "class": "ModelMessage",
-          "init_kwargs": {
-            "role": "user",
-            "content": "What is the weather like today?"
           }
         }
       ]
