@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "name": "yc_openai_basic",
+    "name": "YCOpenAI Basic",
     "description": "Basic text generation with YC OpenAI provider",
     "module": "tests.lib_ai.model_wrappers",
     "class": "YcOpenaiModelWrapper",
@@ -63,15 +63,15 @@
         "headers": {
           "content-type": "application/json",
           "x-client-request-id": "",
-          "x-request-id": "c34175e8-4eb3-42d2-b0e9-4141321cf674",
-          "date": "Mon, 03 Nov 2025 11:46:14 GMT",
+          "x-request-id": "bb7563e1-3910-456a-8d15-f9707ed0005a",
+          "date": "Mon, 03 Nov 2025 12:18:40 GMT",
           "content-length": "357",
           "x-server-trace-id": "***MASKED***",
           "server": "ycalb"
         },
-        "content": "{\"id\":\"41e86d94-79e8-461d-90fc-1032eef03acc\",\"object\":\"chat.completion\",\"created\":1762170374,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How about you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15}}\n"
+        "content": "{\"id\":\"59275194-686a-478c-b195-4f6089263238\",\"object\":\"chat.completion\",\"created\":1762172320,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How about you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15}}\n"
       },
-      "timestamp": "2025-11-03T11:46:14.663037+00:00"
+      "timestamp": "2025-11-03T12:18:40.152130+00:00"
     }
   ]
 }
