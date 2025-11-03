@@ -11,11 +11,11 @@ import importlib
 import json
 import os
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Optional
 
 from lib import utils
 
-from .recorder import GoldenDataRecorder
+from .recorder import GoldenDataRecorder, PatchingRecorderCallback
 from .types import ScenarioDict
 
 
@@ -39,17 +39,17 @@ def substituteEnvVars(value: Any, loadDotenv: bool = True) -> Any:
         # Check if this is a nested module/class definition
         if "module" in value and "class" in value:
             # This is a module/class definition, instantiate it
-            module_path = value["module"]
-            class_name = value["class"]
-            init_kwargs = value.get("init_kwargs", {})
+            modulePath = value["module"]
+            className = value["class"]
+            initKwargs = value.get("init_kwargs", {})
 
             # Recursively substitute env vars in init_kwargs
-            substituted_init_kwargs = {k: substituteEnvVars(v, False) for k, v in init_kwargs.items()}
+            substitutedInitKwargs = substituteEnvVars(initKwargs)
 
             # Import and instantiate the class
-            module = importlib.import_module(module_path)
-            cls = getattr(module, class_name)
-            return cls(**substituted_init_kwargs)
+            module = importlib.import_module(modulePath)
+            cls = getattr(module, className)
+            return cls(**substitutedInitKwargs)
         else:
             # Regular dict, recursively process
             return {k: substituteEnvVars(v, False) for k, v in value.items()}
@@ -70,14 +70,20 @@ def sanitizeFilename(text: str) -> str:
     return safe[:100].strip("_ ")
 
 
-async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secrets: List[str]) -> None:
+async def collectGoldenData(
+    scenarios: List[ScenarioDict],
+    outputDir: Path,
+    secrets: List[str],
+    aenterCallback: Optional[PatchingRecorderCallback] = None,
+    aexitCallback: Optional[PatchingRecorderCallback] = None,
+) -> None:
     """
     Collect golden data for multiple scenarios using global httpx patching.
 
     Args:
         scenarios: List of test scenarios to execute
         outputDir: Directory to save golden data
-        secrets: List of secret values to mask
+        secrets: List of secret values to mask also possible to pass environment variable names with secret
     """
     outputDir.mkdir(parents=True, exist_ok=True)
 
@@ -95,22 +101,36 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
             description = scenario["description"]
             scenarioName = scenario.get("name", description)
 
-            # Substitute environment variables in init_kwargs
-            substitutedInitKwargs = {k: substituteEnvVars(v) for k, v in initKwargs.items()}
+            _secrets: List[str] = []
+            for secret in secrets:
+                envSecret = os.getenv(secret, None)
+                if envSecret:
+                    _secrets.append(envSecret)
+                else:
+                    _secrets.append(secret)
 
-            # Import and instantiate class
-            module = importlib.import_module(modulePath)
-            cls = getattr(module, className)
-            instance = cls(**substitutedInitKwargs)
+            # Substitute environment variables in init_kwargs
+            substitutedInitKwargs = substituteEnvVars(initKwargs)
+            substitutedKwargs = substituteEnvVars(kwargs)
 
             # Record HTTP traffic using global patching
-            async with GoldenDataRecorder(secrets=secrets) as recorder:
+            async with GoldenDataRecorder(
+                secrets=_secrets,
+                aenterCallback=aenterCallback,
+                aexitCallback=aexitCallback,
+            ) as recorder:
+
+                # Import and instantiate class
+                module = importlib.import_module(modulePath)
+                cls = getattr(module, className)
+                instance = cls(**substitutedInitKwargs)
+
                 # Call the method - httpx is patched globally, so all recordings are recorded
                 method = getattr(instance, methodName)
                 if asyncio.iscoroutinefunction(method):
-                    result = await method(**kwargs)
+                    result = await method(**substitutedKwargs)
                 else:
-                    result = method(**kwargs)
+                    result = method(**substitutedKwargs)
 
                 # Generate filename from description
                 filename = sanitizeFilename(scenarioName) + ".json"
@@ -130,7 +150,7 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
                         "class": className,
                         "method": methodName,
                         "init_kwargs": initKwargs,  # Store original (with ${VAR} placeholders)
-                        "kwargs": kwargs,
+                        "kwargs": kwargs,  # Store original (with ${VAR} placeholders)
                         "result_type": type(result).__name__,
                     },
                 )

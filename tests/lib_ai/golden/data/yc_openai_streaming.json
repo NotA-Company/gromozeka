@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "name": "yc_openai_streaming",
+    "description": "Streaming response from YC OpenAI",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "YcOpenaiModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${YC_API_KEY}",
+        "folder_id": "${YC_FOLDER_ID}"
+      },
+      "modelArgs": {
+        "model_id": "yandexgpt",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 8192
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Tell me a story about a brave knight."
+          }
+        }
+      ]
+    },
+    "result_type": "ModelRunResult"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://llm.api.cloud.yandex.net/v1/chat/completions",
+        "headers": {
+          "host": "llm.api.cloud.yandex.net",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.6.1",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.6.1",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "152"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Tell me a story about a brave knight.\",\"role\":\"user\"}],\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"temperature\":0.7}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "content-type": "application/json",
+          "x-client-request-id": "",
+          "x-request-id": "92c7ba37-c94f-441a-b7eb-7f69c6ce0b61",
+          "date": "Mon, 03 Nov 2025 11:46:22 GMT",
+          "x-server-trace-id": "***MASKED***",
+          "server": "ycalb",
+          "transfer-encoding": "chunked"
+        },
+        "content": "{\"id\":\"4ebd5a09-037b-4c3a-8d13-d936adc7439c\",\"object\":\"chat.completion\",\"created\":1762170382,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"In the heart of a vast and verdant kingdom, where ancient forests whispered tales of heroism and grandeur, there lived a brave knight named Sir Cedric. Clad in gleaming armor, his sword always at his side, Sir Cedric was known far and wide for his unwavering courage and chivalric virtues.\\n\\nOne fateful day, a dark shadow fell upon the kingdom. A fearsome dragon, its scales shimmering with an otherworldly glow, had emerged from the depths of the forbidden mountains. Villagers fled in terror as the dragon's fiery breath scorched the land, leaving behind a trail of destruction.\\n\\nKing Eldred summoned Sir Cedric to his royal court. \\\"Brave knight,\\\" the king declared, \\\"the fate of our kingdom rests upon your shoulders. You must slay the dragon and restore peace to our lands.\\\"\\n\\nWithout hesitation, Sir Cedric accepted the king's command. He gathered his loyal steed, gathered provisions, and set off towards the forbidden mountains. The journey was perilous, fraught with treacherous terrain and shadowy creatures that lurked in the darkness.\\n\\nAs Sir Cedric neared the dragon's lair, he could feel the heat of the beast's fiery breath upon his face. Undeterred, he readied his sword and charged into battle. The dragon roared, its massive wings casting shadows across the sky. But Sir Cedric, with a heart of steel and a spirit unbreakable, fought with all his might.\\n\\nThe clash of steel against scaled flesh echoed through the mountains. Sir Cedric's armor shimmered in the light of the dragon's flames, a testament to his unwavering resolve. With each strike of his sword, he grew closer to victory.\\n\\nFinally, with a mighty swing, Sir Cedric delivered the final blow. The dragon collapsed, its fiery breath extinguished. The land was saved, and the villagers rejoiced.\\n\\nSir Cedric returned to the kingdom a hero, his name forever etched in the annals of history. And though he faced many more challenges in his life, he always remained true to his chivalric code, a shining example of bravery and honor for all to admire.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":19,\"total_tokens\":502,\"completion_tokens\":483}}\n"
+      },
+      "timestamp": "2025-11-03T11:46:22.138446+00:00"
+    }
+  ]
+}

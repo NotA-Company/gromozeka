@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "name": "yc_openai_basic",
+    "description": "Basic text generation with YC OpenAI provider",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "YcOpenaiModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${YC_API_KEY}",
+        "folder_id": "${YC_FOLDER_ID}"
+      },
+      "modelArgs": {
+        "model_id": "yandexgpt",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 8192
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Hello, how are you?"
+          }
+        }
+      ]
+    },
+    "result_type": "ModelRunResult"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://llm.api.cloud.yandex.net/v1/chat/completions",
+        "headers": {
+          "host": "llm.api.cloud.yandex.net",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.6.1",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.6.1",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "134"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Hello, how are you?\",\"role\":\"user\"}],\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"temperature\":0.7}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "content-type": "application/json",
+          "x-client-request-id": "",
+          "x-request-id": "c34175e8-4eb3-42d2-b0e9-4141321cf674",
+          "date": "Mon, 03 Nov 2025 11:46:14 GMT",
+          "content-length": "357",
+          "x-server-trace-id": "***MASKED***",
+          "server": "ycalb"
+        },
+        "content": "{\"id\":\"41e86d94-79e8-461d-90fc-1032eef03acc\",\"object\":\"chat.completion\",\"created\":1762170374,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How about you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15}}\n"
+      },
+      "timestamp": "2025-11-03T11:46:14.663037+00:00"
+    }
+  ]
+}

@@ -24,7 +24,6 @@ from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache.types import UserActiveActionEnum
-from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager
 from lib.markdown import markdown_to_markdownv2
 
