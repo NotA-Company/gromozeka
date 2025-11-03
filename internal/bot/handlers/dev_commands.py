@@ -31,6 +31,7 @@ from .. import constants
 from ..models import (
     ChatSettingsKey,
     ChatSettingsValue,
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
@@ -68,6 +69,7 @@ class DevCommandsHandler(BaseBotHandler):
         suggestCategories={CommandPermission.PRIVATE, CommandPermission.HIDDEN},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.SECOND,
+        category=CommandCategory.TECHNICAL,
     )
     async def echo_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -114,6 +116,7 @@ class DevCommandsHandler(BaseBotHandler):
         helpMessage=": Вывести список всех известных моделей и их параметров.",
         suggestCategories={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
+        category=CommandCategory.PRIVATE,
     )
     async def models_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -197,6 +200,7 @@ class DevCommandsHandler(BaseBotHandler):
         helpMessage="[`<chatId>`]: Вывести список настроек для указанного чата",
         suggestCategories={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
+        category=CommandCategory.TECHNICAL,
     )
     async def chat_settings_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -258,6 +262,7 @@ class DevCommandsHandler(BaseBotHandler):
         helpMessage="[`<chatId>`] `<key>` `<value>`: установить/сбросить настройку чата",
         suggestCategories={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
+        category=CommandCategory.TECHNICAL,
     )
     async def set_or_unset_chat_setting_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -368,6 +373,7 @@ class DevCommandsHandler(BaseBotHandler):
         suggestCategories={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         helpOrder=CommandHandlerOrder.TEST,
+        category=CommandCategory.PRIVATE,
     )
     async def test_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -502,6 +508,7 @@ class DevCommandsHandler(BaseBotHandler):
         suggestCategories={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         helpOrder=CommandHandlerOrder.TECHNICAL,
+        category=CommandCategory.PRIVATE,
     )
     async def clear_cache_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
