@@ -17,7 +17,7 @@
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [x] Add Search support
 - [ ] Add Better geocoder
-- [ ] Add support of choosing models via configure
+- [x] Add support of choosing models via configure
 - [ ] Add Per PR tests (make lint + make test)
 - [ ] Add coverage badge?
 - [x] Add support for spam-handling

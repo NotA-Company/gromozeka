@@ -18,6 +18,15 @@ class ChatSettingsPage(IntEnum):
     STANDART = auto()
     EXTENDED = auto()
 
+    def getName(self) -> str:
+        match self:
+            case ChatSettingsPage.STANDART:
+                return "Стандартные настройки"
+            case ChatSettingsPage.EXTENDED:
+                return "Расширенные настройки"
+            case _:
+                return f"{self.name}"
+
 
 class ChatSettingsType(StrEnum):
     """Enum for chat settings."""
