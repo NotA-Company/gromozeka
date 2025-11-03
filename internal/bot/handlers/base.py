@@ -25,11 +25,12 @@ import json
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 import magic
-from telegram import Chat, Message, Update, User
+from telegram import Chat, Message, MessageEntity, Update, User
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
 from telegram.constants import ChatAction, ChatType
@@ -54,14 +55,17 @@ from ..models import (
     CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
+    CommandCategory,
     CommandHandlerInfo,
     CommandHandlerMixin,
+    CommandHandlerOrder,
     EnsuredMessage,
     MediaProcessingInfo,
     MentionCheckResult,
     MessageType,
     UserMetadataDict,
 )
+from ..models.command_handlers import _HANDLER_METADATA_ATTR
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +144,111 @@ class TypingStopper:
             bool: True if the typing task is running, False otherwise
         """
         return self.running
+
+
+def commandHandlerExtended(
+    commands: Sequence[str],  # Sequence of commands to handle
+    shortDescription: str,  # Short description, for suggestions
+    helpMessage: str,  # Long help message
+    suggestCategories: Optional[Set[CommandCategory]] = None,  # Where command need to be suggested. Default: nowhere
+    availableFor: Optional[Set[CommandCategory]] = None,  # Where command is allowed to be used. Default: everywhere
+    helpOrder: CommandHandlerOrder = CommandHandlerOrder.NORMAL,  # Order hor help message
+) -> Callable[
+    [Callable[[Any, EnsuredMessage, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]],
+    Callable[["BaseBotHandler", Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
+]:
+    """
+    Decorator for creating extended command handlers with metadata, permissions, and logging.
+
+    Creates a decorator that wraps command handler functions with additional functionality:
+    - Stores command metadata (commands, descriptions, categories)
+    - Checks user permissions based on chat type and user roles
+    - Logs command usage in the database
+    - Ensures message format before passing to handler
+
+    Args:
+        commands: Sequence of command strings this handler responds to
+        shortDescription: Brief description for command suggestions
+        helpMessage: Detailed help text for the command
+        suggestCategories: Where to suggest this command (default: HIDDEN/Nowhere)
+        availableFor: Where command is allowed (default: DEFAULT/everyone)
+        helpOrder: Order for help message display (default: NORMAL)
+
+    Returns:
+        A decorator function that wraps the command handler
+    """
+    if suggestCategories is None:
+        suggestCategories = {CommandCategory.HIDDEN}
+    if availableFor is None:
+        availableFor = {CommandCategory.DEFAULT}
+
+    def decorator(
+        func: Callable[["BaseBotHandler", EnsuredMessage, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
+    ) -> Callable[["BaseBotHandler", Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
+        # Store metadata as an attribute on the function
+        metadata = CommandHandlerInfo(
+            commands=commands,
+            shortDescription=shortDescription,
+            helpMessage=helpMessage,
+            categories=suggestCategories,
+            order=helpOrder,
+            handler=func,
+        )
+
+        async def wrapper(self: "BaseBotHandler", update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            logger.debug(f"Got {func.__name__} command: {update}")
+
+            message = update.message
+            if not message:
+                logger.error("Message undefined")
+                return
+
+            ensuredMessage: Optional[EnsuredMessage] = None
+            try:
+                ensuredMessage = EnsuredMessage.fromMessage(message)
+            except Exception as e:
+                logger.error(f"Error while ensuring message: {e}")
+                return
+
+            # Check permissions if needed
+
+            canProcess = CommandCategory.DEFAULT in availableFor
+
+            chatType = ensuredMessage.chat.type
+            if not canProcess and CommandCategory.PRIVATE in availableFor:
+                canProcess = chatType == Chat.PRIVATE
+            if not canProcess and CommandCategory.GROUP in availableFor:
+                canProcess = chatType in [Chat.GROUP, Chat.SUPERGROUP]
+
+            if not canProcess and CommandCategory.BOT_OWNER in availableFor:
+                canProcess = await self.isAdmin(ensuredMessage.user, None, allowBotOwners=True)
+
+            if not canProcess and CommandCategory.ADMIN:
+                canProcess = (chatType in [Chat.GROUP, Chat.SUPERGROUP]) and await self.isAdmin(
+                    ensuredMessage.user, ensuredMessage.chat
+                )
+
+            if not canProcess:
+                botCommand = message.parse_entities([MessageEntity.BOT_COMMAND]).values()
+                logger.warning(
+                    f"Command `{botCommand}` not allowed in "
+                    f"chat {chatType}:{ensuredMessage.chat.id} for "
+                    f"user {ensuredMessage.sender}. Needed permissions: {availableFor}"
+                )
+                # TODO: Check if we need to delete command message
+                return
+
+            # Store command message in database
+            self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+
+            # Actually handle command
+            return await func(self, ensuredMessage, update, context)
+
+        # setattr(func, _HANDLER_METADATA_ATTR, metadata)
+        setattr(wrapper, _HANDLER_METADATA_ATTR, metadata)
+        return wrapper
+
+    return decorator
 
 
 class BaseBotHandler(CommandHandlerMixin):
