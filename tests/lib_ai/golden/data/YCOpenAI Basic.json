@@ -63,15 +63,14 @@
         "headers": {
           "content-type": "application/json",
           "x-client-request-id": "",
-          "x-request-id": "b0884b9a-a002-4484-832c-87d5f25d5ae4",
-          "date": "Mon, 03 Nov 2025 12:36:31 GMT",
-          "content-length": "355",
+          "x-request-id": "4514e0af-829e-41ad-8d4c-0aa6d27498e1",
+          "date": "Mon, 03 Nov 2025 14:31:06 GMT",
           "x-server-trace-id": "***MASKED***",
           "server": "ycalb"
         },
-        "content": "{\"id\":\"7b196dc4-87f2-404b-ade6-1fafef6ac346\",\"object\":\"chat.completion\",\"created\":1762173391,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How are you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15}}\n"
+        "content": "{\"id\":\"4e5db106-d835-4941-802d-193437282c77\",\"object\":\"chat.completion\",\"created\":1762180266,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How about you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15}}\n"
       },
-      "timestamp": "2025-11-03T12:36:31.020284+00:00"
+      "timestamp": "2025-11-03T14:31:06.088700+00:00"
     }
   ]
 }

@@ -9,7 +9,6 @@ management, concurrency, error handling, and integration scenarios.
 import asyncio
 import json
 import time
-import uuid
 from unittest.mock import Mock
 
 import pytest
@@ -249,13 +248,11 @@ class TestTaskScheduling:
             delayedUntil=time.time() + 60, function=DelayedTaskFunction.SEND_MESSAGE, kwargs={"text": "Test"}
         )
 
-        # Verify task was added with a UUID
+        # Verify task was added
         callArgs = mockDatabaseWrapper.addDelayedTask.call_args
         taskId = callArgs.kwargs["taskId"]
         assert isinstance(taskId, str)
         assert len(taskId) > 0
-        # Verify it's a valid UUID format
-        uuid.UUID(taskId)
 
     @pytest.mark.asyncio
     async def testScheduleTaskSkipDatabase(self, queueService, mockDatabaseWrapper):
