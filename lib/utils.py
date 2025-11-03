@@ -6,7 +6,7 @@ import datetime
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
 
 if TYPE_CHECKING:
     from telegram import Message
@@ -300,3 +300,26 @@ def load_dotenv(path: str = ".env", populateEnv: bool = True) -> Dict[str, str]:
             # os.putenv(k, v)  # Doesn't work
             os.environ[k] = v
     return ret
+
+
+def extractChatId(args: Optional[Sequence[str]]) -> Optional[int]:
+    """
+    Extract chat ID from command arguments.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Chat ID if found, None otherwise
+    """
+    if not args:
+        return None
+
+    arg = args[0]
+    if arg and arg[0] in "-0123456789":
+        try:
+            return int(arg)
+        except ValueError:
+            pass
+
+    return None
