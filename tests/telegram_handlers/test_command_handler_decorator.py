@@ -5,10 +5,10 @@ Unit tests for command handler decorator implementation, dood!
 import unittest
 
 from internal.bot.models import (
-    CommandCategory,
     CommandHandlerInfo,
     CommandHandlerMixin,
     CommandHandlerOrder,
+    CommandPermission,
     commandHandler,
 )
 
@@ -27,7 +27,7 @@ class TestCommandHandlerMixin(unittest.TestCase):
                 commands=("test1",),
                 shortDescription="Test 1",
                 helpMessage="Help 1",
-                categories={CommandCategory.PRIVATE},
+                categories={CommandPermission.PRIVATE},
             )
             async def test1_handler(self, update, context):
                 pass
@@ -36,7 +36,7 @@ class TestCommandHandlerMixin(unittest.TestCase):
                 commands=("test2",),
                 shortDescription="Test 2",
                 helpMessage="Help 2",
-                categories={CommandCategory.PRIVATE},
+                categories={CommandPermission.PRIVATE},
             )
             async def test2_handler(self, update, context):
                 pass
@@ -60,7 +60,7 @@ class TestCommandHandlerMixin(unittest.TestCase):
                 commands=("decorated",),
                 shortDescription="Decorated",
                 helpMessage="Help",
-                categories={CommandCategory.PRIVATE},
+                categories={CommandPermission.PRIVATE},
             )
             async def decorated_handler(self, update, context):
                 pass
@@ -83,7 +83,7 @@ class TestCommandHandlerMixin(unittest.TestCase):
                 self.test_value = "test"
 
             @commandHandler(
-                commands=("test",), shortDescription="Test", helpMessage="Help", categories={CommandCategory.PRIVATE}
+                commands=("test",), shortDescription="Test", helpMessage="Help", categories={CommandPermission.PRIVATE}
             )
             async def test_handler(self, update, context):
                 return self.test_value
@@ -107,7 +107,7 @@ class TestCommandHandlerMixin(unittest.TestCase):
                 super().__init__()
 
             @commandHandler(
-                commands=("test",), shortDescription="Test", helpMessage="Help", categories={CommandCategory.PRIVATE}
+                commands=("test",), shortDescription="Test", helpMessage="Help", categories={CommandPermission.PRIVATE}
             )
             async def test_handler(self, update, context):
                 pass
@@ -128,7 +128,7 @@ class TestCommandHandlerMixin(unittest.TestCase):
                 super().__init__()
 
             @commandHandler(
-                commands=("test",), shortDescription="Test", helpMessage="Help", categories={CommandCategory.PRIVATE}
+                commands=("test",), shortDescription="Test", helpMessage="Help", categories={CommandPermission.PRIVATE}
             )
             async def test_handler(self, update, context):
                 pass
@@ -157,7 +157,7 @@ class TestCommandHandlerInfo(unittest.TestCase):
             commands=("test",),
             shortDescription="Test",
             helpMessage="Help",
-            categories={CommandCategory.PRIVATE},
+            categories={CommandPermission.PRIVATE},
             handler=dummy_handler,
             order=CommandHandlerOrder.NORMAL,
         )
@@ -165,7 +165,7 @@ class TestCommandHandlerInfo(unittest.TestCase):
         self.assertEqual(info.commands, ("test",))
         self.assertEqual(info.shortDescription, "Test")
         self.assertEqual(info.helpMessage, "Help")
-        self.assertEqual(info.categories, {CommandCategory.PRIVATE})
+        self.assertEqual(info.categories, {CommandPermission.PRIVATE})
         self.assertIs(info.handler, dummy_handler)
 
 

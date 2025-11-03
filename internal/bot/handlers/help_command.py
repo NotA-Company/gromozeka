@@ -15,9 +15,9 @@ from internal.database.wrapper import DatabaseWrapper
 from lib.ai import LLMManager
 
 from ..models import (
-    CommandCategory,
     CommandHandlerInfo,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     commandHandler,
 )
@@ -53,7 +53,7 @@ class HelpHandler(BaseBotHandler):
         commands=("help",),
         shortDescription="Print help",
         helpMessage=": Показать список доступных команд.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.SECOND,
     )
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -76,14 +76,14 @@ class HelpHandler(BaseBotHandler):
         for commandInfo in sortedHandlers:
             helpText = "* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage
             for commandCategory in [
-                CommandCategory.BOT_OWNER,
-                CommandCategory.DEFAULT,
-                CommandCategory.PRIVATE,
-                CommandCategory.GROUP,
-                CommandCategory.ADMIN,
+                CommandPermission.BOT_OWNER,
+                CommandPermission.DEFAULT,
+                CommandPermission.PRIVATE,
+                CommandPermission.GROUP,
+                CommandPermission.ADMIN,
             ]:
                 if commandCategory in commandInfo.categories:
-                    if commandCategory == CommandCategory.BOT_OWNER:
+                    if commandCategory == CommandPermission.BOT_OWNER:
                         botOwnerCommands.append(helpText)
                     else:
                         commands[commandInfo.order].append(helpText)

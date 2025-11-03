@@ -19,8 +19,8 @@ from lib import utils
 from ..models import (
     ChatSettingsKey,
     ChatSettingsValue,
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     MessageSender,
     commandHandler,
@@ -124,7 +124,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         shortDescription="[<chatId>] <emoji> - Start reacting to author of replied message with given emoji",
         helpMessage=" [<chatId>] <emoji> - Ставить указанные реакции под сообщениями автора сообщения,"
         " на которое команда является ответом.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def set_reaction_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -214,7 +214,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         shortDescription="[<chatId>] - Stop reacting to author of replied message",
         helpMessage=" [<chatId>] - Перестать реакции под сообщениями автора сообщения,"
         " на которое команда является ответом.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def unset_reaction_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -296,7 +296,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         commands=("dump_reactions",),
         shortDescription="[<chatId>] - Dump reactions settings",
         helpMessage=" [<chatId>] - Вывести настройки реакций в указанном чате (сфрой JSON-дамп)",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def dump_reactions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -41,8 +41,8 @@ from lib.openweathermap import CombinedWeatherResult, OpenWeatherMapClient
 from .. import constants
 from ..models import (
     ChatSettingsKey,
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     commandHandler,
 )
@@ -370,7 +370,7 @@ class WeatherHandler(BaseBotHandler):
         shortDescription="<city> [, <countryCode>] - Get weather for given city",
         helpMessage=" `<city>` `[, <countryCode>]`: Показать погоду в указанном городе "
         "(можно добавить 2х-буквенный код страны для уточнения).",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def weather_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
