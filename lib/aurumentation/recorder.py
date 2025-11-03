@@ -4,17 +4,23 @@ This module implements the recording coordinator that manages the
 recording process using custom httpx transports.
 """
 
+import asyncio
 import json
 import os
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Awaitable, Dict, List, Optional, TypeAlias
 
 import httpx
 
 from .masker import SecretMasker
 from .transports import RecordingTransport
 from .types import GoldenDataFileFormat, GoldenDataScenarioDict, HttpCallDict, MetadataDict
+
+PatchingRecorderCallback: TypeAlias = (
+    Callable[["GoldenDataRecorder"], None] | Callable[["GoldenDataRecorder"], Awaitable[None]]
+)
 
 
 class GoldenDataRecorder:
@@ -25,7 +31,12 @@ class GoldenDataRecorder:
     complete scenarios with metadata.
     """
 
-    def __init__(self, secrets: Optional[List[str]] = None):
+    def __init__(
+        self,
+        secrets: Optional[List[str]] = None,
+        aenterCallback: Optional[PatchingRecorderCallback] = None,
+        aexitCallback: Optional[PatchingRecorderCallback] = None,
+    ):
         """Initialize the recorder.
 
         Args:
@@ -33,8 +44,11 @@ class GoldenDataRecorder:
         """
         self.secrets = secrets or []
         self.transport: Optional[RecordingTransport] = None
-        self.originalTransportClass = None
+        self.originalClientClass: Optional[type[httpx.AsyncClient]] = None
+        self.asyncClientClass: Optional[type[httpx.AsyncClient]] = None
         self.recordings: List[HttpCallDict] = []
+        self.aenterCallback: Optional[PatchingRecorderCallback] = aenterCallback
+        self.aexitCallback: Optional[PatchingRecorderCallback] = aexitCallback
 
     async def __aenter__(self) -> "GoldenDataRecorder":
         """Enter the async context manager and patch httpx globally.
@@ -60,7 +74,15 @@ class GoldenDataRecorder:
                 kwargs["transport"] = recorder_self.transport
                 super().__init__(*args, **kwargs)
 
+        self.asyncClientClass = PatchedAsyncClient
         httpx.AsyncClient = PatchedAsyncClient
+
+        if self.aenterCallback:
+            if asyncio.iscoroutinefunction(self.aenterCallback):
+                await self.aenterCallback(self)
+            else:
+                self.aenterCallback(self)
+
         print("HttpxRecorder: Patched httpx.AsyncClient")
         return self
 
@@ -72,6 +94,13 @@ class GoldenDataRecorder:
             exc_val: Exception value if an exception occurred
             exc_tb: Exception traceback if an exception occurred
         """
+
+        if self.aexitCallback:
+            if asyncio.iscoroutinefunction(self.aexitCallback):
+                await self.aexitCallback(self)
+            else:
+                self.aexitCallback(self)
+
         # Restore original httpx.AsyncClient
         if self.originalClientClass:
             httpx.AsyncClient = self.originalClientClass

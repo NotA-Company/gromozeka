@@ -1,0 +1,126 @@
+[
+  {
+    "name": "openrouter_basic",
+    "description": "Basic text generation with OpenRouter provider",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "OpenrouterModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelArgs": {
+        "model_id": "mistralai/mistral-7b-instruct",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 32768
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Hello, how are you?"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "openrouter_custom_headers",
+    "description": "OpenRouter with custom HTTP headers",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "OpenrouterModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}",
+        "http_headers": {
+          "HTTP-Referer": "https://example.com",
+          "X-Title": "My AI App"
+        }
+      },
+      "modelArgs": {
+        "model_id": "openchat/openchat-7b",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 8192
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "What is the weather like today?"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "openrouter_model_routing",
+    "description": "OpenRouter with automatic model routing",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "OpenrouterModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelArgs": {
+        "model_id": "auto",
+        "model_version": "latest",
+        "temperature": 0.5,
+        "context_size": 16384
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Tell me about artificial intelligence."
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "openrouter_streaming",
+    "description": "Streaming response from OpenRouter",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "OpenrouterModelWrapper",
+    "method": "generateText",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelArgs": {
+        "model_id": "google/gemma-7b-it",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 8192
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Tell me a story about a brave knight."
+          }
+        }
+      ]
+    }
+  }
+]
