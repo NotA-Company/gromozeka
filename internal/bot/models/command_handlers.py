@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 _HANDLER_METADATA_ATTR = "_command_handler_info"
 
 
-class CommandCategory(Enum):
+class CommandPermission(Enum):
     DEFAULT = auto()  # Available everywhere
     PRIVATE = auto()  # Available in private chats
     GROUP = auto()  # Available in group chats
@@ -40,7 +40,7 @@ class CommandHandlerInfo:
     commands: Sequence[str]
     shortDescription: str
     helpMessage: str
-    categories: Set[CommandCategory]
+    categories: Set[CommandPermission]
     order: CommandHandlerOrder
     # handler: tgTypes.HandlerCallback[tgUpdate.Update, tgTypes.CCT, tgTypes.RT],
     handler: Callable
@@ -60,7 +60,7 @@ def commandHandler(
     commands: Sequence[str],
     shortDescription: str,
     helpMessage: str,
-    categories: Optional[Set[CommandCategory]] = None,
+    categories: Optional[Set[CommandPermission]] = None,
     order: CommandHandlerOrder = CommandHandlerOrder.NORMAL,
 ) -> Callable:
     """
@@ -89,7 +89,7 @@ def commandHandler(
             pass
     """
     if categories is None:
-        categories = {CommandCategory.HIDDEN}
+        categories = {CommandPermission.HIDDEN}
 
     def decorator(func: Callable) -> Callable:
         # Store metadata as an attribute on the function

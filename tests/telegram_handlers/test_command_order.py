@@ -4,8 +4,8 @@ Test script to verify command handler ordering functionality, dood!
 """
 
 from internal.bot.models import (
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     commandHandler,
 )
 
@@ -17,7 +17,7 @@ class TestHandlers:
         commands=("first",),
         shortDescription="First command",
         helpMessage=": Should appear first",
-        categories={CommandCategory.DEFAULT},
+        categories={CommandPermission.DEFAULT},
         order=CommandHandlerOrder.FIRST,
     )
     async def first_command(self):
@@ -27,7 +27,7 @@ class TestHandlers:
         commands=("normal",),
         shortDescription="Normal command",
         helpMessage=": Should appear in middle",
-        categories={CommandCategory.DEFAULT},
+        categories={CommandPermission.DEFAULT},
     )
     async def normal_command(self):
         pass
@@ -36,7 +36,7 @@ class TestHandlers:
         commands=("last",),
         shortDescription="Last command",
         helpMessage=": Should appear last",
-        categories={CommandCategory.DEFAULT},
+        categories={CommandPermission.DEFAULT},
         order=CommandHandlerOrder.LAST,
     )
     async def last_command(self):
@@ -46,7 +46,7 @@ class TestHandlers:
         commands=("early",),
         shortDescription="Early command",
         helpMessage=": Should appear early",
-        categories={CommandCategory.DEFAULT},
+        categories={CommandPermission.DEFAULT},
         order=CommandHandlerOrder.SECOND,
     )
     async def early_command(self):

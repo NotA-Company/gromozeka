@@ -32,8 +32,8 @@ from lib.ai import (
 )
 
 from ..models import (
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     commandHandler,
 )
@@ -167,7 +167,7 @@ class UserDataHandler(BaseBotHandler):
         commands=("get_my_data",),
         shortDescription="Dump data, bot knows about you in this chat",
         helpMessage=": Показать запомненную информацию о Вас в текущем чате.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.TECHNICAL,
     )
     async def get_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -214,7 +214,7 @@ class UserDataHandler(BaseBotHandler):
         commands=("delete_my_data",),
         shortDescription="<key> - Delete user data for given key",
         helpMessage=" `<key>`: Удалить информацию о Вас по указанному ключу.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.TECHNICAL,
     )
     async def delete_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,7 +275,7 @@ class UserDataHandler(BaseBotHandler):
         commands=("clear_my_data",),
         shortDescription="Clear all user data",
         helpMessage=": Очистить все сзнания о Вас в этом чате.",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.TECHNICAL,
     )
     async def clear_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

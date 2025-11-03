@@ -35,8 +35,8 @@ from ..models import (
     CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
-    CommandCategory,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     LLMMessageFormat,
     commandHandler,
@@ -685,7 +685,7 @@ class SummarizationHandler(BaseBotHandler):
         "(call without arguments to start wizard)",
         helpMessage=" `[<maxMessages>]` `[<chatId>]` `[<topicId>]`: Сделать суммаризацию чата "
         "(запускайте без аргументов для запуска мастера).",
-        categories={CommandCategory.PRIVATE},
+        categories={CommandPermission.PRIVATE},
         order=CommandHandlerOrder.NORMAL,
     )
     async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

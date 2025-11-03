@@ -55,10 +55,10 @@ from ..models import (
     CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
-    CommandCategory,
     CommandHandlerInfo,
     CommandHandlerMixin,
     CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     MediaProcessingInfo,
     MentionCheckResult,
@@ -150,8 +150,8 @@ def commandHandlerExtended(
     commands: Sequence[str],  # Sequence of commands to handle
     shortDescription: str,  # Short description, for suggestions
     helpMessage: str,  # Long help message
-    suggestCategories: Optional[Set[CommandCategory]] = None,  # Where command need to be suggested. Default: nowhere
-    availableFor: Optional[Set[CommandCategory]] = None,  # Where command is allowed to be used. Default: everywhere
+    suggestCategories: Optional[Set[CommandPermission]] = None,  # Where command need to be suggested. Default: nowhere
+    availableFor: Optional[Set[CommandPermission]] = None,  # Where command is allowed to be used. Default: everywhere
     helpOrder: CommandHandlerOrder = CommandHandlerOrder.NORMAL,  # Order hor help message
 ) -> Callable[
     [Callable[[Any, EnsuredMessage, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]],
@@ -178,9 +178,9 @@ def commandHandlerExtended(
         A decorator function that wraps the command handler
     """
     if suggestCategories is None:
-        suggestCategories = {CommandCategory.HIDDEN}
+        suggestCategories = {CommandPermission.HIDDEN}
     if availableFor is None:
-        availableFor = {CommandCategory.DEFAULT}
+        availableFor = {CommandPermission.DEFAULT}
 
     def decorator(
         func: Callable[["BaseBotHandler", EnsuredMessage, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
@@ -212,18 +212,18 @@ def commandHandlerExtended(
 
             # Check permissions if needed
 
-            canProcess = CommandCategory.DEFAULT in availableFor
+            canProcess = CommandPermission.DEFAULT in availableFor
 
             chatType = ensuredMessage.chat.type
-            if not canProcess and CommandCategory.PRIVATE in availableFor:
+            if not canProcess and CommandPermission.PRIVATE in availableFor:
                 canProcess = chatType == Chat.PRIVATE
-            if not canProcess and CommandCategory.GROUP in availableFor:
+            if not canProcess and CommandPermission.GROUP in availableFor:
                 canProcess = chatType in [Chat.GROUP, Chat.SUPERGROUP]
 
-            if not canProcess and CommandCategory.BOT_OWNER in availableFor:
+            if not canProcess and CommandPermission.BOT_OWNER in availableFor:
                 canProcess = await self.isAdmin(ensuredMessage.user, None, allowBotOwners=True)
 
-            if not canProcess and CommandCategory.ADMIN:
+            if not canProcess and CommandPermission.ADMIN:
                 canProcess = (chatType in [Chat.GROUP, Chat.SUPERGROUP]) and await self.isAdmin(
                     ensuredMessage.user, ensuredMessage.chat
                 )

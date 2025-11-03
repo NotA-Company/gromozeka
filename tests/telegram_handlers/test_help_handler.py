@@ -17,7 +17,7 @@ import pytest
 from telegram import Chat
 
 from internal.bot.handlers.help_command import CommandHandlerGetterInterface, HelpHandler
-from internal.bot.models import CommandCategory, CommandHandlerOrder
+from internal.bot.models import CommandHandlerOrder, CommandPermission
 from internal.bot.models.command_handlers import CommandHandlerInfo
 from internal.database.models import MessageCategory
 from tests.fixtures.service_mocks import createMockDatabaseWrapper, createMockLlmManager
@@ -101,7 +101,7 @@ def mockCommandsGetter():
             commands=("start",),
             shortDescription="Start bot",
             helpMessage=": Начать работу с ботом",
-            categories={CommandCategory.PRIVATE},
+            categories={CommandPermission.PRIVATE},
             order=CommandHandlerOrder.FIRST,
             handler=Mock(),
         ),
@@ -109,7 +109,7 @@ def mockCommandsGetter():
             commands=("help",),
             shortDescription="Show help",
             helpMessage=": Показать список команд",
-            categories={CommandCategory.PRIVATE},
+            categories={CommandPermission.PRIVATE},
             order=CommandHandlerOrder.SECOND,
             handler=Mock(),
         ),
@@ -117,7 +117,7 @@ def mockCommandsGetter():
             commands=("weather", "w"),
             shortDescription="Get weather",
             helpMessage=" <город>: Получить погоду",
-            categories={CommandCategory.DEFAULT},
+            categories={CommandPermission.DEFAULT},
             order=CommandHandlerOrder.NORMAL,
             handler=Mock(),
         ),
@@ -125,7 +125,7 @@ def mockCommandsGetter():
             commands=("ban",),
             shortDescription="Ban user",
             helpMessage=" <user>: Забанить пользователя",
-            categories={CommandCategory.ADMIN},
+            categories={CommandPermission.ADMIN},
             order=CommandHandlerOrder.NORMAL,
             handler=Mock(),
         ),
@@ -133,7 +133,7 @@ def mockCommandsGetter():
             commands=("dev_test",),
             shortDescription="Dev test",
             helpMessage=": Тестовая команда",
-            categories={CommandCategory.BOT_OWNER},
+            categories={CommandPermission.BOT_OWNER},
             order=CommandHandlerOrder.TEST,
             handler=Mock(),
         ),
@@ -218,10 +218,10 @@ class TestCommandHandlerDiscovery:
         """Test command handlers have proper categories, dood!"""
         handlers = mockCommandsGetter.getCommandHandlers()
 
-        assert CommandCategory.PRIVATE in handlers[0].categories
-        assert CommandCategory.DEFAULT in handlers[2].categories
-        assert CommandCategory.ADMIN in handlers[3].categories
-        assert CommandCategory.BOT_OWNER in handlers[4].categories
+        assert CommandPermission.PRIVATE in handlers[0].categories
+        assert CommandPermission.DEFAULT in handlers[2].categories
+        assert CommandPermission.ADMIN in handlers[3].categories
+        assert CommandPermission.BOT_OWNER in handlers[4].categories
 
     def testCommandHandlersWithMultipleCommands(self, helpHandler, mockCommandsGetter):
         """Test handlers with multiple command aliases, dood!"""
@@ -489,7 +489,7 @@ class TestHelpCommandGroupChat:
             commands=("group_cmd",),
             shortDescription="Group command",
             helpMessage=": Групповая команда",
-            categories={CommandCategory.GROUP},
+            categories={CommandPermission.GROUP},
             order=CommandHandlerOrder.NORMAL,
             handler=Mock(),
         )
@@ -713,7 +713,7 @@ class TestEdgeCases:
                 commands=("last",),
                 shortDescription="Last",
                 helpMessage=": Last command",
-                categories={CommandCategory.PRIVATE},
+                categories={CommandPermission.PRIVATE},
                 order=CommandHandlerOrder.LAST,
                 handler=Mock(),
             ),
@@ -721,7 +721,7 @@ class TestEdgeCases:
                 commands=("first",),
                 shortDescription="First",
                 helpMessage=": First command",
-                categories={CommandCategory.PRIVATE},
+                categories={CommandPermission.PRIVATE},
                 order=CommandHandlerOrder.FIRST,
                 handler=Mock(),
             ),
@@ -729,7 +729,7 @@ class TestEdgeCases:
                 commands=("normal",),
                 shortDescription="Normal",
                 helpMessage=": Normal command",
-                categories={CommandCategory.PRIVATE},
+                categories={CommandPermission.PRIVATE},
                 order=CommandHandlerOrder.NORMAL,
                 handler=Mock(),
             ),
@@ -767,7 +767,7 @@ class TestEdgeCases:
                 commands=("cmd_b",),
                 shortDescription="Command B",
                 helpMessage=": Command B",
-                categories={CommandCategory.PRIVATE},
+                categories={CommandPermission.PRIVATE},
                 order=CommandHandlerOrder.NORMAL,
                 handler=Mock(),
             ),
@@ -775,7 +775,7 @@ class TestEdgeCases:
                 commands=("cmd_a",),
                 shortDescription="Command A",
                 helpMessage=": Command A",
-                categories={CommandCategory.PRIVATE},
+                categories={CommandPermission.PRIVATE},
                 order=CommandHandlerOrder.NORMAL,
                 handler=Mock(),
             ),
