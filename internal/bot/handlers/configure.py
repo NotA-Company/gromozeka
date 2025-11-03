@@ -33,6 +33,7 @@ from ..models import (
     ButtonDataKey,
     CallbackDataDict,
     ChatSettingsKey,
+    ChatSettingsPage,
     ChatSettingsType,
     ChatSettingsValue,
     CommandCategory,
@@ -165,11 +166,8 @@ class ConfigureCommandHandler(BaseBotHandler):
             changes. It also clears user state after value updates.
         """
 
-        # Used keys:
-        # a: Action
-        # c: ChatId
-        # k: Key
-        # v: Value
+        userId = user.id
+        self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
 
         exitButton = InlineKeyboardButton(
             "Закончить настройку",
@@ -263,6 +261,8 @@ class ConfigureCommandHandler(BaseBotHandler):
                     logger.error(f"handle_chat_configuration: wrong chatId: {type(chatId).__name__}#{chatId}")
                     return False
 
+                page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
+
                 chatInfo = self.getChatInfo(chatId)
                 if chatInfo is None:
                     logger.error(f"handle_chat_configuration: chatInfo is None in {chatId}")
@@ -275,7 +275,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                     None, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
                 )
 
-                chatOptions = getChatSettingsInfo()
+                chatOptions = {k: v for k, v in getChatSettingsInfo().items() if v["page"] == page}
                 keyboard: List[List[InlineKeyboardButton]] = []
 
                 for key, option in chatOptions.items():
@@ -301,6 +301,34 @@ class ConfigureCommandHandler(BaseBotHandler):
                                         ButtonDataKey.ChatId: chatId,
                                         ButtonDataKey.Key: key.getId(),
                                         ButtonDataKey.ConfigureAction: "sk",
+                                    }
+                                ),
+                            )
+                        ]
+                    )
+
+                for pageElem in ChatSettingsPage:
+                    if pageElem == page:
+                        continue
+
+                    buttonText = f"{pageElem.value}: {pageElem.name}"
+                    match pageElem:
+                        case ChatSettingsPage.STANDART:
+                            buttonText = "Стандартные настройки"
+                        case ChatSettingsPage.EXTENDED:
+                            buttonText = "Расширенные настройки"
+
+                    buttonText = f"📂 {buttonText}"
+
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                buttonText,
+                                callback_data=utils.packDict(
+                                    {
+                                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                                        ButtonDataKey.ChatId: chatId,
+                                        ButtonDataKey.Page: pageElem.value,
                                     }
                                 ),
                             )
@@ -359,7 +387,6 @@ class ConfigureCommandHandler(BaseBotHandler):
                     await message.edit_text(text=f"Unknown key: {key}")
                     return False
 
-                userId = user.id
                 self.cache.setUserState(
                     userId=userId,
                     stateKey=UserActiveActionEnum.Configuration,
@@ -459,6 +486,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                                 {
                                     ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
                                     ButtonDataKey.ChatId: chatId,
+                                    ButtonDataKey.Page: chatOptions[key]["page"],
                                 }
                             ),
                         )
@@ -485,9 +513,6 @@ class ConfigureCommandHandler(BaseBotHandler):
                 | ButtonConfigureAction.SetValue
             ):
                 _key = data.get(ButtonDataKey.Key, None)
-
-                userId = user.id
-                self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
 
                 if chatId is None or _key is None:
                     logger.error(f"handle_chat_configuration: chatId or key is None in {data}")
@@ -556,6 +581,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                                 {
                                     ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
                                     ButtonDataKey.ChatId: chatId,
+                                    ButtonDataKey.Page: chatOptions[key]["page"],
                                 }
                             ),
                         )
