@@ -28,6 +28,7 @@ from lib.ai import LLMManager
 
 from .. import constants
 from ..models import (
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     DelayedTask,
@@ -231,6 +232,7 @@ class CommonHandler(BaseBotHandler):
         suggestCategories={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.FIRST,
+        category=CommandCategory.PRIVATE,
     )
     async def start_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -270,6 +272,7 @@ class CommonHandler(BaseBotHandler):
         "(можно использовать цитирование или ответ на сообщение).",
         suggestCategories={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.TOOLS,
     )
     async def remind_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -360,6 +363,7 @@ class CommonHandler(BaseBotHandler):
         suggestCategories={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.TECHNICAL,
+        category=CommandCategory.PRIVATE,
     )
     async def list_chats_command(
         self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE

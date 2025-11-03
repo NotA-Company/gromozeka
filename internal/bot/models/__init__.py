@@ -11,6 +11,7 @@ from .chat_settings import ChatSettingsKey, ChatSettingsPage, ChatSettingsType, 
 # Command Handlers
 from .command_handlers import (
     CallbackDataDict,
+    CommandCategory,
     CommandHandlerInfo,
     CommandHandlerMixin,
     CommandHandlerOrder,
@@ -53,6 +54,7 @@ __all__ = [
     # User Metadata
     "UserMetadataDict",
     # Command Handlers
+    "CommandCategory",
     "CommandHandlerInfo",
     "CommandHandlerMixin",
     "commandHandler",

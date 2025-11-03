@@ -55,6 +55,7 @@ from ..models import (
     CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
+    CommandCategory,
     CommandHandlerInfo,
     CommandHandlerMixin,
     CommandHandlerOrder,
@@ -150,9 +151,15 @@ def commandHandlerExtended(
     commands: Sequence[str],  # Sequence of commands to handle
     shortDescription: str,  # Short description, for suggestions
     helpMessage: str,  # Long help message
-    suggestCategories: Optional[Set[CommandPermission]] = None,  # Where command need to be suggested. Default: nowhere
-    availableFor: Optional[Set[CommandPermission]] = None,  # Where command is allowed to be used. Default: everywhere
-    helpOrder: CommandHandlerOrder = CommandHandlerOrder.NORMAL,  # Order hor help message
+    *,
+    # Where command need to be suggested. Default: nowhere
+    suggestCategories: Optional[Set[CommandPermission]] = None,
+    # Where command is allowed to be used. Default: everywhere
+    availableFor: Optional[Set[CommandPermission]] = None,
+    # Order hor help message
+    helpOrder: CommandHandlerOrder = CommandHandlerOrder.NORMAL,
+    # Category for command (for more fine-grained permissions handling)
+    category: CommandCategory = CommandCategory.UNSPECIFIED,
 ) -> Callable[
     [Callable[[Any, EnsuredMessage, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]],
     Callable[["BaseBotHandler", Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
@@ -173,6 +180,7 @@ def commandHandlerExtended(
         suggestCategories: Where to suggest this command (default: HIDDEN/Nowhere)
         availableFor: Where command is allowed (default: DEFAULT/everyone)
         helpOrder: Order for help message display (default: NORMAL)
+        category: Category for command, used for fine-grained permissions handling (default: UNSPECIFIED)
 
     Returns:
         A decorator function that wraps the command handler
@@ -229,11 +237,29 @@ def commandHandlerExtended(
                 )
 
             if not canProcess:
-                botCommand = message.parse_entities([MessageEntity.BOT_COMMAND]).values()
+                botCommand = "".join(list(message.parse_entities([MessageEntity.BOT_COMMAND]).values())[:1])
                 logger.warning(
-                    f"Command `{botCommand}` not allowed in "
+                    f"Command `{botCommand}` is not allowed in "
                     f"chat {chatType}:{ensuredMessage.chat.id} for "
                     f"user {ensuredMessage.sender}. Needed permissions: {availableFor}"
+                )
+                # TODO: Check if we need to delete command message
+                return
+
+            if chatType != Chat.PRIVATE:
+                match category:
+                    case CommandCategory.PRIVATE:
+                        canProcess = False
+                        # TODO: Add checks for orter categories
+                    case _:
+                        pass
+
+            if not canProcess:
+                botCommand = "".join(list(message.parse_entities([MessageEntity.BOT_COMMAND]).values())[:1])
+                logger.warning(
+                    f"Command `{str(botCommand)}` is not allowed in "
+                    f"chat {chatType}:{ensuredMessage.chat.id} for "
+                    f"user {ensuredMessage.sender}. Because of it's category: {category}."
                 )
                 # TODO: Check if we need to delete command message
                 return

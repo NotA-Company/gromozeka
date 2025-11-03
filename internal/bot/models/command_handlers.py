@@ -15,12 +15,26 @@ _HANDLER_METADATA_ATTR = "_command_handler_info"
 
 
 class CommandPermission(Enum):
+    """Permissions for command"""
+
     DEFAULT = auto()  # Available everywhere
     PRIVATE = auto()  # Available in private chats
     GROUP = auto()  # Available in group chats
     ADMIN = auto()  # Available in group chats for Admins
     BOT_OWNER = auto()  # Available for Bot Owners
     HIDDEN = auto()  # Hide from command list
+
+
+class CommandCategory(Enum):
+    """Categories for command"""
+
+    UNSPECIFIED = auto()  # Unspecified category
+    ADMIN = auto()  # Command for Admin/configuration purposes
+    TOOLS = auto()  # Tools usage (Web search, draw, etc...)
+    SPAM = auto()  # SPAM-related commands
+    SPAM_ADMIN = auto()  # SPAM-related commands for Admins
+    TECHNICAL = auto()  # Technical commands
+    PRIVATE = auto()  # Command for private chats only
 
 
 class CommandHandlerOrder(IntEnum):
