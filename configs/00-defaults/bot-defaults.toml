@@ -2,6 +2,8 @@
 # Allow configure by default (Turn it of if you'll want to disable private)
 admin-can-change-settings = true
 
+# Allow tools commands (/draw, /analyze, etc...)
+allow-tools-commands = true
 # Allow replying (Disable to disable private)
 allow-mention = true
 allow-reply = true
@@ -17,6 +19,11 @@ detect-spam = false
 [bot.chat-defaults]
 # Can chat admins change channel-specific bot settings?
 admin-can-change-settings = true
+
+# Allow tools commands (/draw, /analyze, etc...)
+allow-tools-commands = true
+# Delete message with commands, which deniend in chat (for flood protection purposes)
+delete-denied-commands = false
 
 # Allow reaction in bot mention (by username and by name)
 allow-mention = true
@@ -51,18 +58,12 @@ parse-images = true
 # Set to 1 to get smallest image possible
 optimal-image-size        = 896
 
-# Allow /draw command
-allow-draw = true
-# Allow /analyze command
-allow-analyze = true
-# Allow /summary and /topic_summary commands
-allow-summary = true
-# Allow /wather command
-allow-weather = true
-# Allow /web_search command
-allow-web-search = true
+# Allow tools commands (/draw, /analyze, etc...)
+allow-tools-commands = true
+# Delete message with commands, which deniend in chat (for flood protection purposes)
+delete-denied-commands = false
 
-# Allow non-admins to send /spam command
+# Allow non-admins to send /spam and /unban commands
 allow-user-spam-command = false
 # Automatically detect and delete spam messages
 detect-spam = false

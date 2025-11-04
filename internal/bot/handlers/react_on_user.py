@@ -145,7 +145,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             return
 
         args = context.args or []
-        targetChatId = utils.extractChatId(args)
+        targetChatId = utils.extractInt(args)
         if targetChatId is None:
             targetChatId = ensuredMessage.chat.id
         else:
@@ -224,7 +224,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        targetChatId = utils.extractChatId(context.args)
+        targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
             targetChatId = ensuredMessage.chat.id
 
@@ -284,7 +284,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         message = ensuredMessage.getBaseMessage()
 
         logger.debug(f"Args: {context.args}")
-        targetChatId = utils.extractChatId(context.args)
+        targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
             targetChatId = ensuredMessage.chat.id
 
