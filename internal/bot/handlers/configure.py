@@ -337,7 +337,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
 
         resp = (
-            f"Настройка параметра **{chatOptions[key]['short']}** (`{key}`) в чате "
+            f"Настройка параметра **{chatOptions[key]['short']}** (`{key}`) в чате\n"
             f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}):\n\n"
             f"Описание: \n{chatOptions[key]['long']}\n\n"
             f"Тип: **{chatOptions[key]['type']}**\n"
