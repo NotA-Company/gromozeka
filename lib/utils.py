@@ -302,15 +302,16 @@ def load_dotenv(path: str = ".env", populateEnv: bool = True) -> Dict[str, str]:
     return ret
 
 
-def extractChatId(args: Optional[Sequence[str]]) -> Optional[int]:
+def extractInt(args: Optional[Sequence[str]]) -> Optional[int]:
     """
-    Extract chat ID from command arguments.
+    Extract positive or negative integer from optional list of strings.
+    Primarily used for extracting chat ID from `context.args`.
 
     Args:
         args: Command arguments
 
     Returns:
-        Chat ID if found, None otherwise
+        int if found, None otherwise
     """
     if not args:
         return None

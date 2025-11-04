@@ -1039,7 +1039,7 @@ class SpamHandler(BaseBotHandler):
         """
         message = ensuredMessage.getBaseMessage()
 
-        targetChatId = utils.extractChatId(context.args)
+        targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
             targetChatId = ensuredMessage.chat.id
 
@@ -1125,7 +1125,7 @@ class SpamHandler(BaseBotHandler):
             )
             return
 
-        targetChatId = utils.extractChatId(context.args)
+        targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
             targetChatId = ensuredMessage.chat.id
             # If it's quote from another chat, use it as chatId

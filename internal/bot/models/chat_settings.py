@@ -74,7 +74,7 @@ class ChatSettingsKey(StrEnum):
     ALLOW_TOOLS_COMMANDS = "allow-tools-commands"
     # Should bot delete /command command if command wasn't allowed
     DELETE_DENIED_COMMANDS = "delete-denied-commands"
-    
+
     ALLOW_DRAW = "allow-draw"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
     ALLOW_ANALYZE = "allow-analyze"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
     ALLOW_SUMMARY = "allow-summary"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
@@ -219,6 +219,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.BOOL,
         "short": "Обрабатывать изображения",
         "long": "Должен ли бот анализировать изображения используя LLM для дальнейшего использования в разговоре",
+        "page": ChatSettingsPage.STANDART,
+    },
+    ChatSettingsKey.DELETE_DENIED_COMMANDS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Удалять запрещенные команды",
+        "long": "Должен ли бот удалять сообщения с командами, которые не разрешены в настройках чата "
+        "(полезно для предотвращения флуда нечайными кликами на команду)",
         "page": ChatSettingsPage.STANDART,
     },
     ChatSettingsKey.ALLOW_TOOLS_COMMANDS: {

@@ -226,7 +226,7 @@ class DevCommandsHandler(BaseBotHandler):
             - Displays settings in formatted code blocks for readability, dood!
         """
 
-        targetChatId = utils.extractChatId(context.args)
+        targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
             targetChatId = ensuredMessage.chat.id
 
@@ -317,7 +317,7 @@ class DevCommandsHandler(BaseBotHandler):
 
         args = context.args
 
-        targetChatId = utils.extractChatId(args)
+        targetChatId = utils.extractInt(args)
         if targetChatId is None:
             targetChatId = ensuredMessage.chat.id
         else:
