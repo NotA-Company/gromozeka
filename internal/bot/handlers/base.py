@@ -629,7 +629,11 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         # If chat is None, then we are checking if it's bot owner only
 
-        if allowBotOwners and user.username and user.username.lower() in self.botOwners:
+        username = user.username
+        if username:
+            username = username.lower().lstrip("@")
+
+        if allowBotOwners and username in self.botOwners:
             # User is bot owner and bot owners are allowed
             return True
 
