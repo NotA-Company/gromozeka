@@ -75,12 +75,6 @@ class ChatSettingsKey(StrEnum):
     # Should bot delete /command command if command wasn't allowed
     DELETE_DENIED_COMMANDS = "delete-denied-commands"
 
-    ALLOW_DRAW = "allow-draw"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
-    ALLOW_ANALYZE = "allow-analyze"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
-    ALLOW_SUMMARY = "allow-summary"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
-    ALLOW_WEATHER = "allow-weather"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
-    ALLOW_WEB_SEARCH = "allow-web-search"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
-
     # # Allowing different reactions in chat (to mention/reply/random)
     ALLOW_MENTION = "allow-mention"
     ALLOW_REPLY = "allow-reply"

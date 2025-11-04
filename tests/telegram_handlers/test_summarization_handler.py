@@ -96,7 +96,6 @@ def mockConfigManager():
     mock.getBotConfig.return_value = {
         "bot_owners": ["owner1"],
         "defaults": {
-            ChatSettingsKey.ALLOW_SUMMARY: "true",
             ChatSettingsKey.SUMMARY_MODEL: "gpt-4",
             ChatSettingsKey.SUMMARY_FALLBACK_MODEL: "gpt-3.5-turbo",
             ChatSettingsKey.SUMMARY_PROMPT: "Summarize the following messages",
