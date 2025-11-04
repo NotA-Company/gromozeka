@@ -974,10 +974,6 @@ class SpamHandler(BaseBotHandler):
         """
 
         message = ensuredMessage.getBaseMessage()
-
-        # TODO: Move this check to decorator
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        allowUserSpamCommand = chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
         isAdmin = await self.isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat)
 
         logger.debug(
@@ -985,10 +981,10 @@ class SpamHandler(BaseBotHandler):
             f"from User({ensuredMessage.user}) "
             f"in Chat({ensuredMessage.chat}) \n"
             f"to Message({message.reply_to_message}) \n"
-            f"isAdmin: {isAdmin}, allowUserSpamCommand: {allowUserSpamCommand}"
+            f"isAdmin: {isAdmin}"
         )
 
-        if message.reply_to_message is not None and (allowUserSpamCommand or isAdmin):
+        if message.reply_to_message is not None:
             replyMessage = message.reply_to_message
             await self.markAsSpam(
                 replyMessage,
@@ -1268,7 +1264,7 @@ class SpamHandler(BaseBotHandler):
         helpMessage=" [`@<username>`]: Разбанить пользователя в данном чате. "
         "Так же может быть ответом на сообщение забаненного пользователя.",
         suggestCategories={CommandPermission.ADMIN},
-        availableFor={CommandPermission.ADMIN},
+        availableFor={CommandPermission.ADMIN, CommandPermission.GROUP},
         helpOrder=CommandHandlerOrder.SPAM,
         category=CommandCategory.SPAM,
     )

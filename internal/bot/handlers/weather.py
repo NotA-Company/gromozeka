@@ -412,13 +412,6 @@ class WeatherHandler(BaseBotHandler):
             - Country code should be ISO 3166 format (e.g., RU, US, GB)
         """
         # Get Weather for given city (and country)
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_WEATHER].toBool() and not await self.isAdmin(
-            ensuredMessage.user, None, True
-        ):
-            logger.info(f"Unauthorized /weather command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
-            return
-
         city = ""
         countryCode: Optional[str] = None
 

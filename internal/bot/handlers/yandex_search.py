@@ -290,13 +290,6 @@ class YandexSearchHandler(BaseBotHandler):
         Returns:
             None: This method sends messages directly via Telegram API
         """
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_WEB_SEARCH].toBool() and not await self.isAdmin(
-            ensuredMessage.user, None, True
-        ):
-            logger.info(f"Unauthorized /web_search command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
-            return
-
         if not context.args:
             await self.sendMessage(
                 ensuredMessage,
