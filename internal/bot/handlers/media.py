@@ -12,7 +12,7 @@ generation and analysis capabilities with fallback support.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import magic
 from telegram import Chat, Update
@@ -343,11 +343,6 @@ class MediaHandler(BaseBotHandler):
         message = ensuredMessage.getBaseMessage()
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_ANALYZE].toBool() and not await self.isAdmin(
-            ensuredMessage.user, None, True
-        ):
-            logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
-            return
 
         stopper = await self.startContinousTyping(ensuredMessage)
 
@@ -510,13 +505,7 @@ class MediaHandler(BaseBotHandler):
         message = ensuredMessage.getBaseMessage()
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_DRAW].toBool() and not await self.isAdmin(
-            ensuredMessage.user, None, True
-        ):
-            logger.info(f"Unauthorized /analyze command from {ensuredMessage.user} in chat {ensuredMessage.chat}")
-            return
 
-        commandStr = ""
         prompt = ensuredMessage.messageText
 
         if ensuredMessage.isQuote and ensuredMessage.quoteText:
@@ -525,14 +514,23 @@ class MediaHandler(BaseBotHandler):
         elif ensuredMessage.isReply and ensuredMessage.replyText:
             prompt = ensuredMessage.replyText
 
+        elif context.args:
+            prompt = " ".join(context.args)
         else:
-            for entity in message.entities:
-                if entity.type == MessageEntityType.BOT_COMMAND:
-                    commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
-                    prompt = ensuredMessage.messageText[entity.offset + entity.length :].strip()
-                    break
+            logger.warning(f"No prompt found in message: {message}")
+            # Get last messages from this user in chat and generate image, based on them
+            lastMessages: List[str] = []
+            for msg in reversed(
+                self.db.getChatMessagesByUser(ensuredMessage.chat.id, ensuredMessage.sender.id, limit=10)
+            ):
+                lastMessages.append(msg["media_description"] if msg["media_description"] else msg["message_text"])
+            prompt = (
+                f"Draw image for user `{ensuredMessage.sender.name}` based on"
+                f" their latest messages: {utils.jsonDumps(lastMessages)}"
+            )
+            # TODO: We can use LLM to generate prompt.
 
-        logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
+        logger.debug(f"Prompt: '{prompt}'")
         stopper = await self.startContinousTyping(ensuredMessage, action=ChatAction.UPLOAD_PHOTO)
 
         if not prompt:
@@ -540,7 +538,7 @@ class MediaHandler(BaseBotHandler):
             await self.sendMessage(
                 ensuredMessage,
                 messageText=(
-                    "Необходимо указать запрос для генерации изображение. "
+                    "Необходимо указать запрос для генерации изображения. "
                     "Или послать команду ответом на сообщение с текстом "
                     "(можно цитировать при необходимости)."
                 ),

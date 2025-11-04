@@ -748,7 +748,7 @@ class SummarizationHandler(BaseBotHandler):
         match chatType:
             case Chat.PRIVATE:
                 isBotOwner = await self.isAdmin(ensuredMessage.user, None, True)
-                if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool() and not isBotOwner:
+                if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool() and not isBotOwner:
                     logger.info(
                         f"Unauthorized /{commandStr} command from {ensuredMessage.user} "
                         f"in chat {ensuredMessage.chat}"
@@ -832,7 +832,7 @@ class SummarizationHandler(BaseBotHandler):
                 )
 
             case Chat.GROUP | Chat.SUPERGROUP:
-                if not chatSettings[ChatSettingsKey.ALLOW_SUMMARY].toBool():
+                if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
                     logger.info(
                         f"Unauthorized /{commandStr} command from {ensuredMessage.user} "
                         f"in chat {ensuredMessage.chat}"
