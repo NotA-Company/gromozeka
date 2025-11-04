@@ -60,6 +60,13 @@ class UserActiveActionEnum(StrEnum):
 
     Configuration = "activeConfigureId"
     Summarization = "activeSummarizationId"
+    UserDataConfig = "activeUserDataConfigId"
+
+
+class UserActiveConfigurationDict(TypedDict):
+
+    data: Dict[str | int, Any]
+    messageId: int
 
 
 class HCUserCacheDict(TypedDict):
@@ -67,6 +74,7 @@ class HCUserCacheDict(TypedDict):
 
     activeConfigureId: NotRequired[Dict[str, Any]]
     activeSummarizationId: NotRequired[Dict[str, Any]]
+    activeUserDataConfigId: NotRequired[Dict[str, Any]]
 
 
 class HandlersCacheDict(TypedDict):

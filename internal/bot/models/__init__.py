@@ -30,6 +30,7 @@ from .enums import (
     ButtonConfigureAction,
     ButtonDataKey,
     ButtonSummarizationAction,
+    ButtonUserDataConfigAction,
     LLMMessageFormat,
 )
 
@@ -46,6 +47,7 @@ __all__ = [
     "ButtonSummarizationAction",
     "LLMMessageFormat",
     "MessageType",
+    "ButtonUserDataConfigAction",
     # Delayed Tasks
     "DelayedTask",
     "DelayedTaskFunction",
