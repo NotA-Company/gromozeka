@@ -37,7 +37,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.ext import ContextTypes, ExtBot
 
 import lib.utils as utils
-from internal.services.cache import CacheService, UserDataType, UserDataValueType
+from internal.services.cache import CacheService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from lib.ai import (
     LLMManager,
@@ -513,82 +513,6 @@ class BaseBotHandler(CommandHandlerMixin):
     # User Data Management
     ###
 
-    def getUserData(self, chatId: int, userId: int) -> UserDataType:
-        """
-        Get user-specific data for a chat, dood!
-
-        Retrieves user data stored in cache or database.
-
-        Args:
-            chatId: Telegram chat ID
-            userId: Telegram user ID
-
-        Returns:
-            Dictionary of user data as [`UserDataType`](internal/services/cache/types.py)
-        """
-        return self.cache.getChatUserData(chatId=chatId, userId=userId)
-
-    def setUserData(
-        self, chatId: int, userId: int, key: str, value: UserDataValueType, append: bool = False
-    ) -> UserDataValueType:
-        """
-        Set or append user-specific data for a chat, dood!
-
-        If append is True and existing value is a list, appends to it.
-        Otherwise, replaces the value.
-
-        Args:
-            chatId: Telegram chat ID
-            userId: Telegram user ID
-            key: Data key (string identifier)
-            value: Data value (string, list, or dict)
-            append: If True, append to existing list value instead of replacing
-
-        Returns:
-            The final value stored (after append if applicable)
-        """
-        userData = self.getUserData(chatId, userId)
-
-        newValue = value
-        if key in userData and append:
-            # TODO: Properly work with dicts
-            _data = userData[key]
-            if isinstance(newValue, list):
-                newValue = [str(v).strip() for v in newValue]
-            else:
-                newValue = [str(newValue).strip()]
-
-            if isinstance(_data, list):
-                userData[key] = _data + newValue
-            else:
-                userData[key] = [str(_data)] + newValue
-
-            newValue = userData[key]
-
-        self.cache.setChatUserData(chatId=chatId, userId=userId, key=key, value=newValue)
-        return newValue
-
-    def unsetUserData(self, chatId: int, userId: int, key: str) -> None:
-        """
-        Remove a specific user data key, dood!
-
-        Args:
-            chatId: Telegram chat ID
-            userId: Telegram user ID
-            key: Data key to remove
-        """
-        self.cache.unsetChatUserData(chatId=chatId, userId=userId, key=key)
-
-    def clearUserData(self, chatId: int, userId: int) -> None:
-        """
-        Clear all user data for a specific user in a chat, dood!
-
-        Args:
-            chatId: Telegram chat ID
-            userId: Telegram user ID
-        """
-        self.cache.clearChatUserData(chatId=chatId, userId=userId)
-
     def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
         """
         Update an [`EnsuredMessage`](internal/bot/models/ensured_message.py) with current user data, dood!
@@ -598,7 +522,9 @@ class BaseBotHandler(CommandHandlerMixin):
         Args:
             ensuredMessage: Message object to update with user data
         """
-        ensuredMessage.setUserData(self.getUserData(ensuredMessage.chat.id, ensuredMessage.user.id))
+        ensuredMessage.setUserData(
+            self.cache.getChatUserData(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id)
+        )
 
     def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
         """
