@@ -25,7 +25,12 @@ def main():
     logger.debug(f"{sys.argv}")
     logFile = sys.argv[1]
     p = pstats.Stats(logFile)
-    p.sort_stats(SortKey.CUMULATIVE).print_stats(30)
+
+    # for sKey in SortKey:
+    #     p.sort_stats(sKey).print_stats(2)
+
+    # p.sort_stats(SortKey.CUMULATIVE).print_stats(30)
+    p.sort_stats(SortKey.TIME).print_stats(20)
 
 
 if __name__ == "__main__":
