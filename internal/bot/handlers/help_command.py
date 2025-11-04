@@ -15,13 +15,13 @@ from internal.database.wrapper import DatabaseWrapper
 from lib.ai import LLMManager
 
 from ..models import (
+    CommandCategory,
     CommandHandlerInfo,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
-    commandHandler,
 )
-from .base import BaseBotHandler
+from .base import BaseBotHandler, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -49,20 +49,19 @@ class HelpHandler(BaseBotHandler):
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
         self.commandsGetter = commandsGetter
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("help",),
         shortDescription="Print help",
         helpMessage=": Показать список доступных команд.",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.SECOND,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE},
+        helpOrder=CommandHandlerOrder.SECOND,
+        category=CommandCategory.PRIVATE,
     )
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def help_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle the /help command."""
-        if not update.message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage = EnsuredMessage.fromMessage(update.message)
         isBotOwner = await self.isAdmin(ensuredMessage.user, allowBotOwners=True)
 
         commands: Dict[CommandHandlerOrder, List[str]] = {}
@@ -87,6 +86,8 @@ class HelpHandler(BaseBotHandler):
                         botOwnerCommands.append(helpText)
                     else:
                         commands[commandInfo.order].append(helpText)
+                    # Do not add command several times
+                    break
 
         commandsStr = ""
         for v in commands.values():

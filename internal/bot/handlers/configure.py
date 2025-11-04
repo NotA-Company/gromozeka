@@ -27,7 +27,6 @@ from internal.services.cache.types import UserActiveActionEnum
 from lib.ai.manager import LLMManager
 from lib.markdown import markdown_to_markdownv2
 
-from .. import constants
 from ..models import (
     ButtonConfigureAction,
     ButtonDataKey,
@@ -36,13 +35,13 @@ from ..models import (
     ChatSettingsPage,
     ChatSettingsType,
     ChatSettingsValue,
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
-    commandHandler,
     getChatSettingsInfo,
 )
-from .base import BaseBotHandler, HandlerResultStatus
+from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -163,17 +162,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                 targetChatSettings[ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS].toBool()
                 and await self.isAdmin(user=user, chat=chatObj)
             ):
-                buttonTitle: str = f"#{chat['chat_id']}"
-                if chat["title"]:
-                    buttonTitle = f"{chat['title']}"
-                elif chat["username"]:
-                    buttonTitle = f"{chat['username']}"
-                if chat["type"] == Chat.PRIVATE:
-                    buttonTitle = f"{constants.PRIVATE_ICON} {buttonTitle}"
-                else:
-                    # TODO: Different icons for other types?
-                    buttonTitle = f"{constants.CHAT_ICON} {buttonTitle}"
-                buttonTitle += f" ({chat["type"]})"
+                buttonTitle = self.getChatTitle(chat, useMarkdown=False, addChatId=False)
 
                 keyboard.append(
                     [
@@ -218,12 +207,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
         logger.debug(f"ConfigureChat: chatInfo: {chatInfo}")
-        resp = (
-            f"Настраиваем чат **{chatInfo['title'] or chatInfo['username']}#{chatId}**:\n"
-            "\n"
-            f"**{page.getName()}**\n"
-            "\n"
-        )
+        resp = f"Настраиваем чат {self.getChatTitle(chatInfo)}:\n" "\n" f"**{page.getName()}**\n" "\n"
         chatSettings = self.getChatSettings(chatId)
         defaultChatSettings = self.getChatSettings(None, chatType=ChatType(chatInfo["type"]))
 
@@ -655,14 +639,18 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         return
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("configure",),
-        shortDescription="Start chat configuration wizard",
-        helpMessage=": Настроить поведение бота в одном из чатов, где вы админ",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        shortDescription="[<chatId>] - Start chat configuration wizard",
+        helpMessage="[`<chatId>`]: Настроить поведение бота в одном из чатов, где вы админ",
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.PRIVATE,
     )
-    async def configure_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def configure_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle the /configure command to start configuration wizard, dood!
 
@@ -687,31 +675,27 @@ class ConfigureCommandHandler(BaseBotHandler):
             private chats (CommandCategory.PRIVATE) and sets its help text.
         """
 
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
-
         msg = await self.sendMessage(
             ensuredMessage,
             messageText="Загружаю настройки....",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-        # TODO: Add support for /configure <chatId>
         if msg is not None:
-            await self._handle_chat_configuration(
-                {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init}, message=msg, user=ensuredMessage.user
-            )
+            targetChatId = utils.extractChatId(context.args)
+            if targetChatId is not None:
+                await self._handle_chat_configuration(
+                    {
+                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                        ButtonDataKey.ChatId: targetChatId,
+                    },
+                    message=msg,
+                    user=ensuredMessage.user,
+                )
+            else:
+                await self._handle_chat_configuration(
+                    {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init}, message=msg, user=ensuredMessage.user
+                )
         else:
             logger.error("Message undefined")
             return

@@ -1,4 +1,6 @@
 # Our TODO list
+- [ ] Meta wizard for guide thru all commands
+- [ ] User-data manipulation wizard
 - [ ] Add support for embeddings + Vector search oon chat's database
 - [ ] Add support for local LLM-providers (Like Ollama or LLama.cpp)
 - [ ] Less granular command enabling\disabling (after extended command decorator)
@@ -6,7 +8,7 @@
 - [x] Add support json-logging of LLM responses for debug purposes (looks like it sometimes response with weird format)
 - [ ] Run LLM and other requests in separate thread
 - [ ] Add cache for isAdmin (with short TTL like 10 minutes)
-- [ ] Add extended command decorator (to ensure message, chec is admin and so on + delete called command if needed)
+- [x] Add extended command decorator (to ensure message, chec is admin and so on + delete called command if needed)
 - [ ] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
 - [x] Bug: /configure get wrong default (from default, not chat-type specific defaults)
 - [x] Add different defaults for Private and Group chats

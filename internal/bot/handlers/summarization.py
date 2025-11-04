@@ -35,13 +35,13 @@ from ..models import (
     CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
     LLMMessageFormat,
-    commandHandler,
 )
-from .base import BaseBotHandler, HandlerResultStatus
+from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -679,16 +679,20 @@ class SummarizationHandler(BaseBotHandler):
         else:
             await message.edit_text("Суммаризация готова:")
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("summary", "topic_summary"),
         shortDescription="[<maxMessages>] [<chatId>] [<topicId>] - Summarise given chat "
         "(call without arguments to start wizard)",
         helpMessage=" `[<maxMessages>]` `[<chatId>]` `[<topicId>]`: Сделать суммаризацию чата "
         "(запускайте без аргументов для запуска мастера).",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.DEFAULT},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.TOOLS,
     )
-    async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def summary_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle /summary and /topic_summary commands, dood!
 
@@ -723,27 +727,13 @@ class SummarizationHandler(BaseBotHandler):
             Requires ALLOW_SUMMARY setting to be enabled in chat settings.
             Bot owner can bypass this restriction in private chats.
         """
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Failed to ensure message: {type(e).__name__}#{e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        message = ensuredMessage.getBaseMessage()
 
         commandStr = ""
-        for entity in message.entities:
-            if entity.type == MessageEntityType.BOT_COMMAND:
-                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
-                break
+        for entityStr in message.parse_entities([MessageEntityType.BOT_COMMAND]).values():
+            commandStr = entityStr
+            break
 
-        logger.debug(f"Command string: {commandStr}")
         isTopicSummary = commandStr.lower().startswith("/topic_summary")
 
         chatType = ensuredMessage.chat.type

@@ -41,12 +41,12 @@ from lib.openweathermap import CombinedWeatherResult, OpenWeatherMapClient
 from .. import constants
 from ..models import (
     ChatSettingsKey,
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
-    commandHandler,
 )
-from .base import BaseBotHandler, HandlerResultStatus
+from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -365,15 +365,19 @@ class WeatherHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("weather",),
         shortDescription="<city> [, <countryCode>] - Get weather for given city",
         helpMessage=" `<city>` `[, <countryCode>]`: Показать погоду в указанном городе "
         "(можно добавить 2х-буквенный код страны для уточнения).",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.DEFAULT},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.TOOLS,
     )
-    async def weather_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def weather_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle /weather command for retrieving weather information, dood!
 
         Processes the /weather command with city name and optional country code
@@ -408,20 +412,6 @@ class WeatherHandler(BaseBotHandler):
             - Country code should be ISO 3166 format (e.g., RU, US, GB)
         """
         # Get Weather for given city (and country)
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
         if not chatSettings[ChatSettingsKey.ALLOW_WEATHER].toBool() and not await self.isAdmin(
             ensuredMessage.user, None, True
