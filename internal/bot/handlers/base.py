@@ -1085,6 +1085,50 @@ class BaseBotHandler(CommandHandlerMixin):
         await typingStopper.setTask(task)
         return typingStopper
 
+    def getChatTitle(
+        self,
+        chatInfo: ChatInfoDict,
+        *,
+        useMarkdown: bool = True,
+        addChatId: bool = True,
+        addChatType: bool = True,
+    ) -> str:
+        """
+        Get chat title for the given chat info, dood!
+
+        Args:
+            chatInfo: Chat info object
+            useMarkdown: Whether to use markdown markup (Default: True)
+            addChatId: Whether to add chat ID (Default: True)
+            addChatType: Whether yo add chat type (private, group, etc...) (Default: True)
+
+        Returns:
+            Chat title string
+        """
+        chatTitle: str = f"#{chatInfo['chat_id']}"
+        if chatInfo["title"]:
+            chatTitle = chatInfo["title"]
+        elif chatInfo["username"]:
+            chatTitle = chatInfo["username"]
+        if useMarkdown:
+            chatTitle = f"**{chatTitle}**"
+
+        if chatInfo["type"] == Chat.PRIVATE:
+            chatTitle = f"{constants.PRIVATE_ICON} {chatTitle}"
+        else:
+            chatTitle = f"{constants.CHAT_ICON} {chatTitle}"
+            # TODO: Different icons for other types?
+
+        if addChatType:
+            chatTitle = f"{chatTitle} ({chatInfo['type']})"
+
+        if addChatId:
+            if useMarkdown:
+                chatTitle = f"#`{chatInfo['chat_id']}`, {chatTitle}"
+            else:
+                chatTitle = f"#{chatInfo['chat_id']} {chatTitle}"
+        return chatTitle
+
     ###
     # Processing media
     ###

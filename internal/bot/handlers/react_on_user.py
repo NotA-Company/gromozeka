@@ -19,13 +19,13 @@ from lib import utils
 from ..models import (
     ChatSettingsKey,
     ChatSettingsValue,
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
     MessageSender,
-    commandHandler,
 )
-from .base import BaseBotHandler, HandlerResultStatus
+from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -119,30 +119,21 @@ class ReactOnUserMessageHandler(BaseBotHandler):
 
         return HandlerResultStatus.SKIPPED
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("set_reaction",),
         shortDescription="[<chatId>] <emoji> - Start reacting to author of replied message with given emoji",
         helpMessage=" [<chatId>] <emoji> - Ставить указанные реакции под сообщениями автора сообщения,"
         " на которое команда является ответом.",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.ADMIN,
     )
-    async def set_reaction_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def set_reaction_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Bun bip bop"""
-        message = update.message
-        if not message:
-            logger.error(f"Message undefined in {update}")
-            return
-        logger.debug(f"Got set_reaction command: {utils.dumpMessage(message)}")
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        message = ensuredMessage.getBaseMessage()
 
         replyMessage = message.reply_to_message
         if replyMessage is None:
@@ -153,27 +144,26 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        chatId = ensuredMessage.chat.id
-        emoji = None
+        args = context.args or []
+        targetChatId = utils.extractChatId(args)
+        if targetChatId is None:
+            targetChatId = ensuredMessage.chat.id
+        else:
+            args = args[1:]
 
-        if context.args:
-            emoji = context.args[-1]  # Just get last argument as emoji
-            arg0 = context.args[0]
-            try:
-                if arg0.isdigit() or (arg0.startswith("-") and arg0[1:].isdigit()):
-                    chatId = int(arg0)
-            except ValueError:
-                logger.error(f"Invalid chatId: {context.args[0]}")
+        emoji = None
+        if args:
+            emoji = args[0]
 
         if not emoji:
             await self.sendMessage(
                 ensuredMessage,
-                messageText="Не указан emoji.",
+                messageText="Не указан эмодзи для реакции.",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
 
-        targetChat = Chat(id=chatId, type=Chat.PRIVATE if chatId > 0 else Chat.SUPERGROUP)
+        targetChat = Chat(id=targetChatId, type=Chat.PRIVATE if targetChatId > 0 else Chat.SUPERGROUP)
         targetChat.set_bot(message.get_bot())
 
         if not await self.isAdmin(user=ensuredMessage.user, chat=targetChat):
@@ -184,7 +174,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = self._getAuthorToEmojiMap(chatId)
+        authorToEmojiMap = self._getAuthorToEmojiMap(targetChatId)
         sender = self._getMessageAuthor(replyMessage)
 
         if sender.id:
@@ -193,7 +183,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             authorToEmojiMap[sender.username.lower()] = emoji
 
         self.setChatSetting(
-            chatId,
+            targetChatId,
             ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP,
             ChatSettingsValue(utils.jsonDumps(authorToEmojiMap, sort_keys=False)),
         )
@@ -209,30 +199,21 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("unset_reaction",),
         shortDescription="[<chatId>] - Stop reacting to author of replied message",
         helpMessage=" [<chatId>] - Перестать реакции под сообщениями автора сообщения,"
         " на которое команда является ответом.",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.ADMIN,
     )
-    async def unset_reaction_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Bun bip bop"""
-        message = update.message
-        if not message:
-            logger.error(f"Message undefined in {update}")
-            return
-        logger.debug(f"Got unset_reaction command: {utils.dumpMessage(message)}")
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+    async def unset_reaction_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """TODO: Bun bip bop"""
+        message = ensuredMessage.getBaseMessage()
 
         replyMessage = message.reply_to_message
         if replyMessage is None:
@@ -243,16 +224,11 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        chatId = ensuredMessage.chat.id
-        if context.args:
-            arg0 = context.args[0]
-            try:
-                if arg0.isdigit() or (arg0.startswith("-") and arg0[1:].isdigit()):
-                    chatId = int(arg0)
-            except ValueError:
-                logger.error(f"Invalid chatId: {context.args[0]}")
+        targetChatId = utils.extractChatId(context.args)
+        if targetChatId is None:
+            targetChatId = ensuredMessage.chat.id
 
-        targetChat = Chat(id=chatId, type=Chat.PRIVATE if chatId > 0 else Chat.SUPERGROUP)
+        targetChat = Chat(id=targetChatId, type=Chat.PRIVATE if targetChatId > 0 else Chat.SUPERGROUP)
         targetChat.set_bot(message.get_bot())
 
         if not await self.isAdmin(user=ensuredMessage.user, chat=targetChat):
@@ -263,7 +239,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = self._getAuthorToEmojiMap(chatId)
+        authorToEmojiMap = self._getAuthorToEmojiMap(targetChatId)
         sender = self._getMessageAuthor(replyMessage)
         emoji1 = authorToEmojiMap.pop(sender.id, None)
         emoji2 = authorToEmojiMap.pop(sender.username.lower(), None)
@@ -271,7 +247,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         emoji = emoji1 or emoji2
 
         self.setChatSetting(
-            chatId,
+            targetChatId,
             ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP,
             ChatSettingsValue(utils.jsonDumps(authorToEmojiMap, sort_keys=False)),
         )
@@ -292,42 +268,28 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("dump_reactions",),
         shortDescription="[<chatId>] - Dump reactions settings",
         helpMessage=" [<chatId>] - Вывести настройки реакций в указанном чате (сфрой JSON-дамп)",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.ADMIN,
     )
-    async def dump_reactions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Bun bip bop"""
-        message = update.message
-        if not message:
-            logger.error(f"Message undefined in {update}")
-            return
-        logger.debug(f"Got dump_reactions command: {utils.dumpMessage(message)}")
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+    async def dump_reactions_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """TODO: Bun bip bop"""
+        message = ensuredMessage.getBaseMessage()
 
         logger.debug(f"Args: {context.args}")
-        chatId = ensuredMessage.chat.id
-        if context.args:
-            arg0 = context.args[0]
-            try:
-                if arg0.isdigit() or (arg0.startswith("-") and arg0[1:].isdigit()):
-                    chatId = int(arg0)
-            except ValueError:
-                logger.error(f"Invalid chatId: {context.args[0]}")
+        targetChatId = utils.extractChatId(context.args)
+        if targetChatId is None:
+            targetChatId = ensuredMessage.chat.id
 
-        logger.debug(f"chatId: {chatId}")
-        targetChat = Chat(id=chatId, type=Chat.PRIVATE if chatId > 0 else Chat.SUPERGROUP)
+        logger.debug(f"chatId: {targetChatId}")
+        targetChat = Chat(id=targetChatId, type=Chat.PRIVATE if targetChatId > 0 else Chat.SUPERGROUP)
         targetChat.set_bot(message.get_bot())
 
         if not await self.isAdmin(user=ensuredMessage.user, chat=targetChat):
@@ -338,7 +300,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = self._getAuthorToEmojiMap(chatId)
+        authorToEmojiMap = self._getAuthorToEmojiMap(targetChatId)
 
         await self.sendMessage(
             ensuredMessage,

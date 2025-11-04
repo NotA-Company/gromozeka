@@ -23,13 +23,13 @@ from lib.ai import LLMFunctionParameter, LLMManager, LLMParameterType
 
 from ..models import (
     CallbackDataDict,
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     DelayedTaskFunction,
     EnsuredMessage,
-    commandHandler,
 )
-from .base import BaseBotHandler, HandlerResultStatus
+from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +133,7 @@ class ExampleHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
+        # Do something with the message
         return HandlerResultStatus.SKIPPED
 
     ###
@@ -169,14 +170,18 @@ class ExampleHandler(BaseBotHandler):
     # Command Handlers
     ###
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("example",),
         shortDescription="- example command",
         helpMessage=" Пример команды.",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.TEST,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE},
+        helpOrder=CommandHandlerOrder.TEST,
+        category=CommandCategory.TECHNICAL,
     )
-    async def example_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def example_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle the example command, dood!
 
@@ -187,32 +192,12 @@ class ExampleHandler(BaseBotHandler):
             update (Update): Telegram update object.
             context (ContextTypes.DEFAULT_TYPE): Bot context.
         """
-        logger.debug(f"Got example command: {update}")
-
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
         # Send 'typing...' action to show that bot doing something
         await self.startTyping(ensuredMessage)
-
-        # Save user command to DB for summarisation, debug, context and so on
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
-        # Chaeck if user is admin in this chat
-        isAdmin = await self.isAdmin(ensuredMessage.user, ensuredMessage.chat, allowBotOwners=True)
 
         # Send message to user (also save it to db, try to parse as Markdown2 and so on)
         await self.sendMessage(
             ensuredMessage,
-            messageText=f"Hello, dood! You are{'not ' if not isAdmin else ''} admin",
-            messageCategory=MessageCategory.BOT_ERROR,
+            messageText="Hello, **dood**!",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
