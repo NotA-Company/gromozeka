@@ -32,7 +32,7 @@ from lib.ai import (
     LLMManager,
     LLMParameterType,
 )
-from lib.markdown.parser import markdown_to_markdownv2
+from lib.markdown.parser import markdownToMarkdownV2
 
 from ..models import (
     ButtonDataKey,
@@ -384,7 +384,7 @@ class UserDataHandler(BaseBotHandler):
         )
         keyboard.append([exitButton])
         await bot.edit_message_text(
-            markdown_to_markdownv2(resp),
+            markdownToMarkdownV2(resp),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="MarkdownV2",
             chat_id=user.id,
@@ -598,7 +598,7 @@ class UserDataHandler(BaseBotHandler):
             [exitButton],
         ]
         await bot.edit_message_text(
-            markdown_to_markdownv2(resp),
+            markdownToMarkdownV2(resp),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="MarkdownV2",
             chat_id=user.id,
@@ -676,7 +676,7 @@ class UserDataHandler(BaseBotHandler):
         ]
 
         await bot.edit_message_text(
-            markdown_to_markdownv2(f"Готово, теперь ключ {key} установлен в \n```{key}\n{value}\n```"),
+            markdownToMarkdownV2(f"Готово, теперь ключ {key} установлен в \n```{key}\n{value}\n```"),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="MarkdownV2",
             chat_id=user.id,

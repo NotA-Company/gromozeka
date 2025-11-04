@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from lib.markdown import (  # noqa: E402
     markdown_to_html,
-    markdown_to_markdownv2,
+    markdownToMarkdownV2,
     normalize_markdown,
 )
 
@@ -43,7 +43,7 @@ def example():
         self.assertNotIn("<li>", html)
 
         # Test MarkdownV2 output
-        markdownv2 = markdown_to_markdownv2(markdown)
+        markdownv2 = markdownToMarkdownV2(markdown)
         self.assertIn("```python", markdownv2)
         self.assertIn("* Item 1", markdownv2)
         self.assertIn("* Item 2", markdownv2)
@@ -71,7 +71,7 @@ Instructions:
         self.assertNotIn("<li>", html)
 
         # Test MarkdownV2 output
-        markdownv2 = markdown_to_markdownv2(markdown)
+        markdownv2 = markdownToMarkdownV2(markdown)
         self.assertIn("```text", markdownv2)
         self.assertIn("1. First step", markdownv2)
         self.assertIn("2. Second step", markdownv2)
@@ -129,7 +129,7 @@ Test01:
         self.assertIn("* Test02.", normalized)
 
         # Test MarkdownV2 output
-        markdownv2 = markdown_to_markdownv2(markdown)
+        markdownv2 = markdownToMarkdownV2(markdown)
         self.assertIn("```chat-prompt", markdownv2)
         self.assertIn("* Test3.", markdownv2)
         self.assertIn("* Test4.", markdownv2)
@@ -243,7 +243,7 @@ Code
         self.assertNotIn("- Code 3.", normalized)
 
         # Test MarkdownV2 output
-        markdownv2 = markdown_to_markdownv2(markdown)
+        markdownv2 = markdownToMarkdownV2(markdown)
         self.assertIn("• Test 1:", markdownv2)
         self.assertIn("```", markdownv2)
         self.assertIn("Code\n* Code 1.\n* Code 2.\n* Code 3.\n\nCode", markdownv2)

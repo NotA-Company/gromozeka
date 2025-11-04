@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_markdownv2  # noqa: E402
+from lib.markdown import markdownToMarkdownV2  # noqa: E402
 
 
 def test_preserve_paragraphs():
@@ -29,7 +29,7 @@ when the option is enabled."""
 
     # Test 1: Default behavior (should preserve soft line breaks)
     print("1. Default markdown_to_markdownv2 (should preserve soft line breaks):")
-    result1 = markdown_to_markdownv2(test_text)
+    result1 = markdownToMarkdownV2(test_text)
     print(repr(result1))
     print("Rendered:")
     print(result1)
@@ -37,7 +37,7 @@ when the option is enabled."""
 
     # Test 2: Disable soft line break preservation
     print("2. With preserve_soft_line_breaks=False:")
-    result2 = markdown_to_markdownv2(test_text, preserve_soft_line_breaks=False)
+    result2 = markdownToMarkdownV2(test_text, preserve_soft_line_breaks=False)
     print(repr(result2))
     print("Rendered:")
     print(result2)
@@ -53,7 +53,7 @@ when the option is enabled."""
     print(repr(test_text2))
 
     # With preserve_leading_spaces=True (default)
-    result3a = markdown_to_markdownv2(test_text2)
+    result3a = markdownToMarkdownV2(test_text2)
     print("With preserve_leading_spaces=True:")
     print(repr(result3a))
     print("Rendered:")
@@ -61,7 +61,7 @@ when the option is enabled."""
     print()
 
     # With preserve_leading_spaces=False
-    result3b = markdown_to_markdownv2(test_text2, preserve_leading_spaces=False)
+    result3b = markdownToMarkdownV2(test_text2, preserve_leading_spaces=False)
     print("With preserve_leading_spaces=False:")
     print(repr(result3b))
     print("Rendered:")
@@ -78,7 +78,7 @@ continues here
     print(repr(test_text3))
 
     # Both enabled
-    result4a = markdown_to_markdownv2(test_text3, preserve_leading_spaces=True, preserve_soft_line_breaks=True)
+    result4a = markdownToMarkdownV2(test_text3, preserve_leading_spaces=True, preserve_soft_line_breaks=True)
     print("Both options enabled:")
     print(repr(result4a))
     print("Rendered:")
@@ -86,7 +86,7 @@ continues here
     print()
 
     # Both disabled
-    result4b = markdown_to_markdownv2(test_text3, preserve_leading_spaces=False, preserve_soft_line_breaks=False)
+    result4b = markdownToMarkdownV2(test_text3, preserve_leading_spaces=False, preserve_soft_line_breaks=False)
     print("Both options disabled:")
     print(repr(result4b))
     print("Rendered:")

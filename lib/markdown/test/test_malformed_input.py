@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from lib.markdown import (  # noqa: E402
     MarkdownParser,
     markdown_to_html,
-    markdown_to_markdownv2,
+    markdownToMarkdownV2,
 )
 
 
@@ -52,7 +52,7 @@ class TestIncompleteSyntax(unittest.TestCase):
                 # Should not crash
                 doc = self.parser.parse(markdown)
                 html = markdown_to_html(markdown)
-                markdownv2 = markdown_to_markdownv2(markdown)
+                markdownv2 = markdownToMarkdownV2(markdown)
 
                 self.assertIsNotNone(doc)
                 self.assertIsNotNone(html)
@@ -273,7 +273,7 @@ class TestUnicodeEdgeCases(unittest.TestCase):
 
         doc = self.parser.parse(markdown)
         html = markdown_to_html(markdown)
-        markdown_to_markdownv2(markdown)
+        markdownToMarkdownV2(markdown)
 
         self.assertIsNotNone(doc)
         self.assertIn("👋", html)
@@ -520,7 +520,7 @@ class TestSpecialCharacterCombinations(unittest.TestCase):
             with self.subTest(markdown=markdown):
                 doc = self.parser.parse(markdown)
                 html = markdown_to_html(markdown)
-                markdownv2 = markdown_to_markdownv2(markdown)
+                markdownv2 = markdownToMarkdownV2(markdown)
 
                 self.assertIsNotNone(doc)
                 self.assertIsNotNone(html)
@@ -574,7 +574,7 @@ More inline: `**bold**` text"""
 
         doc = self.parser.parse(markdown)
         html = markdown_to_html(markdown)
-        markdown_to_markdownv2(markdown)
+        markdownToMarkdownV2(markdown)
 
         self.assertIsNotNone(doc)
         self.assertIn("<code>*_~[]()</code>", html)
@@ -651,7 +651,7 @@ class TestRobustnessAgainstCrashes(unittest.TestCase):
 
         doc = self.parser.parse(markdown)
         html = markdown_to_html(markdown)
-        markdownv2 = markdown_to_markdownv2(markdown)
+        markdownv2 = markdownToMarkdownV2(markdown)
 
         self.assertIsNotNone(doc)
         self.assertIsNotNone(html)

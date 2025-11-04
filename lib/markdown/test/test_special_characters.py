@@ -14,7 +14,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from lib.markdown import (  # noqa: E402
     markdown_to_html,
-    markdown_to_markdownv2,
+    markdownToMarkdownV2,
     normalize_markdown,
 )
 
@@ -27,7 +27,7 @@ class TestSpecialCharacters(unittest.TestCase):
         input_text = "Test: '\"-*_<>~' "
 
         # Test MarkdownV2 output
-        markdownv2_result = markdown_to_markdownv2(input_text)
+        markdownv2_result = markdownToMarkdownV2(input_text)
         self.assertIn("\\*", markdownv2_result, "Asterisk should be escaped in MarkdownV2")
         self.assertIn("\\_", markdownv2_result, "Underscore should be escaped in MarkdownV2")
         self.assertIn("\\~", markdownv2_result, "Tilde should be escaped in MarkdownV2")
@@ -65,7 +65,7 @@ class TestSpecialCharacters(unittest.TestCase):
 
         for input_text, expected_escape in test_cases:
             with self.subTest(input_text=input_text):
-                markdownv2_result = markdown_to_markdownv2(input_text)
+                markdownv2_result = markdownToMarkdownV2(input_text)
                 self.assertIn(
                     expected_escape,
                     markdownv2_result,
@@ -86,7 +86,7 @@ class TestSpecialCharacters(unittest.TestCase):
         for input_text in test_cases:
             with self.subTest(input_text=input_text):
                 # Test that all formats preserve the characters
-                markdownv2_result = markdown_to_markdownv2(input_text)
+                markdownv2_result = markdownToMarkdownV2(input_text)
                 html_result = markdown_to_html(input_text)
                 normalized_result = normalize_markdown(input_text)
 
@@ -132,7 +132,7 @@ class TestSpecialCharacters(unittest.TestCase):
 
         for input_text, expected_pattern in test_cases:
             with self.subTest(input_text=input_text):
-                markdownv2_result = markdown_to_markdownv2(input_text)
+                markdownv2_result = markdownToMarkdownV2(input_text)
                 self.assertIn(
                     expected_pattern,
                     markdownv2_result,
@@ -151,7 +151,7 @@ class TestSpecialCharacters(unittest.TestCase):
         for input_text in test_cases:
             with self.subTest(input_text=input_text):
                 # Should not crash and should preserve all characters
-                markdownv2_result = markdown_to_markdownv2(input_text)
+                markdownv2_result = markdownToMarkdownV2(input_text)
                 html_result = markdown_to_html(input_text)
                 normalized_result = normalize_markdown(input_text)
 
@@ -188,7 +188,7 @@ class TestSpecialCharacters(unittest.TestCase):
             with self.subTest(input_text=input_text):
                 # Should not crash
                 try:
-                    markdownv2_result = markdown_to_markdownv2(input_text)
+                    markdownv2_result = markdownToMarkdownV2(input_text)
                     html_result = markdown_to_html(input_text)
                     normalized_result = normalize_markdown(input_text)
 
@@ -213,18 +213,18 @@ class TestSpecialCharacters(unittest.TestCase):
     def test_escaping_in_different_contexts(self):
         """Test that escaping works correctly in different contexts."""
         # Test in regular text
-        result = markdown_to_markdownv2("Regular text with * and _ and ~")
+        result = markdownToMarkdownV2("Regular text with * and _ and ~")
         self.assertIn("\\*", result)
         self.assertIn("\\_", result)
         self.assertIn("\\~", result)
 
         # Test in code spans (should not be escaped inside code)
-        result = markdown_to_markdownv2("Code: `*_~` text")
+        result = markdownToMarkdownV2("Code: `*_~` text")
         # The code span content should not be escaped, but text outside should be
         self.assertIn("`*_~`", result)  # Inside code span, not escaped
 
         # Test in links
-        result = markdown_to_markdownv2("Link: [text with *_~](http://example.com)")
+        result = markdownToMarkdownV2("Link: [text with *_~](http://example.com)")
         # Link text should have escaped characters
         self.assertTrue("\\*" in result or "*" in result)  # May be in link text
 
@@ -259,7 +259,7 @@ class TestSpecialCharacters(unittest.TestCase):
 
         for markdown in test_cases:
             with self.subTest(markdown=markdown):
-                result = markdown_to_markdownv2(markdown)
+                result = markdownToMarkdownV2(markdown)
                 # Should handle without crashing
                 self.assertIsInstance(result, str)
 
@@ -267,7 +267,7 @@ class TestSpecialCharacters(unittest.TestCase):
         """Test consecutive different special characters."""
         markdown = "*_~`[](){}#>-=+|\\!@$%^&"
 
-        result = markdown_to_markdownv2(markdown)
+        result = markdownToMarkdownV2(markdown)
         html = markdown_to_html(markdown)
 
         # Should not crash
@@ -286,7 +286,7 @@ class TestSpecialCharacters(unittest.TestCase):
 
         for markdown in test_cases:
             with self.subTest(markdown=markdown):
-                result = markdown_to_markdownv2(markdown)
+                result = markdownToMarkdownV2(markdown)
                 html = markdown_to_html(markdown)
 
                 self.assertIsInstance(result, str)
@@ -304,7 +304,7 @@ class TestSpecialCharacters(unittest.TestCase):
         for markdown in test_cases:
             with self.subTest(markdown=markdown):
                 html = markdown_to_html(markdown)
-                result = markdown_to_markdownv2(markdown)
+                result = markdownToMarkdownV2(markdown)
 
                 self.assertIsInstance(html, str)
                 self.assertIsInstance(result, str)
@@ -317,7 +317,7 @@ class TestSpecialCharacters(unittest.TestCase):
 - Item with [brackets]"""
 
         html = markdown_to_html(markdown)
-        result = markdown_to_markdownv2(markdown)
+        result = markdownToMarkdownV2(markdown)
 
         self.assertIn("<ul>", html)
         self.assertIn("•", result)
@@ -329,7 +329,7 @@ class TestSpecialCharacters(unittest.TestCase):
 > Quote with ~ tilde"""
 
         html = markdown_to_html(markdown)
-        markdown_to_markdownv2(markdown)
+        markdownToMarkdownV2(markdown)
 
         self.assertIn("asterisk", html)
         self.assertIn("underscore", html)

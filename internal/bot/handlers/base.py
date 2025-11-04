@@ -45,7 +45,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
-from lib.markdown import markdown_to_markdownv2
+from lib.markdown import markdownToMarkdownV2
 
 from ...config.manager import ConfigManager
 from ...database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
@@ -762,7 +762,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 replyMessage: Optional[Message] = None
                 if tryMarkdownV2 and photoCaption is not None:
                     try:
-                        messageTextParsed = markdown_to_markdownv2(addMessagePrefix + photoCaption)
+                        messageTextParsed = markdownToMarkdownV2(addMessagePrefix + photoCaption)
                         # logger.debug(f"Sending MarkdownV2: {replyText}")
                         replyMessage = await message.reply_photo(
                             caption=messageTextParsed,
@@ -818,7 +818,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     # Try to send Message as MarkdownV2 first
                     if tryMarkdownV2:
                         try:
-                            messageTextParsed = markdown_to_markdownv2(addMessagePrefix + _messageText)
+                            messageTextParsed = markdownToMarkdownV2(addMessagePrefix + _messageText)
                             # logger.debug(f"Sending MarkdownV2: {replyText}")
                             replyMessage = await message.reply_text(
                                 text=messageTextParsed,

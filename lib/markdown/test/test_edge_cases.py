@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from lib.markdown import (  # noqa: E402
     MarkdownParser,
     markdown_to_html,
-    markdown_to_markdownv2,
+    markdownToMarkdownV2,
 )
 from lib.markdown.ast_nodes import MDList  # noqa: E402
 
@@ -438,7 +438,7 @@ class TestMarkdownV2EdgeCases(unittest.TestCase):
     - Level 3
       - Level 4"""
 
-        result = markdown_to_markdownv2(markdown)
+        result = markdownToMarkdownV2(markdown)
 
         # Should render with bullet points
         self.assertIn("•", result)
@@ -448,7 +448,7 @@ class TestMarkdownV2EdgeCases(unittest.TestCase):
         """Test empty elements in MarkdownV2."""
         markdown = "- Item 1\n- \n- Item 3"
 
-        result = markdown_to_markdownv2(markdown)
+        result = markdownToMarkdownV2(markdown)
 
         # Should handle gracefully
         self.assertIn("Item 1", result)
@@ -460,7 +460,7 @@ class TestMarkdownV2EdgeCases(unittest.TestCase):
   - Nested with **more** special
     > Quote with `code`"""
 
-        result = markdown_to_markdownv2(markdown)
+        result = markdownToMarkdownV2(markdown)
 
         # Should escape properly
         self.assertIn("_special_", result)

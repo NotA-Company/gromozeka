@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_markdownv2  # noqa: E402
+from lib.markdown import markdownToMarkdownV2  # noqa: E402
 
 
 def test_preserve_options():
@@ -29,7 +29,7 @@ Final line"""
 
     # Test 1: Default behavior (should preserve both)
     print("1. Default markdown_to_markdownv2 (should preserve both):")
-    result1 = markdown_to_markdownv2(test_text)
+    result1 = markdownToMarkdownV2(test_text)
     print(repr(result1))
     print("Rendered:")
     print(result1)
@@ -37,7 +37,7 @@ Final line"""
 
     # Test 2: Explicitly disable both options
     print("2. With both options disabled:")
-    result2 = markdown_to_markdownv2(test_text, preserve_leading_spaces=False, preserve_soft_line_breaks=False)
+    result2 = markdownToMarkdownV2(test_text, preserve_leading_spaces=False, preserve_soft_line_breaks=False)
     print(repr(result2))
     print("Rendered:")
     print(result2)
@@ -45,7 +45,7 @@ Final line"""
 
     # Test 3: Only preserve leading spaces
     print("3. Only preserve leading spaces:")
-    result3 = markdown_to_markdownv2(test_text, preserve_leading_spaces=True, preserve_soft_line_breaks=False)
+    result3 = markdownToMarkdownV2(test_text, preserve_leading_spaces=True, preserve_soft_line_breaks=False)
     print(repr(result3))
     print("Rendered:")
     print(result3)
@@ -53,7 +53,7 @@ Final line"""
 
     # Test 4: Only preserve soft line breaks
     print("4. Only preserve soft line breaks:")
-    result4 = markdown_to_markdownv2(test_text, preserve_leading_spaces=False, preserve_soft_line_breaks=True)
+    result4 = markdownToMarkdownV2(test_text, preserve_leading_spaces=False, preserve_soft_line_breaks=True)
     print(repr(result4))
     print("Rendered:")
     print(result4)
@@ -67,7 +67,7 @@ Final line"""
     print("5. Test with formatted text:")
     print("Original:")
     print(repr(formatted_text))
-    result5 = markdown_to_markdownv2(formatted_text)
+    result5 = markdownToMarkdownV2(formatted_text)
     print("MarkdownV2 result:")
     print(repr(result5))
     print("Rendered:")
