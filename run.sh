@@ -8,6 +8,7 @@ cd `dirname $0`
 [ -z "$COMPRESSOR" ] && COMPRESSOR="xz -9e"
 [ -z "$DO_PIP_UPDATE" ] && DO_PIP_UPDATE="1"
 [ -z "$DO_GIT_PULL" ] && DO_GIT_PULL="0"
+[ -z "$USE_PROFILER" ] && USE_PROFILER="0"
 
 mkdir -p logs
 # Compress old logs
@@ -27,5 +28,10 @@ if [ "$DO_PIP_UPDATE" = "1" ]; then
     ./venv/bin/pip install -r ./requirements.txt
 fi
 
-./venv/bin/python ./main.py --config-dir ./configs/00-defaults --config-dir "./configs/$ENV" $*
+PROFILER=""
+if [ "$USE_PROFILER" = "1" ]; then
+    NOW=`date +%Y-%m-%d_%H-%M`
+    PROFILER=" -m cProfile -o logs/profile.${NOW}.profile "
+fi
+./venv/bin/python $PROFILER ./main.py --config-dir ./configs/00-defaults --config-dir "./configs/$ENV" $*
 #2>&1 | tee `date '+logs/%Y-%m-%d_%H-%M.log'`
