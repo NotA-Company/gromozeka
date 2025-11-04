@@ -46,12 +46,12 @@ from lib.yandex_search import YandexSearchClient
 
 from ..models import (
     ChatSettingsKey,
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
-    commandHandler,
 )
-from .base import BaseBotHandler
+from .base import BaseBotHandler, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -264,14 +264,18 @@ class YandexSearchHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("web_search",),
         shortDescription="<query> - Search Web for given query using Yandex",
         helpMessage=" `<query>`: Поискать в интернете используя Yandex Search API",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.DEFAULT},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.TOOLS,
     )
-    async def web_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def web_search(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle /web_search command for direct user web searches.
 
         This method processes the /web_search command, allowing users to search
@@ -286,21 +290,6 @@ class YandexSearchHandler(BaseBotHandler):
         Returns:
             None: This method sends messages directly via Telegram API
         """
-        logger.debug(f"Got /web_search command: {update}")
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
         if not chatSettings[ChatSettingsKey.ALLOW_WEB_SEARCH].toBool() and not await self.isAdmin(
             ensuredMessage.user, None, True

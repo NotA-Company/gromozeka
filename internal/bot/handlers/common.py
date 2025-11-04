@@ -26,7 +26,6 @@ from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import LLMManager
 
-from .. import constants
 from ..models import (
     CommandCategory,
     CommandHandlerOrder,
@@ -398,15 +397,7 @@ class CommonHandler(BaseBotHandler):
         resp = "Список доступных чатов:\n\n"
 
         for chat in knownChats:
-            chatTitle: str = f"#{chat['chat_id']}"
-            if chat["title"]:
-                chatTitle = chat["title"]
-            elif chat["username"]:
-                chatTitle = chat["username"]
-            if chat["type"] == Chat.PRIVATE:
-                chatTitle = f"{constants.PRIVATE_ICON} **{chatTitle}**"
-            else:
-                chatTitle = f"{constants.CHAT_ICON} **{chatTitle}**"
-            resp += f"* #`{chat['chat_id']}`, {chatTitle} ({chat["type"]})\n"
+            chatTitle = self.getChatTitle(chat)
+            resp += f"* {chatTitle}\n"
 
         await self.sendMessage(ensuredMessage, resp, messageCategory=MessageCategory.BOT_COMMAND_REPLY)

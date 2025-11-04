@@ -32,12 +32,12 @@ from lib.ai import (
 )
 
 from ..models import (
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
-    commandHandler,
 )
-from .base import BaseBotHandler
+from .base import BaseBotHandler, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -163,14 +163,18 @@ class UserDataHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("get_my_data",),
         shortDescription="Dump data, bot knows about you in this chat",
         helpMessage=": Показать запомненную информацию о Вас в текущем чате.",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.TECHNICAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE, CommandPermission.GROUP},
+        helpOrder=CommandHandlerOrder.TECHNICAL,
+        category=CommandCategory.TOOLS,
     )
-    async def get_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def get_my_data_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle the /get_my_data command to display stored user data, dood!
 
@@ -189,19 +193,6 @@ class UserDataHandler(BaseBotHandler):
             a technical command, dood!
         """
 
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
         self._updateEMessageUserData(ensuredMessage)
 
         await self.sendMessage(
@@ -210,14 +201,18 @@ class UserDataHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("delete_my_data",),
         shortDescription="<key> - Delete user data for given key",
         helpMessage=" `<key>`: Удалить информацию о Вас по указанному ключу.",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.TECHNICAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE, CommandPermission.GROUP},
+        helpOrder=CommandHandlerOrder.TECHNICAL,
+        category=CommandCategory.TOOLS,
     )
-    async def delete_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def delete_my_data_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle the /delete_my_data command to remove specific user data, dood!
 
@@ -237,19 +232,6 @@ class UserDataHandler(BaseBotHandler):
             This command is only available in private chats, dood!
         """
 
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
         self._updateEMessageUserData(ensuredMessage)
 
         if not context.args:
@@ -260,10 +242,8 @@ class UserDataHandler(BaseBotHandler):
             )
             return
 
-        chatId = ensuredMessage.chat.id
-        userId = ensuredMessage.user.id
         key = context.args[0]
-        self.unsetUserData(chatId=chatId, userId=userId, key=key)
+        self.unsetUserData(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, key=key)
 
         await self.sendMessage(
             ensuredMessage,
@@ -271,14 +251,18 @@ class UserDataHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("clear_my_data",),
         shortDescription="Clear all user data",
         helpMessage=": Очистить все сзнания о Вас в этом чате.",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.TECHNICAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE, CommandPermission.GROUP},
+        helpOrder=CommandHandlerOrder.TECHNICAL,
+        category=CommandCategory.TOOLS,
     )
-    async def clear_my_data_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def clear_my_data_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle the /clear_my_data command to remove all user data, dood!
 
@@ -297,25 +281,8 @@ class UserDataHandler(BaseBotHandler):
             a technical command, dood!
         """
 
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
         self._updateEMessageUserData(ensuredMessage)
-
-        chatId = ensuredMessage.chat.id
-        userId = ensuredMessage.user.id
-
-        self.clearUserData(userId=userId, chatId=chatId)
+        self.clearUserData(userId=ensuredMessage.user.id, chatId=ensuredMessage.chat.id)
 
         await self.sendMessage(
             ensuredMessage,

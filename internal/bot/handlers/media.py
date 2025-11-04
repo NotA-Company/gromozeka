@@ -36,13 +36,13 @@ from lib.ai import (
 from .. import constants
 from ..models import (
     ChatSettingsKey,
+    CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
     MessageType,
-    commandHandler,
 )
-from .base import BaseBotHandler, HandlerResultStatus
+from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -300,15 +300,19 @@ class MediaHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("analyze",),
         shortDescription="<prompt> - Analyse answered media with given prompt",
         helpMessage=" `<prompt>`: Проанализировать медиа используя указанный промпт "
         "(на данный момент доступен только анализ картинок и статических стикеров).",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.DEFAULT},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.TOOLS,
     )
-    async def analyze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def analyze_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle /analyze <prompt> command to analyze media with AI, dood!
 
@@ -336,19 +340,7 @@ class MediaHandler(BaseBotHandler):
             Requires ALLOW_ANALYZE setting enabled or admin privileges.
         """
         # Analyse media with given prompt. Should be reply to message with media.
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, MessageCategory.USER_COMMAND)
+        message = ensuredMessage.getBaseMessage()
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
         if not chatSettings[ChatSettingsKey.ALLOW_ANALYZE].toBool() and not await self.isAdmin(
@@ -469,15 +461,19 @@ class MediaHandler(BaseBotHandler):
             stopper=stopper,
         )
 
-    @commandHandler(
+    @commandHandlerExtended(
         commands=("draw",),
         shortDescription="[<prompt>] - Draw image with given prompt " "(use qoute or replied message as prompt if any)",
         helpMessage=" `[<prompt>]`: Сгенерировать изображение, используя указанный промпт. "
         "Так же может быть ответом на сообщение или цитированием.",
-        categories={CommandPermission.PRIVATE},
-        order=CommandHandlerOrder.NORMAL,
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.DEFAULT},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.TOOLS,
     )
-    async def draw_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def draw_command(
+        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """
         Handle /draw [<prompt>] command to generate images with AI, dood!
 
@@ -511,19 +507,7 @@ class MediaHandler(BaseBotHandler):
             Requires ALLOW_DRAW setting enabled or admin privileges.
         """
         # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
-        message = update.message
-        if not message:
-            logger.error("Message undefined")
-            return
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        try:
-            ensuredMessage = EnsuredMessage.fromMessage(message)
-        except Exception as e:
-            logger.error(f"Error while ensuring message: {e}")
-            return
-
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        message = ensuredMessage.getBaseMessage()
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
         if not chatSettings[ChatSettingsKey.ALLOW_DRAW].toBool() and not await self.isAdmin(
