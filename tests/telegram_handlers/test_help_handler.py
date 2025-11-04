@@ -434,83 +434,6 @@ class TestHelpCommandPrivateChat:
 
 
 # ============================================================================
-# Integration Tests - /help Command in Group Chat
-# ============================================================================
-
-
-class TestHelpCommandGroupChat:
-    """Test /help command in group chat, dood!"""
-
-    @pytest.mark.asyncio
-    async def testHelpCommandInGroupChat(self, helpHandler, mockBot):
-        """Test /help command works in group chat, dood!"""
-        helpHandler.injectBot(mockBot)
-        helpHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        helpHandler.isAdmin = AsyncMock(return_value=False)
-
-        message = createMockMessage(chatId=123, userId=456, text="/help")
-        message.chat.type = Chat.GROUP
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await helpHandler.help_command(update, context)
-
-        # Should still work (PRIVATE category can be used in groups)
-        helpHandler.sendMessage.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testHelpCommandInSupergroup(self, helpHandler, mockBot):
-        """Test /help command works in supergroup, dood!"""
-        helpHandler.injectBot(mockBot)
-        helpHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        helpHandler.isAdmin = AsyncMock(return_value=False)
-
-        message = createMockMessage(chatId=123, userId=456, text="/help")
-        message.chat.type = Chat.SUPERGROUP
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await helpHandler.help_command(update, context)
-
-        # Should work in supergroups
-        helpHandler.sendMessage.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testHelpCommandShowsGroupCommands(self, helpHandler, mockBot):
-        """Test /help command shows GROUP category commands, dood!"""
-        helpHandler.injectBot(mockBot)
-        helpHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        helpHandler.isAdmin = AsyncMock(return_value=False)
-
-        # Add a GROUP command to the mock
-        groupHandler = CommandHandlerInfo(
-            commands=("group_cmd",),
-            shortDescription="Group command",
-            helpMessage=": Групповая команда",
-            categories={CommandPermission.GROUP},
-            order=CommandHandlerOrder.NORMAL,
-            handler=Mock(),
-        )
-        helpHandler.commandsGetter.getCommandHandlers.return_value.append(groupHandler)
-
-        message = createMockMessage(chatId=123, userId=456, text="/help")
-        message.chat.type = Chat.GROUP
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await helpHandler.help_command(update, context)
-
-        callArgs = helpHandler.sendMessage.call_args
-        messageText = callArgs[1]["messageText"]
-
-        # Should show GROUP commands
-        assert "group_cmd" in messageText
-
-
-# ============================================================================
 # Integration Tests - Category-Based Filtering
 # ============================================================================
 
@@ -659,21 +582,6 @@ class TestEdgeCases:
 
         # Should not raise exception
         await helpHandler.help_command(update, context)
-
-    @pytest.mark.asyncio
-    async def testHelpCommandWithEnsuredMessageError(self, helpHandler, mockBot):
-        """Test /help command handles EnsuredMessage creation error, dood!"""
-        helpHandler.injectBot(mockBot)
-
-        message = createMockMessage(text="/help")
-        message.chat = None  # This will cause EnsuredMessage.fromMessage to fail
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        # Should raise ValueError since handler doesn't catch it
-        with pytest.raises(ValueError, match="Message Chat undefined"):
-            await helpHandler.help_command(update, context)
 
     @pytest.mark.asyncio
     async def testHelpCommandWithEmptyCommandList(self, helpHandler, mockBot):

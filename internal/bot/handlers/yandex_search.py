@@ -45,7 +45,6 @@ from lib.ai import (
 from lib.yandex_search import YandexSearchClient
 
 from ..models import (
-    ChatSettingsKey,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,

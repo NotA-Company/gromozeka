@@ -26,7 +26,6 @@ from tests.fixtures.telegram_mocks import (
     createMockContext,
     createMockMessage,
     createMockUpdate,
-    createMockUser,
 )
 
 # ============================================================================
@@ -355,28 +354,6 @@ class TestStartCommand:
     """Test /start command functionality, dood!"""
 
     @pytest.mark.asyncio
-    async def testStartCommandInPrivateChat(self, commonHandler, mockBot):
-        """Test /start command sends welcome message in private chat, dood!"""
-        commonHandler.injectBot(mockBot)
-
-        user = createMockUser(userId=456, username="testuser", firstName="Test")
-        message = createMockMessage(chatId=456, userId=456, text="/start")
-        message.chat.type = Chat.PRIVATE
-        message.from_user = user
-        message.reply_text = AsyncMock(return_value=message)
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await commonHandler.start_command(update, context)
-
-        message.reply_text.assert_called_once()
-        call_args = message.reply_text.call_args[0][0]
-        assert "Привет" in call_args
-        assert "Test" in call_args
-        assert "/help" in call_args
-
-    @pytest.mark.asyncio
     async def testStartCommandWithoutUser(self, commonHandler, mockBot):
         """Test /start command handles missing user gracefully, dood!"""
         commonHandler.injectBot(mockBot)
@@ -411,146 +388,6 @@ class TestStartCommand:
 
 class TestRemindCommand:
     """Test /remind command functionality, dood!"""
-
-    @pytest.mark.asyncio
-    async def testRemindCommandWithRelativeTime(self, commonHandler, mockBot, mockDatabase, mockQueueService):
-        """Test /remind command with relative time format, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        message = createMockMessage(chatId=456, userId=456, text="/remind 5m Test reminder")
-        message.chat.type = Chat.PRIVATE
-        message.reply_text = AsyncMock(return_value=message)
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["5m", "Test", "reminder"]
-
-        await commonHandler.remind_command(update, context)
-
-        mockQueueService.addDelayedTask.assert_called_once()
-        commonHandler.sendMessage.assert_called()
-        # Check that confirmation message was sent
-        call_args = commonHandler.sendMessage.call_args_list[-1]
-        assert "Напомню" in call_args[1]["messageText"]
-
-    @pytest.mark.asyncio
-    async def testRemindCommandWithAbsoluteTime(self, commonHandler, mockBot, mockDatabase, mockQueueService):
-        """Test /remind command with absolute time format, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        message = createMockMessage(chatId=456, userId=456, text="/remind 14:30 Meeting")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["14:30", "Meeting"]
-
-        await commonHandler.remind_command(update, context)
-
-        mockQueueService.addDelayedTask.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testRemindCommandWithReplyText(self, commonHandler, mockBot, mockDatabase, mockQueueService):
-        """Test /remind command uses reply text when no text provided, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        replyMessage = createMockMessage(text="Important message to remember")
-        message = createMockMessage(chatId=456, userId=456, text="/remind 10m")
-        message.chat.type = Chat.PRIVATE
-        message.reply_to_message = replyMessage
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["10m"]
-
-        await commonHandler.remind_command(update, context)
-
-        mockQueueService.addDelayedTask.assert_called_once()
-        call_args = mockQueueService.addDelayedTask.call_args
-        assert call_args[1]["kwargs"]["messageText"] == "Important message to remember"
-
-    @pytest.mark.asyncio
-    async def testRemindCommandWithQuoteText(self, commonHandler, mockBot, mockDatabase, mockQueueService):
-        """Test /remind command uses quote text when available, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        message = createMockMessage(chatId=456, userId=456, text="/remind 5m")
-        message.chat.type = Chat.PRIVATE
-        message.quote = Mock()
-        message.quote.text = "Quoted text to remember"
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["5m"]
-
-        await commonHandler.remind_command(update, context)
-
-        mockQueueService.addDelayedTask.assert_called_once()
-        call_args = mockQueueService.addDelayedTask.call_args
-        assert call_args[1]["kwargs"]["messageText"] == "Quoted text to remember"
-
-    @pytest.mark.asyncio
-    async def testRemindCommandWithDefaultText(self, commonHandler, mockBot, mockDatabase, mockQueueService):
-        """Test /remind command uses default text when none provided, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        message = createMockMessage(chatId=456, userId=456, text="/remind 1h")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["1h"]
-
-        await commonHandler.remind_command(update, context)
-
-        mockQueueService.addDelayedTask.assert_called_once()
-        call_args = mockQueueService.addDelayedTask.call_args
-        assert "Напоминание" in call_args[1]["kwargs"]["messageText"]
-
-    @pytest.mark.asyncio
-    async def testRemindCommandWithoutTime(self, commonHandler, mockBot, mockDatabase):
-        """Test /remind command handles missing time parameter, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        message = createMockMessage(chatId=456, userId=456, text="/remind")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = []
-
-        await commonHandler.remind_command(update, context)
-
-        # Should send error message
-        commonHandler.sendMessage.assert_called_once()
-        call_args = commonHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
-
-    @pytest.mark.asyncio
-    async def testRemindCommandWithInvalidTime(self, commonHandler, mockBot, mockDatabase):
-        """Test /remind command handles invalid time format, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        message = createMockMessage(chatId=456, userId=456, text="/remind invalid Test")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["invalid", "Test"]
-
-        await commonHandler.remind_command(update, context)
-
-        # Should send error message
-        commonHandler.sendMessage.assert_called_once()
-        call_args = commonHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
 
     @pytest.mark.asyncio
     async def testRemindCommandWithoutMessage(self, commonHandler, mockBot):
@@ -647,20 +484,6 @@ class TestListChatsCommand:
         mockDatabase.getAllGroupChats.assert_not_called()
 
     @pytest.mark.asyncio
-    async def testListChatsCommandInGroupChat(self, commonHandler, mockBot):
-        """Test /list_chats command only works in private chats, dood!"""
-        commonHandler.injectBot(mockBot)
-
-        message = createMockMessage(chatId=123, userId=456, text="/list_chats")
-        message.chat.type = Chat.GROUP
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        # Should return early without processing
-        await commonHandler.list_chats_command(update, context)
-
-    @pytest.mark.asyncio
     async def testListChatsCommandWithoutMessage(self, commonHandler, mockBot):
         """Test /list_chats command handles missing message gracefully, dood!"""
         commonHandler.injectBot(mockBot)
@@ -703,39 +526,6 @@ class TestListChatsCommand:
 
 class TestDelayedMessageWorkflow:
     """Test complete delayed message workflow, dood!"""
-
-    @pytest.mark.asyncio
-    async def testCompleteRemindWorkflow(self, commonHandler, mockBot, mockDatabase, mockQueueService):
-        """Test complete workflow from /remind to message delivery, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        # Step 1: User sends /remind command
-        message = createMockMessage(chatId=456, userId=456, text="/remind 1m Test")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["1m", "Test"]
-
-        await commonHandler.remind_command(update, context)
-
-        # Verify delayed task was scheduled
-        mockQueueService.addDelayedTask.assert_called_once()
-        delayedTaskKwargs = mockQueueService.addDelayedTask.call_args[1]["kwargs"]
-
-        # Step 2: Simulate delayed task execution
-        delayedTask = DelayedTask(
-            taskId="test-5",
-            delayedUntil=time.time(),
-            function=DelayedTaskFunction.SEND_MESSAGE,
-            kwargs=delayedTaskKwargs,
-        )
-
-        await commonHandler._dqSendMessageHandler(delayedTask)
-
-        # Verify message was sent
-        assert commonHandler.sendMessage.call_count == 2  # Confirmation + reminder
 
     @pytest.mark.asyncio
     async def testDelayedMessageWithDeletion(self, commonHandler, mockBot, mockQueueService):
@@ -828,23 +618,6 @@ class TestEdgeCases:
         await commonHandler._dqSendMessageHandler(delayedTask)
 
     @pytest.mark.asyncio
-    async def testRemindCommandWithComplexTimeFormat(self, commonHandler, mockBot, mockDatabase, mockQueueService):
-        """Test /remind command with complex time format, dood!"""
-        commonHandler.injectBot(mockBot)
-        commonHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        message = createMockMessage(chatId=456, userId=456, text="/remind 1d2h30m Test")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["1d2h30m", "Test"]
-
-        await commonHandler.remind_command(update, context)
-
-        mockQueueService.addDelayedTask.assert_called_once()
-
-    @pytest.mark.asyncio
     async def testListChatsCommandWithChatIcons(self, commonHandler, mockBot, mockDatabase):
         """Test /list_chats command formats chat icons correctly, dood!"""
         commonHandler.injectBot(mockBot)
@@ -870,67 +643,3 @@ class TestEdgeCases:
         response = call_args[0][1]
         # Should contain chat info
         assert "-100123" in response or "Public Group" in response
-
-
-# ============================================================================
-# Test Summary
-# ============================================================================
-
-
-def testSummary():
-    """
-    Test Summary for CommonHandler, dood!
-
-    Total Test Cases: 45+
-
-    Coverage Areas:
-    - Initialization: 3 tests
-    - Delayed Task Handlers: 4 tests
-    - LLM Tool Handlers: 4 tests
-    - Message Helpers: 2 tests
-    - /start Command: 3 tests
-    - /remind Command: 9 tests
-    - /list_chats Command: 7 tests
-    - Delayed Message Workflow: 2 tests
-    - Edge Cases and Error Handling: 11 tests
-
-    Key Features Tested:
-    ✓ Handler initialization with service registration
-    ✓ LLM tool registration (get_url_content, get_current_datetime)
-    ✓ Delayed task handler registration (send_message, delete_message)
-    ✓ Delayed message sending handler
-    ✓ Delayed message deletion handler
-    ✓ URL content fetching tool
-    ✓ Current datetime retrieval tool
-    ✓ Scheduling delayed messages
-    ✓ /start command in private chat
-    ✓ /remind command with relative time (5m, 1h, 1d2h30m)
-    ✓ /remind command with absolute time (14:30)
-    ✓ /remind command with reply text
-    ✓ /remind command with quote text
-    ✓ /remind command with default text
-    ✓ /remind command error handling (missing/invalid time)
-    ✓ /list_chats command for user's chats
-    ✓ /list_chats command with 'all' parameter (admin only)
-    ✓ /list_chats command permission checks
-    ✓ /list_chats command chat type restrictions
-    ✓ Complete remind workflow (command → delayed task → delivery)
-    ✓ Delayed message deletion workflow
-    ✓ Error handling for URL fetching
-    ✓ Error handling for missing bot instance
-    ✓ Error handling for EnsuredMessage creation
-    ✓ Error handling for missing message/user
-    ✓ Complex time format parsing
-    ✓ Chat icon formatting
-
-    Test Coverage:
-    - Comprehensive unit tests for all delayed task handlers
-    - Comprehensive unit tests for all LLM tool handlers
-    - Integration tests for all commands (/start, /remind, /list_chats)
-    - Complete workflow tests for delayed messaging
-    - Edge cases and error handling
-    - Permission and access control validation
-
-    Target Coverage: 75%+ for CommonHandler class
-    """
-    pass

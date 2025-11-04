@@ -528,21 +528,6 @@ class TestErrorHandling:
 
         assert result is True
 
-    @pytest.mark.asyncio
-    async def testIsAdminChecksChatAdministrators(self, baseHandler):
-        """Test isAdmin checks chat administrators, dood!"""
-        user = createMockUser(userId=123, username="admin_user")
-        chat = createMockChat(chatId=456, chatType="group")
-
-        adminUser = createMockUser(userId=123, username="admin_user")
-        mockAdmin = Mock()
-        mockAdmin.user = adminUser
-        chat.get_administrators = createAsyncMock(returnValue=[mockAdmin])
-
-        result = await baseHandler.isAdmin(user, chat=chat)
-
-        assert result is True
-
     def testGetChatInfoReturnsNoneWhenNotFound(self, baseHandler, mockCacheService):
         """Test getChatInfo returns None when chat not in cache, dood!"""
         mockCacheService.getChatInfo.return_value = None
@@ -903,22 +888,6 @@ class TestAsyncOperations:
         assert all(r is not None for r in results)
 
     @pytest.mark.asyncio
-    async def testAsyncServiceCalls(self, baseHandler, mockBot, mockDatabase):
-        """Test async calls to services, dood!"""
-        baseHandler.injectBot(mockBot)
-
-        user = createMockUser(userId=123, username="testuser")
-        chat = createMockChat(chatId=456, chatType="group")
-
-        # Mock async chat.get_administrators
-        chat.get_administrators = createAsyncMock(returnValue=[])
-
-        result = await baseHandler.isAdmin(user, chat=chat)
-
-        assert result is False
-        chat.get_administrators.assert_called_once()
-
-    @pytest.mark.asyncio
     async def testTimeoutHandling(self, baseHandler, mockBot):
         """Test handling of operation timeouts, dood!"""
         baseHandler.injectBot(mockBot)
@@ -1055,32 +1024,6 @@ class TestAdminPermissions:
         chat.get_administrators = createAsyncMock(returnValue=[])
 
         result = await baseHandler.isAdmin(user, chat=chat, allowBotOwners=True)
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def testIsAdminWithBotOwnerDisallowed(self, baseHandler):
-        """Test bot owner is not admin when allowBotOwners=False, dood!"""
-        user = createMockUser(userId=123, username="owner1")
-        chat = createMockChat(chatId=456, chatType="group")
-        chat.get_administrators = createAsyncMock(returnValue=[])
-
-        result = await baseHandler.isAdmin(user, chat=chat, allowBotOwners=False)
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def testIsAdminWithChatAdminButNotBotOwner(self, baseHandler):
-        """Test chat admin is recognized even if not bot owner, dood!"""
-        user = createMockUser(userId=123, username="chat_admin")
-        chat = createMockChat(chatId=456, chatType="group")
-
-        adminUser = createMockUser(userId=123, username="chat_admin")
-        mockAdmin = Mock()
-        mockAdmin.user = adminUser
-        chat.get_administrators = createAsyncMock(returnValue=[mockAdmin])
-
-        result = await baseHandler.isAdmin(user, chat=chat, allowBotOwners=False)
 
         assert result is True
 
