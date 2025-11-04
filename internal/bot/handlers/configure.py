@@ -15,6 +15,7 @@ The configuration system supports:
 import logging
 from typing import Any, Dict, List, Optional
 
+import telegram
 from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, User
 from telegram.constants import ChatType
 from telegram.ext import ContextTypes
@@ -65,6 +66,26 @@ class ConfigureCommandHandler(BaseBotHandler):
     """
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+        """
+        Initialize the configuration handler with required dependencies, dood!
+
+        Builds a list of selectable AI models that users can choose from during
+        configuration. Only models marked with can_be_choosen=True in their metadata
+        are included in the selection list.
+
+        Args:
+            configManager: Configuration manager instance for accessing bot settings
+            database: Database wrapper for data persistence operations
+            llmManager: LLM manager for accessing available AI models
+
+        Returns:
+            None
+
+        Side Effects:
+            - Initializes parent BaseBotHandler
+            - Populates self.selectableModels with choosable model names
+            - Logs the list of selectable models at debug level
+        """
         super().__init__(configManager, database, llmManager)
 
         selectableModels: List[str] = []
@@ -112,24 +133,49 @@ class ConfigureCommandHandler(BaseBotHandler):
         user = ensuredMessage.user
         userId = user.id
         messageText = ensuredMessage.getRawMessageText()
-        activeConfigureId = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
-        if activeConfigureId is None:
+        activeConfigure = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
+        if activeConfigure is None:
             return HandlerResultStatus.SKIPPED
 
         await self._handle_chat_configuration(
             data={
-                **activeConfigureId["data"],
+                **activeConfigure["data"],
                 ButtonDataKey.Value: messageText,
             },
-            message=activeConfigureId["message"],
+            messageId=activeConfigure["messageId"],
             user=user,
+            bot=context.bot,
         )
         return HandlerResultStatus.FINAL
 
     async def chatConfiguration_Init(
-        self, data: Dict[str | int, Any], message: Message, user: User, chatId: Optional[int]
+        self, data: Dict[str | int, Any], messageId: int, user: User, chatId: Optional[int], bot: telegram.Bot
     ) -> None:
-        """Draw list on configurable chats"""
+        """
+        Display the initial list of chats that the user can configure, dood!
+
+        Shows all chats where the user has admin privileges and is allowed to change
+        settings. Bot owners can see all chats. Each chat is presented as a button
+        that leads to its configuration page.
+
+        Args:
+            data: Callback data dictionary (unused in Init action)
+            messageId: ID of the message to edit with the chat list
+            user: Telegram user who initiated the configuration
+            chatId: Must be None for Init action (raises RuntimeError otherwise)
+            bot: Telegram bot instance for API calls
+
+        Returns:
+            None
+
+        Raises:
+            RuntimeError: If chatId is not None (invalid state for Init action)
+
+        Side Effects:
+            - Edits the message to show list of configurable chats
+            - Creates inline keyboard with chat selection buttons
+            - Shows error message if user has no configurable chats
+        """
         if chatId is not None:
             raise RuntimeError("Init: chatId should be None in Init action")
 
@@ -149,7 +195,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                 username=chat["username"],
                 is_forum=chat["is_forum"],
             )
-            chatObj.set_bot(message.get_bot())
+            chatObj.set_bot(bot)
 
             targetChatSettings = self.getChatSettings(chat["chat_id"])
             # Show chat only if:
@@ -176,23 +222,63 @@ class ConfigureCommandHandler(BaseBotHandler):
                 )
 
         if not keyboard:
-            await message.edit_text("Вы не являетесь администратором ни в одном чате.")
+            await bot.edit_message_text(
+                "Вы не являетесь администратором ни в одном чате.",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         keyboard.append([exitButton])
-        await message.edit_text(text="Выберите чат для настройки:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await bot.edit_message_text(
+            text="Выберите чат для настройки:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            chat_id=user.id,
+            message_id=messageId,
+        )
 
     async def chatConfiguration_ConfigureChat(
-        self, data: Dict[str | int, Any], message: Message, user: User, chatId: Optional[int]
+        self, data: Dict[str | int, Any], messageId: int, user: User, chatId: Optional[int], bot: telegram.Bot
     ) -> None:
+        """
+        Display configuration settings page for a specific chat, dood!
+
+        Shows all available settings for the selected chat, organized by page
+        (STANDART, ADVANCED, etc.). Each setting is displayed with its current
+        status and whether it differs from the default value.
+
+        Args:
+            data: Callback data dictionary containing chatId and optional page
+            messageId: ID of the message to edit with settings
+            user: Telegram user performing the configuration
+            chatId: ID of the chat being configured (must not be None)
+            bot: Telegram bot instance for API calls
+
+        Returns:
+            None
+
+        Side Effects:
+            - Edits message to show chat settings page
+            - Creates inline keyboard with setting buttons
+            - Shows navigation buttons for other pages
+            - Displays error message if chat is invalid or not found
+        """
         if chatId is None:
             logger.error(f"ConfigureChat: chatId is None in {data}")
-            await message.edit_text("Ошибка: Чат не выбран")
+            await bot.edit_message_text(
+                "Ошибка: Чат не выбран",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         if not isinstance(chatId, int):
             logger.error(f"ConfigureChat: wrong chatId: {type(chatId).__name__}#{chatId}")
-            await message.edit_text("Ошибка: некорректный идентификатор чата")
+            await bot.edit_message_text(
+                "Ошибка: некорректный идентификатор чата",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
@@ -200,7 +286,11 @@ class ConfigureCommandHandler(BaseBotHandler):
         chatInfo = self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ConfigureChat: chatInfo is None in {chatId}")
-            await message.edit_text("Ошибка: Выбран неизвестный чат")
+            await bot.edit_message_text(
+                "Ошибка: Выбран неизвестный чат",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         logger.debug(f"ConfigureChat: chatInfo: {chatInfo}")
@@ -278,26 +368,67 @@ class ConfigureCommandHandler(BaseBotHandler):
         # logger.debug(resp)
         # logger.debug(respMD)
         try:
-            await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+            await bot.edit_message_text(
+                text=respMD,
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                chat_id=user.id,
+                message_id=messageId,
+            )
         except Exception as e:
             logger.exception(e)
-            await message.edit_text(text=f"Error while editing message: {e}")
+            await bot.edit_message_text(
+                text=f"Error while editing message: {e}",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
     async def chatConfiguration_ConfigureKey(
-        self, data: Dict[str | int, Any], message: Message, user: User, chatId: Optional[int]
+        self, data: Dict[str | int, Any], messageId: int, user: User, chatId: Optional[int], bot: telegram.Bot
     ) -> None:
+        """
+        Display configuration options for a specific setting key, dood!
+
+        Shows detailed information about a single setting including its description,
+        type, current value, and default value. Provides appropriate input options
+        based on the setting type (buttons for booleans/models, text input for others).
+
+        Args:
+            data: Callback data dictionary containing chatId and key
+            messageId: ID of the message to edit with setting details
+            user: Telegram user configuring the setting
+            chatId: ID of the chat being configured (must not be None)
+            bot: Telegram bot instance for API calls
+
+        Returns:
+            None
+
+        Side Effects:
+            - Edits message to show setting configuration interface
+            - Creates inline keyboard with value selection buttons
+            - Stores active configuration state in cache for text input
+            - Shows error message if chat or key is invalid
+        """
         keyId = data.get(ButtonDataKey.Key, None)
 
         if chatId is None or keyId is None:
             logger.error(f"ConfigureKey: chatId or key is None in {data}")
-            await message.edit_text("Ошибка: Чат или настройка не выбрана.")
+            await bot.edit_message_text(
+                "Ошибка: Чат или настройка не выбрана.",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         chatInfo = self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ConfigureKey: chatInfo is None in {chatId}")
-            await message.edit_text("Ошибка: Выбран неизвестный чат.")
+            await bot.edit_message_text(
+                "Ошибка: Выбран неизвестный чат.",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         chatSettings = self.getChatSettings(chatId)
@@ -309,12 +440,20 @@ class ConfigureCommandHandler(BaseBotHandler):
             key = ChatSettingsKey.fromId(keyId)
         except ValueError:
             logger.error(f"ConfigureKey: wrong key: {keyId}")
-            await message.edit_text("Ошибка: Неизвестная настройка.")
+            await bot.edit_message_text(
+                "Ошибка: Неизвестная настройка.",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         if key not in chatOptions:
             logger.error(f"ConfigureKey: wrong key: {key}")
-            await message.edit_text("Ошибка: Неверная настройка.")
+            await bot.edit_message_text(
+                "Ошибка: Неверная настройка.",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         self.cache.setUserState(
@@ -326,7 +465,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                     ButtonDataKey.ChatId: chatId,
                     ButtonDataKey.Key: keyId,
                 },
-                "message": message,
+                "messageId": messageId,
             },
         )
 
@@ -335,7 +474,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         resp = (
             f"Настройка параметра **{chatOptions[key]['short']}** (`{key}`) в чате\n"
-            f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}):\n\n"
+            f"{self.getChatTitle(chatInfo)}:\n\n"
             f"Описание: \n{chatOptions[key]['long']}\n\n"
             f"Тип: **{chatOptions[key]['type']}**\n"
             f"Был ли изменён: **{'Да' if wasChanged else 'Нет'}**\n"
@@ -438,26 +577,70 @@ class ConfigureCommandHandler(BaseBotHandler):
         # logger.debug(resp)
         # logger.debug(respMD)
         try:
-            await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+            await bot.edit_message_text(
+                text=respMD,
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                chat_id=user.id,
+                message_id=messageId,
+            )
         except Exception as e:
             logger.exception(e)
-            await message.edit_text(text=f"Error while editing message: {e}")
+            await bot.edit_message_text(
+                text=f"Error while editing message: {e}",
+                chat_id=user.id,
+                message_id=messageId,
+            )
 
     async def chatConfiguration_SetValue(
-        self, data: Dict[str | int, Any], message: Message, user: User, chatId: Optional[int]
+        self, data: Dict[str | int, Any], messageId: int, user: User, chatId: Optional[int], bot: telegram.Bot
     ) -> None:
+        """
+        Update a chat setting with a new value, dood!
+
+        Handles all setting update actions including SetTrue, SetFalse, ResetValue,
+        and SetValue. Validates the new value based on the setting type and updates
+        the database. Shows confirmation message with the new value.
+
+        Args:
+            data: Callback data dictionary containing chatId, key, action, and optional value
+            messageId: ID of the message to edit with confirmation
+            user: Telegram user performing the update
+            chatId: ID of the chat being configured (must not be None)
+            bot: Telegram bot instance for API calls
+
+        Returns:
+            None
+
+        Raises:
+            RuntimeError: If action is not a valid setting update action
+
+        Side Effects:
+            - Updates chat setting in database
+            - Edits message to show success confirmation
+            - Validates model index for MODEL type settings
+            - Shows error message if chat or key is invalid
+        """
         keyId = data.get(ButtonDataKey.Key, None)
         action = data.get(ButtonDataKey.ConfigureAction, None)
 
         if chatId is None or keyId is None:
             logger.error(f"[Re]SetValue: chatId or key is None in {data}")
-            await message.edit_text("Ошибка: Не выбран чат или настройка")
+            await bot.edit_message_text(
+                "Ошибка: Не выбран чат или настройка",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         chatInfo = self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"[Re]SetValue: chatInfo is None for {chatId}")
-            await message.edit_text("Ошибка: Выбран неизвестный чат")
+            await bot.edit_message_text(
+                "Ошибка: Выбран неизвестный чат",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         chatOptions = getChatSettingsInfo()
@@ -466,12 +649,20 @@ class ConfigureCommandHandler(BaseBotHandler):
             key = ChatSettingsKey.fromId(keyId)
         except ValueError:
             logger.error(f"[Re]SetValue: wrong key: {keyId}")
-            await message.edit_text("Ошибка: Выбрана несуществующая настройка")
+            await bot.edit_message_text(
+                "Ошибка: Выбрана несуществующая настройка",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         if key not in chatOptions:
             logger.error(f"[Re]SetValue: wrong key: {key}")
-            await message.edit_text("Ошибка: Ввбрана некорректная настройка")
+            await bot.edit_message_text(
+                "Ошибка: Ввбрана некорректная настройка",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
         keyboard: List[List[InlineKeyboardButton]] = []
@@ -508,8 +699,9 @@ class ConfigureCommandHandler(BaseBotHandler):
         chatSettings = self.getChatSettings(chatId)
 
         resp = (
-            f"Параметр **{chatOptions[key]['short']}** (`{key}`) в чате "
-            f"**{chatInfo['title'] or chatInfo['username']}** ({chatId}) успешно изменён.\n\n"
+            f"Параметр **{chatOptions[key]['short']}** (`{key}`) в чате\n"
+            f"{self.getChatTitle(chatInfo)}\n"
+            "успешно изменён.\n\n"
             f"Новое значение:\n```\n{chatSettings[key].toStr()}\n```\n"
         )
 
@@ -540,44 +732,47 @@ class ConfigureCommandHandler(BaseBotHandler):
         # logger.debug(resp)
         # logger.debug(respMD)
         try:
-            await message.edit_text(text=respMD, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
+            await bot.edit_message_text(
+                text=respMD,
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                chat_id=user.id,
+                message_id=messageId,
+            )
         except Exception as e:
             logger.exception(e)
-            await message.edit_text(text=f"Error while editing message: {e}")
+            await bot.edit_message_text(
+                text=f"Error while editing message: {e}",
+                chat_id=user.id,
+                message_id=messageId,
+            )
             return
 
-    async def _handle_chat_configuration(self, data: Dict[str | int, Any], message: Message, user: User) -> None:
+    async def _handle_chat_configuration(
+        self, data: Dict[str | int, Any], messageId: int, user: User, bot: telegram.Bot
+    ) -> None:
         """
-        Process chat configuration actions and update the interface, dood!
+        Route configuration actions to appropriate handlers with permission checks, dood!
 
-        This is the core configuration handler that processes all configuration actions
-        using a match/case statement. It handles navigation, value updates, and UI
-        generation for the configuration wizard.
+        Central dispatcher for all configuration actions. Validates user permissions
+        before delegating to specific action handlers (Init, ConfigureChat, ConfigureKey,
+        SetValue, Cancel). Ensures users can only configure chats where they have
+        admin privileges.
 
         Args:
-            data: Dictionary containing action data with keys:
-                - ConfigureAction (ButtonDataKey.ConfigureAction): The action to perform
-                - ChatId (ButtonDataKey.ChatId): Target chat ID (optional, action-dependent)
-                - Key (ButtonDataKey.Key): Setting key ID (optional, action-dependent)
-                - Value (ButtonDataKey.Value): New value (optional, for SetValue action)
-            message: Telegram message object to edit with new content
-            user: User performing the configuration
+            data: Callback data dictionary containing action and parameters
+            messageId: ID of the message to edit
+            user: Telegram user performing the action
+            bot: Telegram bot instance for API calls
 
         Returns:
-            bool: True if action was processed successfully, False on error
+            None
 
-        Actions:
-            - Init: Display list of chats where user is admin
-            - ConfigureChat: Show all settings for selected chat
-            - ConfigureKey: Display options for specific setting with current/default values
-            - SetTrue/SetFalse: Set boolean setting to True/False
-            - ResetValue: Reset setting to default value
-            - SetValue: Set setting to custom value from text input
-            - Cancel: Exit configuration wizard
-
-        Note:
-            This method performs admin permission checks before allowing configuration
-            changes. It also clears user state after value updates.
+        Side Effects:
+            - Clears active configuration state from cache
+            - Validates user permissions for chat configuration
+            - Delegates to specific action handler based on action type
+            - Shows error message if user lacks permissions or action is unknown
         """
 
         userId = user.id
@@ -593,7 +788,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                 id=chatId,
                 type=Chat.PRIVATE if chatId > 0 else Chat.GROUP,
             )
-            chatObj.set_bot(message.get_bot())
+            chatObj.set_bot(bot)
 
             targetChatSettings = self.getChatSettings(chatId)
             # Allow to configure only if:
@@ -605,18 +800,26 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
             if not canChangeSettings:
                 logger.error(f"handle_chat_configuration: user#{user.id} is not allowed to configure {chatId}")
-                await message.edit_text(text="Вы не можете настраивать выбранный чат")
+                await bot.edit_message_text(
+                    text="Вы не можете настраивать выбранный чат",
+                    chat_id=user.id,
+                    message_id=messageId,
+                )
                 return
 
         match action:
             case ButtonConfigureAction.Init:
-                await self.chatConfiguration_Init(data=data, message=message, user=user, chatId=chatId)
+                await self.chatConfiguration_Init(data=data, messageId=messageId, user=user, chatId=chatId, bot=bot)
 
             case ButtonConfigureAction.ConfigureChat:
-                await self.chatConfiguration_ConfigureChat(data=data, message=message, user=user, chatId=chatId)
+                await self.chatConfiguration_ConfigureChat(
+                    data=data, messageId=messageId, user=user, chatId=chatId, bot=bot
+                )
 
             case ButtonConfigureAction.ConfigureKey:
-                await self.chatConfiguration_ConfigureKey(data=data, message=message, user=user, chatId=chatId)
+                await self.chatConfiguration_ConfigureKey(
+                    data=data, messageId=messageId, user=user, chatId=chatId, bot=bot
+                )
 
             case (
                 ButtonConfigureAction.SetTrue
@@ -624,13 +827,21 @@ class ConfigureCommandHandler(BaseBotHandler):
                 | ButtonConfigureAction.ResetValue
                 | ButtonConfigureAction.SetValue
             ):
-                await self.chatConfiguration_SetValue(data=data, message=message, user=user, chatId=chatId)
+                await self.chatConfiguration_SetValue(data=data, messageId=messageId, user=user, chatId=chatId, bot=bot)
 
             case ButtonConfigureAction.Cancel:
-                await message.edit_text(text="Настройка закончена, буду ждать вас снова")
+                await bot.edit_message_text(
+                    text="Настройка закончена, буду ждать вас снова",
+                    chat_id=user.id,
+                    message_id=messageId,
+                )
             case _:
                 logger.error(f"handle_chat_configuration: unknown action: {data}")
-                await message.edit_text(text=f"Unknown action: {action}")
+                await bot.edit_message_text(
+                    text=f"Unknown action: {action}",
+                    chat_id=user.id,
+                    message_id=messageId,
+                )
                 return
 
         return
@@ -685,12 +896,16 @@ class ConfigureCommandHandler(BaseBotHandler):
                         ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
                         ButtonDataKey.ChatId: targetChatId,
                     },
-                    message=msg,
+                    messageId=msg.id,
                     user=ensuredMessage.user,
+                    bot=context.bot,
                 )
             else:
                 await self._handle_chat_configuration(
-                    {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init}, message=msg, user=ensuredMessage.user
+                    {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init},
+                    messageId=msg.id,
+                    user=ensuredMessage.user,
+                    bot=context.bot,
                 )
         else:
             logger.error("Message undefined")
@@ -738,13 +953,9 @@ class ConfigureCommandHandler(BaseBotHandler):
             return HandlerResultStatus.FATAL
 
         configureAction = data.get(ButtonDataKey.ConfigureAction, None)
-        # Used keys:
-        # a: Action
-        # c: ChatId
-        # k: Key
-        # v: Value
+
         if configureAction is not None:
-            await self._handle_chat_configuration(data, query.message, user)
+            await self._handle_chat_configuration(data, query.message.id, user, context.bot)
             return HandlerResultStatus.FINAL
 
         return HandlerResultStatus.SKIPPED

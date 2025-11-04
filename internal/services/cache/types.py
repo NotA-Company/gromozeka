@@ -58,9 +58,9 @@ class HCChatUserCacheDict(TypedDict):
 class UserActiveActionEnum(StrEnum):
     """Active action types for users, dood."""
 
-    Configuration = "activeConfigureId"
-    Summarization = "activeSummarizationId"
-    UserDataConfig = "activeUserDataConfigId"
+    Configuration = "activeConfigure"
+    Summarization = "activeSummarization"
+    UserDataConfig = "activeUserDataConfig"
 
 
 class UserActiveConfigurationDict(TypedDict):
@@ -72,9 +72,9 @@ class UserActiveConfigurationDict(TypedDict):
 class HCUserCacheDict(TypedDict):
     """User-level cache for active actions, dood."""
 
-    activeConfigureId: NotRequired[Dict[str, Any]]
-    activeSummarizationId: NotRequired[Dict[str, Any]]
-    activeUserDataConfigId: NotRequired[Dict[str, Any]]
+    activeConfigure: NotRequired[UserActiveConfigurationDict]
+    activeSummarization: NotRequired[UserActiveConfigurationDict]
+    activeUserDataConfig: NotRequired[UserActiveConfigurationDict]
 
 
 class HandlersCacheDict(TypedDict):
