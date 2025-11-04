@@ -46,8 +46,6 @@ def mockConfigManager():
             ChatSettingsKey.IMAGE_GENERATION_MODEL: "dall-e-3",
             ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: "dall-e-2",
             ChatSettingsKey.IMAGE_PARSING_MODEL: "gpt-4-vision",
-            ChatSettingsKey.ALLOW_ANALYZE: "true",
-            ChatSettingsKey.ALLOW_DRAW: "true",
             ChatSettingsKey.ALLOW_MENTION: "true",
             ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: "[Fallback] ",
         },

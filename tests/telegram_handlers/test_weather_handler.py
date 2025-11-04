@@ -533,31 +533,6 @@ class TestWeatherCommand:
     """Test /weather command functionality, dood!"""
 
     @pytest.mark.asyncio
-    async def testWeatherCommandAdminOverride(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command allows admin even when disabled, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=True)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("false"),
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather Moscow")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["Moscow"]
-
-        await weatherHandler.weather_command(update, context)
-
-        # Admin should be able to use command
-        mockWeatherClient.getWeatherByCity.assert_called_once()
-
-    @pytest.mark.asyncio
     async def testWeatherCommandWithoutMessage(self, weatherHandler, mockBot):
         """Test /weather command handles missing message gracefully, dood!"""
         weatherHandler.injectBot(mockBot)
