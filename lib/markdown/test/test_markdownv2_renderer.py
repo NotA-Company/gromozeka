@@ -15,7 +15,7 @@ import unittest  # noqa: E402
 from lib.markdown import (  # noqa: E402
     MarkdownParser,
     MarkdownV2Renderer,
-    markdown_to_markdownv2,
+    markdownToMarkdownV2,
 )
 
 
@@ -283,7 +283,7 @@ Final paragraph with special chars: ()[]{}!"""
     def test_convenience_function(self):
         """Test the convenience function markdown_to_markdownv2."""
         markdown = "**Bold** and *italic* text."
-        result = markdown_to_markdownv2(markdown)
+        result = markdownToMarkdownV2(markdown)
         self.assertIn("*Bold*", result)
         self.assertIn("_italic_", result)
         self.assertIn(r"text\.", result)

@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_html, markdown_to_markdownv2  # noqa: E402
+from lib.markdown import markdown_to_html, markdownToMarkdownV2  # noqa: E402
 
 # Test 1: Normal blank line (no spaces)
 text1 = """
@@ -40,7 +40,7 @@ print("Test 1: Normal blank line (no spaces)")
 print("=" * 60)
 print("Input:", repr(text1))
 print("\nMarkdownV2:")
-print(markdown_to_markdownv2(text1))
+print(markdownToMarkdownV2(text1))
 print("\nHTML:")
 print(markdown_to_html(text1))
 
@@ -49,7 +49,7 @@ print("Test 2: Blank line with 3 spaces")
 print("=" * 60)
 print("Input:", repr(text2))
 print("\nMarkdownV2:")
-print(markdown_to_markdownv2(text2))
+print(markdownToMarkdownV2(text2))
 print("\nHTML:")
 print(markdown_to_html(text2))
 
@@ -58,6 +58,6 @@ print("Test 3: Blank line with 5 spaces")
 print("=" * 60)
 print("Input:", repr(text3))
 print("\nMarkdownV2:")
-print(markdown_to_markdownv2(text3))
+print(markdownToMarkdownV2(text3))
 print("\nHTML:")
 print(markdown_to_html(text3))

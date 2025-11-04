@@ -465,7 +465,7 @@ def normalize_markdown(text: str, **options) -> str:
     return parser.parse_to_markdown(text)
 
 
-def markdown_to_markdownv2(text: str, **options) -> str:
+def markdownToMarkdownV2(text: str, **options) -> str:
     """
     Convert Markdown text to Telegram MarkdownV2 format.
 

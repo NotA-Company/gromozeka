@@ -28,7 +28,7 @@ from lib.ai import (
     ModelMessage,
     ModelRunResult,
 )
-from lib.markdown import markdown_to_markdownv2
+from lib.markdown import markdownToMarkdownV2
 
 from .. import constants
 from ..models import (
@@ -525,7 +525,7 @@ class SummarizationHandler(BaseBotHandler):
                 case 1:
                     # Set messages count
                     await bot.edit_message_text(
-                        text=markdown_to_markdownv2(
+                        text=markdownToMarkdownV2(
                             f"Выбран чат {chatTitle}{topicTitle}\n"
                             f"Укажите количество сообщений для суммаризации или нажмите нужную кнопку:"
                         ),
@@ -545,7 +545,7 @@ class SummarizationHandler(BaseBotHandler):
                     )
 
                     await bot.edit_message_text(
-                        text=markdown_to_markdownv2(
+                        text=markdownToMarkdownV2(
                             f"Выбран чат {chatTitle}{topicTitle}\n"
                             f"Текущий промпт для суммаризации:\n```\n{currentPrompt}\n```\n"
                             f"Укажите новый промпт или нажмите нужную кнопку:"
@@ -611,7 +611,7 @@ class SummarizationHandler(BaseBotHandler):
             ]
 
             await bot.edit_message_text(
-                text=markdown_to_markdownv2(
+                text=markdownToMarkdownV2(
                     f"Выбран чат {chatTitle}{topicTitle}\n"
                     f"Границы суммаризации: {durationDescription}\n"
                     "Вы можете поменять границы суммаризации или поменять промпт:"

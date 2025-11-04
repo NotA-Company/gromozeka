@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from lib.markdown import (  # noqa: E402
     MarkdownParser,
     markdown_to_html,
-    markdown_to_markdownv2,
+    markdownToMarkdownV2,
 )
 
 # Mark all tests in this module as slow
@@ -350,7 +350,7 @@ code_{i}()
         markdown = "\n\n".join(sections)
 
         start_time = time.time()
-        result = markdown_to_markdownv2(markdown)
+        result = markdownToMarkdownV2(markdown)
         render_time = time.time() - start_time
 
         # Should complete in reasonable time (< 10 seconds)
