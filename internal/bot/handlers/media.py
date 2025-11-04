@@ -526,7 +526,7 @@ class MediaHandler(BaseBotHandler):
                 lastMessages.append(msg["media_description"] if msg["media_description"] else msg["message_text"])
             prompt = (
                 f"Draw image for user `{ensuredMessage.sender.name}` based on"
-                f" their latest messages: {utils.jsonDumps(lastMessages)}"
+                f" his/her latest messages: {utils.jsonDumps(lastMessages)}"
             )
             # TODO: We can use LLM to generate prompt.
 

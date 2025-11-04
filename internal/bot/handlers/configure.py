@@ -218,10 +218,9 @@ class ConfigureCommandHandler(BaseBotHandler):
             wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
             resp += (
                 "\n\n\n"
-                f"## **{option['short']}** (`{key}`):\n"
+                f"# **{option['short']}** (`{key}`):\n"
                 # f" {option['long']}\n"
-                f" Тип: **{option['type']}**\n"
-                f" Изменено: **{'Да' if wasChanged else 'Нет'}**\n"
+                f"Изменено: **{' Да' if wasChanged else 'Нет'}**  Тип: **{option['type']}**\n"
                 # f" Текущее значение:\n```\n{chatSettings[key].toStr()}\n```\n"
                 # f" Значение по умолчанию:\n```\n{defaultChatSettings[key].toStr()}\n```\n"
             )
