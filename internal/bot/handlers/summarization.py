@@ -365,14 +365,13 @@ class SummarizationHandler(BaseBotHandler):
         )
         action: Optional[str] = data.get(ButtonDataKey.SummarizationAction, None)
         if action is None or action not in ButtonSummarizationAction.all():
-            ValueError(f"Wrong action in {data}")
-            return  # Useless, used for fixing typechecking issues
-
-        isToticSummary = action.startswith("t")
+            raise ValueError(f"Wrong action in {data}")
 
         if action == ButtonSummarizationAction.Cancel:
             await message.edit_text(text="Суммаризация отменена")
             return
+
+        isToticSummary = action.startswith("t")
 
         maxMessages = data.get(ButtonDataKey.MaxMessages, None)
         if maxMessages is None:
@@ -386,12 +385,7 @@ class SummarizationHandler(BaseBotHandler):
             keyboard: List[List[InlineKeyboardButton]] = []
             # chatSettings = self.getChatSettings(ensuredMessage.chat.id)
             for chat in userChats:
-                chatTitle: str = f"#{chat['chat_id']}"
-                if chat["title"]:
-                    chatTitle = f"{constants.CHAT_ICON} {chat['title']} ({chat["type"]})"
-                elif chat["username"]:
-                    chatTitle = f"{constants.PRIVATE_ICON} {chat['username']} ({chat["type"]})"
-
+                chatTitle = self.getChatTitle(chat, useMarkdown=False, addChatId=False)
                 keyboard.append(
                     [
                         InlineKeyboardButton(
@@ -415,6 +409,7 @@ class SummarizationHandler(BaseBotHandler):
             await message.edit_text(text="Выберите чат для суммаризации:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
+        # BotOwner cat summarize any chat
         chatFound = await self.isAdmin(user, None, True)
         chatInfo: Optional[ChatInfoDict] = None
         for chat in userChats:
@@ -428,11 +423,7 @@ class SummarizationHandler(BaseBotHandler):
             return
 
         # ChatID Choosen
-        chatTitle: str = f"#{chatInfo['chat_id']}"
-        if chatInfo["title"]:
-            chatTitle = f"{constants.CHAT_ICON} {chatInfo['title']} ({chatInfo['type']})"
-        elif chatInfo["username"]:
-            chatTitle = f"{constants.PRIVATE_ICON} {chatInfo['username']} ({chatInfo['type']})"
+        chatTitle = self.getChatTitle(chatInfo)
 
         topicId = data.get(ButtonDataKey.TopicId, None)
         # Choose TopicID if needed
@@ -493,7 +484,7 @@ class SummarizationHandler(BaseBotHandler):
             )
             return
 
-        # TopicID Choosen
+        # TopicID Choosen or not needed
         topicTitle = ""
         if topicId is not None and isToticSummary:
             topics = self.cache.getChatTopicsInfo(chatId=chatId)
@@ -514,8 +505,10 @@ class SummarizationHandler(BaseBotHandler):
         userActionK = data.get(ButtonDataKey.UserAction, None)
         if userActionK is not None:
             userState = {
-                **dataTemplate,
-                ButtonDataKey.UserAction: userActionK,
+                "data": {
+                    **dataTemplate,
+                    ButtonDataKey.UserAction: userActionK,
+                },
                 "message": message,
             }
             self.cache.setUserState(
@@ -542,6 +535,7 @@ class SummarizationHandler(BaseBotHandler):
 
             match userActionK:
                 case 1:
+                    # Set messages count
                     await message.edit_text(
                         text=markdown_to_markdownv2(
                             f"Выбран чат {chatTitle}{topicTitle}\n"
@@ -551,8 +545,9 @@ class SummarizationHandler(BaseBotHandler):
                         reply_markup=InlineKeyboardMarkup(keyboard),
                     )
                 case 2:
+                    # Set summarization prompt
                     currentPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
-                    userState[ButtonDataKey.SummarizationAction] = action + "+"
+                    userState["data"][ButtonDataKey.SummarizationAction] = action + "+"
                     self.cache.setUserState(
                         userId=userId,
                         stateKey=UserActiveActionEnum.Summarization,
@@ -638,10 +633,10 @@ class SummarizationHandler(BaseBotHandler):
         tillDT: Optional[datetime.datetime] = None
         if maxMessages < 1:
             # if maxMessages == 0: # Summarisation for today, no special actions needed
-            if maxMessages == -1:
-                # Summarization for yesterday
-                tillDT = today
-                sinceDT = today - datetime.timedelta(days=1)
+            if maxMessages < 0:
+                # Summarization for -X days (-1 - yesterday, -2 - two days ago, etc...)
+                tillDT = today - datetime.timedelta(days=(-maxMessages)-1)
+                sinceDT = today - datetime.timedelta(days=-maxMessages)
             maxMessages = None
 
         repliedMessage = message.reply_to_message
@@ -681,9 +676,9 @@ class SummarizationHandler(BaseBotHandler):
 
     @commandHandlerExtended(
         commands=("summary", "topic_summary"),
-        shortDescription="[<maxMessages>] [<chatId>] [<topicId>] - Summarise given chat "
-        "(call without arguments to start wizard)",
-        helpMessage=" `[<maxMessages>]` `[<chatId>]` `[<topicId>]`: Сделать суммаризацию чата "
+        shortDescription="[<maxMessages>] - Start summarization wizard" "(call without arguments to start wizard)",
+        helpMessage=" `[<maxMessages>]`: В Личке - открыть мастер суммаризации, "
+        "uheggjdjv в чате - провести суммаризацию за сегодня (или на основе переданного количества сообщений)"
         "(запускайте без аргументов для запуска мастера).",
         suggestCategories={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
@@ -713,9 +708,6 @@ class SummarizationHandler(BaseBotHandler):
         Command Formats:
             Private chat:
                 /summary - Start wizard
-                /summary <maxMessages> - Summarize with wizard for chat selection
-                /summary <maxMessages> <chatId> - Summarize specific chat
-                /summary <maxMessages> <chatId> <topicId> - Summarize specific topic
 
             Group/Supergroup:
                 /summary - Summarize today's messages
@@ -724,7 +716,6 @@ class SummarizationHandler(BaseBotHandler):
                 /topic_summary <maxMessages> - Summarize last N messages in topic
 
         Note:
-            Requires ALLOW_SUMMARY setting to be enabled in chat settings.
             Bot owner can bypass this restriction in private chats.
         """
         message = ensuredMessage.getBaseMessage()
@@ -736,123 +727,49 @@ class SummarizationHandler(BaseBotHandler):
 
         isTopicSummary = commandStr.lower().startswith("/topic_summary")
 
-        chatType = ensuredMessage.chat.type
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        maxMessages: Optional[int] = utils.extractInt(context.args)
 
-        today = datetime.datetime.now(datetime.timezone.utc)
-        today = today.replace(hour=0, minute=0, second=0, microsecond=0)
-        maxMessages: Optional[int] = None
-        chatId: Optional[int] = None
-        threadId: Optional[int] = None
-
-        match chatType:
+        match ensuredMessage.chat.type:
             case Chat.PRIVATE:
-                isBotOwner = await self.isAdmin(ensuredMessage.user, None, True)
-                if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool() and not isBotOwner:
-                    logger.info(
-                        f"Unauthorized /{commandStr} command from {ensuredMessage.user} "
-                        f"in chat {ensuredMessage.chat}"
-                    )
-                    # await self.handle_message(update=update, context=context)
-                    return
-
-                maxMessages = 0
-                intArgs: List[Optional[int]] = [None, None, None]
-                if context.args:
-                    for i in range(3):
-                        if len(context.args) > i:
-                            try:
-                                intArgs[i] = int(context.args[i])
-                            except ValueError:
-                                logger.error(f"Invalid arguments: '{context.args[i]}' is not a valid number.")
-
-                maxMessages = intArgs[0]
-                chatId = intArgs[1]
-                threadId = intArgs[2]
-                jsonAction = "t" if isTopicSummary else "s"
-
-                if maxMessages is None or maxMessages < 1:
+                # In private chat - start summarization wizard
+                if maxMessages is None:
                     maxMessages = 0
 
-                if chatId is None:
-                    msg = await self.sendMessage(
-                        ensuredMessage,
-                        messageText="Загружаю список чатов....",
-                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    )
-
-                    if msg is not None:
-                        await self._handle_summarization(
-                            {"s": jsonAction, "m": maxMessages}, message=msg, user=ensuredMessage.user
-                        )
-                    else:
-                        logger.error("Message undefined")
-
-                    return
-
-                if threadId is None and isTopicSummary:
-                    msg = await self.sendMessage(
-                        ensuredMessage,
-                        messageText="Загружаю список топиков....",
-                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    )
-
-                    if msg is not None:
-                        await self._handle_summarization(
-                            {"s": jsonAction, "c": chatId, "m": maxMessages}, message=msg, user=ensuredMessage.user
-                        )
-                    else:
-                        logger.error("Message undefined")
-
-                    return
-
-                userChats = self.db.getUserChats(ensuredMessage.user.id)
-                chatFound = isBotOwner
-                for uChat in userChats:
-                    if uChat["chat_id"] == chatId:
-                        chatFound = True
-                        break
-
-                if not chatFound:
-                    await self.sendMessage(
-                        ensuredMessage, "Передан неверный ID чата", messageCategory=MessageCategory.BOT_ERROR
-                    )
-                    return
-
-                if maxMessages == 0:
-                    maxMessages = None
-
-                return await self._doSummarization(
+                msg = await self.sendMessage(
                     ensuredMessage,
-                    chatId=chatId,
-                    threadId=threadId,
-                    chatSettings=chatSettings,  # TODO: Think: Should we get chat settings or user settings?
-                    sinceDT=today,
-                    maxMessages=maxMessages,
+                    messageText="Загружаю список чатов....",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
+                if msg is not None:
+                    await self._handle_summarization(
+                        {
+                            ButtonDataKey.SummarizationAction: (
+                                ButtonSummarizationAction.TopicSummarization
+                                if isTopicSummary
+                                else ButtonSummarizationAction.Summarization
+                            ),
+                            ButtonDataKey.MaxMessages: maxMessages,
+                        },
+                        # {"s": jsonAction, "c": chatId, "m": maxMessages},
+                        message=msg,
+                        user=ensuredMessage.user,
+                    )
+                else:
+                    logger.error("Message undefined")
+
+                return
 
             case Chat.GROUP | Chat.SUPERGROUP:
-                if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
-                    logger.info(
-                        f"Unauthorized /{commandStr} command from {ensuredMessage.user} "
-                        f"in chat {ensuredMessage.chat}"
-                    )
-                    # await self.handle_message(update=update, context=context)
-                    return
-
-                if context.args and len(context.args) > 0:
-                    try:
-                        maxMessages = int(context.args[0])
-                        if maxMessages < 1:
-                            maxMessages = None
-                    except ValueError:
-                        logger.error(f"Invalid arguments: '{context.args[0]}' is not a valid number.")
-
                 # Summary command print summary for whole chat.
                 # Topic-summary prints summary for current topic, we threat default topic as 0
+                today = datetime.datetime.now(datetime.timezone.utc)
+                today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+
+                threadId: Optional[int] = None
                 if isTopicSummary:
                     threadId = ensuredMessage.threadId if ensuredMessage.threadId else 0
 
+                chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
                 return await self._doSummarization(
                     ensuredMessage=ensuredMessage,
                     chatId=ensuredMessage.chat.id,
@@ -863,7 +780,7 @@ class SummarizationHandler(BaseBotHandler):
                 )
 
             case _:
-                logger.error(f"Unsupported chat type for Summarization: {chatType}")
+                logger.error(f"Unsupported chat type for Summarization: {ensuredMessage.chat.type}")
 
     async def buttonHandler(
         self,

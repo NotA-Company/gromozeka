@@ -682,7 +682,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         )
 
         if msg is not None:
-            targetChatId = utils.extractChatId(context.args)
+            targetChatId = utils.extractInt(context.args)
             if targetChatId is not None:
                 await self._handle_chat_configuration(
                     {

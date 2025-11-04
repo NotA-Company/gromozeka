@@ -222,6 +222,7 @@ def commandHandlerExtended(
             # Check permissions if needed
 
             canProcess = CommandPermission.DEFAULT in availableFor
+            isBotOwner = await self.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
 
             chatType = ensuredMessage.chat.type
             if not canProcess and CommandPermission.PRIVATE in availableFor:
@@ -230,16 +231,20 @@ def commandHandlerExtended(
                 canProcess = chatType in [Chat.GROUP, Chat.SUPERGROUP]
 
             if not canProcess and CommandPermission.BOT_OWNER in availableFor:
-                canProcess = await self.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
+                canProcess = isBotOwner
 
             if not canProcess and CommandPermission.ADMIN:
                 canProcess = (chatType in [Chat.GROUP, Chat.SUPERGROUP]) and await self.isAdmin(
-                    ensuredMessage.user, ensuredMessage.chat
+                    ensuredMessage.sender, ensuredMessage.chat
                 )
 
             chatSettings = self.getChatSettings(ensuredMessage.chat.id)
             if not canProcess:
-                botCommand = "".join(list(message.parse_entities([MessageEntity.BOT_COMMAND]).values())[:1])
+                botCommand = ensuredMessage.messageText.split(" ", 1)[0]
+                for entityStr in message.parse_entities([MessageEntity.BOT_COMMAND]).values():
+                    botCommand = entityStr
+                    break
+
                 logger.warning(
                     f"Command `{botCommand}` is not allowed in "
                     f"chat {chatType}:{ensuredMessage.chat.id} for "
@@ -262,7 +267,8 @@ def commandHandlerExtended(
                 case CommandCategory.ADMIN | CommandCategory.SPAM_ADMIN:
                     canProcess = isAdmin
                 case CommandCategory.TOOLS:
-                    canProcess = chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool()
+                    # BotOwners could bypass TollsAllowed check
+                    canProcess = chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool() or isBotOwner
                 case CommandCategory.SPAM:
                     canProcess = isAdmin or chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
                 case CommandCategory.TECHNICAL:
@@ -274,11 +280,15 @@ def commandHandlerExtended(
                     pass
 
             if not canProcess:
-                botCommand = "".join(list(message.parse_entities([MessageEntity.BOT_COMMAND]).values())[:1])
+                botCommand = ensuredMessage.messageText.split(" ", 1)[0]
+                for entityStr in message.parse_entities([MessageEntity.BOT_COMMAND]).values():
+                    botCommand = entityStr
+                    break
+
                 logger.warning(
                     f"Command `{str(botCommand)}` is not allowed in "
                     f"chat {chatType}:{ensuredMessage.chat.id} for "
-                    f"user {ensuredMessage.sender}. Because of it's category: {category}."
+                    f"user {ensuredMessage.sender}. Command category: {category}."
                 )
                 if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
                     try:
