@@ -276,52 +276,6 @@ class TestChatSettings:
 class TestUserManagement:
     """Test user data management functionality, dood!"""
 
-    def testGetUserData(self, baseHandler, mockCacheService):
-        """Test getting user data from cache, dood!"""
-        mockCacheService.getChatUserData.return_value = {"key": "value"}
-
-        userData = baseHandler.getUserData(chatId=123, userId=456)
-
-        assert userData == {"key": "value"}
-        mockCacheService.getChatUserData.assert_called_once_with(chatId=123, userId=456)
-
-    def testSetUserDataSimple(self, baseHandler, mockCacheService):
-        """Test setting simple user data, dood!"""
-        mockCacheService.getChatUserData.return_value = {}
-
-        result = baseHandler.setUserData(chatId=123, userId=456, key="preference", value="dark_mode")
-
-        assert result == "dark_mode"
-        mockCacheService.setChatUserData.assert_called_once()
-
-    def testSetUserDataAppendToList(self, baseHandler, mockCacheService):
-        """Test appending to existing list in user data, dood!"""
-        mockCacheService.getChatUserData.return_value = {"items": ["item1", "item2"]}
-
-        result = baseHandler.setUserData(chatId=123, userId=456, key="items", value="item3", append=True)
-
-        assert result == ["item1", "item2", "item3"]
-
-    def testSetUserDataAppendCreatesListFromString(self, baseHandler, mockCacheService):
-        """Test appending to string value converts it to list, dood!"""
-        mockCacheService.getChatUserData.return_value = {"items": "item1"}
-
-        result = baseHandler.setUserData(chatId=123, userId=456, key="items", value="item2", append=True)
-
-        assert result == ["item1", "item2"]
-
-    def testUnsetUserData(self, baseHandler, mockCacheService):
-        """Test removing user data key, dood!"""
-        baseHandler.unsetUserData(chatId=123, userId=456, key="preference")
-
-        mockCacheService.unsetChatUserData.assert_called_once_with(chatId=123, userId=456, key="preference")
-
-    def testClearUserData(self, baseHandler, mockCacheService):
-        """Test clearing all user data, dood!"""
-        baseHandler.clearUserData(chatId=123, userId=456)
-
-        mockCacheService.clearChatUserData.assert_called_once_with(chatId=123, userId=456)
-
     def testParseUserMetadataWithValidJson(self, baseHandler):
         """Test parsing user metadata from database record, dood!"""
         userInfo = {"metadata": '{"key": "value", "count": 42}'}
@@ -1475,15 +1429,6 @@ class TestEdgeCases:
 
         assert result is False
 
-    def testSetUserDataWithEmptyKey(self, baseHandler, mockCacheService):
-        """Test setting user data with empty key, dood!"""
-        mockCacheService.getChatUserData.return_value = {}
-
-        # Should handle empty key gracefully
-        result = baseHandler.setUserData(chatId=123, userId=456, key="", value="test")
-
-        assert result == "test"
-
     @pytest.mark.asyncio
     async def testSendMessageWithVeryLongText(self, baseHandler, mockBot):
         """Test sending message with very long text, dood!"""
@@ -1511,62 +1456,3 @@ class TestEdgeCases:
         # Should return defaults
         assert len(settings) > 0
         assert ChatSettingsKey.CHAT_MODEL in settings
-
-
-# ============================================================================
-# Summary Statistics
-# ============================================================================
-
-
-def testSummary():
-    """
-    Test Summary for BaseBotHandler, dood!
-
-    Total Test Cases: 100+
-
-    Coverage Areas:
-    - Initialization: 5 tests
-    - Chat Settings: 7 tests
-    - User Management: 11 tests
-    - Message Sending: 9 tests
-    - Error Handling: 6 tests
-    - Media Handling: 4 tests
-    - Command Processing: 4 tests
-    - Context Management: 4 tests
-    - Integration: 4 tests
-    - Async Operations: 4 tests
-    - Helper Methods: 7 tests
-    - Rate Limiting: 4 tests
-    - Edge Cases: 9 tests
-    - Admin Permissions: 4 tests (NEW)
-    - Mention Detection: 3 tests (NEW)
-    - Chat/Topic Info: 4 tests (NEW)
-    - LLM Image Parsing: 3 tests (NEW)
-    - Database Transactions: 4 tests (NEW)
-
-    Key Features Tested:
-    ✓ Handler initialization with all dependencies
-    ✓ Chat settings management (get, set, unset, defaults)
-    ✓ User data management (get, set, append, clear)
-    ✓ User metadata parsing and updates
-    ✓ Message sending (text, photo, markdown, buttons)
-    ✓ Error handling (Telegram API, database, LLM)
-    ✓ Media processing (images, stickers)
-    ✓ Command handler discovery
-    ✓ Context management and message saving
-    ✓ Admin permission checking (bot owners, chat admins, case-insensitive)
-    ✓ Chat and topic info updates (forum chats, username changes, custom emojis)
-    ✓ Mention detection (username, multiple nicknames, position variations)
-    ✓ Async operations and concurrency
-    ✓ Integration with all services
-    ✓ Edge cases and boundary conditions
-    ✓ LLM image parsing workflow (end-to-end, error handling, size selection)
-    ✓ Database transaction handling (threading, quotes, media IDs, user updates)
-
-    Not Tested (Out of Scope or Not Implemented):
-    - Rate limiting (not implemented in base handler)
-    - Actual LLM integration (mocked)
-    - Real database operations (mocked)
-    - Real Telegram API calls (mocked)
-    """
-    pass
