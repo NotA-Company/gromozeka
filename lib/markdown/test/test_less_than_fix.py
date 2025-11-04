@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_markdownv2  # noqa: E402
+from lib.markdown import markdownToMarkdownV2  # noqa: E402
 
 
 def test_less_than_greater_than_symbols():
@@ -17,7 +17,7 @@ def test_less_than_greater_than_symbols():
 
     # Test case 1: Basic comparison
     markdown1 = "7 > 5. 9 < 10"
-    result1 = markdown_to_markdownv2(markdown1)
+    result1 = markdownToMarkdownV2(markdown1)
     print(f"Input: {repr(markdown1)}")
     print(f"Output: {repr(result1)}")
 
@@ -26,7 +26,7 @@ def test_less_than_greater_than_symbols():
 
     # Test case 2: More complex comparisons
     markdown2 = "Compare: a < b and c > d, also x <= y"
-    result2 = markdown_to_markdownv2(markdown2)
+    result2 = markdownToMarkdownV2(markdown2)
     print(f"\nInput: {repr(markdown2)}")
     print(f"Output: {repr(result2)}")
 
@@ -35,7 +35,7 @@ def test_less_than_greater_than_symbols():
 
     # Test case 3: Valid autolinks should still work
     markdown3 = "Visit <https://example.com> and email <user@example.com>"
-    result3 = markdown_to_markdownv2(markdown3)
+    result3 = markdownToMarkdownV2(markdown3)
     print(f"\nInput: {repr(markdown3)}")
     print(f"Output: {repr(result3)}")
 

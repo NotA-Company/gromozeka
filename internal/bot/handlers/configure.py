@@ -26,7 +26,7 @@ from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache.types import UserActiveActionEnum
 from lib.ai.manager import LLMManager
-from lib.markdown import markdown_to_markdownv2
+from lib.markdown import markdownToMarkdownV2
 
 from ..models import (
     ButtonConfigureAction,
@@ -364,7 +364,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             ]
         )
 
-        respMD = markdown_to_markdownv2(resp)
+        respMD = markdownToMarkdownV2(resp)
         # logger.debug(resp)
         # logger.debug(respMD)
         try:
@@ -573,7 +573,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             ]
         )
 
-        respMD = markdown_to_markdownv2(resp)
+        respMD = markdownToMarkdownV2(resp)
         # logger.debug(resp)
         # logger.debug(respMD)
         try:
@@ -728,7 +728,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             ]
         )
 
-        respMD = markdown_to_markdownv2(resp)
+        respMD = markdownToMarkdownV2(resp)
         # logger.debug(resp)
         # logger.debug(respMD)
         try:

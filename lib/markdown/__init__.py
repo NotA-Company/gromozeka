@@ -61,7 +61,7 @@ from .inline_parser import InlineParser
 from .parser import (
     MarkdownParser,
     markdown_to_html,
-    markdown_to_markdownv2,
+    markdownToMarkdownV2,
     normalize_markdown,
     parse_markdown,
     validate_markdown,
@@ -74,7 +74,7 @@ __all__ = [
     "MarkdownParser",
     "parse_markdown",
     "markdown_to_html",
-    "markdown_to_markdownv2",
+    "markdownToMarkdownV2",
     "normalize_markdown",
     "validate_markdown",
     "Tokenizer",

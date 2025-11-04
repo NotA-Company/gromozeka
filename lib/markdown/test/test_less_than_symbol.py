@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from lib.markdown import markdown_to_markdownv2  # noqa: E402
+from lib.markdown import markdownToMarkdownV2  # noqa: E402
 
 
 def test_less_than_symbol():
@@ -23,7 +23,7 @@ def test_less_than_symbol():
     print(text)
     print("\n===========\n")
 
-    result = markdown_to_markdownv2(text)
+    result = markdownToMarkdownV2(text)
 
     print("MarkdownV2 result:")
     print(repr(result))
