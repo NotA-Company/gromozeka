@@ -1,1 +1,1 @@
-* When writing docstrings for functions, classes, or methods, **be concise** but **always** describe all arguments and the return type.
+* When writing docstrings for functions, classes, methods, etc, **be concise** but **always** describe all arguments and the return type.

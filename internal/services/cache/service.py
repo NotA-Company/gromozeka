@@ -23,6 +23,7 @@ from .types import (
     HCSpamWarningMessageInfo,
     HCUserCacheDict,
     UserActiveActionEnum,
+    UserActiveConfigurationDict,
     UserDataType,
     UserDataValueType,
 )
@@ -469,13 +470,13 @@ class CacheService:
     # ## User State
 
     def getUserState(
-        self, userId: int, stateKey: UserActiveActionEnum, default: Optional[Dict[str, Any]] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, userId: int, stateKey: UserActiveActionEnum, default: Optional[UserActiveConfigurationDict] = None
+    ) -> Optional[UserActiveConfigurationDict]:
         """Get temporary user state (persisted on shutdown)"""
         userState = self.users.get(userId, {})
         return userState.get(stateKey.value, default)
 
-    def setUserState(self, userId: int, stateKey: UserActiveActionEnum, value: Dict[str, Any]) -> None:
+    def setUserState(self, userId: int, stateKey: UserActiveActionEnum, value: UserActiveConfigurationDict) -> None:
         """Set temporary user state (persisted on shutdown)"""
         userState = self.users.get(userId, {})
         userState[stateKey.value] = value
