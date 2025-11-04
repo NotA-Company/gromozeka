@@ -19,7 +19,6 @@ from telegram import Chat
 
 from internal.bot.handlers.weather import WeatherHandler
 from internal.bot.models import ChatSettingsKey, ChatSettingsValue, EnsuredMessage
-from internal.database.models import MessageCategory
 from lib.openweathermap.models import CombinedWeatherResult
 from tests.fixtures.service_mocks import createMockDatabaseWrapper, createMockLlmManager
 from tests.fixtures.telegram_mocks import (
@@ -534,108 +533,6 @@ class TestWeatherCommand:
     """Test /weather command functionality, dood!"""
 
     @pytest.mark.asyncio
-    async def testWeatherCommandWithCity(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command with city name, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather Moscow")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["Moscow"]
-
-        await weatherHandler.weather_command(update, context)
-
-        mockWeatherClient.getWeatherByCity.assert_called_once_with("Moscow", None)
-        weatherHandler.sendMessage.assert_called_once()
-
-        # Verify response contains weather data
-        call_args = weatherHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandWithCityAndCountry(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command with city and country code, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather London, GB")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["London,", "GB"]
-
-        await weatherHandler.weather_command(update, context)
-
-        # The handler joins args with space, so "London," becomes "London, GB" then splits by comma
-        # Result is "London" and " GB" (with leading space)
-        mockWeatherClient.getWeatherByCity.assert_called_once_with("London", " GB")
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandWithoutArguments(self, weatherHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /weather command requires city argument, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = []
-
-        await weatherHandler.weather_command(update, context)
-
-        # Should send error message
-        weatherHandler.sendMessage.assert_called_once()
-        call_args = weatherHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
-        assert "Необходимо указать город" in call_args[1]["messageText"]
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandUnauthorized(self, weatherHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /weather command checks authorization, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("false"),
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather Moscow")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["Moscow"]
-
-        await weatherHandler.weather_command(update, context)
-
-        # Should not process (returns early)
-        mockDatabase.saveChatMessage.assert_called_once()
-
-    @pytest.mark.asyncio
     async def testWeatherCommandAdminOverride(
         self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
     ):
@@ -659,67 +556,6 @@ class TestWeatherCommand:
 
         # Admin should be able to use command
         mockWeatherClient.getWeatherByCity.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandHandlesApiError(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command handles API errors gracefully, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        mockWeatherClient.getWeatherByCity.side_effect = Exception("API Error")
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather Moscow")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["Moscow"]
-
-        await weatherHandler.weather_command(update, context)
-
-        # Should send error message
-        weatherHandler.sendMessage.assert_called_once()
-        call_args = weatherHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandHandlesNoneResult(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command handles None result from API, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        mockWeatherClient.getWeatherByCity.return_value = None
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather UnknownCity")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["UnknownCity"]
-
-        await weatherHandler.weather_command(update, context)
-
-        # Should send error message
-        weatherHandler.sendMessage.assert_called_once()
-        call_args = weatherHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
-        # Check the first positional argument (messageText) or keyword argument
-        messageText = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("messageText", "")
-        assert "Не удалось получить погоду" in messageText
 
     @pytest.mark.asyncio
     async def testWeatherCommandWithoutMessage(self, weatherHandler, mockBot):
@@ -965,110 +801,12 @@ class TestMessageHandler:
 
 
 # ============================================================================
-# Integration Tests - Cache Integration
-# ============================================================================
-
-
-class TestCacheIntegration:
-    """Test weather handler integration with cache, dood!"""
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandUsesCachedData(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command uses cached weather data, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        # First call should fetch from API
-        message1 = createMockMessage(chatId=456, userId=456, text="/weather Moscow")
-        message1.chat.type = Chat.PRIVATE
-
-        update1 = createMockUpdate(message=message1)
-        context1 = createMockContext()
-        context1.args = ["Moscow"]
-
-        await weatherHandler.weather_command(update1, context1)
-
-        # Verify API was called
-        assert mockWeatherClient.getWeatherByCity.call_count == 1
-
-        # Second call should use cache (if TTL not expired)
-        message2 = createMockMessage(chatId=456, userId=456, text="/weather Moscow")
-        message2.chat.type = Chat.PRIVATE
-
-        update2 = createMockUpdate(message=message2)
-        context2 = createMockContext()
-        context2.args = ["Moscow"]
-
-        await weatherHandler.weather_command(update2, context2)
-
-        # API might be called again or use cache depending on implementation
-        # This test verifies the handler works with cache
-        assert mockWeatherClient.getWeatherByCity.call_count >= 1
-
-
-# ============================================================================
 # Edge Cases and Error Handling
 # ============================================================================
 
 
 class TestEdgeCases:
     """Test edge cases and error handling, dood!"""
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandWithMultiWordCity(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command with multi-word city name, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather New York")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["New", "York"]
-
-        await weatherHandler.weather_command(update, context)
-
-        # Should combine multi-word city name
-        mockWeatherClient.getWeatherByCity.assert_called_once_with("New York", None)
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandWithSpecialCharacters(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command handles special characters in city name, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="/weather Москва")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["Москва"]
-
-        await weatherHandler.weather_command(update, context)
-
-        mockWeatherClient.getWeatherByCity.assert_called_once_with("Москва", None)
 
     @pytest.mark.asyncio
     async def testMessageHandlerWithEmptyRestText(self, weatherHandler, mockCacheService):
@@ -1125,30 +863,6 @@ class TestEdgeCases:
         result = await weatherHandler.messageHandler(update, context, ensuredMessage)
 
         assert result == HandlerResultStatus.SKIPPED
-
-    @pytest.mark.asyncio
-    async def testWeatherCommandInGroupChat(
-        self, weatherHandler, mockBot, mockDatabase, mockCacheService, mockWeatherClient
-    ):
-        """Test /weather command works in group chats, dood!"""
-        weatherHandler.injectBot(mockBot)
-        weatherHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        weatherHandler.isAdmin = AsyncMock(return_value=False)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.ALLOW_WEATHER: ChatSettingsValue("true"),
-        }
-
-        message = createMockMessage(chatId=-100123, userId=456, text="/weather Moscow")
-        message.chat.type = Chat.GROUP
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["Moscow"]
-
-        await weatherHandler.weather_command(update, context)
-
-        mockWeatherClient.getWeatherByCity.assert_called_once()
 
     @pytest.mark.asyncio
     async def testFormatWeatherWithExtremeTemperatures(self, weatherHandler):

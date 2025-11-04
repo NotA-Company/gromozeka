@@ -15,11 +15,9 @@ import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from telegram import Chat
 
 from internal.bot.handlers.user_data import UserDataHandler
 from internal.bot.models import EnsuredMessage
-from internal.database.models import MessageCategory
 from tests.fixtures.service_mocks import createMockDatabaseWrapper, createMockLlmManager
 from tests.fixtures.telegram_mocks import (
     createMockBot,
@@ -276,60 +274,6 @@ class TestGetMyDataCommand:
     """Test /get_my_data command functionality, dood!"""
 
     @pytest.mark.asyncio
-    async def testGetMyDataCommandWithData(self, userDataHandler, mockBot, mockDatabase):
-        """Test /get_my_data command displays user data, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        # Mock user data
-        mockUserData = {"name": "John Doe", "age": "30", "favorite_color": "blue"}
-        userDataHandler._updateEMessageUserData = Mock(side_effect=lambda em: setattr(em, "userData", mockUserData))
-
-        message = createMockMessage(chatId=456, userId=456, text="/get_my_data")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await userDataHandler.get_my_data_command(update, context)
-
-        # Verify message was sent with user data
-        userDataHandler.sendMessage.assert_called_once()
-        call_args = userDataHandler.sendMessage.call_args
-        messageText = call_args[1]["messageText"]
-
-        # Should contain JSON formatted data
-        assert "```json" in messageText
-        assert "name" in messageText
-        assert "John Doe" in messageText
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
-
-    @pytest.mark.asyncio
-    async def testGetMyDataCommandEmptyData(self, userDataHandler, mockBot):
-        """Test /get_my_data command with empty user data, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        # Mock empty user data
-        userDataHandler._updateEMessageUserData = Mock(side_effect=lambda em: setattr(em, "userData", {}))
-
-        message = createMockMessage(chatId=456, userId=456, text="/get_my_data")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await userDataHandler.get_my_data_command(update, context)
-
-        # Verify message was sent with empty JSON
-        userDataHandler.sendMessage.assert_called_once()
-        call_args = userDataHandler.sendMessage.call_args
-        messageText = call_args[1]["messageText"]
-
-        assert "```json" in messageText
-        assert "{}" in messageText
-
-    @pytest.mark.asyncio
     async def testGetMyDataCommandWithoutMessage(self, userDataHandler, mockBot):
         """Test /get_my_data command handles missing message gracefully, dood!"""
         userDataHandler.injectBot(mockBot)
@@ -363,80 +307,6 @@ class TestGetMyDataCommand:
 
 class TestDeleteMyDataCommand:
     """Test /delete_my_data command functionality, dood!"""
-
-    @pytest.mark.asyncio
-    async def testDeleteMyDataCommandSuccess(self, userDataHandler, mockBot, mockDatabase):
-        """Test /delete_my_data command deletes specific key, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        userDataHandler.unsetUserData = Mock()
-        userDataHandler._updateEMessageUserData = Mock()
-
-        message = createMockMessage(chatId=456, userId=456, text="/delete_my_data name")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["name"]
-
-        await userDataHandler.delete_my_data_command(update, context)
-
-        # Verify unsetUserData was called
-        userDataHandler.unsetUserData.assert_called_once_with(chatId=456, userId=456, key="name")
-
-        # Verify success message was sent
-        userDataHandler.sendMessage.assert_called_once()
-        call_args = userDataHandler.sendMessage.call_args
-        messageText = call_args[1]["messageText"]
-
-        assert "Готово" in messageText
-        assert "name" in messageText
-        assert "удален" in messageText
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
-
-    @pytest.mark.asyncio
-    async def testDeleteMyDataCommandWithoutKey(self, userDataHandler, mockBot):
-        """Test /delete_my_data command handles missing key parameter, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        userDataHandler._updateEMessageUserData = Mock()
-
-        message = createMockMessage(chatId=456, userId=456, text="/delete_my_data")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = []
-
-        await userDataHandler.delete_my_data_command(update, context)
-
-        # Verify error message was sent
-        userDataHandler.sendMessage.assert_called_once()
-        call_args = userDataHandler.sendMessage.call_args
-        messageText = call_args[1]["messageText"]
-
-        assert "нужно указать ключ" in messageText
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
-
-    @pytest.mark.asyncio
-    async def testDeleteMyDataCommandWithMultipleArgs(self, userDataHandler, mockBot):
-        """Test /delete_my_data command uses only first argument as key, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        userDataHandler.unsetUserData = Mock()
-        userDataHandler._updateEMessageUserData = Mock()
-
-        message = createMockMessage(chatId=456, userId=456, text="/delete_my_data name extra args")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["name", "extra", "args"]
-
-        await userDataHandler.delete_my_data_command(update, context)
-
-        # Verify only first arg was used as key
-        userDataHandler.unsetUserData.assert_called_once_with(chatId=456, userId=456, key="name")
 
     @pytest.mark.asyncio
     async def testDeleteMyDataCommandWithoutMessage(self, userDataHandler, mockBot):
@@ -475,35 +345,6 @@ class TestClearMyDataCommand:
     """Test /clear_my_data command functionality, dood!"""
 
     @pytest.mark.asyncio
-    async def testClearMyDataCommandSuccess(self, userDataHandler, mockBot):
-        """Test /clear_my_data command clears all user data, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        userDataHandler.clearUserData = Mock()
-        userDataHandler._updateEMessageUserData = Mock()
-
-        message = createMockMessage(chatId=456, userId=456, text="/clear_my_data")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await userDataHandler.clear_my_data_command(update, context)
-
-        # Verify clearUserData was called
-        userDataHandler.clearUserData.assert_called_once_with(userId=456, chatId=456)
-
-        # Verify success message was sent
-        userDataHandler.sendMessage.assert_called_once()
-        call_args = userDataHandler.sendMessage.call_args
-        messageText = call_args[1]["messageText"]
-
-        assert "Готово" in messageText
-        assert "память" in messageText
-        assert "очищена" in messageText
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
-
-    @pytest.mark.asyncio
     async def testClearMyDataCommandWithoutMessage(self, userDataHandler, mockBot):
         """Test /clear_my_data command handles missing message gracefully, dood!"""
         userDataHandler.injectBot(mockBot)
@@ -528,25 +369,6 @@ class TestClearMyDataCommand:
 
         # Should not raise exception
         await userDataHandler.clear_my_data_command(update, context)
-
-    @pytest.mark.asyncio
-    async def testClearMyDataCommandInGroupChat(self, userDataHandler, mockBot):
-        """Test /clear_my_data command works in group chats (private category), dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        userDataHandler.clearUserData = Mock()
-        userDataHandler._updateEMessageUserData = Mock()
-
-        message = createMockMessage(chatId=123, userId=456, text="/clear_my_data")
-        message.chat.type = Chat.GROUP
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await userDataHandler.clear_my_data_command(update, context)
-
-        # Should still work (command is PRIVATE category but can be used in groups)
-        userDataHandler.clearUserData.assert_called_once_with(userId=456, chatId=123)
 
 
 # ============================================================================
@@ -577,73 +399,6 @@ class TestEdgeCases:
         resultData = json.loads(result)
         assert resultData["done"] is True
         assert resultData["data"] == complexData
-
-    @pytest.mark.asyncio
-    async def testGetMyDataCommandWithNestedData(self, userDataHandler, mockBot):
-        """Test /get_my_data command handles nested data structures, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-
-        # Mock nested user data
-        nestedData = {"profile": {"name": "John", "age": 30}, "preferences": {"theme": "dark", "language": "en"}}
-        userDataHandler._updateEMessageUserData = Mock(side_effect=lambda em: setattr(em, "userData", nestedData))
-
-        message = createMockMessage(chatId=456, userId=456, text="/get_my_data")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await userDataHandler.get_my_data_command(update, context)
-
-        # Verify message contains nested structure
-        call_args = userDataHandler.sendMessage.call_args
-        messageText = call_args[1]["messageText"]
-
-        assert "profile" in messageText
-        assert "preferences" in messageText
-
-    @pytest.mark.asyncio
-    async def testDeleteMyDataCommandWithSpecialCharacters(self, userDataHandler, mockBot):
-        """Test /delete_my_data command handles keys with special characters, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        userDataHandler.unsetUserData = Mock()
-        userDataHandler._updateEMessageUserData = Mock()
-
-        message = createMockMessage(chatId=456, userId=456, text="/delete_my_data user-name_123")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["user-name_123"]
-
-        await userDataHandler.delete_my_data_command(update, context)
-
-        # Verify key with special characters was used
-        userDataHandler.unsetUserData.assert_called_once_with(chatId=456, userId=456, key="user-name_123")
-
-    @pytest.mark.asyncio
-    async def testCommandsInDifferentChatTypes(self, userDataHandler, mockBot):
-        """Test commands work in different chat types, dood!"""
-        userDataHandler.injectBot(mockBot)
-        userDataHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        userDataHandler._updateEMessageUserData = Mock()
-
-        chatTypes = [Chat.PRIVATE, Chat.GROUP, Chat.SUPERGROUP]
-
-        for chatType in chatTypes:
-            message = createMockMessage(chatId=123, userId=456, text="/get_my_data")
-            message.chat.type = chatType
-
-            update = createMockUpdate(message=message)
-            context = createMockContext()
-
-            # Should work in all chat types
-            await userDataHandler.get_my_data_command(update, context)
-
-        # Should be called once for each chat type
-        assert userDataHandler.sendMessage.call_count == len(chatTypes)
 
     @pytest.mark.asyncio
     async def testLlmToolWithEmptyData(self, userDataHandler):

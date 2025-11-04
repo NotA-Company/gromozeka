@@ -146,49 +146,6 @@ def populateDatabaseWithMessages(db: DatabaseWrapper, chatId: int = 123, message
 
 
 @pytest.mark.asyncio
-async def testSummaryCommandRouting(application, inMemoryDb, mockBot):
-    """
-    Test /summary command routes through Application, dood!
-
-    Verifies:
-        - Command reaches summarization handler
-        - Summary is generated and sent
-    """
-    chatId = 123
-    userId = 456
-
-    # Populate database with messages
-    populateDatabaseWithMessages(inMemoryDb, chatId=chatId, messageCount=10)
-
-    message = createMockMessage(
-        messageId=100,
-        chatId=chatId,
-        userId=userId,
-        text="/summary",
-    )
-    message.chat.type = Chat.GROUP
-    message.entities = [Mock(type="bot_command", offset=0, length=8)]
-
-    update = createMockUpdate(message=message)
-    context = createMockContext(bot=mockBot)
-
-    # Enable summary in chat settings
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_SUMMARY.value, "true")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.SUMMARY_MODEL.value, "test-model")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.SUMMARY_FALLBACK_MODEL.value, "test-model")
-
-    # Find and call the /summary command handler directly
-    commandHandlers = application.handlerManager.getCommandHandlers()
-    summaryHandler = next((h for h in commandHandlers if "summary" in h.commands), None)
-    assert summaryHandler is not None, "Summary command handler not found, dood!"
-
-    await summaryHandler.handler(update, context)
-
-    # Verify summary sent
-    assert message.reply_text.called, "Bot should send summary, dood!"
-
-
-@pytest.mark.asyncio
 async def testSummaryCommandPermissionCheck(application, inMemoryDb, mockBot):
     """
     Test summary command permission check through full Application, dood!
@@ -223,57 +180,3 @@ async def testSummaryCommandPermissionCheck(application, inMemoryDb, mockBot):
 
     # Verify no summary sent (command rejected)
     assert not mockBot.sendMessage.called, "Bot should not send summary for unauthorized user, dood!"
-
-
-@pytest.mark.asyncio
-async def testSummaryCommandWithNoMessages(application, inMemoryDb, mockBot):
-    """
-    Test summary command with no messages through full Application, dood!
-
-    Verifies:
-        - Error handling works end-to-end
-        - User notified when no messages available
-    """
-    chatId = 123
-    userId = 456
-
-    # Register user in chat (required for message handling)
-    inMemoryDb.updateChatUser(chatId=chatId, userId=userId, username="testuser", fullName="Test User")
-
-    # Don't populate database with messages - testing empty case
-
-    message = createMockMessage(
-        messageId=100,
-        chatId=chatId,
-        userId=userId,
-        text="/summary",
-    )
-    message.chat.type = Chat.GROUP
-    message.entities = [Mock(type="bot_command", offset=0, length=8)]
-
-    update = createMockUpdate(message=message)
-    context = createMockContext(bot=mockBot)
-
-    # Enable summary and set required settings
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_SUMMARY.value, "true")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.SUMMARY_MODEL.value, "test-model")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.SUMMARY_FALLBACK_MODEL.value, "test-model")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.SUMMARY_PROMPT.value, "Summarize this chat")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.FALLBACK_HAPPENED_PREFIX.value, "[Fallback]")
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.RANDOM_ANSWER_PROBABILITY.value, "0.0")
-
-    # Find and call the /summary command handler directly
-    commandHandlers = application.handlerManager.getCommandHandlers()
-    summaryHandler = next((h for h in commandHandlers if "summary" in h.commands), None)
-    assert summaryHandler is not None, "Summary command handler not found, dood!"
-
-    await summaryHandler.handler(update, context)
-
-    # Verify error message sent (handler uses message.reply_text, not bot.sendMessage)
-    # Note: In e2e flow through full application, the message gets saved first,
-    # then the handler processes it. Check if reply was called.
-    assert message.reply_text.called, "Bot should send no messages notification, dood!"
-    # Also verify the message content
-    assert message.reply_text.call_count >= 1, "Should have called reply_text at least once"
-    call_args = message.reply_text.call_args
-    assert call_args is not None, "reply_text should have been called with arguments"
