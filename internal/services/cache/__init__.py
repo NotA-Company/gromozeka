@@ -13,6 +13,7 @@ from .types import (
     HCSpamWarningMessageInfo,
     HCUserCacheDict,
     UserActiveActionEnum,
+    UserActiveConfigurationDict,
     UserDataType,
     UserDataValueType,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "HCUserCacheDict",
     "HandlersCacheDict",
     "UserActiveActionEnum",
+    "UserActiveConfigurationDict",
     "UserDataType",
     "UserDataValueType",
 ]

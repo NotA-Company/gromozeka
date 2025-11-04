@@ -42,6 +42,7 @@ class CommandHandlerOrder(IntEnum):
 
     FIRST = 0
     SECOND = 10
+    WIZARDS = 20
     NORMAL = 50
     SPAM = 70
     TECHNICAL = 80

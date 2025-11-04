@@ -1,0 +1,1 @@
+* When writing docstrings for functions, classes, or methods, **be concise** but **always** describe all arguments and the return type.
