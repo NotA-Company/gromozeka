@@ -4,6 +4,7 @@ Cache service: Singleton cache service with LRU eviction and selective persisten
 
 import json
 import logging
+import time
 from collections import OrderedDict
 from threading import RLock
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -15,6 +16,7 @@ from lib import utils
 
 from .models import CacheNamespace, CachePersistenceLevel
 from .types import (
+    HCChatAdminsDict,
     HCChatCacheDict,
     HCChatPersistentCacheDict,
     HCChatUserCacheDict,
@@ -350,6 +352,33 @@ class CacheService:
         else:
             logger.error(f"No dbWrapper found, can't save topic info for {chatId}:{topicId}")
         logger.debug(f"Updated topic info for {chatId}:{topicId}, dood!")
+
+    # Chat admin list
+    def getChatAdmins(self, chatId: int, ttl: Optional[int] = 300) -> Optional[Dict[int, str]]:
+        """Get chat info from cache or database"""
+        chatCache = self.chats.get(chatId, {})
+        admins = chatCache.get("admins", None)
+
+        # If not in cache, try loading from database
+        if admins is None:
+            return None
+
+        if ttl is not None:
+            if time.time() > admins["updatedAt"] + ttl:
+                # Should we grop cache? No, do not want to
+                return None
+        return admins["admins"]
+
+    def setChatAdmins(self, chatId: int, admins: Dict[int, str]) -> None:
+        """Update chat info in cache"""
+        chatCache = self.chats.get(chatId, {})
+        adminsDict: HCChatAdminsDict = {
+            "admins": admins.copy(),
+            "updatedAt": time.time(),
+        }
+        chatCache["admins"] = adminsDict
+        self.chats.set(chatId, chatCache)
+        logger.debug(f"Updated chat admins list for {chatId}, dood!")
 
     # ## ChatUser UserData
     def _getChatUserKey(self, chatId: int, userId: int) -> str:

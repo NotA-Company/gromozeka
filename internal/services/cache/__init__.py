@@ -6,6 +6,7 @@ from .models import CacheNamespace, CachePersistenceLevel
 from .service import CacheService, LRUCache
 from .types import (
     HandlersCacheDict,
+    HCChatAdminsDict,
     HCChatCacheDict,
     HCChatPersistentCacheDict,
     HCChatUserCacheDict,
@@ -25,6 +26,7 @@ __all__ = [
     "CacheNamespace",
     # Types
     "HCChatCacheDict",
+    "HCChatAdminsDict",
     "HCChatPersistentCacheDict",
     "HCChatUserCacheDict",
     "HCSpamWarningMessageInfo",
