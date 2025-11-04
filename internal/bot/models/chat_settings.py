@@ -71,11 +71,15 @@ class ChatSettingsKey(StrEnum):
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
 
     # # Allowing different commands in chat
-    ALLOW_DRAW = "allow-draw"
-    ALLOW_ANALYZE = "allow-analyze"
-    ALLOW_SUMMARY = "allow-summary"
-    ALLOW_WEATHER = "allow-weather"
-    ALLOW_WEB_SEARCH = "allow-web-search"
+    ALLOW_TOOLS_COMMANDS = "allow-tools-commands"
+    # Should bot delete /command command if command wasn't allowed
+    DELETE_DENIED_COMMANDS = "delete-denied-commands"
+    
+    ALLOW_DRAW = "allow-draw"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
+    ALLOW_ANALYZE = "allow-analyze"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
+    ALLOW_SUMMARY = "allow-summary"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
+    ALLOW_WEATHER = "allow-weather"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
+    ALLOW_WEB_SEARCH = "allow-web-search"  # DEPRECATED, use ALLOW_TOOLS_COMMANDS instead
 
     # # Allowing different reactions in chat (to mention/reply/random)
     ALLOW_MENTION = "allow-mention"
@@ -217,34 +221,10 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "long": "Должен ли бот анализировать изображения используя LLM для дальнейшего использования в разговоре",
         "page": ChatSettingsPage.STANDART,
     },
-    ChatSettingsKey.ALLOW_DRAW: {
+    ChatSettingsKey.ALLOW_TOOLS_COMMANDS: {
         "type": ChatSettingsType.BOOL,
-        "short": "Разрешить рисовать (`/draw`)",
-        "long": "Разрешить команду `/draw` для генерации изображений",
-        "page": ChatSettingsPage.STANDART,
-    },
-    ChatSettingsKey.ALLOW_ANALYZE: {
-        "type": ChatSettingsType.BOOL,
-        "short": "Разрешить анализировать (`/analyze`)",
-        "long": "Разрешить команду `/analyze` для анализа изображений указанным запросом",
-        "page": ChatSettingsPage.STANDART,
-    },
-    ChatSettingsKey.ALLOW_WEATHER: {
-        "type": ChatSettingsType.BOOL,
-        "short": "Разрешить узнавать погоду (`/weather`)",
-        "long": "Разрешить команду `/weather` для получения погоды в указанном городе",
-        "page": ChatSettingsPage.STANDART,
-    },
-    ChatSettingsKey.ALLOW_WEB_SEARCH: {
-        "type": ChatSettingsType.BOOL,
-        "short": "Разрешить искать в Интернете (`/web_search`)",
-        "long": "Разрешить команду `/web_search` для поиска в Интернете",
-        "page": ChatSettingsPage.STANDART,
-    },
-    ChatSettingsKey.ALLOW_SUMMARY: {
-        "type": ChatSettingsType.BOOL,
-        "short": "Разрешить сводку (`/summary`)",
-        "long": "Разрешить команду `/summary`/`/topic_summary` для суммаризации сообщений за сегодня",
+        "short": "Разрешить команды использования инструментов (`/draw`, ...)",
+        "long": "Разрешить команды использования различных инструментов (Например `/draw`, `/analyze` и т.д.)",
         "page": ChatSettingsPage.STANDART,
     },
     ChatSettingsKey.ALLOW_MENTION: {

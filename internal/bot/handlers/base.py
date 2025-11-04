@@ -63,6 +63,7 @@ from ..models import (
     EnsuredMessage,
     MediaProcessingInfo,
     MentionCheckResult,
+    MessageSender,
     MessageType,
     UserMetadataDict,
 )
@@ -229,13 +230,14 @@ def commandHandlerExtended(
                 canProcess = chatType in [Chat.GROUP, Chat.SUPERGROUP]
 
             if not canProcess and CommandPermission.BOT_OWNER in availableFor:
-                canProcess = await self.isAdmin(ensuredMessage.user, None, allowBotOwners=True)
+                canProcess = await self.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
 
             if not canProcess and CommandPermission.ADMIN:
                 canProcess = (chatType in [Chat.GROUP, Chat.SUPERGROUP]) and await self.isAdmin(
                     ensuredMessage.user, ensuredMessage.chat
                 )
 
+            chatSettings = self.getChatSettings(ensuredMessage.chat.id)
             if not canProcess:
                 botCommand = "".join(list(message.parse_entities([MessageEntity.BOT_COMMAND]).values())[:1])
                 logger.warning(
@@ -243,16 +245,33 @@ def commandHandlerExtended(
                     f"chat {chatType}:{ensuredMessage.chat.id} for "
                     f"user {ensuredMessage.sender}. Needed permissions: {availableFor}"
                 )
-                # TODO: Check if we need to delete command message
+                if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
+                    try:
+                        await message.delete()
+                    except Exception as e:
+                        logger.error(f"Error while deleting message: {e}")
                 return
 
-            if chatType != Chat.PRIVATE:
-                match category:
-                    case CommandCategory.PRIVATE:
-                        canProcess = False
-                        # TODO: Add checks for orter categories
-                    case _:
-                        pass
+            isAdmin = await self.isAdmin(ensuredMessage.sender, ensuredMessage.chat)
+            match category:
+                case CommandCategory.UNSPECIFIED:
+                    # No category specified, deny by default
+                    canProcess = False
+                case CommandCategory.PRIVATE:
+                    canProcess = chatType == Chat.PRIVATE
+                case CommandCategory.ADMIN | CommandCategory.SPAM_ADMIN:
+                    canProcess = isAdmin
+                case CommandCategory.TOOLS:
+                    canProcess = chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool()
+                case CommandCategory.SPAM:
+                    canProcess = isAdmin or chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
+                case CommandCategory.TECHNICAL:
+                    # Actually technical command shouldn't present in group chats except of debug purposes, but whatever
+                    canProcess = isAdmin
+                case _:
+                    logger.error(f"Unhandled command category: {category}, deny")
+                    canProcess = False
+                    pass
 
             if not canProcess:
                 botCommand = "".join(list(message.parse_entities([MessageEntity.BOT_COMMAND]).values())[:1])
@@ -261,7 +280,11 @@ def commandHandlerExtended(
                     f"chat {chatType}:{ensuredMessage.chat.id} for "
                     f"user {ensuredMessage.sender}. Because of it's category: {category}."
                 )
-                # TODO: Check if we need to delete command message
+                if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
+                    try:
+                        await message.delete()
+                    except Exception as e:
+                        logger.error(f"Error while deleting message: {e}")
                 return
 
             # Store command message in database
@@ -577,7 +600,9 @@ class BaseBotHandler(CommandHandlerMixin):
     # Different helpers
     ###
 
-    async def isAdmin(self, user: User, chat: Optional[Chat] = None, allowBotOwners: bool = True) -> bool:
+    async def isAdmin(
+        self, user: User | MessageSender, chat: Optional[Chat] = None, allowBotOwners: bool = True
+    ) -> bool:
         """
         Check if a user is an admin or bot owner, dood!
 

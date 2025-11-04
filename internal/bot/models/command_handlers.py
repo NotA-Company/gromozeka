@@ -29,12 +29,12 @@ class CommandCategory(Enum):
     """Categories for command"""
 
     UNSPECIFIED = auto()  # Unspecified category
+    PRIVATE = auto()  # Command for private chats only
     ADMIN = auto()  # Command for Admin/configuration purposes
     TOOLS = auto()  # Tools usage (Web search, draw, etc...)
     SPAM = auto()  # SPAM-related commands
     SPAM_ADMIN = auto()  # SPAM-related commands for Admins
     TECHNICAL = auto()  # Technical commands
-    PRIVATE = auto()  # Command for private chats only
 
 
 class CommandHandlerOrder(IntEnum):
