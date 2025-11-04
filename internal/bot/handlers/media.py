@@ -40,6 +40,7 @@ from ..models import (
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    LLMMessageFormat,
     MessageType,
 )
 from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
@@ -519,16 +520,48 @@ class MediaHandler(BaseBotHandler):
         else:
             logger.warning(f"No prompt found in message: {message}")
             # Get last messages from this user in chat and generate image, based on them
-            lastMessages: List[str] = []
+
+            # prompt = (
+            #     f"Draw image for user `{ensuredMessage.sender.name}` based on"
+            #     f" his/her latest messages: {utils.jsonDumps(lastMessages)}"
+            # )
+
+            # TODO: Move prompt to chat settings
+            latestMessages: List[ModelMessage] = [
+                ModelMessage(
+                    content="Write prompt for generating image for user, based on his/ner latest messages. "
+                    "Print ONLY prompt.",
+                    role="system",
+                ),
+            ]
             for msg in reversed(
-                self.db.getChatMessagesByUser(ensuredMessage.chat.id, ensuredMessage.sender.id, limit=10)
+                self.db.getChatMessagesByUser(
+                    ensuredMessage.chat.id,
+                    ensuredMessage.sender.id,
+                    limit=10,
+                )
             ):
-                lastMessages.append(msg["media_description"] if msg["media_description"] else msg["message_text"])
-            prompt = (
-                f"Draw image for user `{ensuredMessage.sender.name}` based on"
-                f" his/her latest messages: {utils.jsonDumps(lastMessages)}"
-            )
-            # TODO: We can use LLM to generate prompt.
+                eMsg = EnsuredMessage.fromDBChatMessage(msg)
+                self._updateEMessageUserData(eMsg)
+                latestMessages.append(
+                    await eMsg.toModelMessage(
+                        self.db,
+                        format=LLMMessageFormat(
+                            chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr(),
+                        ),
+                    )
+                )
+
+            textLLM = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
+            fallbackLLM = chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager)
+            async with await self.startContinousTyping(ensuredMessage):
+                llmRet = await textLLM.generateTextWithFallBack(latestMessages, fallbackModel=fallbackLLM)
+                # Should i check llmRet.status? do not wanna for now
+                if llmRet.resultText:
+                    prompt = llmRet.resultText
+                else:
+                    # Fallback to something static
+                    prompt = f"Draw image of {ensuredMessage.sender} in chat `{ensuredMessage.chat.title}`"
 
         logger.debug(f"Prompt: '{prompt}'")
         stopper = await self.startContinousTyping(ensuredMessage, action=ChatAction.UPLOAD_PHOTO)

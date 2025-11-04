@@ -147,6 +147,23 @@ class TypingStopper:
         """
         return self.running
 
+    async def __aenter__(self) -> "TypingStopper":
+        """
+        Enter the context manager, dood!
+
+        Returns:
+            TypingStopper: The TypingStopper instance
+        """
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        """
+        Exit the context manager, dood!
+
+        Stops the typing task and waits for it to complete.
+        """
+        await self.stopTask()
+
 
 def commandHandlerExtended(
     commands: Sequence[str],  # Sequence of commands to handle
