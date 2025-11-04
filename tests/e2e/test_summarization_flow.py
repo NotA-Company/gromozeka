@@ -173,7 +173,7 @@ async def testSummaryCommandPermissionCheck(application, inMemoryDb, mockBot):
     context = createMockContext(bot=mockBot)
 
     # DISABLE summary in settings
-    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_SUMMARY.value, "false")
+    inMemoryDb.setChatSetting(chatId, ChatSettingsKey.ALLOW_TOOLS_COMMANDS.value, "false")
 
     # Route through Application
     await application.handlerManager.handle_message(update, context)
