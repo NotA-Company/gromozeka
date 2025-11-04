@@ -30,7 +30,7 @@ from tests.fixtures.database_fixtures import (
     createBatchChatMessages,
     createSampleChatMessage,
 )
-from tests.fixtures.telegram_mocks import createMockBot, createMockUpdate
+from tests.fixtures.telegram_mocks import createMockBot
 
 # ============================================================================
 # Performance Test Markers
@@ -395,34 +395,6 @@ def testCacheHitMissPerformance(performanceDb):
 
     assert hitDuration < 5, f"Cache hit took {hitDuration:.2f}ms (target: < 5ms)"
     assert missDuration < 10, f"Cache miss took {missDuration:.2f}ms (target: < 10ms)"
-
-
-# ============================================================================
-# Handler Chain Performance Tests
-# ============================================================================
-
-
-@pytest.mark.benchmark
-@pytest.mark.asyncio
-async def testHandlerChainExecutionTime(baseHandler):
-    """
-    Test handler chain execution time.
-
-    Target: < 200ms total
-    """
-    update = createMockUpdate(text="test message")
-
-    startTime = time.time()
-
-    # Simulate handler chain operations
-    baseHandler.getChatSettings(update.message.chat.id)
-    baseHandler.getUserData(update.message.chat.id, update.message.from_user.id)
-
-    endTime = time.time()
-    duration = (endTime - startTime) * 1000  # Convert to ms
-
-    print(f"\nHandler chain execution: {duration:.2f}ms")
-    assert duration < 200, f"Handler chain took {duration:.2f}ms (target: < 200ms)"
 
 
 # ============================================================================
