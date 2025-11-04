@@ -106,10 +106,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        chat = ensuredMessage.chat
-        chatType = chat.type
-
-        if chatType != Chat.PRIVATE:
+        if ensuredMessage.chat.type != Chat.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
         user = ensuredMessage.user
@@ -644,7 +641,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         helpMessage="[`<chatId>`]: Настроить поведение бота в одном из чатов, где вы админ",
         suggestCategories={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
-        helpOrder=CommandHandlerOrder.NORMAL,
+        helpOrder=CommandHandlerOrder.WIZARDS,
         category=CommandCategory.PRIVATE,
     )
     async def configure_command(
