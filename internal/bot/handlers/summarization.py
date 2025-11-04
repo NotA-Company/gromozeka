@@ -96,8 +96,7 @@ class SummarizationHandler(BaseBotHandler):
         if activeSummarizationId is None:
             return HandlerResultStatus.SKIPPED
 
-        data = activeSummarizationId.copy()
-        data.pop("message", None)
+        data = activeSummarizationId["data"]
         # TODO: Make user action enum
         userAction = data.pop(ButtonDataKey.UserAction, None)
         match userAction:
