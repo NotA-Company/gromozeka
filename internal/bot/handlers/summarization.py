@@ -635,7 +635,7 @@ class SummarizationHandler(BaseBotHandler):
             # if maxMessages == 0: # Summarisation for today, no special actions needed
             if maxMessages < 0:
                 # Summarization for -X days (-1 - yesterday, -2 - two days ago, etc...)
-                tillDT = today - datetime.timedelta(days=(-maxMessages)-1)
+                tillDT = today - datetime.timedelta(days=(-maxMessages) - 1)
                 sinceDT = today - datetime.timedelta(days=-maxMessages)
             maxMessages = None
 
@@ -678,8 +678,7 @@ class SummarizationHandler(BaseBotHandler):
         commands=("summary", "topic_summary"),
         shortDescription="[<maxMessages>] - Start summarization wizard" "(call without arguments to start wizard)",
         helpMessage=" `[<maxMessages>]`: В Личке - открыть мастер суммаризации, "
-        "uheggjdjv в чате - провести суммаризацию за сегодня (или на основе переданного количества сообщений)"
-        "(запускайте без аргументов для запуска мастера).",
+        "в групповом чате - провести суммаризацию за сегодня (или на основе переданного количества сообщений).",
         suggestCategories={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,

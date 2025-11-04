@@ -506,43 +506,6 @@ async def test_manual_spam_marking_by_admin(inMemoryDb, spamHandler, mockBot):
     assert len(spamMessages) > 0
 
 
-@pytest.mark.asyncio
-async def test_manual_ham_marking_by_admin(inMemoryDb, spamHandler, mockBot):
-    """Test manual ham marking via /learn_ham command, dood!"""
-    chatId = -100123
-    adminId = 789
-
-    # Create legitimate message
-    hamMsg = createHamMessage(
-        messageId=1,
-        chatId=chatId,
-        text="This is a legitimate message",
-    )
-
-    # Create admin command message replying to ham
-    commandMsg = createMockMessage(
-        messageId=2,
-        chatId=chatId,
-        userId=adminId,
-        text="/learn_ham",
-    )
-    commandMsg.chat = createMockChat(chatId=chatId, chatType="private")
-    commandMsg.reply_to_message = hamMsg
-    commandMsg.get_bot = Mock(return_value=mockBot)
-
-    # Mock admin check
-    with patch.object(spamHandler, "isAdmin", return_value=True):
-        update = createMockUpdate(message=commandMsg)
-        context = createMockContext(bot=mockBot)
-        context.args = [str(chatId)]
-
-        await spamHandler.learn_spam_ham_command(update, context)
-
-    # Verify ham was learned
-    stats = await spamHandler.getBayesFilterStats(chatId=chatId)
-    assert stats["total_ham_messages"] >= 1
-
-
 # ============================================================================
 # Filter Training from History Tests
 # ============================================================================

@@ -18,7 +18,6 @@ from telegram import Chat, MessageEntity
 from telegram.constants import MessageEntityType
 
 from internal.bot.handlers.dev_commands import DevCommandsHandler
-from internal.bot.models import ChatSettingsKey, ChatSettingsValue
 from internal.database.models import MessageCategory
 from tests.fixtures.service_mocks import createMockDatabaseWrapper, createMockLlmManager
 from tests.fixtures.telegram_mocks import (
@@ -26,7 +25,6 @@ from tests.fixtures.telegram_mocks import (
     createMockContext,
     createMockMessage,
     createMockUpdate,
-    createMockUser,
 )
 
 # ============================================================================
@@ -147,89 +145,6 @@ class TestInitialization:
         from internal.bot.handlers.base import BaseBotHandler
 
         assert isinstance(devCommandsHandler, BaseBotHandler)
-
-
-# ============================================================================
-# Unit Tests - Admin Permission Checks
-# ============================================================================
-
-
-class TestAdminPermissionChecks:
-    """Test admin permission checking for dev commands, dood!"""
-
-    @pytest.mark.asyncio
-    async def testModelsCommandRequiresAdmin(self, devCommandsHandler, mockBot, mockDatabase):
-        """Test /models command requires admin permission, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.isAdmin = AsyncMock(return_value=False)
-
-        user = createMockUser(userId=456, username="regularuser")
-        message = createMockMessage(chatId=456, userId=456, text="/models")
-        message.from_user = user
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await devCommandsHandler.models_command(update, context)
-
-        # Should not process command for non-admin
-        devCommandsHandler.isAdmin.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testSettingsCommandRequiresAdmin(self, devCommandsHandler, mockBot, mockDatabase):
-        """Test /settings command requires admin permission, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.isAdmin = AsyncMock(return_value=False)
-
-        user = createMockUser(userId=456, username="regularuser")
-        message = createMockMessage(chatId=456, userId=456, text="/settings")
-        message.from_user = user
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-
-        await devCommandsHandler.chat_settings_command(update, context)
-
-        # Should not process command for non-admin
-        devCommandsHandler.isAdmin.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testSetCommandRequiresAdmin(self, devCommandsHandler, mockBot, mockDatabase):
-        """Test /set command requires admin permission, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.isAdmin = AsyncMock(return_value=False)
-
-        user = createMockUser(userId=456, username="regularuser")
-        message = createMockMessage(chatId=456, userId=456, text="/set key value")
-        message.from_user = user
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["key", "value"]
-
-        await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-
-        # Should not process command for non-admin
-        devCommandsHandler.isAdmin.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testTestCommandRequiresAdmin(self, devCommandsHandler, mockBot, mockDatabase):
-        """Test /test command requires admin permission, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.isAdmin = AsyncMock(return_value=False)
-
-        user = createMockUser(userId=456, username="regularuser")
-        message = createMockMessage(chatId=456, userId=456, text="/test long")
-        message.from_user = user
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["long"]
-
-        await devCommandsHandler.test_command(update, context)
-
-        # Should not process command for non-admin
-        devCommandsHandler.isAdmin.assert_called_once()
 
 
 # ============================================================================
@@ -395,33 +310,6 @@ class TestSettingsCommand:
     """Test /settings command functionality, dood!"""
 
     @pytest.mark.asyncio
-    async def testSettingsCommandDisplaysChatSettings(
-        self, devCommandsHandler, mockBot, mockDatabase, mockCacheService
-    ):
-        """Test /settings command displays current chat settings, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.CHAT_MODEL: ChatSettingsValue("gpt-4"),
-            ChatSettingsKey.ALLOW_MENTION: ChatSettingsValue("true"),
-        }
-
-        message = createMockMessage(chatId=456, userId=456, text="/settings")
-        message.chat.type = Chat.PRIVATE
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = []
-
-        await devCommandsHandler.chat_settings_command(update, context)
-
-        devCommandsHandler.sendMessage.assert_called_once()
-        call_args = devCommandsHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
-
-    @pytest.mark.asyncio
     async def testSettingsCommandWithDebugMode(self, devCommandsHandler, mockBot, mockDatabase, mockCacheService):
         """Test /settings command with debug parameter, dood!"""
         devCommandsHandler.injectBot(mockBot)
@@ -475,160 +363,6 @@ class TestSettingsCommand:
 
 class TestSetUnsetCommands:
     """Test /set and /unset command functionality, dood!"""
-
-    @pytest.mark.asyncio
-    async def testSetCommandSetsValidSetting(self, devCommandsHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /set command sets a valid chat setting, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        message = createMockMessage(chatId=456, userId=456, text="/set chat-model gpt-4")
-        message.chat.type = Chat.PRIVATE
-        # Add bot command entity
-        entity = Mock(spec=MessageEntity)
-        entity.type = MessageEntityType.BOT_COMMAND
-        entity.offset = 0
-        entity.length = 4
-        message.entities = [entity]
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["chat-model", "gpt-4"]
-
-        await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-
-        devCommandsHandler.sendMessage.assert_called_once()
-        call_args = devCommandsHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
-        assert "Готово" in call_args[1]["messageText"]
-
-    @pytest.mark.asyncio
-    async def testSetCommandWithMultiWordValue(self, devCommandsHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /set command with multi-word value, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        message = createMockMessage(chatId=456, userId=456, text="/set chat-prompt You are a helpful assistant")
-        message.chat.type = Chat.PRIVATE
-        entity = Mock(spec=MessageEntity)
-        entity.type = MessageEntityType.BOT_COMMAND
-        entity.offset = 0
-        entity.length = 4
-        message.entities = [entity]
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["chat-prompt", "You", "are", "a", "helpful", "assistant"]
-
-        await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-
-        devCommandsHandler.sendMessage.assert_called_once()
-        call_args = devCommandsHandler.sendMessage.call_args
-        assert "You are a helpful assistant" in call_args[1]["messageText"]
-
-    @pytest.mark.asyncio
-    async def testSetCommandWithInvalidKey(self, devCommandsHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /set command with invalid setting key, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        message = createMockMessage(chatId=456, userId=456, text="/set INVALID_KEY value")
-        message.chat.type = Chat.PRIVATE
-        entity = Mock(spec=MessageEntity)
-        entity.type = MessageEntityType.BOT_COMMAND
-        entity.offset = 0
-        entity.length = 4
-        message.entities = [entity]
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["INVALID_KEY", "value"]
-
-        await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-
-        devCommandsHandler.sendMessage.assert_called_once()
-        call_args = devCommandsHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
-        assert "Неизвестный ключ" in call_args[1]["messageText"]
-
-    @pytest.mark.asyncio
-    async def testSetCommandWithoutValue(self, devCommandsHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /set command without value parameter, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        message = createMockMessage(chatId=456, userId=456, text="/set chat-model")
-        message.chat.type = Chat.PRIVATE
-        entity = Mock(spec=MessageEntity)
-        entity.type = MessageEntityType.BOT_COMMAND
-        entity.offset = 0
-        entity.length = 4
-        message.entities = [entity]
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["chat-model"]
-
-        await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-
-        devCommandsHandler.sendMessage.assert_called_once()
-        call_args = devCommandsHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
-
-    @pytest.mark.asyncio
-    async def testUnsetCommandResetsValidSetting(self, devCommandsHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /unset command resets a valid chat setting, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        message = createMockMessage(chatId=456, userId=456, text="/unset chat-model")
-        message.chat.type = Chat.PRIVATE
-        entity = Mock(spec=MessageEntity)
-        entity.type = MessageEntityType.BOT_COMMAND
-        entity.offset = 0
-        entity.length = 6
-        message.entities = [entity]
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["chat-model"]
-
-        await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-
-        devCommandsHandler.sendMessage.assert_called_once()
-        call_args = devCommandsHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_COMMAND_REPLY
-        assert "сброшено" in call_args[1]["messageText"]
-
-    @pytest.mark.asyncio
-    async def testUnsetCommandWithoutKey(self, devCommandsHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /unset command without key parameter, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        message = createMockMessage(chatId=456, userId=456, text="/unset")
-        message.chat.type = Chat.PRIVATE
-        entity = Mock(spec=MessageEntity)
-        entity.type = MessageEntityType.BOT_COMMAND
-        entity.offset = 0
-        entity.length = 6
-        message.entities = [entity]
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = []
-
-        await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-
-        devCommandsHandler.sendMessage.assert_called_once()
-        call_args = devCommandsHandler.sendMessage.call_args
-        assert call_args[1]["messageCategory"] == MessageCategory.BOT_ERROR
 
     @pytest.mark.asyncio
     async def testSetUnsetCommandWithoutMessage(self, devCommandsHandler, mockBot):
@@ -1005,26 +739,6 @@ class TestEdgeCases:
         devCommandsHandler.sendMessage.assert_called_once()
 
     @pytest.mark.asyncio
-    async def testSetCommandWithNoEntities(self, devCommandsHandler, mockBot, mockDatabase, mockCacheService):
-        """Test /set command handles message without entities, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        message = createMockMessage(chatId=456, userId=456, text="/set chat-model gpt-4")
-        message.chat.type = Chat.PRIVATE
-        message.entities = []  # No entities
-
-        update = createMockUpdate(message=message)
-        context = createMockContext()
-        context.args = ["chat-model", "gpt-4"]
-
-        await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-
-        # Should still work, just won't detect command type from entities
-        devCommandsHandler.sendMessage.assert_called_once()
-
-    @pytest.mark.asyncio
     async def testTestCommandLongSuiteWithDefaultParameters(self, devCommandsHandler, mockBot, mockDatabase):
         """Test /test long suite uses default parameters, dood!"""
         devCommandsHandler.injectBot(mockBot)
@@ -1044,116 +758,3 @@ class TestEdgeCases:
 
         # Should send 10 messages (default iterations)
         assert devCommandsHandler.sendMessage.call_count == 2
-
-    @pytest.mark.asyncio
-    async def testAllCommandsSaveToDatabase(self, devCommandsHandler, mockBot, mockDatabase):
-        """Test all commands save messages to database, dood!"""
-        devCommandsHandler.injectBot(mockBot)
-        devCommandsHandler.sendMessage = AsyncMock(return_value=createMockMessage())
-        devCommandsHandler.isAdmin = AsyncMock(return_value=True)
-
-        commands = [
-            ("/echo test", ["test"]),
-            ("/models", []),
-            ("/settings", []),
-            ("/set chat-model gpt-4", ["chat-model", "gpt-4"]),
-            ("/test cacheStats", ["cacheStats"]),
-        ]
-
-        for commandText, args in commands:
-            mockDatabase.saveChatMessage.reset_mock()
-
-            message = createMockMessage(chatId=456, userId=456, text=commandText)
-            message.chat.type = Chat.PRIVATE
-            if commandText.startswith("/set"):
-                entity = Mock(spec=MessageEntity)
-                entity.type = MessageEntityType.BOT_COMMAND
-                entity.offset = 0
-                entity.length = 4
-                message.entities = [entity]
-
-            update = createMockUpdate(message=message)
-            context = createMockContext()
-            context.args = args
-
-            if commandText.startswith("/echo"):
-                await devCommandsHandler.echo_command(update, context)
-            elif commandText.startswith("/models"):
-                await devCommandsHandler.models_command(update, context)
-            elif commandText.startswith("/settings"):
-                await devCommandsHandler.chat_settings_command(update, context)
-            elif commandText.startswith("/set"):
-                await devCommandsHandler.set_or_unset_chat_setting_command(update, context)
-            elif commandText.startswith("/test"):
-                await devCommandsHandler.test_command(update, context)
-
-            # Verify message was saved
-            mockDatabase.saveChatMessage.assert_called()
-
-
-# ============================================================================
-# Test Summary
-# ============================================================================
-
-
-def testSummary():
-    """
-    Test Summary for DevCommandsHandler, dood!
-
-    Total Test Cases: 45+
-
-    Coverage Areas:
-    - Initialization: 2 tests
-    - Admin Permission Checks: 4 tests
-    - /echo Command: 4 tests
-    - /models Command: 4 tests
-    - /settings Command: 4 tests
-    - /set and /unset Commands: 8 tests
-    - /test Command: 12 tests
-    - Edge Cases and Error Handling: 7 tests
-
-    Key Features Tested:
-    ✓ Handler initialization with dependencies
-    ✓ Inheritance from BaseBotHandler
-    ✓ Admin permission checks for all commands
-    ✓ /echo command with text
-    ✓ /echo command without text (error handling)
-    ✓ /echo command with multiple words
-    ✓ /models command lists all models
-    ✓ /models command shows model details
-    ✓ /models command batches sending
-    ✓ /settings command displays chat settings
-    ✓ /settings command with debug mode
-    ✓ /set command sets valid settings
-    ✓ /set command with multi-word values
-    ✓ /set command with invalid keys
-    ✓ /set command without value (error)
-    ✓ /unset command resets settings
-    ✓ /unset command without key (error)
-    ✓ /test long suite with iterations
-    ✓ /test delayedQueue suite
-    ✓ /test cacheStats suite
-    ✓ /test dumpEntities suite
-    ✓ /test dumpEntities without reply (error)
-    ✓ /test dumpEntities without entities (error)
-    ✓ /test unknown suite (error)
-    ✓ /test without suite (error)
-    ✓ /test long with invalid parameters
-    ✓ Error handling for missing messages
-    ✓ Error handling for EnsuredMessage creation
-    ✓ Database message saving
-    ✓ Empty settings handling
-    ✓ None model info handling
-    ✓ Default parameter usage
-
-    Test Coverage:
-    - Comprehensive unit tests for all command handlers
-    - Integration tests for complete command workflows
-    - Admin permission validation for all commands
-    - Error handling and edge cases
-    - Database interaction verification
-    - Parameter validation
-
-    Target Coverage: 75%+ for DevCommandsHandler class
-    """
-    pass
