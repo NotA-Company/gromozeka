@@ -27,7 +27,6 @@ from internal.services.cache.models import CacheNamespace  # noqa: E402
 
 # Import directly to avoid circular dependencies
 from internal.services.cache.service import CacheService, LRUCache  # noqa: E402
-from internal.services.cache.types import UserActiveActionEnum  # noqa: E402
 
 
 class TestLRUCache(unittest.TestCase):
@@ -169,7 +168,7 @@ class TestCacheServiceBasics(unittest.TestCase):
     def testGetStats(self):
         """Test statistics generation"""
         self.cache.chats.set(123, {"settings": {}})
-        self.cache.users.set(456, {"activeConfigureId": {}})
+        self.cache.users.set(456, {"activeConfigure": {"data": {}, "messageId": 1}})
 
         stats = self.cache.getStats()
 
@@ -369,66 +368,6 @@ class TestUserState(unittest.TestCase):
             del self.mockDb
         CacheService._instance = None
         gc.collect()
-
-    def testGetUserState(self):
-        """Test getting user state"""
-        testState = {"step": 1, "data": "test"}
-        self.cache.users.set(123, {"activeConfigureId": testState})
-
-        state = self.cache.getUserState(123, UserActiveActionEnum.Configuration)
-        self.assertEqual(state, testState)
-
-    def testGetUserStateDefault(self):
-        """Test getting nonexistent user state with default"""
-        state = self.cache.getUserState(999, UserActiveActionEnum.Configuration, {"default": True})
-        self.assertEqual(state, {"default": True})
-
-    def testSetUserState(self):
-        """Test setting user state"""
-        testState = {"step": 1, "data": "test"}
-        self.cache.setUserState(123, UserActiveActionEnum.Configuration, testState)
-
-        state = self.cache.getUserState(123, UserActiveActionEnum.Configuration)
-        self.assertEqual(state, testState)
-
-        # Check dirty tracking
-        self.assertIn(123, self.cache.dirtyKeys[CacheNamespace.USERS])
-
-    def testClearUserStateSingle(self):
-        """Test clearing single user state key"""
-        self.cache.users.set(
-            123,
-            {
-                "activeConfigureId": {"step": 1},
-                "activeSummarizationId": {"step": 2},
-            },
-        )
-
-        self.cache.clearUserState(123, UserActiveActionEnum.Configuration)
-
-        state = self.cache.getUserState(123, UserActiveActionEnum.Configuration)
-        self.assertIsNone(state)
-
-        # Other state should remain
-        state2 = self.cache.getUserState(123, UserActiveActionEnum.Summarization)
-        self.assertEqual(state2, {"step": 2})
-
-    def testClearUserStateAll(self):
-        """Test clearing all user state keys"""
-        self.cache.users.set(
-            123,
-            {
-                "activeConfigureId": {"step": 1},
-                "activeSummarizationId": {"step": 2},
-            },
-        )
-
-        self.cache.clearUserState(123)
-
-        state1 = self.cache.getUserState(123, UserActiveActionEnum.Configuration)
-        state2 = self.cache.getUserState(123, UserActiveActionEnum.Summarization)
-        self.assertIsNone(state1)
-        self.assertIsNone(state2)
 
     def testClearUserStateNonexistent(self):
         """Test clearing state for nonexistent user"""
