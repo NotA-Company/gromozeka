@@ -29,9 +29,16 @@ if [ "$DO_PIP_UPDATE" = "1" ]; then
 fi
 
 PROFILER=""
+PROFILR_LOG=""
 if [ "$USE_PROFILER" = "1" ]; then
     NOW=`date +%Y-%m-%d_%H-%M`
-    PROFILER=" -m cProfile -o logs/profile.${NOW}.profile "
+    PROFILR_LOG="logs/profile.${NOW}.profile"
+    PROFILER=" -m cProfile -o $PROFILR_LOG "
 fi
+
 ./venv/bin/python $PROFILER ./main.py --config-dir ./configs/00-defaults --config-dir "./configs/$ENV" $*
 #2>&1 | tee `date '+logs/%Y-%m-%d_%H-%M.log'`
+
+if [ -n "$PROFILR_LOG" ]; then
+    ./venv/bin/python ./show_profile.py $PROFILR_LOG
+fi
