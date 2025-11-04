@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 
 class HCSpamWarningMessageInfo(TypedDict):
+    """Spam warning message metadata, dood."""
+
     # messageId: int
     parentMessageId: NotRequired[Optional[int]]
     userId: int
@@ -20,13 +22,27 @@ class HCSpamWarningMessageInfo(TypedDict):
 
 
 class HCChatPersistentCacheDict(TypedDict):
+    """Persistent chat cache data, dood."""
+
     spamWarningMessages: NotRequired[Dict[int, HCSpamWarningMessageInfo]]
 
 
+class HCChatAdminsDict(TypedDict):
+    """Chat admins list with update timestamp, dood."""
+
+    # When list was updated last time
+    updatedAt: float
+    # Dict[userId, username], Actually only iserId is needed, username is used for debug purposes only
+    admins: Dict[int, str]
+
+
 class HCChatCacheDict(TypedDict):
+    """Complete chat cache including settings, info, topics, and admins, dood."""
+
     settings: NotRequired[Dict["ChatSettingsKey", "ChatSettingsValue"]]
     info: NotRequired[ChatInfoDict]
     topicInfo: NotRequired[Dict[int, ChatTopicInfoDict]]
+    admins: NotRequired[HCChatAdminsDict]
 
 
 UserDataValueType: TypeAlias = str | List[str] | Dict[str, Any]
@@ -34,45 +50,29 @@ UserDataType: TypeAlias = Dict[str, UserDataValueType]
 
 
 class HCChatUserCacheDict(TypedDict):
+    """Cache data for a specific user within a chat, dood."""
+
     data: NotRequired[UserDataType]
 
 
 class UserActiveActionEnum(StrEnum):
+    """Active action types for users, dood."""
+
     Configuration = "activeConfigureId"
     Summarization = "activeSummarizationId"
 
 
 class HCUserCacheDict(TypedDict):
+    """User-level cache for active actions, dood."""
+
     activeConfigureId: NotRequired[Dict[str, Any]]
     activeSummarizationId: NotRequired[Dict[str, Any]]
 
 
 class HandlersCacheDict(TypedDict):
+    """Root cache structure for all bot handlers, dood."""
+
     # Cache structure:
     chats: Dict[int, HCChatCacheDict]
-    # "chats": Dict[int, Any]= {
-    #     "<chatId>": Dict[str, Any] = {
-    #         "settings": Dict[ChatSettingsKey, ChatSettingsValue] = {...},
-    #         "info": Dict[str, any] = {...},
-    #         "topics": Dict[int, Any] = {
-    #             "<topicId>": Dict[str, Any] = {
-    #                 "iconColor": Optional[int],
-    #                 "customEmojiId": Optional[int],
-    #                 "name": Optional[str],
-    #             },
-    #         },
-    #     },
-    # },
     chatUsers: Dict[str, HCChatUserCacheDict]
-    # "chatUsers": Dict[str, Any] = {
-    #     "<chatId>:<userId>": Dict[str, Any] = {
-    #         "data": Dict[str, str|List["str"]] = {...},
-    #     },
-    # },
     users: Dict[int, HCUserCacheDict]
-    # "users": Dict[int, Any] = {
-    #     <userId>: Dict[str, Any] = {
-    #         "activeConfigureId": Dict[str, Any] = {...},
-    #         "activeSummarizationId": Dict[str, Any] = {...},
-    #     },
-    # },

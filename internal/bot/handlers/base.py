@@ -592,24 +592,28 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             True if user is admin/owner, False otherwise
         """
-        # If chat is None, then we are checking if it's bot owner
-        username = user.username
-        if username is None:
-            return False
-        username = username.lower()
+        # If chat is None, then we are checking if it's bot owner only
 
-        if allowBotOwners and username in self.botOwners:
+        if allowBotOwners and user.username and user.username.lower() in self.botOwners:
+            # User is bot owner and bot owners are allowed
             return True
 
-        # If userId is the same as chatID, then it's private chat or Anonymous Admin
+        # If userId is the same as chatID, then it's Private chat or Anonymous Admin
         if chat is not None and user.id == chat.id:
             return True
 
+        # If chat is passed, check if user is admin of given chat
         if chat is not None:
+            chatAdmins = self.cache.getChatAdmins(chat.id)
+            if chatAdmins is not None:
+                return user.id in chatAdmins
+
+            chatAdmins = {}  # userID -> username
             for admin in await chat.get_administrators():
-                # logger.debug(f"Got admin for chat {chat.id}: {admin}")
-                if admin.user.username and username == admin.user.username.lower():
-                    return True
+                chatAdmins[admin.user.id] = admin.user.name
+
+            self.cache.setChatAdmins(chat.id, chatAdmins)
+            return user.id in chatAdmins
 
         return False
 
