@@ -51,7 +51,7 @@ from ..models import (
     CommandPermission,
     EnsuredMessage,
 )
-from .base import BaseBotHandler, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -394,7 +394,11 @@ class YandexSearchHandler(BaseBotHandler):
         category=CommandCategory.TOOLS,
     )
     async def web_search(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /web_search command for direct user web searches.
 

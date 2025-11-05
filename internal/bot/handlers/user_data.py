@@ -35,7 +35,7 @@ from ..models import (
     CommandPermission,
     EnsuredMessage,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -722,7 +722,11 @@ class UserDataHandler(BaseBotHandler):
         category=CommandCategory.TOOLS,
     )
     async def get_my_data_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Display stored user data as JSON, dood!
@@ -755,7 +759,11 @@ class UserDataHandler(BaseBotHandler):
         category=CommandCategory.PRIVATE,
     )
     async def knowledge_config_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Start interactive user data configuration wizard (private chats only), dood!

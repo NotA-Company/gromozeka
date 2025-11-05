@@ -42,7 +42,7 @@ from ..models import (
     EnsuredMessage,
     getChatSettingsInfo,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -856,7 +856,11 @@ class ConfigureCommandHandler(BaseBotHandler):
         category=CommandCategory.PRIVATE,
     )
     async def configure_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle the /configure command to start configuration wizard, dood!

@@ -25,7 +25,7 @@ from ..models import (
     EnsuredMessage,
     MessageSender,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,11 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         category=CommandCategory.ADMIN,
     )
     async def set_reaction_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Bun bip bop"""
         message = ensuredMessage.getBaseMessage()
@@ -210,7 +214,11 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         category=CommandCategory.ADMIN,
     )
     async def unset_reaction_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """TODO: Bun bip bop"""
         message = ensuredMessage.getBaseMessage()
@@ -278,7 +286,11 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         category=CommandCategory.ADMIN,
     )
     async def dump_reactions_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """TODO: Bun bip bop"""
         message = ensuredMessage.getBaseMessage()

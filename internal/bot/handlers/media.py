@@ -43,7 +43,7 @@ from ..models import (
     LLMMessageFormat,
     MessageType,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +312,11 @@ class MediaHandler(BaseBotHandler):
         category=CommandCategory.TOOLS,
     )
     async def analyze_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /analyze <prompt> command to analyze media with AI, dood!
@@ -468,7 +472,11 @@ class MediaHandler(BaseBotHandler):
         category=CommandCategory.TOOLS,
     )
     async def draw_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /draw [<prompt>] command to generate images with AI, dood!

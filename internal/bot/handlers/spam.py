@@ -47,7 +47,7 @@ from ..models import (
     DelayedTaskFunction,
     EnsuredMessage,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -919,7 +919,11 @@ class SpamHandler(BaseBotHandler):
         category=CommandCategory.TECHNICAL,
     )
     async def bayes_stats_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         TODO
@@ -945,7 +949,11 @@ class SpamHandler(BaseBotHandler):
         category=CommandCategory.SPAM,
     )
     async def spam_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /spam command to manually mark messages as spam, dood!
@@ -1005,7 +1013,11 @@ class SpamHandler(BaseBotHandler):
         category=CommandCategory.SPAM_ADMIN,
     )
     async def pretrain_bayes_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /pretrain_bayes [<chatId>] command for initial filter training, dood!
@@ -1073,7 +1085,11 @@ class SpamHandler(BaseBotHandler):
         category=CommandCategory.SPAM_ADMIN,
     )
     async def learn_spam_ham_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /learn_spam and /learn_ham commands for manual filter training, dood!
@@ -1185,7 +1201,11 @@ class SpamHandler(BaseBotHandler):
         category=CommandCategory.TECHNICAL,
     )
     async def get_spam_score_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /get_spam_score command to analyze messages for spam, dood!
@@ -1269,7 +1289,11 @@ class SpamHandler(BaseBotHandler):
         category=CommandCategory.SPAM,
     )
     async def unban_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /unban command to unban users and correct false positives, dood!

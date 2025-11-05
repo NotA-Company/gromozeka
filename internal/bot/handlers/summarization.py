@@ -43,7 +43,7 @@ from ..models import (
     EnsuredMessage,
     LLMMessageFormat,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -720,7 +720,11 @@ class SummarizationHandler(BaseBotHandler):
         category=CommandCategory.TOOLS,
     )
     async def summary_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /summary and /topic_summary commands, dood!
