@@ -34,7 +34,7 @@ from ..models import (
     DelayedTaskFunction,
     EnsuredMessage,
 )
-from .base import BaseBotHandler, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,11 @@ class CommonHandler(BaseBotHandler):
         category=CommandCategory.PRIVATE,
     )
     async def start_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle the /start command to welcome new users, dood!
@@ -274,7 +278,11 @@ class CommonHandler(BaseBotHandler):
         category=CommandCategory.TOOLS,
     )
     async def remind_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle the /remind command to schedule reminder messages, dood!
@@ -365,7 +373,11 @@ class CommonHandler(BaseBotHandler):
         category=CommandCategory.PRIVATE,
     )
     async def list_chats_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle the /list_chats command to display known chats, dood!

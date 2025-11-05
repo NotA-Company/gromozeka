@@ -4,7 +4,7 @@ Gromozeka Help command Handler.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -21,7 +21,7 @@ from ..models import (
     CommandPermission,
     EnsuredMessage,
 )
-from .base import BaseBotHandler, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,11 @@ class HelpHandler(BaseBotHandler):
         category=CommandCategory.PRIVATE,
     )
     async def help_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle the /help command."""
         isBotOwner = await self.isAdmin(ensuredMessage.user, allowBotOwners=True)

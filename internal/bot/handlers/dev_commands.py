@@ -18,6 +18,7 @@ to regular users, dood!
 import asyncio
 import logging
 import time
+from typing import Optional
 
 from telegram import Chat, Update
 from telegram.constants import MessageEntityType
@@ -36,7 +37,7 @@ from ..models import (
     CommandPermission,
     EnsuredMessage,
 )
-from .base import BaseBotHandler, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,11 @@ class DevCommandsHandler(BaseBotHandler):
         category=CommandCategory.TECHNICAL,
     )
     async def echo_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle the /echo command for testing bot responsiveness, dood!
 
@@ -119,7 +124,11 @@ class DevCommandsHandler(BaseBotHandler):
         category=CommandCategory.PRIVATE,
     )
     async def models_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /models command to list all available LLM models, dood!
 
@@ -203,7 +212,11 @@ class DevCommandsHandler(BaseBotHandler):
         category=CommandCategory.TECHNICAL,
     )
     async def chat_settings_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /settings command to display current chat configuration, dood!
 
@@ -265,7 +278,11 @@ class DevCommandsHandler(BaseBotHandler):
         category=CommandCategory.TECHNICAL,
     )
     async def set_or_unset_chat_setting_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /set and /unset commands for managing chat settings, dood!
 
@@ -376,7 +393,11 @@ class DevCommandsHandler(BaseBotHandler):
         category=CommandCategory.PRIVATE,
     )
     async def test_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /test command to run various diagnostic test suites, dood!"""
         message = ensuredMessage.getBaseMessage()
@@ -511,7 +532,11 @@ class DevCommandsHandler(BaseBotHandler):
         category=CommandCategory.PRIVATE,
     )
     async def clear_cache_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Clear cache"""
         await self.startTyping(ensuredMessage)
