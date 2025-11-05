@@ -1,7 +1,12 @@
 # Our TODO list
+- [ ] Add cache-invalidation mechaism (drop old tasks and cache entries from DB)
+- [ ] use `httpx` instead of `request` in [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py) + add redirection handling + headers 
+- [ ] Add some cache into [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py)
+- [ ] Add optional condensing of page content via LLM into [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py)
+- [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
-- [ ] User-data manipulation wizard
+- [x] Add User-data manipulation wizard
 - [ ] Add support for embeddings + Vector search oon chat's database
 - [ ] Add support for local LLM-providers (Like Ollama or LLama.cpp)
 - [x] Less granular command enabling\disabling (after extended command decorator)
