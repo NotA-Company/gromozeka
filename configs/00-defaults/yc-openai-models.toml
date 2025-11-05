@@ -32,15 +32,16 @@ support_text = true
 support_images = false
 can_be_choosen = true
 
-[models.models."yc/llama"]
+[models.models."yc/gpt-oss-20b"]
 provider = "yc-openai"
-model_id = "llama"
+model_id = "gpt-oss-20b"
 model_version="latest"
 temperature = 0.5
-context = 8192
+context = 128000
 support_tools = true
 support_text = true
 support_images = false
+can_be_choosen = true
 
 [models.models."yc/qwen3-235b-a22b-fp8"]
 provider = "yc-openai"
