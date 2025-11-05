@@ -223,6 +223,7 @@ class LLMMessageHandler(BaseBotHandler):
                         logger.warning(
                             f"No text field found in json reply, fallback to text. Json Reply is: {jsonReply}"
                         )
+                        # TODO: Add logging of this thing Also process tool_calls here
                     logger.debug(f"Extracted text is: {lmRetText}")
                 except ValueError as e:
                     logger.debug("It wasn't JSON...")

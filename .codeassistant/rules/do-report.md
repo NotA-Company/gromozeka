@@ -1,0 +1,2 @@
+* On begining of big task, write implementation plan into Markdown file in `docs/plans/` directory. Use `docs/templates/task-plan-template.md` as template.
+* After compleating any task **ALWAYS** write report and put it into Markdown file in `docs/reports/` directory. Use `docs/templates/task-report-template.md` as template.
