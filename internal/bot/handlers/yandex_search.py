@@ -268,10 +268,38 @@ class YandexSearchHandler(BaseBotHandler):
             str: The content from the URL as a string, or a JSON error object
                  if the request fails
         """
-        # TODO: Check if content is text content
         try:
-            ret = requests.get(url).content.decode("utf-8")
-            if parse_to_markdown:
+            # TODO: Switch to httpx and properly handle redirects and so on
+            doc: requests.Response = requests.get(url)
+
+            if doc.status_code < 200 or doc.status_code >= 300:
+                reason = doc.reason
+                if isinstance(doc.reason, bytes):
+                    try:
+                        reason = doc.reason.decode("utf-8")
+                    except UnicodeDecodeError:
+                        reason = doc.reason.decode("iso-8859-1")
+
+                return utils.jsonDumps(
+                    {
+                        "done": False,
+                        "error": f"Request failed with status {doc.status_code}: {reason}",
+                    }
+                )
+            
+            contentType = doc.headers.get('content-type', 'text/html')
+            if not contentType.startswith('text/'):
+                logger.warning(f"getUrl: content type of '{url}' is {contentType}")
+                return utils.jsonDumps({"done": False, "error": f"Content is not text, but {contentType}"})
+
+            try:
+                ret = doc.content.decode(doc.encoding or "utf-8")
+            except Exception as e:
+                logger.error(f"getUrl: cannot decode content as {doc.encoding}: {e}")
+                ret = doc.content.decode("iso-8859-1")
+
+            if parse_to_markdown and "html" in contentType:
+                # Parse to Markdown only if it's HTML
                 ret = html_to_markdown.convert(
                     ret,
                     options=html_to_markdown.ConversionOptions(
@@ -282,7 +310,7 @@ class YandexSearchHandler(BaseBotHandler):
             return ret
         except Exception as e:
             logger.error(f"Error getting content from {url}: {e}")
-            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+            return utils.jsonDumps({"done": False, "error": str(e)})
 
     def _formatSearchResult(self, searchResult: ys.SearchResponse) -> Sequence[str]:
         """Format Yandex Search API response for Telegram message display.
