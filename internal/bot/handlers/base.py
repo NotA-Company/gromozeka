@@ -94,27 +94,34 @@ class HandlerResultStatus(Enum):
     FATAL = "fatal"  # Fatal error, need to stop processing
 
 
-class TypingStopper:
+class TypingManager:
     """
     Helper class to manage continuous typing actions, dood!
 
     This class is used to control the continuous sending of typing actions
     while a long-running operation is in progress.
 
-    Attributes:
-        running: Boolean indicating if the typing action is still running
-        task: The asyncio task associated with the typing action
+    TODO
     """
 
-    def __init__(self, task: Optional[asyncio.Task] = None) -> None:
+    def __init__(
+        self,
+        action: ChatAction,
+        maxTimeout: int,
+        repeatTimeout: int,
+        task: Optional[asyncio.Task] = None,
+    ) -> None:
         """
-        Initialize the TypingStopper with an asyncio task, dood!
-
-        Args:
-            task: The asyncio task to manage for continuous typing actions
+        TODO
         """
         self.running = True
+        self.action = action
+        self.maxTimeout = maxTimeout
+        self.repeatTimeout = repeatTimeout
         self.task = task
+
+        self.startTime = time.time()
+        self.iteration: int = 0
 
     async def setTask(self, task: asyncio.Task) -> None:
         """
@@ -140,14 +147,19 @@ class TypingStopper:
 
     async def isRunning(self) -> bool:
         """
-        Check if the typing task is still running, dood!
-
-        Returns:
-            bool: True if the typing task is running, False otherwise
+        TODO
         """
-        return self.running
+        if not self.running:
+            return False
+        
+        return self.startTime + self.maxTimeout > time.time()
 
-    async def __aenter__(self) -> "TypingStopper":
+    async def sendTypingAction(self) -> None:
+        """TODO"""
+        if self.running:
+            self.iteration = 0
+
+    async def __aenter__(self) -> "TypingManager":
         """
         Enter the context manager, dood!
 
@@ -173,16 +185,22 @@ def commandHandlerExtended(
     # Where command need to be suggested. Default: nowhere
     suggestCategories: Optional[Set[CommandPermission]] = None,
     # Where command is allowed to be used. Default: everywhere
+    # TODO: Think if it really needed or we can use category for it?
     availableFor: Optional[Set[CommandPermission]] = None,
     # Order hor help message
     helpOrder: CommandHandlerOrder = CommandHandlerOrder.NORMAL,
     # Category for command (for more fine-grained permissions handling)
     category: CommandCategory = CommandCategory.UNSPECIFIED,
+    # Which ChatAction we should send? None - to send nothing
+    typingAction: Optional[ChatAction] = ChatAction.TYPING,
+    # Should we reply to user with exception message on exception? Default: True
+    replyErrorOnException: bool = True,
 ) -> Callable[
-    [Callable[[Any, EnsuredMessage, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]],
+    [Callable[[Any, EnsuredMessage, Optional[TypingManager], Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]],
     Callable[["BaseBotHandler", Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
 ]:
     """
+    TODO: rewrite
     Decorator for creating extended command handlers with metadata, permissions, and logging.
 
     Creates a decorator that wraps command handler functions with additional functionality:
@@ -209,7 +227,10 @@ def commandHandlerExtended(
         availableFor = {CommandPermission.DEFAULT}
 
     def decorator(
-        func: Callable[["BaseBotHandler", EnsuredMessage, Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
+        func: Callable[
+            ["BaseBotHandler", EnsuredMessage, Optional[TypingManager], Update, ContextTypes.DEFAULT_TYPE],
+            Awaitable[None],
+        ],
     ) -> Callable[["BaseBotHandler", Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
         # Store metadata as an attribute on the function
         metadata = CommandHandlerInfo(
@@ -240,8 +261,9 @@ def commandHandlerExtended(
 
             canProcess = CommandPermission.DEFAULT in availableFor
             isBotOwner = await self.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
-
+            chatSettings = self.getChatSettings(ensuredMessage.chat.id)
             chatType = ensuredMessage.chat.type
+
             if not canProcess and CommandPermission.PRIVATE in availableFor:
                 canProcess = chatType == Chat.PRIVATE
             if not canProcess and CommandPermission.GROUP in availableFor:
@@ -255,7 +277,6 @@ def commandHandlerExtended(
                     ensuredMessage.sender, ensuredMessage.chat
                 )
 
-            chatSettings = self.getChatSettings(ensuredMessage.chat.id)
             if not canProcess:
                 botCommand = ensuredMessage.messageText.split(" ", 1)[0]
                 for entityStr in message.parse_entities([MessageEntity.BOT_COMMAND]).values():
@@ -318,7 +339,21 @@ def commandHandlerExtended(
             self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
             # Actually handle command
-            return await func(self, ensuredMessage, update, context)
+            try:
+                if typingAction is not None:
+                    async with await self.startContinousTyping(ensuredMessage, action=typingAction) as typingManager:
+                        return await func(self, ensuredMessage, typingManager, update, context)
+                else:
+                    return await func(self, ensuredMessage, None, update, context)
+            except Exception as e:
+                logger.error(f"Error while handling command {ensuredMessage.messageText.split(" ", 1)[0]}: {e}")
+                logger.exception(e)
+                if replyErrorOnException:
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=f"Error while handling command:\n```\n{e}\n```",
+                        messageCategory=MessageCategory.BOT_ERROR,
+                    )
 
         # setattr(func, _HANDLER_METADATA_ATTR, metadata)
         setattr(wrapper, _HANDLER_METADATA_ATTR, metadata)
@@ -615,7 +650,7 @@ class BaseBotHandler(CommandHandlerMixin):
         mediaPrompt: Optional[str] = None,
         messageCategory: MessageCategory = MessageCategory.BOT,
         replyMarkup: Optional[ReplyMarkup] = None,
-        stopper: Optional[TypingStopper] = None,
+        stopper: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
     ) -> Optional[Message]:
         """
@@ -1026,7 +1061,7 @@ class BaseBotHandler(CommandHandlerMixin):
         action: ChatAction = ChatAction.TYPING,
         maxTimeout: int = 120,
         repeatTimeout: int = 5,
-    ) -> TypingStopper:
+    ) -> TypingManager:
         """
         Start continuous typing action, dood!
 
@@ -1043,33 +1078,33 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             TypingStopper instance to control the typing action
         """
-        startTime = time.time()
-        stopTime = startTime + maxTimeout
-        typingStopper = TypingStopper()
+        typingManager = TypingManager(
+            action=action,
+            maxTimeout=maxTimeout,
+            repeatTimeout=repeatTimeout,
+        )
 
         # logger.debug(f"startContinousTyping(,{action},{maxTimeout},{repeatTimeout}) started...")
 
         async def _sendTyping() -> None:
-            iteration = 0
-            while time.time() < stopTime:
-                # logger.debug(f"_sendTyping(,{action}), iteration: {iteration}...")
-                if not await typingStopper.isRunning():
-                    return
+            typingManager.iteration = 0
 
-                if iteration == 0:
-                    await self.startTyping(ensuredMessage, action)
+            while await typingManager.isRunning():
+                # logger.debug(f"_sendTyping(,{action}), iteration: {iteration}...")
+                if typingManager.iteration == 0:
+                    await self.startTyping(ensuredMessage, typingManager.action)
 
                 # Sleep 1 second to faster stop in case of typingStopper activated
+                typingManager.iteration = (typingManager.iteration + 1) % typingManager.repeatTimeout
                 await asyncio.sleep(1)
-                iteration = (iteration + 1) % repeatTimeout
 
             logger.warning(f"startContinousTyping({ensuredMessage}) reached timeout, exiting...")
 
         # Send initial action now as task will start not immediately
         await self.startTyping(ensuredMessage, action)
         task = asyncio.create_task(_sendTyping())
-        await typingStopper.setTask(task)
-        return typingStopper
+        await typingManager.setTask(task)
+        return typingManager
 
     def getChatTitle(
         self,
