@@ -134,8 +134,7 @@ class YandexSearchHandler(BaseBotHandler):
                 LLMFunctionParameter(
                     name="download_pages",
                     description="Should tool return list of downloaded pages in markdown format (true)"
-                    " or just list of URLs with brief description (false)."
-                    " Default: true",
+                    " or just list of URLs with brief description (false).",
                     type=LLMParameterType.BOOLEAN,
                     required=True,
                 ),
