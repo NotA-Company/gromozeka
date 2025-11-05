@@ -119,13 +119,24 @@ class YandexSearchHandler(BaseBotHandler):
         self.llmService.registerTool(
             name="web_search",
             description=(
-                "Search information in Web, return list of result URLs with " "brief description of what found"
+                "Search information in Web."
+                " Return list of result URLs with"
+                " brief description of what found"
+                " or content from found pages"
             ),
             parameters=[
                 LLMFunctionParameter(
                     name="query",
                     description="Search query",
                     type=LLMParameterType.STRING,
+                    required=True,
+                ),
+                LLMFunctionParameter(
+                    name="download_pages",
+                    description="Should tool return list of downloaded pages in markdown format (true)"
+                    " or just list of URLs with brief description (false)."
+                    " Default: true",
+                    type=LLMParameterType.BOOLEAN,
                     required=True,
                 ),
                 LLMFunctionParameter(
@@ -170,26 +181,12 @@ class YandexSearchHandler(BaseBotHandler):
         self,
         extraData: Optional[Dict[str, Any]],
         query: str,
+        download_pages: bool,
         enable_content_filter: bool = False,
         max_results: int = 3,
         **kwargs,
     ) -> str:
-        """Perform web search via Yandex Search API as an LLM tool.
-
-        This method is registered as an LLM tool, allowing the language model to
-        autonomously search the web when it needs additional information. It handles
-        search parameter configuration, content filtering, and result formatting
-        for LLM consumption.
-
-        Args:
-            extraData (Optional[Dict[str, Any]]): Additional data passed from LLM service
-            query (str): Search query text to look up on the web
-            enable_content_filter (bool): Whether to enable family-safe content filtering
-            **kwargs: Additional keyword arguments passed from LLM tool call
-
-        Returns:
-            str: JSON-formatted search results or error message for LLM processing
-        """
+        """TODO"""
         try:
             # TODO: Also add optional download of page from search
             contentFilter: ys.FamilyMode = (
@@ -200,16 +197,40 @@ class YandexSearchHandler(BaseBotHandler):
                 "familyMode": contentFilter,
                 "groupsOnPage": max_results,
             }
-            ret = await self.yandexSearchClient.search(query, **searchKWargs)
-            if ret is None:
+            searchResult = await self.yandexSearchClient.search(query, **searchKWargs)
+            if searchResult is None:
                 return utils.jsonDumps({"done": False, "errorMessage": "Failed to perform web search"})
 
-            # Drop useless things
-            ret.pop("requestId", None)
-            ret.pop("foundHuman", None)
-            ret.pop("page", None)
+            ret = {}
+            if download_pages:
+                # Return content of found documents
+                if "error" in searchResult:
+                    ret["error"] = searchResult
+                
+                ret["pages"] = []
 
-            return utils.jsonDumps({**ret, "done": "error" not in ret})
+                for group in searchResult["groups"]:
+                    for doc in group:
+                        url = doc["url"]
+                        # url = doc["savedCopyUrl"]
+                        content = await self._llmToolGetUrlContent(extraData=extraData, url=url, parse_to_markdown=True)
+                        if content and content[0] != "{":
+                            # Check that there is any result and it isn't json
+                            ret["pages"].append({"url": url, "content": content})
+
+            else:
+                # Return only search results
+                # Drop useless things
+                searchResult.pop("requestId", None)
+                searchResult.pop("foundHuman", None)
+                searchResult.pop("page", None)
+                for groupIdx, group in enumerate(searchResult["groups"]):
+                    for docIdx, doc in enumerate(group):
+                        searchResult["groups"][groupIdx][docIdx].pop("savedCopyUrl", None)
+
+                ret = searchResult
+
+            return utils.jsonDumps({**ret, "done": "error" not in searchResult})
         except Exception as e:
             logger.error(f"Error searching web: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
