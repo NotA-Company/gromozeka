@@ -182,7 +182,7 @@ class YandexSearchHandler(BaseBotHandler):
         query: str,
         download_pages: bool,
         enable_content_filter: bool = False,
-        max_results: int = 3,
+        max_results: int = 5,
         **kwargs,
     ) -> str:
         """Perform web search using Yandex Search API.
@@ -192,13 +192,18 @@ class YandexSearchHandler(BaseBotHandler):
             query: Search query string
             download_pages: Whether to download and parse content of found pages
             enable_content_filter: Whether to enable content filtering (default: False)
-            max_results: Maximum number of results to return (default: 3)
+            max_results: Maximum number of results to return (default: 5)
             **kwargs: Additional keyword arguments
 
         Returns:
             JSON string containing search results or page contents with status information
         """
         try:
+            max_results = min(max(1, max_results), 10)
+            if download_pages:
+                # Limit max_results to 5 if download_pages is True
+                # Because of context restrictions, most of LLM's wont't be able to handle more than ~5 results
+                max_results = min(max_results, 5)
             contentFilter: ys.FamilyMode = (
                 ys.FamilyMode.FAMILY_MODE_MODERATE if enable_content_filter else ys.FamilyMode.FAMILY_MODE_NONE
             )
@@ -278,7 +283,7 @@ class YandexSearchHandler(BaseBotHandler):
                     try:
                         reason = doc.reason.decode("utf-8")
                     except UnicodeDecodeError:
-                        reason = doc.reason.decode("iso-8859-1")
+                        reason = doc.reason.decode("iso-8859-1", errors="replace")
 
                 return utils.jsonDumps(
                     {
@@ -296,7 +301,7 @@ class YandexSearchHandler(BaseBotHandler):
                 ret = doc.content.decode(doc.encoding or "utf-8")
             except Exception as e:
                 logger.error(f"getUrl: cannot decode content as {doc.encoding}: {e}")
-                ret = doc.content.decode("iso-8859-1")
+                ret = doc.content.decode("iso-8859-1", errors="replace")
 
             if parse_to_markdown and "html" in contentType:
                 # Parse to Markdown only if it's HTML
