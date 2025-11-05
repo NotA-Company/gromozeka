@@ -1,12 +1,9 @@
 # Pull Request: [PR Title]
 
-**PR Number:** [#XXX]
 **Author:** [Developer Name]
 **Date Created:** [YYYY-MM-DD]
 **Target Branch:** [e.g., main, develop, master]
 **Source Branch:** [e.g., feature/feature-name, fix/bug-name]
-**Status:** [Draft/Ready for Review/Approved/Merged]
-**Reviewers:** [@reviewer1, @reviewer2]
 
 ## Brief Description
 
