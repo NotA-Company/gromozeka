@@ -1,5 +1,6 @@
 # Our TODO list
-- [ ] Add cache-invalidation mechaism (drop old tasks and cache entries from DB)
+- [ ] Drop\comment private-defaults and chat-defaults from default config
+- [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [ ] use `httpx` instead of `request` in [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py) + add redirection handling + headers 
 - [ ] Add some cache into [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py)
 - [ ] Add optional condensing of page content via LLM into [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py)
