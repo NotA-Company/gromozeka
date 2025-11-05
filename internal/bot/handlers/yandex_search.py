@@ -23,6 +23,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional, Sequence
 
+import html_to_markdown
 import requests
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -118,7 +119,10 @@ class YandexSearchHandler(BaseBotHandler):
         self.llmService.registerTool(
             name="web_search",
             description=(
-                "Search information in Web, return list of result URLs with " "brief description of what found"
+                "Search information in Web."
+                " Return list of result URLs with"
+                " brief description of what found"
+                " or content from found pages"
             ),
             parameters=[
                 LLMFunctionParameter(
@@ -128,11 +132,24 @@ class YandexSearchHandler(BaseBotHandler):
                     required=True,
                 ),
                 LLMFunctionParameter(
+                    name="download_pages",
+                    description="Should tool return list of downloaded pages in markdown format (true)"
+                    " or just list of URLs with brief description (false).",
+                    type=LLMParameterType.BOOLEAN,
+                    required=True,
+                ),
+                LLMFunctionParameter(
                     name="enable_content_filter",
                     description=(
                         "If content filer should be used to not allow inapropriate content" " (Default: false)"
                     ),
                     type=LLMParameterType.BOOLEAN,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="max_results",
+                    description="Maximum number of results to return (Default: 3)",
+                    type=LLMParameterType.NUMBER,
                     required=False,
                 ),
             ],
@@ -149,51 +166,97 @@ class YandexSearchHandler(BaseBotHandler):
                     type=LLMParameterType.STRING,
                     required=True,
                 ),
+                LLMFunctionParameter(
+                    name="parse_to_markdown",
+                    description="Whether to parse the content to Markdown format (Default: true)",
+                    type=LLMParameterType.BOOLEAN,
+                    required=False,
+                ),
             ],
             handler=self._llmToolGetUrlContent,
         )
 
     async def _llmToolWebSearch(
-        self, extraData: Optional[Dict[str, Any]], query: str, enable_content_filter: bool = False, **kwargs
+        self,
+        extraData: Optional[Dict[str, Any]],
+        query: str,
+        download_pages: bool,
+        enable_content_filter: bool = False,
+        max_results: int = 5,
+        **kwargs,
     ) -> str:
-        """Perform web search via Yandex Search API as an LLM tool.
-
-        This method is registered as an LLM tool, allowing the language model to
-        autonomously search the web when it needs additional information. It handles
-        search parameter configuration, content filtering, and result formatting
-        for LLM consumption.
+        """Perform web search using Yandex Search API.
 
         Args:
-            extraData (Optional[Dict[str, Any]]): Additional data passed from LLM service
-            query (str): Search query text to look up on the web
-            enable_content_filter (bool): Whether to enable family-safe content filtering
-            **kwargs: Additional keyword arguments passed from LLM tool call
+            extraData: Optional additional data for the operation
+            query: Search query string
+            download_pages: Whether to download and parse content of found pages
+            enable_content_filter: Whether to enable content filtering (default: False)
+            max_results: Maximum number of results to return (default: 5)
+            **kwargs: Additional keyword arguments
 
         Returns:
-            str: JSON-formatted search results or error message for LLM processing
+            JSON string containing search results or page contents with status information
         """
         try:
-            # TODO: Add groupsOnPage as optional parameter
-            # TODO: Also add optional download of page from search
+            max_results = min(max(1, max_results), 10)
+            if download_pages:
+                # Limit max_results to 5 if download_pages is True
+                # Because of context restrictions, most of LLM's wont't be able to handle more than ~5 results
+                max_results = min(max_results, 5)
             contentFilter: ys.FamilyMode = (
                 ys.FamilyMode.FAMILY_MODE_MODERATE if enable_content_filter else ys.FamilyMode.FAMILY_MODE_NONE
             )
-            kwargs = {**self.yandexSearchDefaults, "familyMode": contentFilter}
-            ret = await self.yandexSearchClient.search(query, **kwargs)
-            if ret is None:
-                return utils.jsonDumps({"done": False, "errorMessage": "Failed to perform web search"})
+            searchKWargs = {
+                **self.yandexSearchDefaults,
+                "familyMode": contentFilter,
+                "groupsOnPage": max_results,
+            }
+            searchResult = await self.yandexSearchClient.search(query, **searchKWargs)
+            if searchResult is None:
+                return utils.jsonDumps({"done": False, "error": "Failed to perform web search"})
 
-            # Drop useless things
-            ret.pop("requestId", None)
-            ret.pop("foundHuman", None)
-            ret.pop("page", None)
+            ret = {}
+            if download_pages:
+                # Return content of found documents
+                if "error" in searchResult:
+                    ret["error"] = searchResult
 
-            return utils.jsonDumps({**ret, "done": "error" not in ret})
+                ret["pages"] = []
+
+                for group in searchResult["groups"]:
+                    for doc in group:
+                        url = doc["url"]
+                        # url = doc["savedCopyUrl"]
+                        content = await self._llmToolGetUrlContent(extraData=extraData, url=url, parse_to_markdown=True)
+                        if content and content[0] != "{":
+                            # Check that there is any result and it isn't json
+                            ret["pages"].append({"url": url, "content": content})
+
+            else:
+                # Return only search results
+                # Drop useless things
+                searchResult.pop("requestId", None)
+                searchResult.pop("foundHuman", None)
+                searchResult.pop("page", None)
+                for groupIdx, group in enumerate(searchResult["groups"]):
+                    for docIdx, doc in enumerate(group):
+                        searchResult["groups"][groupIdx][docIdx].pop("savedCopyUrl", None)
+
+                ret = searchResult
+
+            return utils.jsonDumps({**ret, "done": "error" not in searchResult})
         except Exception as e:
             logger.error(f"Error searching web: {e}")
-            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+            return utils.jsonDumps({"done": False, "error": str(e)})
 
-    async def _llmToolGetUrlContent(self, extraData: Optional[Dict[str, Any]], url: str, **kwargs) -> str:
+    async def _llmToolGetUrlContent(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        url: str,
+        parse_to_markdown: bool = True,
+        **kwargs,
+    ) -> str:
         """
         LLM tool handler to fetch content from a URL, dood!
 
@@ -209,16 +272,50 @@ class YandexSearchHandler(BaseBotHandler):
         Returns:
             str: The content from the URL as a string, or a JSON error object
                  if the request fails
-
-        Note:
-            TODO: Add content type checking to ensure text content is returned
         """
-        # TODO: Check if content is text content
         try:
-            return requests.get(url).content.decode("utf-8")
+            # TODO: Switch to httpx and properly handle redirects and so on
+            doc: requests.Response = requests.get(url)
+
+            if doc.status_code < 200 or doc.status_code >= 300:
+                reason = doc.reason
+                if isinstance(doc.reason, bytes):
+                    try:
+                        reason = doc.reason.decode("utf-8")
+                    except UnicodeDecodeError:
+                        reason = doc.reason.decode("iso-8859-1", errors="replace")
+
+                return utils.jsonDumps(
+                    {
+                        "done": False,
+                        "error": f"Request failed with status {doc.status_code}: {reason}",
+                    }
+                )
+
+            contentType = doc.headers.get("content-type", "text/html")
+            if not contentType.startswith("text/"):
+                logger.warning(f"getUrl: content type of '{url}' is {contentType}")
+                return utils.jsonDumps({"done": False, "error": f"Content is not text, but {contentType}"})
+
+            try:
+                ret = doc.content.decode(doc.encoding or "utf-8")
+            except Exception as e:
+                logger.error(f"getUrl: cannot decode content as {doc.encoding}: {e}")
+                ret = doc.content.decode("iso-8859-1", errors="replace")
+
+            if parse_to_markdown and "html" in contentType:
+                # Parse to Markdown only if it's HTML
+                ret = html_to_markdown.convert(
+                    ret,
+                    options=html_to_markdown.ConversionOptions(
+                        extract_metadata=False,
+                        strip_tags={"svg", "img"},
+                    ),
+                )
+            return ret
         except Exception as e:
             logger.error(f"Error getting content from {url}: {e}")
-            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+            return utils.jsonDumps({"done": False, "error": str(e)})
 
     def _formatSearchResult(self, searchResult: ys.SearchResponse) -> Sequence[str]:
         """Format Yandex Search API response for Telegram message display.

@@ -8,7 +8,6 @@ FLAKE8 = $(VENV_PATH)/bin/flake8
 BLACK = $(VENV_PATH)/bin/black
 ISORT = $(VENV_PATH)/bin/isort
 PYRIGHT = $(VENV_PATH)/bin/pyright
-#PYTEST = $(PYTHON) -m pytest
 PYTEST = $(VENV_PATH)/bin/pytest
 
 ifdef V
@@ -17,6 +16,7 @@ endif
 # Targets
 
 # Create virtual environment
+# Note: this isn't .PHONY target
 venv:
 	python3 -m venv $(VENV_PATH)
 	@echo "Virtual environment created at $(VENV_PATH)"
@@ -30,28 +30,31 @@ activate: venv
 	. $(VENV_PATH)/bin/activate
 
 # Update requirements.txt
-requirements:
+freeze-requirements: venv
 	$(PIP) freeze > requirements.txt
 	@echo "requirements.txt updated"
 
+list-outdated-requirements: venv
+	@echo "List of outdated requirements"
+	$(PIP) list --outdated
+	
 # Run the application
-run:
+run: venv
 	./run.sh
 
-# Run linter on entire project (excluding venv)
-lint:
-#	$(FLAKE8) --exclude=$(VENV_PATH) .
+# Run linter on entire project
+lint: venv
 	$(FLAKE8) .
 	$(ISORT) --check-only --diff .
 	$(PYRIGHT)
 
 # Format Python files using black and isort
-format:
+format: venv
 	$(ISORT) .
 	$(BLACK) .
 
 # Run all tests
-test:
+test: venv
 	@echo "🧪 Running all Gromozeka tests, dood!"
 	@echo "=================================="
 	@echo ""
@@ -59,7 +62,7 @@ test:
 	@echo ""
 	@echo "✅ All tests completed, dood!"
 
-test-failed:
+test-failed: venv
 	@echo "🧪 Re-Running Failed Gromozeka tests, dood!"
 	@echo "=================================="
 	@echo ""
@@ -68,7 +71,7 @@ test-failed:
 	@echo "✅ Tests completed, dood!"
 
 # Run tests with coverage report
-coverage:
+coverage: venv
 	@echo "📊 Running tests with coverage report, dood!"
 	@echo "============================================"
 	@echo ""
@@ -93,18 +96,20 @@ clean:
 # Show available targets
 help:
 	@echo "Available targets:"
-	@echo "  venv         - Create virtual environment"
-	@echo "  install      - Install all dependencies"
-	@echo "  requirements - Update requirements.txt from requirements.direct.txt"
-	@echo "  run          - Run the application"
-	@echo "  lint         - Run linter on entire project"
-	@echo "  format       - Format Python files"
-	@echo "  test         - Run all tests (Pass V=1 to enable verbose output)"
-	@echo "  test-failed  - ReRun failed tests (Pass V=1 to enable verbose output)"
-	@echo "  coverage     - Run tests with coverage report (Pass V=1 to enable verbose output)"
-	@echo "  check        - Check code quality (lint + format)"
-	@echo "  clean        - Clean build files and cache"
-	@echo "  help         - Show this help message"
+	@echo "  venv                        - Create virtual environment"
+	@echo "  install                     - Install all dependencies"
+	@echo "  activate                    - Activate virtual environment"
+	@echo "  freeze-requirements         - Update requirements.txt with current packages"
+	@echo "  list-outdated-requirements  - List outdated packages"
+	@echo "  run                         - Run the application"
+	@echo "  lint                        - Run linter on entire project"
+	@echo "  format                      - Format Python files with black and isort"
+	@echo "  test                        - Run all tests (Pass V=1 for verbose output)"
+	@echo "  test-failed                 - Re-run failed tests (Pass V=1 for verbose output)"
+	@echo "  coverage                    - Run tests with coverage report (Pass V=1 for verbose output)"
+	@echo "  check                       - Check code quality (lint + format)"
+	@echo "  clean                       - Clean build files and cache"
+	@echo "  help                        - Show this help message"
 
 # Default target
-.PHONY: venv install requirements run lint format test coverage check clean help
+.PHONY: install activate freeze-requirements list-outdated-requirements run lint format test test-failed coverage check clean help
