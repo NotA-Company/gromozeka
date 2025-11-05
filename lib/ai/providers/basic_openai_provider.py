@@ -93,6 +93,21 @@ class BasicOpenAIModel(AbstractModel):
             #   if chunk.choices[0].delta.content is not None:
             #       print(chunk.choices[0].delta.content, end="")
 
+            # Response validation (for better error messages)
+            if not hasattr(response, "choices"):
+                logger.error(
+                    f"response does not have field 'choices' {self.modelId}: {type(response).__name__}({response})"
+                )
+                raise ValueError(f"Invalid response from OpenAI-compatible model: 1#{response}")
+            if not isinstance(response.choices, list):
+                logger.error(
+                    f"response.choices is not list, but a {type(response.choices).__name__}({response.choices})"
+                )
+                raise ValueError(f"Invalid response from OpenAI-compatible model: 2#{response}")
+            if not response.choices:
+                logger.error(f"response.choices is empty: {type(response.choices).__name__}({response.choices})")
+                raise ValueError(f"Invalid response from OpenAI-compatible model: 3#{response}")
+
             status = ModelResultStatus.UNSPECIFIED
             match response.choices[0].finish_reason:
                 case "stop":
@@ -104,6 +119,7 @@ class BasicOpenAIModel(AbstractModel):
                 case "content_filter":
                     status = ModelResultStatus.CONTENT_FILTER
                 case _:
+                    logger.warning(f"Unknown LLM finish reason: {response.choices[0].finish_reason}")
                     status = ModelResultStatus.UNKNOWN
 
             retMessage = response.choices[0].message
