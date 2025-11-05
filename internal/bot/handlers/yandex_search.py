@@ -185,9 +185,20 @@ class YandexSearchHandler(BaseBotHandler):
         max_results: int = 3,
         **kwargs,
     ) -> str:
-        """TODO"""
+        """Perform web search using Yandex Search API.
+
+        Args:
+            extraData: Optional additional data for the operation
+            query: Search query string
+            download_pages: Whether to download and parse content of found pages
+            enable_content_filter: Whether to enable content filtering (default: False)
+            max_results: Maximum number of results to return (default: 3)
+            **kwargs: Additional keyword arguments
+
+        Returns:
+            JSON string containing search results or page contents with status information
+        """
         try:
-            # TODO: Also add optional download of page from search
             contentFilter: ys.FamilyMode = (
                 ys.FamilyMode.FAMILY_MODE_MODERATE if enable_content_filter else ys.FamilyMode.FAMILY_MODE_NONE
             )
@@ -205,7 +216,7 @@ class YandexSearchHandler(BaseBotHandler):
                 # Return content of found documents
                 if "error" in searchResult:
                     ret["error"] = searchResult
-                
+
                 ret["pages"] = []
 
                 for group in searchResult["groups"]:
