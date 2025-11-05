@@ -132,9 +132,11 @@ class YandexSearchHandler(BaseBotHandler):
                     required=True,
                 ),
                 LLMFunctionParameter(
-                    name="download_pages",
-                    description="Should tool return list of downloaded pages in markdown format (true)"
-                    " or just list of URLs with brief description (false).",
+                    name="return_page_content",
+                    description=(
+                        "Should tool return full content of found documents as well?"
+                        " Use it instead of downloading those documents later."
+                    ),
                     type=LLMParameterType.BOOLEAN,
                     required=True,
                 ),
@@ -180,7 +182,7 @@ class YandexSearchHandler(BaseBotHandler):
         self,
         extraData: Optional[Dict[str, Any]],
         query: str,
-        download_pages: bool,
+        return_page_content: bool,
         enable_content_filter: bool = False,
         max_results: int = 5,
         **kwargs,
@@ -190,7 +192,7 @@ class YandexSearchHandler(BaseBotHandler):
         Args:
             extraData: Optional additional data for the operation
             query: Search query string
-            download_pages: Whether to download and parse content of found pages
+            return_page_content: Whether to download and parse content of found pages
             enable_content_filter: Whether to enable content filtering (default: False)
             max_results: Maximum number of results to return (default: 5)
             **kwargs: Additional keyword arguments
@@ -200,10 +202,11 @@ class YandexSearchHandler(BaseBotHandler):
         """
         try:
             max_results = min(max(1, max_results), 10)
-            if download_pages:
-                # Limit max_results to 5 if download_pages is True
+            if return_page_content:
+                # Limit max_results to 5 if return_page_content is True
                 # Because of context restrictions, most of LLM's wont't be able to handle more than ~5 results
                 max_results = min(max_results, 5)
+
             contentFilter: ys.FamilyMode = (
                 ys.FamilyMode.FAMILY_MODE_MODERATE if enable_content_filter else ys.FamilyMode.FAMILY_MODE_NONE
             )
@@ -217,7 +220,7 @@ class YandexSearchHandler(BaseBotHandler):
                 return utils.jsonDumps({"done": False, "error": "Failed to perform web search"})
 
             ret = {}
-            if download_pages:
+            if return_page_content:
                 # Return content of found documents
                 if "error" in searchResult:
                     ret["error"] = searchResult
@@ -226,12 +229,30 @@ class YandexSearchHandler(BaseBotHandler):
 
                 for group in searchResult["groups"]:
                     for doc in group:
-                        url = doc["url"]
-                        # url = doc["savedCopyUrl"]
-                        content = await self._llmToolGetUrlContent(extraData=extraData, url=url, parse_to_markdown=True)
-                        if content and content[0] != "{":
-                            # Check that there is any result and it isn't json
-                            ret["pages"].append({"url": url, "content": content})
+                        fetched = False
+                        for url in [doc["url"], doc.get("savedCopyUrl", None)]:
+                            if url is None:
+                                continue
+                            # Try URL and cachedCopy if failed
+                            # url = doc["savedCopyUrl"]
+                            content = await self._llmToolGetUrlContent(
+                                extraData=extraData, url=url, parse_to_markdown=True
+                            )
+                            if content and content[0] != "{":
+                                # Check that there is any result and it isn't json
+                                ret["pages"].append({"url": url, "content": content})
+                                fetched = True
+                                break
+                            else:
+                                logger.warning(f"Failed to fetch content from {url}: {content}")
+                        if not fetched:
+                            # If fetch fails, print description
+                            ret["pages"].append(
+                                {
+                                    "url": doc["url"],
+                                    "description": doc.get("extendedText", "") + "\n" + "\n".join(doc["passages"]),
+                                }
+                            )
 
             else:
                 # Return only search results
@@ -267,6 +288,7 @@ class YandexSearchHandler(BaseBotHandler):
         Args:
             extraData: Optional extra data passed by the LLM service (unused)
             url: The URL to fetch content from
+            parse_to_markdown: Whether to parse the content to Markdown (default: True)
             **kwargs: Additional keyword arguments (unused)
 
         Returns:
