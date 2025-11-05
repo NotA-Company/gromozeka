@@ -286,9 +286,9 @@ class YandexSearchHandler(BaseBotHandler):
                         "error": f"Request failed with status {doc.status_code}: {reason}",
                     }
                 )
-            
-            contentType = doc.headers.get('content-type', 'text/html')
-            if not contentType.startswith('text/'):
+
+            contentType = doc.headers.get("content-type", "text/html")
+            if not contentType.startswith("text/"):
                 logger.warning(f"getUrl: content type of '{url}' is {contentType}")
                 return utils.jsonDumps({"done": False, "error": f"Content is not text, but {contentType}"})
 
