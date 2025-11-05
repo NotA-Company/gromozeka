@@ -214,7 +214,7 @@ class YandexSearchHandler(BaseBotHandler):
             }
             searchResult = await self.yandexSearchClient.search(query, **searchKWargs)
             if searchResult is None:
-                return utils.jsonDumps({"done": False, "errorMessage": "Failed to perform web search"})
+                return utils.jsonDumps({"done": False, "error": "Failed to perform web search"})
 
             ret = {}
             if download_pages:
@@ -248,7 +248,7 @@ class YandexSearchHandler(BaseBotHandler):
             return utils.jsonDumps({**ret, "done": "error" not in searchResult})
         except Exception as e:
             logger.error(f"Error searching web: {e}")
-            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+            return utils.jsonDumps({"done": False, "error": str(e)})
 
     async def _llmToolGetUrlContent(
         self,
