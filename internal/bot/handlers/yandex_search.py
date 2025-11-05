@@ -173,6 +173,8 @@ class YandexSearchHandler(BaseBotHandler):
             str: JSON-formatted search results or error message for LLM processing
         """
         try:
+            # TODO: Add groupsOnPage as optional parameter
+            # TODO: Also add optional download of page from search
             contentFilter: ys.FamilyMode = (
                 ys.FamilyMode.FAMILY_MODE_MODERATE if enable_content_filter else ys.FamilyMode.FAMILY_MODE_NONE
             )
@@ -213,7 +215,7 @@ class YandexSearchHandler(BaseBotHandler):
         """
         # TODO: Check if content is text content
         try:
-            return str(requests.get(url).content)
+            return requests.get(url).content.decode("utf-8")
         except Exception as e:
             logger.error(f"Error getting content from {url}: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
