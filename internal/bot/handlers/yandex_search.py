@@ -23,6 +23,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional, Sequence
 
+import html_to_markdown
 import requests
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -135,6 +136,12 @@ class YandexSearchHandler(BaseBotHandler):
                     type=LLMParameterType.BOOLEAN,
                     required=False,
                 ),
+                LLMFunctionParameter(
+                    name="max_results",
+                    description="Maximum number of results to return (Default: 3)",
+                    type=LLMParameterType.NUMBER,
+                    required=False,
+                ),
             ],
             handler=self._llmToolWebSearch,
         )
@@ -149,12 +156,23 @@ class YandexSearchHandler(BaseBotHandler):
                     type=LLMParameterType.STRING,
                     required=True,
                 ),
+                LLMFunctionParameter(
+                    name="parse_to_markdown",
+                    description="Whether to parse the content to Markdown format (Default: true)",
+                    type=LLMParameterType.BOOLEAN,
+                    required=False,
+                ),
             ],
             handler=self._llmToolGetUrlContent,
         )
 
     async def _llmToolWebSearch(
-        self, extraData: Optional[Dict[str, Any]], query: str, enable_content_filter: bool = False, **kwargs
+        self,
+        extraData: Optional[Dict[str, Any]],
+        query: str,
+        enable_content_filter: bool = False,
+        max_results: int = 3,
+        **kwargs,
     ) -> str:
         """Perform web search via Yandex Search API as an LLM tool.
 
@@ -173,13 +191,16 @@ class YandexSearchHandler(BaseBotHandler):
             str: JSON-formatted search results or error message for LLM processing
         """
         try:
-            # TODO: Add groupsOnPage as optional parameter
             # TODO: Also add optional download of page from search
             contentFilter: ys.FamilyMode = (
                 ys.FamilyMode.FAMILY_MODE_MODERATE if enable_content_filter else ys.FamilyMode.FAMILY_MODE_NONE
             )
-            kwargs = {**self.yandexSearchDefaults, "familyMode": contentFilter}
-            ret = await self.yandexSearchClient.search(query, **kwargs)
+            searchKWargs = {
+                **self.yandexSearchDefaults,
+                "familyMode": contentFilter,
+                "groupsOnPage": max_results,
+            }
+            ret = await self.yandexSearchClient.search(query, **searchKWargs)
             if ret is None:
                 return utils.jsonDumps({"done": False, "errorMessage": "Failed to perform web search"})
 
@@ -193,7 +214,13 @@ class YandexSearchHandler(BaseBotHandler):
             logger.error(f"Error searching web: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
-    async def _llmToolGetUrlContent(self, extraData: Optional[Dict[str, Any]], url: str, **kwargs) -> str:
+    async def _llmToolGetUrlContent(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        url: str,
+        parse_to_markdown: bool = True,
+        **kwargs,
+    ) -> str:
         """
         LLM tool handler to fetch content from a URL, dood!
 
@@ -209,13 +236,19 @@ class YandexSearchHandler(BaseBotHandler):
         Returns:
             str: The content from the URL as a string, or a JSON error object
                  if the request fails
-
-        Note:
-            TODO: Add content type checking to ensure text content is returned
         """
         # TODO: Check if content is text content
         try:
-            return requests.get(url).content.decode("utf-8")
+            ret = requests.get(url).content.decode("utf-8")
+            if parse_to_markdown:
+                ret = html_to_markdown.convert(
+                    ret,
+                    options=html_to_markdown.ConversionOptions(
+                        extract_metadata=False,
+                        strip_tags={"svg", "img"},
+                    ),
+                )
+            return ret
         except Exception as e:
             logger.error(f"Error getting content from {url}: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
