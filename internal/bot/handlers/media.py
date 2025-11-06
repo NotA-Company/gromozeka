@@ -356,7 +356,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение с медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return
 
@@ -378,7 +378,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Необходимо указать запрос для анализа медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return
 
@@ -403,7 +403,7 @@ class MediaHandler(BaseBotHandler):
                     ensuredMessage,
                     messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
                     messageCategory=MessageCategory.BOT_ERROR,
-                    stopper=stopper,
+                    typingManager=stopper,
                 )
                 return
 
@@ -416,7 +416,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Не удалось получить данные медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return
 
@@ -427,7 +427,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return
 
@@ -450,7 +450,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return
 
@@ -458,7 +458,7 @@ class MediaHandler(BaseBotHandler):
             ensuredMessage,
             messageText=llmRet.resultText,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-            stopper=stopper,
+            typingManager=stopper,
         )
 
     @commandHandlerExtended(
@@ -584,7 +584,7 @@ class MediaHandler(BaseBotHandler):
                     "(можно цитировать при необходимости)."
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return
 
@@ -601,7 +601,7 @@ class MediaHandler(BaseBotHandler):
                     f"{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return
 
@@ -611,7 +611,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Ошибка генерации изображения, попробуйте позже.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return
 
@@ -631,5 +631,5 @@ class MediaHandler(BaseBotHandler):
             mediaPrompt=prompt,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             addMessagePrefix=imgAddPrefix,
-            stopper=stopper,
+            typingManager=stopper,
         )
