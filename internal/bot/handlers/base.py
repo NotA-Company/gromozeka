@@ -224,20 +224,20 @@ class TypingManager:
         if not self.running:
             return False
 
-        return self.isTimeout()
+        return not self.isTimeout()
 
     def isTimeout(self) -> bool:
         """
         Check if the typing manager has exceeded its maximum timeout duration, dood!
 
-        Determines whether the typing manager should continue running based on the
-        elapsed time since it started. Returns True if the manager is still within
-        its timeout limit, False if it has exceeded the limit.
+        Determines whether the typing manager has exceeded its timeout limit based on
+        the elapsed time since it started. Returns True if the manager has exceeded
+        its timeout limit, False if it is still within the limit.
 
         Returns:
-            bool: True if still within timeout limits, False if timeout exceeded
+            bool: True if timeout exceeded, False if still within timeout limits
         """
-        return self.startTime + self.maxTimeout > time.time()
+        return self.startTime + self.maxTimeout <= time.time()
 
     async def tick(self) -> int:
         """
