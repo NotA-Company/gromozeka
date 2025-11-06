@@ -21,7 +21,7 @@ import time
 from typing import Optional
 
 from telegram import Chat, Update
-from telegram.constants import MessageEntityType
+from telegram.constants import ChatType, MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
@@ -205,8 +205,8 @@ class DevCommandsHandler(BaseBotHandler):
 
     @commandHandlerExtended(
         commands=("settings",),
-        shortDescription="[<chatId>] -Dump all settings for this chat",
-        helpMessage="[`<chatId>`]: Вывести список настроек для указанного чата",
+        shortDescription="[<chatId>] [skip-default] - Dump all settings for this chat",
+        helpMessage="[`<chatId>`] [`skip-default`]: Вывести список настроек для указанного чата",
         suggestCategories={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         category=CommandCategory.TECHNICAL,
@@ -218,30 +218,49 @@ class DevCommandsHandler(BaseBotHandler):
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """Handle /settings command to display current chat configuration, dood!
+        """Handle the /settings command to display chat configuration, dood!
 
-        Dumps all settings for the current chat, showing both keys and values.
-        This is useful for debugging chat-specific configurations and verifying
-        that settings are applied correctly.
+        Retrieves and displays all settings for a specified chat, including default
+        values and custom overrides. This command is useful for debugging configuration
+        issues and understanding the current state of chat-specific settings.
 
         Args:
+            ensuredMessage: Ensured message object containing chat information
+            typingManager: Optional typing manager for showing typing status
             update: Telegram update object containing the message
-            context: Bot context with optional 'debug' argument
+            context: Bot context with command arguments
 
         Command Usage:
-            /settings - Shows all chat settings
+            /settings - Display settings for current chat
+            /settings <chatId> - Display settings for specified chat
+            /settings <chatId> skip-default - Display only non-default settings
 
         Returns:
             None
 
+        Settings Displayed:
+            - All available chat settings with their current values
+            - Default values marked with "(default)" indicator
+            - Values matching defaults marked with "(as default)" indicator
+            - Chat name and ID in the response header
+
         Note:
             - Restricted to bot owners only
-            - Displays settings in formatted code blocks for readability, dood!
+            - If chatId is not provided, uses current chat
+            - skip-default flag hides settings that are using default values
+            - Sends error message if chat is not found, dood!
         """
 
-        targetChatId = utils.extractInt(context.args)
+        args = context.args
+        targetChatId = utils.extractInt(args)
         if targetChatId is None:
             targetChatId = ensuredMessage.chat.id
+        elif args:
+            args = args[1:]
+
+        skipDefault = False
+        if args and args[0].lower() == "skip-default":
+            skipDefault = True
 
         chatInfo = self.getChatInfo(targetChatId)
         if not chatInfo:
@@ -260,8 +279,17 @@ class DevCommandsHandler(BaseBotHandler):
 
         resp = f"Настройки чата {chatName} #`{targetChatId}`:\n\n"
         chatSettings = self.getChatSettings(targetChatId)
+        chatSettingsNoDef = self.getChatSettings(targetChatId, returnDefault=False)
+        defaultSettings = self.getChatSettings(None, chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP)
         for k, v in chatSettings.items():
-            resp += f"`{k}`:```{k}\n{v}\n```\n"
+            isDefaultStr = ""
+            if k not in chatSettingsNoDef:
+                isDefaultStr = " **(default)**"
+                if skipDefault:
+                    continue
+            elif chatSettings[k].toStr() == defaultSettings[k].toStr():
+                isDefaultStr = " **(as default)**"
+            resp += f"`{k}`{isDefaultStr}:```{k}\n{v}\n```\n"
 
         await self.sendMessage(
             ensuredMessage,
