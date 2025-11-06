@@ -348,17 +348,18 @@ class WeatherHandler(BaseBotHandler):
         # TODO: Try to convert city to initial form (Москве -> Москва)
         # TODO: Try to convert country to country code (Россия -> RU)
 
-        await self.startTyping(ensuredMessage)
-        weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
-        if weatherData is None:
-            logger.warning(f"Wasn't able to get weather for {city}, {countryCode}")
-            return HandlerResultStatus.ERROR
+        async with await self.startContinousTyping(ensuredMessage) as typingManager:
+            weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
+            if weatherData is None:
+                logger.warning(f"Wasn't able to get weather for {city}, {countryCode}")
+                return HandlerResultStatus.ERROR
 
-        await self.sendMessage(
-            ensuredMessage,
-            await self._formatWeather(weatherData),
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-        )
+            await self.sendMessage(
+                ensuredMessage,
+                await self._formatWeather(weatherData),
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
         return HandlerResultStatus.FINAL
 
     ###
@@ -433,7 +434,6 @@ class WeatherHandler(BaseBotHandler):
             )
             return
 
-        await self.startTyping(ensuredMessage)
         try:
             weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
             if weatherData is None:

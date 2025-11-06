@@ -424,7 +424,6 @@ class YandexSearchHandler(BaseBotHandler):
 
         searchQuery = " ".join(context.args)
 
-        await self.startTyping(ensuredMessage)
         try:
             searchRet = await self.yandexSearchClient.search(searchQuery, **self.yandexSearchDefaults)
             if searchRet is None:
