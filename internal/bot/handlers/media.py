@@ -146,9 +146,22 @@ class MediaHandler(BaseBotHandler):
             raise RuntimeError("ensuredMessage should be provided")
         ensuredMessage = extraData["ensuredMessage"]
         if not isinstance(ensuredMessage, EnsuredMessage):
-            raise RuntimeError("ensuredMessage should be EnsuredMessage")
+            raise RuntimeError(
+                f"ensuredMessage should be instance of EnsuredMessage but got {type(ensuredMessage).__name__}"
+            )
+        if "typingManager" not in extraData:
+            raise RuntimeError("typingManager should be provided")
+        typingManager = extraData["typingManager"]
+        if not isinstance(typingManager, TypingManager):
+            raise RuntimeError(
+                f"typingManager should be instance of TypingManager, but got {type(typingManager).__name__}"
+            )
 
-        await self.startTyping(ensuredMessage, ChatAction.UPLOAD_PHOTO)
+        # Show that we are sending photo + increase timeout as it could take long...
+        originalAction = typingManager.action
+        typingManager.action = ChatAction.UPLOAD_PHOTO
+        typingManager.maxTimeout = typingManager.maxTimeout + 300
+        await typingManager.sendTypingAction()
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         logger.debug(
             f"Generating image: {image_prompt}. Image description: {image_description}, "
@@ -183,6 +196,10 @@ class MediaHandler(BaseBotHandler):
             mediaPrompt=image_prompt,
             addMessagePrefix=imgAddPrefix,
         )
+
+        # Return original typing action (Probably - ChatAction.TYPING)
+        typingManager.action = originalAction
+        await typingManager.sendTypingAction()
 
         return utils.jsonDumps({"done": ret is not None})
 
@@ -275,25 +292,26 @@ class MediaHandler(BaseBotHandler):
             # Process further
             return HandlerResultStatus.NEXT
 
-        await self.startTyping(ensuredMessage)
-        # Not text message, try to get it's content from DB
-        storedReply = self.db.getChatMessageByMessageId(
-            chatId=ensuredReply.chat.id,
-            messageId=ensuredReply.messageId,
-        )
-        if storedReply is None:
-            logger.error(f"Failed to get parent message #{ensuredReply.chat.id}:{ensuredReply.messageId}")
-        else:
-            eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply)
-            await eStoredMsg.updateMediaContent(self.db)
-            response = eStoredMsg.mediaContent
-            if response is None or response == "":
-                response = constants.DUNNO_EMOJI
+        async with await self.startContinousTyping(ensuredMessage) as typingManager:
+            # Not text message, try to get it's content from DB
+            storedReply = self.db.getChatMessageByMessageId(
+                chatId=ensuredReply.chat.id,
+                messageId=ensuredReply.messageId,
+            )
+            if storedReply is None:
+                logger.error(f"Failed to get parent message #{ensuredReply.chat.id}:{ensuredReply.messageId}")
+            else:
+                eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply)
+                await eStoredMsg.updateMediaContent(self.db)
+                response = eStoredMsg.mediaContent
+                if response is None or response == "":
+                    response = constants.DUNNO_EMOJI
 
-        await self.sendMessage(
-            ensuredMessage,
-            messageText=response,
-        )
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=response,
+                typingManager=typingManager,
+            )
 
         return HandlerResultStatus.FINAL
 
