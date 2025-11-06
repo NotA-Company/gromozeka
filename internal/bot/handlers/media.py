@@ -43,7 +43,7 @@ from ..models import (
     LLMMessageFormat,
     MessageType,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -146,9 +146,22 @@ class MediaHandler(BaseBotHandler):
             raise RuntimeError("ensuredMessage should be provided")
         ensuredMessage = extraData["ensuredMessage"]
         if not isinstance(ensuredMessage, EnsuredMessage):
-            raise RuntimeError("ensuredMessage should be EnsuredMessage")
+            raise RuntimeError(
+                f"ensuredMessage should be instance of EnsuredMessage but got {type(ensuredMessage).__name__}"
+            )
+        if "typingManager" not in extraData:
+            raise RuntimeError("typingManager should be provided")
+        typingManager = extraData["typingManager"]
+        if not isinstance(typingManager, TypingManager):
+            raise RuntimeError(
+                f"typingManager should be instance of TypingManager, but got {type(typingManager).__name__}"
+            )
 
-        await self.startTyping(ensuredMessage, ChatAction.UPLOAD_PHOTO)
+        # Show that we are sending photo + increase timeout as it could take long...
+        originalAction = typingManager.action
+        typingManager.action = ChatAction.UPLOAD_PHOTO
+        typingManager.maxTimeout = typingManager.maxTimeout + 300
+        await typingManager.sendTypingAction()
         chatSettings = self.getChatSettings(ensuredMessage.chat.id)
         logger.debug(
             f"Generating image: {image_prompt}. Image description: {image_description}, "
@@ -183,6 +196,10 @@ class MediaHandler(BaseBotHandler):
             mediaPrompt=image_prompt,
             addMessagePrefix=imgAddPrefix,
         )
+
+        # Return original typing action (Probably - ChatAction.TYPING)
+        typingManager.action = originalAction
+        await typingManager.sendTypingAction()
 
         return utils.jsonDumps({"done": ret is not None})
 
@@ -275,25 +292,26 @@ class MediaHandler(BaseBotHandler):
             # Process further
             return HandlerResultStatus.NEXT
 
-        await self.startTyping(ensuredMessage)
-        # Not text message, try to get it's content from DB
-        storedReply = self.db.getChatMessageByMessageId(
-            chatId=ensuredReply.chat.id,
-            messageId=ensuredReply.messageId,
-        )
-        if storedReply is None:
-            logger.error(f"Failed to get parent message #{ensuredReply.chat.id}:{ensuredReply.messageId}")
-        else:
-            eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply)
-            await eStoredMsg.updateMediaContent(self.db)
-            response = eStoredMsg.mediaContent
-            if response is None or response == "":
-                response = constants.DUNNO_EMOJI
+        async with await self.startTyping(ensuredMessage) as typingManager:
+            # Not text message, try to get it's content from DB
+            storedReply = self.db.getChatMessageByMessageId(
+                chatId=ensuredReply.chat.id,
+                messageId=ensuredReply.messageId,
+            )
+            if storedReply is None:
+                logger.error(f"Failed to get parent message #{ensuredReply.chat.id}:{ensuredReply.messageId}")
+            else:
+                eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply)
+                await eStoredMsg.updateMediaContent(self.db)
+                response = eStoredMsg.mediaContent
+                if response is None or response == "":
+                    response = constants.DUNNO_EMOJI
 
-        await self.sendMessage(
-            ensuredMessage,
-            messageText=response,
-        )
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=response,
+                typingManager=typingManager,
+            )
 
         return HandlerResultStatus.FINAL
 
@@ -312,7 +330,11 @@ class MediaHandler(BaseBotHandler):
         category=CommandCategory.TOOLS,
     )
     async def analyze_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /analyze <prompt> command to analyze media with AI, dood!
@@ -345,14 +367,12 @@ class MediaHandler(BaseBotHandler):
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
 
-        stopper = await self.startContinousTyping(ensuredMessage)
-
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение с медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -374,7 +394,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Необходимо указать запрос для анализа медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -399,7 +419,7 @@ class MediaHandler(BaseBotHandler):
                     ensuredMessage,
                     messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
                     messageCategory=MessageCategory.BOT_ERROR,
-                    stopper=stopper,
+                    typingManager=typingManager,
                 )
                 return
 
@@ -412,7 +432,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Не удалось получить данные медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -423,7 +443,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -446,7 +466,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -454,7 +474,7 @@ class MediaHandler(BaseBotHandler):
             ensuredMessage,
             messageText=llmRet.resultText,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-            stopper=stopper,
+            typingManager=typingManager,
         )
 
     @commandHandlerExtended(
@@ -466,9 +486,14 @@ class MediaHandler(BaseBotHandler):
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
+        typingAction=ChatAction.UPLOAD_PHOTO,
     )
     async def draw_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /draw [<prompt>] command to generate images with AI, dood!
@@ -554,17 +579,15 @@ class MediaHandler(BaseBotHandler):
 
             textLLM = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
             fallbackLLM = chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager)
-            async with await self.startContinousTyping(ensuredMessage):
-                llmRet = await textLLM.generateTextWithFallBack(latestMessages, fallbackModel=fallbackLLM)
-                # Should i check llmRet.status? do not wanna for now
-                if llmRet.resultText:
-                    prompt = llmRet.resultText
-                else:
-                    # Fallback to something static
-                    prompt = f"Draw image of {ensuredMessage.sender} in chat `{ensuredMessage.chat.title}`"
+            llmRet = await textLLM.generateTextWithFallBack(latestMessages, fallbackModel=fallbackLLM)
+            # Should i check llmRet.status? do not wanna for now
+            if llmRet.resultText:
+                prompt = llmRet.resultText
+            else:
+                # Fallback to something static
+                prompt = f"Draw image of {ensuredMessage.sender} in chat `{ensuredMessage.chat.title}`"
 
         logger.debug(f"Prompt: '{prompt}'")
-        stopper = await self.startContinousTyping(ensuredMessage, action=ChatAction.UPLOAD_PHOTO)
 
         if not prompt:
             # Fixed f-string missing placeholders
@@ -576,7 +599,7 @@ class MediaHandler(BaseBotHandler):
                     "(можно цитировать при необходимости)."
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -593,7 +616,7 @@ class MediaHandler(BaseBotHandler):
                     f"{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -603,7 +626,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Ошибка генерации изображения, попробуйте позже.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -623,5 +646,5 @@ class MediaHandler(BaseBotHandler):
             mediaPrompt=prompt,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             addMessagePrefix=imgAddPrefix,
-            stopper=stopper,
+            typingManager=typingManager,
         )

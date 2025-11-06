@@ -43,7 +43,7 @@ from ..models import (
     EnsuredMessage,
     LLMMessageFormat,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,7 @@ class SummarizationHandler(BaseBotHandler):
     async def _doSummarization(
         self,
         ensuredMessage: EnsuredMessage,
+        *,
         chatId: int,
         threadId: Optional[int],
         chatSettings: Dict[ChatSettingsKey, ChatSettingsValue],
@@ -131,6 +132,7 @@ class SummarizationHandler(BaseBotHandler):
         maxMessages: Optional[int] = None,
         summarizationPrompt: Optional[str] = None,
         useCache: bool = True,
+        typingManager: Optional[TypingManager] = None,
     ) -> None:
         """
         Perform chat summarization and send results, dood!
@@ -162,7 +164,11 @@ class SummarizationHandler(BaseBotHandler):
         if sinceDT is None and maxMessages is None:
             raise ValueError("one of sinceDT or maxMessages MUST be not None")
 
-        stopper = await self.startContinousTyping(ensuredMessage, maxTimeout=300)  # Up to 10 minutes, lol
+        if typingManager is None:
+            # summarization is long process, let's set timeout to 10 minutes
+            typingManager = await self.startTyping(ensuredMessage, maxTimeout=600)
+        else:
+            typingManager.maxTimeout = typingManager.maxTimeout + 600
 
         messages = self.db.getChatMessagesSince(
             chatId=chatId,
@@ -188,14 +194,15 @@ class SummarizationHandler(BaseBotHandler):
             )
             if cache is not None:
                 resMessages = json.loads(cache["summary"])
-                await stopper.stopTask()
-                for msg in resMessages:
+                maxIdx = len(resMessages) - 1
+                for idx, msg in enumerate(resMessages):
                     await self.sendMessage(
                         ensuredMessage,
                         messageText=msg,
                         messageCategory=MessageCategory.BOT_SUMMARY,
+                        typingManager=typingManager if idx >= maxIdx else None,
                     )
-                    time.sleep(1)
+                    time.sleep(0.5)
                 return
 
         systemMessage = {
@@ -311,18 +318,28 @@ class SummarizationHandler(BaseBotHandler):
                 summary=utils.jsonDumps(resMessages),
             )
 
-        await stopper.stopTask()
-        for msg in resMessages:
+        maxIdx = len(resMessages) - 1
+        for idx, msg in enumerate(resMessages):
             await self.sendMessage(
                 ensuredMessage,
                 messageText=msg,
                 messageCategory=MessageCategory.BOT_SUMMARY,
+                typingManager=typingManager if idx >= maxIdx else None,
             )
             time.sleep(0.5)
 
     async def _handle_summarization(self, data: Dict[str | int, Any], messageId: int, user: User, bot: telegram.Bot):
         """
-        TODO
+        Handle the summarization process for messages, dood!
+
+        Processes the summarization request based on user action and generates
+        a summary of the specified messages or chat history.
+
+        Args:
+            data: Dictionary containing summarization parameters and options
+            messageId: ID of the message that triggered the summarization
+            user: User who requested the summarization
+            bot: Telegram bot instance for sending messages
         """
 
         userId = user.id
@@ -720,7 +737,11 @@ class SummarizationHandler(BaseBotHandler):
         category=CommandCategory.TOOLS,
     )
     async def summary_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /summary and /topic_summary commands, dood!
@@ -812,6 +833,7 @@ class SummarizationHandler(BaseBotHandler):
                     chatSettings=chatSettings,
                     maxMessages=maxMessages,
                     sinceDT=today,
+                    typingManager=typingManager,
                 )
 
             case _:

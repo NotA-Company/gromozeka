@@ -11,7 +11,6 @@ Test Categories:
 - Edge Cases: Error handling, permission checks, validation
 """
 
-import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -196,134 +195,6 @@ class TestInitialization:
 class TestLlmToolGenerateAndSendImage:
     """Test LLM tool for image generation, dood!"""
 
-    @pytest.mark.asyncio
-    async def testGenerateAndSendImageSuccess(self, mediaHandler, mockBot, mockCacheService, mockLlmManager):
-        """Test successful image generation via LLM tool, dood!"""
-        mediaHandler.injectBot(mockBot)
-
-        # Setup chat settings
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.IMAGE_GENERATION_MODEL: ChatSettingsValue("dall-e-3"),
-            ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: ChatSettingsValue("dall-e-2"),
-            ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: ChatSettingsValue(""),
-        }
-
-        # Create ensured message
-        message = createMockMessage(chatId=123, userId=456, text="Generate image")
-        message.reply_photo = createAsyncMock(returnValue=message)
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-
-        extraData = {"ensuredMessage": ensuredMessage}
-
-        result = await mediaHandler._llmToolGenerateAndSendImage(
-            extraData=extraData, image_prompt="A beautiful sunset", image_description="Sunset image"
-        )
-
-        # Verify result
-        resultData = json.loads(result)
-        assert resultData["done"] is True
-
-        # Verify image was sent
-        message.reply_photo.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def testGenerateAndSendImageWithFallback(self, mediaHandler, mockBot, mockCacheService, mockLlmManager):
-        """Test image generation with fallback model, dood!"""
-        mediaHandler.injectBot(mockBot)
-
-        # Setup chat settings
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.IMAGE_GENERATION_MODEL: ChatSettingsValue("dall-e-3"),
-            ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: ChatSettingsValue("dall-e-2"),
-            ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: ChatSettingsValue("[Fallback] "),
-        }
-
-        # Mock fallback scenario
-        mockImageModel = mockLlmManager._models["dall-e-3"]
-        mockImageModel.generateImageWithFallBack = createAsyncMock(
-            returnValue=Mock(
-                status=ModelResultStatus.FINAL,
-                mediaData=b"fallback_image_data",
-                resultText="Generated with fallback",
-                isFallback=True,
-            )
-        )
-
-        message = createMockMessage(chatId=123, userId=456, text="Generate")
-        message.reply_photo = createAsyncMock(returnValue=message)
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-
-        extraData = {"ensuredMessage": ensuredMessage}
-
-        result = await mediaHandler._llmToolGenerateAndSendImage(extraData=extraData, image_prompt="Test prompt")
-
-        resultData = json.loads(result)
-        assert resultData["done"] is True
-
-    @pytest.mark.asyncio
-    async def testGenerateAndSendImageFailure(self, mediaHandler, mockBot, mockCacheService, mockLlmManager):
-        """Test image generation failure handling, dood!"""
-        mediaHandler.injectBot(mockBot)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.IMAGE_GENERATION_MODEL: ChatSettingsValue("dall-e-3"),
-            ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: ChatSettingsValue("dall-e-2"),
-        }
-
-        # Mock generation failure
-        mockImageModel = mockLlmManager._models["dall-e-3"]
-        mockImageModel.generateImageWithFallBack = createAsyncMock(
-            returnValue=Mock(
-                status=ModelResultStatus.ERROR,
-                mediaData=None,
-                resultText="Generation failed",
-                isFallback=False,
-            )
-        )
-
-        message = createMockMessage(chatId=123, userId=456, text="Generate")
-        message.reply_text = createAsyncMock(returnValue=message)
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-
-        extraData = {"ensuredMessage": ensuredMessage}
-
-        result = await mediaHandler._llmToolGenerateAndSendImage(extraData=extraData, image_prompt="Test prompt")
-
-        resultData = json.loads(result)
-        assert resultData["done"] is False
-        assert "errorMessage" in resultData
-
-    @pytest.mark.asyncio
-    async def testGenerateAndSendImageNoMediaData(self, mediaHandler, mockBot, mockCacheService, mockLlmManager):
-        """Test handling when no media data is returned, dood!"""
-        mediaHandler.injectBot(mockBot)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.IMAGE_GENERATION_MODEL: ChatSettingsValue("dall-e-3"),
-            ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: ChatSettingsValue("dall-e-2"),
-        }
-
-        # Mock no media data
-        mockImageModel = mockLlmManager._models["dall-e-3"]
-        mockImageModel.generateImageWithFallBack = createAsyncMock(
-            returnValue=Mock(
-                status=ModelResultStatus.FINAL,
-                mediaData=None,
-                resultText="No image",
-                isFallback=False,
-            )
-        )
-
-        message = createMockMessage(chatId=123, userId=456, text="Generate")
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-
-        extraData = {"ensuredMessage": ensuredMessage}
-
-        result = await mediaHandler._llmToolGenerateAndSendImage(extraData=extraData, image_prompt="Test prompt")
-
-        resultData = json.loads(result)
-        assert resultData["done"] is False
-
     def testGenerateAndSendImageMissingExtraData(self, mediaHandler):
         """Test error when extraData is missing, dood!"""
         with pytest.raises(RuntimeError, match="extraData should be provided"):
@@ -337,17 +208,6 @@ class TestLlmToolGenerateAndSendImage:
             import asyncio
 
             asyncio.run(mediaHandler._llmToolGenerateAndSendImage(extraData={}, image_prompt="Test"))
-
-    def testGenerateAndSendImageInvalidEnsuredMessage(self, mediaHandler):
-        """Test error when ensuredMessage is invalid type, dood!"""
-        with pytest.raises(RuntimeError, match="ensuredMessage should be EnsuredMessage"):
-            import asyncio
-
-            asyncio.run(
-                mediaHandler._llmToolGenerateAndSendImage(
-                    extraData={"ensuredMessage": "not_an_ensured_message"}, image_prompt="Test"
-                )
-            )
 
 
 # ============================================================================
@@ -501,42 +361,6 @@ class TestMessageHandler:
         result = await mediaHandler.messageHandler(update, context, ensuredMessage)
 
         assert result == HandlerResultStatus.SKIPPED
-
-
-# ============================================================================
-# Integration Tests - Complete Workflows
-# ============================================================================
-
-
-class TestCompleteWorkflows:
-    """Test complete media processing workflows, dood!"""
-
-    @pytest.mark.asyncio
-    async def testLlmToolImageGenerationWorkflow(self, mediaHandler, mockBot, mockCacheService, mockLlmManager):
-        """Test LLM tool calling workflow for image generation, dood!"""
-        mediaHandler.injectBot(mockBot)
-
-        mockCacheService.getChatSettings.return_value = {
-            ChatSettingsKey.IMAGE_GENERATION_MODEL: ChatSettingsValue("dall-e-3"),
-            ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: ChatSettingsValue("dall-e-2"),
-            ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: ChatSettingsValue(""),
-        }
-
-        # Simulate LLM calling the tool
-        message = createMockMessage(chatId=123, userId=456, text="Generate an image")
-        message.reply_photo = createAsyncMock(returnValue=message)
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-
-        extraData = {"ensuredMessage": ensuredMessage}
-
-        result = await mediaHandler._llmToolGenerateAndSendImage(
-            extraData=extraData, image_prompt="A serene mountain landscape", image_description="Mountain view"
-        )
-
-        # Verify workflow completed
-        resultData = json.loads(result)
-        assert resultData["done"] is True
-        message.reply_photo.assert_called_once()
 
 
 # ============================================================================

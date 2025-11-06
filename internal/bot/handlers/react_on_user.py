@@ -25,7 +25,7 @@ from ..models import (
     EnsuredMessage,
     MessageSender,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,11 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         category=CommandCategory.ADMIN,
     )
     async def set_reaction_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Bun bip bop"""
         message = ensuredMessage.getBaseMessage()
@@ -210,9 +214,18 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         category=CommandCategory.ADMIN,
     )
     async def unset_reaction_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """TODO: Bun bip bop"""
+        """
+        Remove a reaction from a message, dood!
+
+        This command allows removing reactions that were previously added to messages.
+        The command must be sent as a reply to the message from which to remove the reaction.
+        """
         message = ensuredMessage.getBaseMessage()
 
         replyMessage = message.reply_to_message
@@ -278,9 +291,18 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         category=CommandCategory.ADMIN,
     )
     async def dump_reactions_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """TODO: Bun bip bop"""
+        """
+        Dump reaction statistics for a chat, dood!
+
+        This command displays statistics about reactions in the specified chat,
+        including the number of reactions and which users have reacted to messages.
+        """
         message = ensuredMessage.getBaseMessage()
 
         logger.debug(f"Args: {context.args}")

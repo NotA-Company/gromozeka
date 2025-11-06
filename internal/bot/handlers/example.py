@@ -29,7 +29,7 @@ from ..models import (
     DelayedTaskFunction,
     EnsuredMessage,
 )
-from .base import BaseBotHandler, HandlerResultStatus, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +180,11 @@ class ExampleHandler(BaseBotHandler):
         category=CommandCategory.TECHNICAL,
     )
     async def example_command(
-        self, ensuredMessage: EnsuredMessage, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle the example command, dood!
@@ -192,8 +196,6 @@ class ExampleHandler(BaseBotHandler):
             update (Update): Telegram update object.
             context (ContextTypes.DEFAULT_TYPE): Bot context.
         """
-        # Send 'typing...' action to show that bot doing something
-        await self.startTyping(ensuredMessage)
 
         # Send message to user (also save it to db, try to parse as Markdown2 and so on)
         await self.sendMessage(

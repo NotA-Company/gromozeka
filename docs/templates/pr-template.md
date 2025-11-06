@@ -26,6 +26,7 @@ Closes: #issue-number (if applicable)
 - Mention any related issues or tickets
 - Keep it concise but informative
 - Use present tense (e.g., "Add feature" not "Added feature")
+- `PR Title`, `Brief Description` and `Key change` sections should be doubled on Russian language
 
 ## Changed Files
 
@@ -98,7 +99,7 @@ q3r4s5t refactor(utils): improve code readability
 [Continue for all commits...]
 
 **How to fill this section:**
-- Copy the output from `git log master..HEAD --oneline`
+- Copy the output from `git log master..HEAD --pretty=format:"%h - %an, %ai : %s"`
 - Optionally add brief explanations for complex commits
 - Ensure commit messages follow conventional commit format
 - Group related commits if there are many
@@ -237,31 +238,30 @@ When reviewing this PR, please check:
 
 **Instructions for using this template:**
 
-1. **Replace all placeholder text** in brackets [like this] with actual content
-2. **Fill out all sections** - do not leave any section empty or with placeholder text
+1. **Replace ALL placeholder text** in brackets \[like this\] with actual content
+2. **Fill out ALL sections** - do not leave any section empty or with placeholder text
 3. **Generate file and commit lists** using the provided git commands
 4. **Categorize changes** appropriately (features, bugs, improvements, etc.)
 5. **Complete the checklist** before requesting review
 6. **Link all files** using relative paths for easy navigation
 7. **Follow commit message format** using conventional commits
+8. **Delete all `How to fill this section` sections** after. Those sections are present to help filling template, they shouldn't be in repulting document
+9. **Ensure no \[placeholders\] left** - ALL placeholders should be filled with actual content or deleted if no content needed
 
 **Git Commands Reference:**
 
 ```bash
 # Get list of changed files with statistics
-git diff master --stat
+git diff $(git merge-base master HEAD) --stat
 
 # Get list of changed files with status (M=modified, A=added, D=deleted)
-git diff master --name-status
+git diff $(git merge-base master HEAD) --name-status
 
 # Get list of commits
-git log master..HEAD --oneline
-
-# Get detailed commit information
 git log master..HEAD --pretty=format:"%h - %an, %ai : %s"
 
 # Get diff for specific file
-git diff master -- path/to/file
+git diff $(git merge-base master HEAD) -- path/to/file
 
 # Check if branch is up to date with master
 git fetch origin master
