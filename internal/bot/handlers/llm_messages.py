@@ -416,7 +416,7 @@ class LLMMessageHandler(BaseBotHandler):
             return False
 
         logger.debug("It is reply to our message, processing reply...")
-        async with await self.startContinousTyping(ensuredMessage) as typingManager:
+        async with await self.startTyping(ensuredMessage) as typingManager:
             # As it's resporse to our message, we need to wait for media to be processed if any
             await ensuredMessage.updateMediaContent(self.db)
 
@@ -528,7 +528,7 @@ class LLMMessageHandler(BaseBotHandler):
 
         messageText = mentionedMe.restText or ""
         messageTextLower = messageText.lower()
-        async with await self.startContinousTyping(ensuredMessage) as typingManager:
+        async with await self.startTyping(ensuredMessage) as typingManager:
 
             ###
             # Who today: Random choose from users who were active today
@@ -681,7 +681,7 @@ class LLMMessageHandler(BaseBotHandler):
             return False
 
         logger.debug(f"Random float: {randomFloat} < {treshold}, answering to message")
-        async with await self.startContinousTyping(ensuredMessage) as typingManager:
+        async with await self.startTyping(ensuredMessage) as typingManager:
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
             # Handle LLM Action

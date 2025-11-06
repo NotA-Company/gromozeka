@@ -162,7 +162,7 @@ class SummarizationHandler(BaseBotHandler):
         if sinceDT is None and maxMessages is None:
             raise ValueError("one of sinceDT or maxMessages MUST be not None")
 
-        stopper = await self.startContinousTyping(ensuredMessage, maxTimeout=300)  # Up to 10 minutes, lol
+        stopper = await self.startTyping(ensuredMessage, maxTimeout=300)  # Up to 10 minutes, lol
 
         messages = self.db.getChatMessagesSince(
             chatId=chatId,

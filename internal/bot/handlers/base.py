@@ -388,7 +388,7 @@ def commandHandlerExtended(
             # Actually handle command
             try:
                 if typingAction is not None:
-                    async with await self.startContinousTyping(ensuredMessage, action=typingAction) as typingManager:
+                    async with await self.startTyping(ensuredMessage, action=typingAction) as typingManager:
                         return await func(self, ensuredMessage, typingManager, update, context)
                 else:
                     return await func(self, ensuredMessage, None, update, context)
@@ -1095,10 +1095,10 @@ class BaseBotHandler(CommandHandlerMixin):
         metadataStr = utils.jsonDumps(metadata)
         self.db.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
 
-    async def startTyping(self, ensuredMessage: EnsuredMessage, action: ChatAction = ChatAction.TYPING) -> None:
+    async def _startTyping(self, ensuredMessage: EnsuredMessage, action: ChatAction = ChatAction.TYPING) -> None:
         """
         Send typing action to the chat, dood!
-        NOTE: Do not use it, use startContinousTyping() instead
+        NOTE: Do not use it, use _startTyping() instead
 
         Args:
             ensuredMessage: Message object to send typing action for
@@ -1106,7 +1106,7 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         await ensuredMessage.chat.send_action(action=action, message_thread_id=ensuredMessage.threadId)
 
-    async def startContinousTyping(
+    async def startTyping(
         self,
         ensuredMessage: EnsuredMessage,
         *,
@@ -1146,7 +1146,7 @@ class BaseBotHandler(CommandHandlerMixin):
             while await typingManager.isRunning():
                 # logger.debug(f"_sendTyping(,{action}), iteration: {iteration}...")
                 if typingManager.iteration == 0:
-                    await self.startTyping(ensuredMessage, typingManager.action)
+                    await self._startTyping(ensuredMessage, typingManager.action)
 
                 # Sleep 1 second to faster stop in case of typingStopper activated
                 typingManager.iteration = (typingManager.iteration + 1) % typingManager.repeatTimeout
@@ -1155,7 +1155,7 @@ class BaseBotHandler(CommandHandlerMixin):
             logger.warning(f"startContinousTyping({ensuredMessage}) reached timeout, exiting...")
 
         # Send initial action now as task will start not immediately
-        await self.startTyping(ensuredMessage, typingManager.action)
+        await self._startTyping(ensuredMessage, typingManager.action)
         task = asyncio.create_task(_sendTyping())
         await typingManager.setTask(task)
         return typingManager
