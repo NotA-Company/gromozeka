@@ -394,6 +394,7 @@ def commandHandlerExtended(
                         ensuredMessage,
                         messageText=f"Error while handling command:\n```\n{e}\n```",
                         messageCategory=MessageCategory.BOT_ERROR,
+                        typingManager=typingManager,
                     )
 
         # setattr(func, _HANDLER_METADATA_ATTR, metadata)
@@ -694,7 +695,7 @@ class BaseBotHandler(CommandHandlerMixin):
         mediaPrompt: Optional[str] = None,
         messageCategory: MessageCategory = MessageCategory.BOT,
         replyMarkup: Optional[ReplyMarkup] = None,
-        stopper: Optional[TypingManager] = None,
+        typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
     ) -> Optional[Message]:
         """
@@ -736,8 +737,8 @@ class BaseBotHandler(CommandHandlerMixin):
         isPrivate = chatType == Chat.PRIVATE
         isGroupChat = chatType in [Chat.GROUP, Chat.SUPERGROUP]
 
-        if stopper is not None:
-            await stopper.stopTask()
+        if typingManager is not None:
+            await typingManager.stopTask()
 
         if not isPrivate and not isGroupChat:
             logger.error("Cannot send message to chat type {}".format(chatType))
