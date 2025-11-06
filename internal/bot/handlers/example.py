@@ -196,8 +196,6 @@ class ExampleHandler(BaseBotHandler):
             update (Update): Telegram update object.
             context (ContextTypes.DEFAULT_TYPE): Bot context.
         """
-        # Send 'typing...' action to show that bot doing something
-        await self.startTyping(ensuredMessage)
 
         # Send message to user (also save it to db, try to parse as Markdown2 and so on)
         await self.sendMessage(

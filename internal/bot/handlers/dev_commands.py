@@ -411,7 +411,6 @@ class DevCommandsHandler(BaseBotHandler):
             return
 
         suite = context.args[0]
-        await self.startTyping(ensuredMessage)
 
         match suite:
             case "long":
@@ -445,10 +444,10 @@ class DevCommandsHandler(BaseBotHandler):
                         messageText=f"Iteration {i}",
                         skipLogs=True,  # Do not spam logs
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                        typingManager=typingManager if i >= iterationsCount - 1 else None,
                     )
                     if i < iterationsCount - 1:
-                        await self.startTyping(ensuredMessage)
-                    await asyncio.sleep(delay)
+                        await asyncio.sleep(delay)
 
             case "delayedQueue":
                 await self.sendMessage(
@@ -539,8 +538,6 @@ class DevCommandsHandler(BaseBotHandler):
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Clear cache"""
-        await self.startTyping(ensuredMessage)
-
         # Dump only temporary caches, do not touch User and ChatPersistent ones
         self.cache.clearNamespace(CacheNamespace.CHAT_USERS)
         self.cache.clearNamespace(CacheNamespace.CHATS)

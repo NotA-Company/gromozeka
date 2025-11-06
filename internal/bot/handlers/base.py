@@ -160,10 +160,16 @@ class TypingManager:
         If the task is not awaitable, logs a warning message.
         """
         self.running = False
-        if not inspect.isawaitable(self.task):
+        if self.task is None:
+            return
+        elif not inspect.isawaitable(self.task):
             logger.warning(f"TypingStopper: {type(self.task).__name__}({self.task}) is not awaitable")
         else:
             await self.task
+            # it is possible, that we'll spon it several times:
+            #  (via sendMessage() and as aexit from contextManager)
+            #  it isn't error
+            self.task = None
 
     async def isRunning(self) -> bool:
         """
@@ -1092,6 +1098,7 @@ class BaseBotHandler(CommandHandlerMixin):
     async def startTyping(self, ensuredMessage: EnsuredMessage, action: ChatAction = ChatAction.TYPING) -> None:
         """
         Send typing action to the chat, dood!
+        NOTE: Do not use it, use startContinousTyping() instead
 
         Args:
             ensuredMessage: Message object to send typing action for
@@ -1104,8 +1111,10 @@ class BaseBotHandler(CommandHandlerMixin):
         ensuredMessage: EnsuredMessage,
         *,
         action: ChatAction = ChatAction.TYPING,
-        maxTimeout: int = 120,
-        repeatTimeout: int = 5,
+        # 5 minutes looks like reasonable default
+        maxTimeout: int = 300,
+        # If we'll not send typing action for abount 5 seconds, it will wanish, so need to refresh it
+        repeatTimeout: int = 4,
     ) -> TypingManager:
         """
         Start continuous typing action, dood!
@@ -1146,7 +1155,7 @@ class BaseBotHandler(CommandHandlerMixin):
             logger.warning(f"startContinousTyping({ensuredMessage}) reached timeout, exiting...")
 
         # Send initial action now as task will start not immediately
-        await self.startTyping(ensuredMessage, action)
+        await self.startTyping(ensuredMessage, typingManager.action)
         task = asyncio.create_task(_sendTyping())
         await typingManager.setTask(task)
         return typingManager
