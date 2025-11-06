@@ -96,80 +96,120 @@ class HandlerResultStatus(Enum):
 
 class TypingManager:
     """
-    Helper class to manage continuous typing actions, dood!
+    Helper class to manage continuous typing actions during long-running operations, dood!
 
-    This class is used to control the continuous sending of typing actions
-    while a long-running operation is in progress. It provides a context manager
-    interface for easy integration with async operations.
+    This class provides a way to continuously send typing actions (like TYPING, UPLOAD_PHOTO, etc.)
+    to Telegram chats while time-consuming operations are in progress. It implements the
+    async context manager protocol for easy integration with async operations.
 
-    The class tracks the typing state, manages timeouts, and can be used to
-    automatically stop typing when an operation completes.
+    The manager handles timing control, state tracking, and automatic cleanup when operations
+    complete or timeout. It's particularly useful for commands that involve LLM processing,
+    media handling, or other operations that might take several seconds.
+
+    Usage:
+        ```python
+        async with await self.startTyping(message, action=ChatAction.TYPING) as typingManager:
+            # Long-running operation here
+            result = await someLongOperation()
+        ```
 
     Attributes:
-        running: Flag indicating if typing is active
-        action: The ChatAction to send (e.g., TYPING, UPLOAD_PHOTO)
-        maxTimeout: Maximum duration in seconds to keep typing
-        repeatTimeout: Interval in seconds between typing actions
-        task: Async task managing the typing loop
-        startTime: Timestamp when typing started
+        running: Boolean flag indicating if typing is currently active
+        action: The ChatAction to send (e.g., TYPING, UPLOAD_PHOTO, RECORD_VIDEO)
+        maxTimeout: Maximum duration in seconds to keep typing active
+        repeatInterval: Interval in seconds between typing actions
+        _task: Internal async task managing the typing loop
+        _sendActionFn: Function to call for sending typing actions
+        startTime: Timestamp when typing started (for timeout calculation)
         iteration: Current iteration counter for timing control
     """
+
+    __slots__ = (
+        "running",
+        "action",
+        "maxTimeout",
+        "repeatInterval",
+        "_task",
+        "_sendActionFn",
+        "startTime",
+        "iteration",
+    )
 
     def __init__(
         self,
         action: ChatAction,
         maxTimeout: int,
-        repeatTimeout: int,
-        task: Optional[asyncio.Task] = None,
+        repeatInterval: int,
     ) -> None:
         """
         Initialize the TypingManager with specified parameters, dood!
 
         Sets up the typing manager with the action to perform, timeout limits,
-        and optional async task for managing the typing loop.
+        and internal state for managing the typing loop.
 
         Args:
             action: The ChatAction to send (e.g., TYPING, UPLOAD_PHOTO)
             maxTimeout: Maximum duration in seconds to keep typing active
-            repeatTimeout: Interval in seconds between typing actions
-            task: Optional async task for managing the typing loop
+            repeatInterval: Interval in seconds between typing actions
         """
         self.running = True
         self.action = action
         self.maxTimeout = maxTimeout
-        self.repeatTimeout = repeatTimeout
-        self.task = task
+        self.repeatInterval = repeatInterval
+
+        self._task: Optional[asyncio.Task] = None
+        self._sendActionFn: Optional[Callable[[], Awaitable]] = None
 
         self.startTime = time.time()
         self.iteration: int = 0
 
-    async def setTask(self, task: asyncio.Task) -> None:
+    async def startTask(
+        self,
+        task: asyncio.Task,
+        sendActionFn: Optional[Callable[[], Awaitable]] = None,
+        runTaskOnStart: bool = True,
+    ) -> None:
         """
-        Set the asyncio task for this TypingManager, dood!
+        Set the asyncio task and action function for this TypingManager, dood!
+
+        Configures the typing manager with the task to execute and the function
+        to call for sending typing actions. Resets the running state and start time.
 
         Args:
             task: The asyncio task to manage for continuous typing actions
+            sendActionFn: Optional function to call for sending typing actions
+            runTaskOnStart: If True, immediately send a typing action when starting
         """
-        self.task = task
+        self._task = task
+        self._sendActionFn = sendActionFn
+        self.running = True
+        self.startTime = time.time()
 
-    async def stopTask(self) -> None:
+        if runTaskOnStart:
+            await self.sendTypingAction()
+
+    async def stopTask(self, wait: bool = True) -> None:
         """
         Stop the typing task and wait for it to complete, dood!
 
-        Sets the running flag to False and awaits the completion of the typing task.
-        If the task is not awaitable, logs a warning message.
+        Sets the running flag to False and optionally awaits the completion of the typing task.
+        If the task is not awaitable, logs a warning message. Clears the task reference
+        to prevent multiple stops.
+
+        Args:
+            wait: If True, wait for the task to complete before returning
         """
         self.running = False
-        if self.task is None:
+        if self._task is None:
             return
-        elif not inspect.isawaitable(self.task):
-            logger.warning(f"TypingManager: {type(self.task).__name__}({self.task}) is not awaitable")
-        else:
-            await self.task
-            # it is possible, that we'll spon it several times:
-            #  (via sendMessage() and as aexit from contextManager)
-            #  it isn't error
-            self.task = None
+        elif not inspect.isawaitable(self._task):
+            logger.warning(f"TypingManager: {type(self._task).__name__}({self._task}) is not awaitable")
+        elif wait:
+            await self._task
+        # it is possible, that we'll stop it several times:
+        #  (via sendMessage() and as aexit from contextManager)
+        #  it isn't error, so need to clear self.task
+        self._task = None
 
     async def isRunning(self) -> bool:
         """
@@ -186,16 +226,39 @@ class TypingManager:
 
         return self.startTime + self.maxTimeout > time.time()
 
+    async def tick(self) -> int:
+        """
+        Advance the iteration counter for timing control, dood!
+
+        Sleeps for 1 second and increments the iteration counter, wrapping around
+        based on the repeatInterval. This method is used to control the timing
+        of typing actions in the continuous typing loop.
+
+        Returns:
+            The new iteration counter value
+        """
+        await asyncio.sleep(1)
+
+        self.iteration = (self.iteration + 1) % self.repeatInterval
+        return self.iteration
+
     async def sendTypingAction(self) -> None:
         """
-        Reset the iteration counter for the typing action, dood!
+        Send a typing action and reset the iteration counter, dood!
 
-        This method is called to indicate that a typing action has been sent,
-        resetting the iteration counter to 0. This is used to control the
-        timing of subsequent typing actions in the continuous typing loop.
+        This method is called to send a typing action and reset the iteration
+        counter to 0. This is used to control the timing of subsequent typing
+        actions in the continuous typing loop. Only sends if the manager is running.
         """
-        if self.running:
-            self.iteration = 0
+        if not await self.isRunning():
+            logger.warning("TypingManager::sendTypingAction(): not running")
+            return
+
+        self.iteration = 0
+        if self._sendActionFn:
+            await self._sendActionFn()
+        else:
+            logger.warning("TypingManager: sendTypingAction called while action is None")
 
     async def __aenter__(self) -> "TypingManager":
         """
@@ -1095,17 +1158,6 @@ class BaseBotHandler(CommandHandlerMixin):
         metadataStr = utils.jsonDumps(metadata)
         self.db.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
 
-    async def _startTyping(self, ensuredMessage: EnsuredMessage, action: ChatAction = ChatAction.TYPING) -> None:
-        """
-        Send typing action to the chat, dood!
-        NOTE: Do not use it, use _startTyping() instead
-
-        Args:
-            ensuredMessage: Message object to send typing action for
-            action: Chat action to send (default: TYPING)
-        """
-        await ensuredMessage.chat.send_action(action=action, message_thread_id=ensuredMessage.threadId)
-
     async def startTyping(
         self,
         ensuredMessage: EnsuredMessage,
@@ -1114,20 +1166,20 @@ class BaseBotHandler(CommandHandlerMixin):
         # 5 minutes looks like reasonable default
         maxTimeout: int = 300,
         # If we'll not send typing action for abount 5 seconds, it will wanish, so need to refresh it
-        repeatTimeout: int = 4,
+        repeatInterval: int = 4,
     ) -> TypingManager:
         """
         Start continuous typing action, dood!
 
-        Sends a typing action that repeats at regular intervals until stopped.
-        This is useful for long-running operations to show the user that
-        the bot is still working.
+        Creates and configures a TypingManager that sends typing actions at regular
+        intervals until stopped. This is useful for long-running operations to show
+        the user that the bot is still working.
 
         Args:
             ensuredMessage: Message object to send typing action for
             action: Chat action to send (default: TYPING)
-            maxTimeout: Maximum time to keep typing (default: 120 seconds)
-            repeatTimeout: Interval between typing actions (default: 5 seconds)
+            maxTimeout: Maximum time in seconds to keep typing (default: 300 seconds)
+            repeatInterval: Interval in seconds between typing actions (default: 4 seconds)
 
         Returns:
             TypingManager instance to control the typing action
@@ -1135,29 +1187,28 @@ class BaseBotHandler(CommandHandlerMixin):
         typingManager = TypingManager(
             action=action,
             maxTimeout=maxTimeout,
-            repeatTimeout=repeatTimeout,
+            repeatInterval=repeatInterval,
         )
 
-        # logger.debug(f"startContinousTyping(,{action},{maxTimeout},{repeatTimeout}) started...")
+        # logger.debug(f"startContinousTyping(,{action},{maxTimeout},{repeatInterval}) started...")
+
+        async def sendAction():
+            await ensuredMessage.chat.send_action(
+                action=typingManager.action,
+                message_thread_id=ensuredMessage.threadId,
+            )
 
         async def _sendTyping() -> None:
             typingManager.iteration = 0
 
             while await typingManager.isRunning():
                 # logger.debug(f"_sendTyping(,{action}), iteration: {iteration}...")
-                if typingManager.iteration == 0:
-                    await self._startTyping(ensuredMessage, typingManager.action)
+                if await typingManager.tick() == 0:
+                    await typingManager.sendTypingAction()
 
-                # Sleep 1 second to faster stop in case of TypingManager stopped
-                typingManager.iteration = (typingManager.iteration + 1) % typingManager.repeatTimeout
-                await asyncio.sleep(1)
+            logger.warning(f"startTyping({ensuredMessage}) reached timeout ({typingManager.maxTimeout}), exiting...")
 
-            logger.warning(f"startContinousTyping({ensuredMessage}) reached timeout, exiting...")
-
-        # Send initial action now as task will start not immediately
-        await self._startTyping(ensuredMessage, typingManager.action)
-        task = asyncio.create_task(_sendTyping())
-        await typingManager.setTask(task)
+        await typingManager.startTask(asyncio.create_task(_sendTyping()), sendAction, True)
         return typingManager
 
     def getChatTitle(
