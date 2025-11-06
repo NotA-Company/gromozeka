@@ -367,14 +367,12 @@ class MediaHandler(BaseBotHandler):
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
 
-        stopper = await self.startTyping(ensuredMessage)
-
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение с медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -396,7 +394,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Необходимо указать запрос для анализа медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -421,7 +419,7 @@ class MediaHandler(BaseBotHandler):
                     ensuredMessage,
                     messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
                     messageCategory=MessageCategory.BOT_ERROR,
-                    typingManager=stopper,
+                    typingManager=typingManager,
                 )
                 return
 
@@ -434,7 +432,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Не удалось получить данные медиа.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -445,7 +443,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -468,7 +466,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
                 messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -476,7 +474,7 @@ class MediaHandler(BaseBotHandler):
             ensuredMessage,
             messageText=llmRet.resultText,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-            typingManager=stopper,
+            typingManager=typingManager,
         )
 
     @commandHandlerExtended(
@@ -488,6 +486,7 @@ class MediaHandler(BaseBotHandler):
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
+        typingAction=ChatAction.UPLOAD_PHOTO,
     )
     async def draw_command(
         self,
@@ -580,17 +579,15 @@ class MediaHandler(BaseBotHandler):
 
             textLLM = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
             fallbackLLM = chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager)
-            async with await self.startTyping(ensuredMessage):
-                llmRet = await textLLM.generateTextWithFallBack(latestMessages, fallbackModel=fallbackLLM)
-                # Should i check llmRet.status? do not wanna for now
-                if llmRet.resultText:
-                    prompt = llmRet.resultText
-                else:
-                    # Fallback to something static
-                    prompt = f"Draw image of {ensuredMessage.sender} in chat `{ensuredMessage.chat.title}`"
+            llmRet = await textLLM.generateTextWithFallBack(latestMessages, fallbackModel=fallbackLLM)
+            # Should i check llmRet.status? do not wanna for now
+            if llmRet.resultText:
+                prompt = llmRet.resultText
+            else:
+                # Fallback to something static
+                prompt = f"Draw image of {ensuredMessage.sender} in chat `{ensuredMessage.chat.title}`"
 
         logger.debug(f"Prompt: '{prompt}'")
-        stopper = await self.startTyping(ensuredMessage, action=ChatAction.UPLOAD_PHOTO)
 
         if not prompt:
             # Fixed f-string missing placeholders
@@ -602,7 +599,7 @@ class MediaHandler(BaseBotHandler):
                     "(можно цитировать при необходимости)."
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -619,7 +616,7 @@ class MediaHandler(BaseBotHandler):
                     f"{str(mlRet.resultText)}\n```\nPrompt:\n```\n{prompt}\n```"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -629,7 +626,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Ошибка генерации изображения, попробуйте позже.",
                 messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=stopper,
+                typingManager=typingManager,
             )
             return
 
@@ -649,5 +646,5 @@ class MediaHandler(BaseBotHandler):
             mediaPrompt=prompt,
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             addMessagePrefix=imgAddPrefix,
-            typingManager=stopper,
+            typingManager=typingManager,
         )
