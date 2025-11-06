@@ -211,7 +211,7 @@ class TypingManager:
         #  it isn't error, so need to clear self.task
         self._task = None
 
-    async def isRunning(self) -> bool:
+    def isRunning(self) -> bool:
         """
         Check if typing is still active and within timeout limits, dood!
 
@@ -224,6 +224,19 @@ class TypingManager:
         if not self.running:
             return False
 
+        return self.isTimeout()
+
+    def isTimeout(self) -> bool:
+        """
+        Check if the typing manager has exceeded its maximum timeout duration, dood!
+
+        Determines whether the typing manager should continue running based on the
+        elapsed time since it started. Returns True if the manager is still within
+        its timeout limit, False if it has exceeded the limit.
+
+        Returns:
+            bool: True if still within timeout limits, False if timeout exceeded
+        """
         return self.startTime + self.maxTimeout > time.time()
 
     async def tick(self) -> int:
@@ -250,7 +263,7 @@ class TypingManager:
         counter to 0. This is used to control the timing of subsequent typing
         actions in the continuous typing loop. Only sends if the manager is running.
         """
-        if not await self.isRunning():
+        if not self.isRunning():
             logger.warning("TypingManager::sendTypingAction(): not running")
             return
 
@@ -1201,12 +1214,15 @@ class BaseBotHandler(CommandHandlerMixin):
         async def _sendTyping() -> None:
             typingManager.iteration = 0
 
-            while await typingManager.isRunning():
+            while typingManager.isRunning():
                 # logger.debug(f"_sendTyping(,{action}), iteration: {iteration}...")
                 if await typingManager.tick() == 0:
                     await typingManager.sendTypingAction()
 
-            logger.warning(f"startTyping({ensuredMessage}) reached timeout ({typingManager.maxTimeout}), exiting...")
+            if typingManager.isTimeout():
+                logger.warning(
+                    f"startTyping({ensuredMessage}) reached timeout ({typingManager.maxTimeout}), exiting..."
+                )
 
         await typingManager.startTask(asyncio.create_task(_sendTyping()), sendAction, True)
         return typingManager
