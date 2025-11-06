@@ -1,12 +1,11 @@
 [bot.private-defaults]
 # Allow configure by default (Turn it of if you'll want to disable private)
-admin-can-change-settings = true
+# admin-can-change-settings = true
 
 # Allow tools commands (/draw, /analyze, etc...)
-allow-tools-commands = true
-# Allow replying (Disable to disable private)
-allow-mention = true
-allow-reply = true
+# allow-tools-commands = true
+# allow-mention = true
+# allow-reply = true
 
 # For private chats - Always answer something
 random-answer-probability = 1
@@ -18,26 +17,26 @@ detect-spam = false
 
 [bot.chat-defaults]
 # Can chat admins change channel-specific bot settings?
-admin-can-change-settings = true
+# admin-can-change-settings = true
 
 # Allow tools commands (/draw, /analyze, etc...)
-allow-tools-commands = true
+# allow-tools-commands = true
 # Delete message with commands, which deniend in chat (for flood protection purposes)
-delete-denied-commands = false
+# delete-denied-commands = false
 
 # Allow reaction in bot mention (by username and by name)
-allow-mention = true
+# allow-mention = true
 # Allow reaction on reply of bot message
-allow-reply = true
+# allow-reply = true
 
 # Probability of random answer to any message (set 0 for disable, 1 for always)
 # For chat it should be very rare event
-random-answer-probability = 0.01
+# random-answer-probability = 0.01
 # In case of random answer - answer to chat admin messages?
-random-answer-to-admin = true
+# random-answer-to-admin = true
 
 # Automatically detect and delete spam messages
-detect-spam = false
+# detect-spam = false
 
 [bot.defaults]
 # Can chat admins change channel-specific bot settings?
@@ -98,11 +97,11 @@ random-answer-to-admin = true
 tools-used-prefix        = "🛠"
 fallback-happened-prefix = "🤖"
 
-summary-model                   = "openrouter/gemma-3-27b-it-free"
-summary-fallback-model          = "openrouter/deepseek-chat-v3.1-free"
-chat-model                      = "openrouter/gemma-3-12b-it-free"
-fallback-model                  = "openrouter/deepseek-chat-v3.1-free"
-image-parsing-model             = "openrouter/gemma-3-27b-it-free"
+chat-model                      = "openrouter/mistral-7b-instruct:free"
+fallback-model                  = "openrouter/gemma-3-12b-it:free"
+summary-model                   = "openrouter/gemma-3-12b-it:free"
+summary-fallback-model          = "openrouter/deepseek-chat-v3.1:free"
+image-parsing-model             = "openrouter/gemma-3-27b-it:free"
 image-generation-model          = "yandex-art"
 image-generation-fallback-model = "openrouter/gemini-2.5-flash-image"
 
@@ -111,7 +110,9 @@ parse-image-prompt = "Подробно опиши, что изображено �
 chat-prompt        = """
 Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола.
 """
-
+# Prompt suffix for chat model
+# We allow admins to change only first part of prompt
+# So we'll be sure that bot understand format of messages and so on
 chat-prompt-suffix = """
 Сообщения пользователей указаны в JSON-формате, где:
 * `login` - Логин пользователя.
