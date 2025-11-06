@@ -292,7 +292,7 @@ class MediaHandler(BaseBotHandler):
             # Process further
             return HandlerResultStatus.NEXT
 
-        async with await self.startContinousTyping(ensuredMessage) as typingManager:
+        async with await self.startTyping(ensuredMessage) as typingManager:
             # Not text message, try to get it's content from DB
             storedReply = self.db.getChatMessageByMessageId(
                 chatId=ensuredReply.chat.id,
@@ -367,7 +367,7 @@ class MediaHandler(BaseBotHandler):
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
 
-        stopper = await self.startContinousTyping(ensuredMessage)
+        stopper = await self.startTyping(ensuredMessage)
 
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self.sendMessage(
@@ -580,7 +580,7 @@ class MediaHandler(BaseBotHandler):
 
             textLLM = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
             fallbackLLM = chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager)
-            async with await self.startContinousTyping(ensuredMessage):
+            async with await self.startTyping(ensuredMessage):
                 llmRet = await textLLM.generateTextWithFallBack(latestMessages, fallbackModel=fallbackLLM)
                 # Should i check llmRet.status? do not wanna for now
                 if llmRet.resultText:
@@ -590,7 +590,7 @@ class MediaHandler(BaseBotHandler):
                     prompt = f"Draw image of {ensuredMessage.sender} in chat `{ensuredMessage.chat.title}`"
 
         logger.debug(f"Prompt: '{prompt}'")
-        stopper = await self.startContinousTyping(ensuredMessage, action=ChatAction.UPLOAD_PHOTO)
+        stopper = await self.startTyping(ensuredMessage, action=ChatAction.UPLOAD_PHOTO)
 
         if not prompt:
             # Fixed f-string missing placeholders
