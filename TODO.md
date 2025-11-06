@@ -1,7 +1,4 @@
 # Our TODO list
-- [ ] By default, use free openrouter models
-- [ ] Add (if not) https://openrouter.ai/deepseek/deepseek-chat-v3.1:free and https://openrouter.ai/google/gemma-3-27b-it:free
-- [ ] Drop\comment private-defaults and chat-defaults from default config
 - [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [ ] use `httpx` instead of `request` in [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py) + add redirection handling + headers 
 - [ ] Add some cache into [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py)
@@ -9,30 +6,33 @@
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
-- [x] Add User-data manipulation wizard
 - [ ] Add support for embeddings + Vector search oon chat's database
 - [ ] Add support for local LLM-providers (Like Ollama or LLama.cpp)
-- [x] Less granular command enabling\disabling (after extended command decorator)
 - [ ] Add commands for listing topics and renaming topics in DB
-- [x] Add support json-logging of LLM responses for debug purposes (looks like it sometimes response with weird format)
 - [ ] Run LLM and other requests in separate thread
+- [ ] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
+- [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
+- [ ] Add support of periodic tasks (summarization for example)
+- [ ] Add cron for analyzing and remembering knowledge from messages
+- [ ] Add Better geocoder
+- [ ] Add Per PR tests (make lint + make test)
+- [ ] Add coverage badge?
+- [x] By default, use free openrouter models
+- [x] Add (if not) https://openrouter.ai/deepseek/deepseek-chat-v3.1:free and https://openrouter.ai/google/gemma-3-27b-it:free
+- [x] Drop\comment private-defaults and chat-defaults from default config
+- [x] Add User-data manipulation wizard
+- [x] Less granular command enabling\disabling (after extended command decorator)
+- [x] Add support json-logging of LLM responses for debug purposes (looks like it sometimes response with weird format)
 - [x] Add cache for isAdmin (with short TTL like 10 minutes)
 - [x] Add extended command decorator (to ensure message, chec is admin and so on + delete called command if needed)
-- [ ] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
 - [x] Bug: /configure get wrong default (from default, not chat-type specific defaults)
 - [x] Add different defaults for Private and Group chats
 - [x] Add support of reading and saving all messages from chat
 - [x] Add plugins support (not plugins, but extensible handlers support)
 - [x] Add support for direct mesages
 - [x] Add Summarisation plugin. Summarisation only possible in chats. Summarisation will be displayed on command or in some time if configured
-- [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
-- [ ] Add support of periodic tasks (summarization for example)
-- [ ] Add cron for analyzing and remembering knowledge from messages
 - [x] Add Search support
-- [ ] Add Better geocoder
 - [x] Add support of choosing models via configure
-- [ ] Add Per PR tests (make lint + make test)
-- [ ] Add coverage badge?
 - [x] Add support for spam-handling
 - [x] Add Bayes filtering into spam-detection
 - [x] Add some AI support via YandexCloud
