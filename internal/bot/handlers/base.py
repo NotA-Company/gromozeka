@@ -145,7 +145,7 @@ class TypingManager:
 
     async def setTask(self, task: asyncio.Task) -> None:
         """
-        Set the asyncio task for this TypingStopper, dood!
+        Set the asyncio task for this TypingManager, dood!
 
         Args:
             task: The asyncio task to manage for continuous typing actions
@@ -163,7 +163,7 @@ class TypingManager:
         if self.task is None:
             return
         elif not inspect.isawaitable(self.task):
-            logger.warning(f"TypingStopper: {type(self.task).__name__}({self.task}) is not awaitable")
+            logger.warning(f"TypingManager: {type(self.task).__name__}({self.task}) is not awaitable")
         else:
             await self.task
             # it is possible, that we'll spon it several times:
@@ -202,7 +202,7 @@ class TypingManager:
         Enter the context manager, dood!
 
         Returns:
-            TypingStopper: The TypingStopper instance
+            TypingManager: The TypingManager instance
         """
         return self
 
@@ -724,7 +724,7 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaPrompt: Optional prompt for media processing
             messageCategory: Category for database storage (from [`MessageCategory`](internal/database/models.py))
             replyMarkup: Optional reply markup (keyboard/buttons)
-            stopper: Optional `TypingStopper` object for stoping typing action if any
+            typingManager: Optional `TypingManager` object for managing typing action if any
             splitIfTooLong: If True (default) - will split long messages to smaller ones
         Returns:
             Sent Message object, or None if sending failed
@@ -1130,7 +1130,7 @@ class BaseBotHandler(CommandHandlerMixin):
             repeatTimeout: Interval between typing actions (default: 5 seconds)
 
         Returns:
-            TypingStopper instance to control the typing action
+            TypingManager instance to control the typing action
         """
         typingManager = TypingManager(
             action=action,
@@ -1148,7 +1148,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 if typingManager.iteration == 0:
                     await self._startTyping(ensuredMessage, typingManager.action)
 
-                # Sleep 1 second to faster stop in case of typingStopper activated
+                # Sleep 1 second to faster stop in case of TypingManager stopped
                 typingManager.iteration = (typingManager.iteration + 1) % typingManager.repeatTimeout
                 await asyncio.sleep(1)
 
