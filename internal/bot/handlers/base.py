@@ -99,9 +99,20 @@ class TypingManager:
     Helper class to manage continuous typing actions, dood!
 
     This class is used to control the continuous sending of typing actions
-    while a long-running operation is in progress.
+    while a long-running operation is in progress. It provides a context manager
+    interface for easy integration with async operations.
 
-    TODO
+    The class tracks the typing state, manages timeouts, and can be used to
+    automatically stop typing when an operation completes.
+
+    Attributes:
+        running: Flag indicating if typing is active
+        action: The ChatAction to send (e.g., TYPING, UPLOAD_PHOTO)
+        maxTimeout: Maximum duration in seconds to keep typing
+        repeatTimeout: Interval in seconds between typing actions
+        task: Async task managing the typing loop
+        startTime: Timestamp when typing started
+        iteration: Current iteration counter for timing control
     """
 
     def __init__(
@@ -112,7 +123,16 @@ class TypingManager:
         task: Optional[asyncio.Task] = None,
     ) -> None:
         """
-        TODO
+        Initialize the TypingManager with specified parameters, dood!
+
+        Sets up the typing manager with the action to perform, timeout limits,
+        and optional async task for managing the typing loop.
+
+        Args:
+            action: The ChatAction to send (e.g., TYPING, UPLOAD_PHOTO)
+            maxTimeout: Maximum duration in seconds to keep typing active
+            repeatTimeout: Interval in seconds between typing actions
+            task: Optional async task for managing the typing loop
         """
         self.running = True
         self.action = action
@@ -147,15 +167,27 @@ class TypingManager:
 
     async def isRunning(self) -> bool:
         """
-        TODO
+        Check if typing is still active and within timeout limits, dood!
+
+        Determines if typing should continue based on the running flag and
+        whether the maximum timeout has been exceeded.
+
+        Returns:
+            True if typing is active and within timeout, False otherwise
         """
         if not self.running:
             return False
-        
+
         return self.startTime + self.maxTimeout > time.time()
 
     async def sendTypingAction(self) -> None:
-        """TODO"""
+        """
+        Reset the iteration counter for the typing action, dood!
+
+        This method is called to indicate that a typing action has been sent,
+        resetting the iteration counter to 0. This is used to control the
+        timing of subsequent typing actions in the continuous typing loop.
+        """
         if self.running:
             self.iteration = 0
 
@@ -200,14 +232,21 @@ def commandHandlerExtended(
     Callable[["BaseBotHandler", Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
 ]:
     """
-    TODO: rewrite
-    Decorator for creating extended command handlers with metadata, permissions, and logging.
+    Decorator for creating extended command handlers with metadata, permissions, and logging, dood!
 
     Creates a decorator that wraps command handler functions with additional functionality:
     - Stores command metadata (commands, descriptions, categories)
     - Checks user permissions based on chat type and user roles
     - Logs command usage in the database
     - Ensures message format before passing to handler
+    - Manages typing actions during command execution
+    - Handles exceptions and error reporting
+
+    The decorator performs comprehensive permission checking based on:
+    - Command category (PRIVATE, ADMIN, TOOLS, SPAM, etc.)
+    - Chat type (PRIVATE, GROUP, SUPERGROUP)
+    - User roles (bot owner, chat admin, regular user)
+    - Chat-specific settings
 
     Args:
         commands: Sequence of command strings this handler responds to
@@ -217,9 +256,11 @@ def commandHandlerExtended(
         availableFor: Where command is allowed (default: DEFAULT/everyone)
         helpOrder: Order for help message display (default: NORMAL)
         category: Category for command, used for fine-grained permissions handling (default: UNSPECIFIED)
+        typingAction: ChatAction to send during command execution (default: TYPING)
+        replyErrorOnException: Whether to send error messages to users on exceptions (default: True)
 
     Returns:
-        A decorator function that wraps the command handler
+        A decorator function that wraps the command handler with all the above functionality
     """
     if suggestCategories is None:
         suggestCategories = {CommandPermission.HIDDEN}
@@ -530,8 +571,11 @@ class BaseBotHandler(CommandHandlerMixin):
             chatId: Telegram chat ID
             key: Setting key from [`ChatSettingsKey`](internal/bot/models/chat_settings.py) enum
             value: Setting value as [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
+
+        Note:
+            This method directly updates the cache. Consider whether this setting
+            should be validated before being applied.
         """
-        # TODO: Should I add deprecation warning?
         self.cache.setChatSetting(chatId, key, value)
 
     def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:

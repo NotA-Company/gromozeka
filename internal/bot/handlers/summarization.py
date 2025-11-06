@@ -322,7 +322,16 @@ class SummarizationHandler(BaseBotHandler):
 
     async def _handle_summarization(self, data: Dict[str | int, Any], messageId: int, user: User, bot: telegram.Bot):
         """
-        TODO
+        Handle the summarization process for messages, dood!
+
+        Processes the summarization request based on user action and generates
+        a summary of the specified messages or chat history.
+
+        Args:
+            data: Dictionary containing summarization parameters and options
+            messageId: ID of the message that triggered the summarization
+            user: User who requested the summarization
+            bot: Telegram bot instance for sending messages
         """
 
         userId = user.id

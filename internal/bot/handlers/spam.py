@@ -926,7 +926,11 @@ class SpamHandler(BaseBotHandler):
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
-        TODO
+        Display Bayesian filter statistics for all group chats, dood!
+
+        This command shows statistics about the Bayesian spam filter for each
+        group chat, including the number of spam and ham messages processed,
+        filter accuracy, and other relevant metrics.
         """
         for chatInfo in self.db.getAllGroupChats():
             stats = await self.getBayesFilterStats(chatId=chatInfo["chat_id"])
