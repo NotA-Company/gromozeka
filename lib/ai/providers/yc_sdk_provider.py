@@ -3,10 +3,14 @@ Yandex Cloud SDK provider for LLM models, dood!
 """
 
 import logging
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Optional
 
-from yandex_cloud_ml_sdk import YCloudML
+from yandex_cloud_ml_sdk import AsyncYCloudML
 from yandex_cloud_ml_sdk._exceptions import AioRpcError
+from yandex_cloud_ml_sdk._models.completions.model import AsyncGPTModel
+from yandex_cloud_ml_sdk._models.image_generation.model import AsyncImageGenerationModel
+from yandex_cloud_ml_sdk._models.image_generation.result import ImageGenerationModelResult
+from yandex_cloud_ml_sdk._types.operation import AsyncOperation
 from yandex_cloud_ml_sdk.auth import YandexCloudCLIAuth
 
 from ..abstract import AbstractLLMProvider, AbstractModel
@@ -25,12 +29,14 @@ class YcSdkModel(AbstractModel):
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        ycSDK: Any,  # Actually YCloudML, but it isn't class
+        ycSDK: AsyncYCloudML,  # pyright: ignore[reportGeneralTypeIssues]
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize YC SDK model, dood!"""
         super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
-        self._ycModel = None
+        self._ycModel: Optional[
+            AsyncImageGenerationModel | AsyncGPTModel  # pyright: ignore[reportGeneralTypeIssues]
+        ] = None
         self.ycSDK = ycSDK
 
         self.supportText = self._config.get("support_text", True)
@@ -123,17 +129,25 @@ class YcSdkModel(AbstractModel):
         if not self.supportImages:
             raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
 
+        if not isinstance(self._ycModel, AsyncImageGenerationModel):  # pyright: ignore[reportArgumentType]
+            raise ValueError(
+                "Need AsyncImageGenerationModel for generating images, " f"but got {type(self._ycModel).__name__}"
+            )
         # From docs:
         # # Sample 3: run with several messages specifying weight
         # operation = model.run_deferred([{"text": message1, "weight": 5}, message2])
         # TODO: Think about support of message weights
 
-        result: Any = None
+        result: Optional[ImageGenerationModelResult] = None
         resultStatus: ModelResultStatus = ModelResultStatus.UNKNOWN
 
         try:
-            operation = self._ycModel.run_deferred([message.toDict("text", skipRole=True) for message in messages])
-            result = operation.wait()
+            operation: AsyncOperation[ImageGenerationModelResult] = await self._ycModel.run_deferred(
+                [message.toDict("text", skipRole=True) for message in messages]
+            )
+            result = await operation.wait()
+            if not isinstance(result, ImageGenerationModelResult):
+                raise RuntimeError(f"result is not ImageGenerationModelResult, but a {type(result).__name__}")
             resultStatus = ModelResultStatus.FINAL
         except Exception as e:
             resultStatus = ModelResultStatus.ERROR
@@ -155,6 +169,7 @@ class YcSdkModel(AbstractModel):
                 logger.exception(e)
 
             return ModelRunResult(result, resultStatus, resultText=errorMsg, error=e)
+
         logger.debug(f"Image generation Result: {result}")
         return ModelRunResult(
             result,
@@ -188,9 +203,12 @@ class YcSdkProvider(AbstractLLMProvider):
             if not folder_id:
                 raise ValueError("folder_id is required for YC SDK provider, dood!")
 
+            if not yc_profile:
+                raise ValueError("yc_profile is required for YC SDK provider, dood!")
+
             logger.debug(f"Initializing YC SDK provider with folder_id: {folder_id} and yc_profile: {yc_profile}, dood")
             # TODO: Add ability to configure somehow else
-            self._ycMlSDK = YCloudML(folder_id=folder_id, auth=YandexCloudCLIAuth(), yc_profile=yc_profile)
+            self._ycMlSDK = AsyncYCloudML(folder_id=folder_id, auth=YandexCloudCLIAuth(), yc_profile=yc_profile)
 
             logger.info("YC SDK provider initialized, dood!")
 
