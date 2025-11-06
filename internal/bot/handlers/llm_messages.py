@@ -191,7 +191,7 @@ class LLMMessageHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=f"Error while sending LLM request: {type(e).__name__}",
                 messageCategory=MessageCategory.BOT_ERROR,
-                stopper=stopper,
+                typingManager=stopper,
             )
             return False
 
@@ -266,7 +266,7 @@ class LLMMessageHandler(BaseBotHandler):
                         photoCaption=lmRetText,
                         mediaPrompt=imagePrompt,
                         addMessagePrefix=imgAddPrefix,
-                        stopper=stopper,
+                        typingManager=stopper,
                     )
                     is not None
                 )
@@ -280,7 +280,7 @@ class LLMMessageHandler(BaseBotHandler):
                 messageText=lmRetText,
                 addMessagePrefix=addPrefix,
                 tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON,
-                stopper=stopper,
+                typingManager=stopper,
             )
             is not None
         )
