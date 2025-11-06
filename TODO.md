@@ -1,4 +1,6 @@
 # Our TODO list
+- [ ] By default, use free openrouter models
+- [ ] Add (if not) https://openrouter.ai/deepseek/deepseek-chat-v3.1:free and https://openrouter.ai/google/gemma-3-27b-it:free
 - [ ] Drop\comment private-defaults and chat-defaults from default config
 - [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [ ] use `httpx` instead of `request` in [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py) + add redirection handling + headers 
