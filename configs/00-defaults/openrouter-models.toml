@@ -1,15 +1,17 @@
 # https://openrouter.ai/models
-[models.models."openrouter/claude-sonnet-4"]
+[models.models."openrouter/claude-haiku-4.5"]
+# https://openrouter.ai/anthropic/claude-haiku-4.5
 provider = "openrouter"
-model_id = "anthropic/claude-sonnet-4"
+model_id = "anthropic/claude-haiku-4.5"
 model_version = "latest"
 temparature = 0.3
-context = 256000
+context = 200000
 support_tools = true
 support_text = true
 support_images = false
 
 [models.models."openrouter/deepseek-chat-v3.1"]
+# https://openrouter.ai/deepseek/deepseek-chat-v3.1
 provider = "openrouter"
 model_id = "deepseek/deepseek-chat-v3.1"
 model_version = "latest"
@@ -20,6 +22,7 @@ support_text = true
 support_images = false
 
 [models.models."openrouter/qwen-turbo"]
+# https://openrouter.ai/qwen/qwen-turbo
 provider = "openrouter"
 model_id = "qwen/qwen-turbo"
 model_version = "latest"
@@ -30,6 +33,7 @@ support_text = true
 support_images = false
 
 [models.models."openrouter/gemini-2.5-flash-image"]
+# https://openrouter.ai/google/gemini-2.5-flash-image
 provider = "openrouter"
 model_id = "google/gemini-2.5-flash-image"
 model_version = "latest"
