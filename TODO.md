@@ -1,4 +1,6 @@
 # Our TODO list
+- [ ] Think about channels support
+- [ ] Fix found tool-calling bugs
 - [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [ ] use `httpx` instead of `request` in [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py) + add redirection handling + headers 
 - [ ] Add some cache into [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py)
