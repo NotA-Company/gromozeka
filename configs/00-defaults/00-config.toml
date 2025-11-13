@@ -76,7 +76,7 @@ default-language = "ru"
 ratelimiter-queue = "geocode-maps"
 
 [geocode-maps]
-# Geocoder client for https://geocode.maps.co/
+# Geocode Maps API api-key from https://geocode.maps.co/
 # If enabled, will be used for geocoding instead of OpenWeatherMap one
 enabled = false
 # Geocoding API key from https://geocode.maps.co/
