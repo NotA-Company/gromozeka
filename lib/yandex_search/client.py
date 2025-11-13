@@ -139,7 +139,7 @@ class YandexSearchClient:
         cache: Optional[SearchCacheInterface] = None,
         cacheTTL: Optional[int] = 3600,
         useCache: bool = True,
-        rateLimiterQueue: str = "yandex_search",
+        rateLimiterQueue: str = "yandex-search",
     ):
         """Initialize Yandex Search client with authentication and configuration.
 

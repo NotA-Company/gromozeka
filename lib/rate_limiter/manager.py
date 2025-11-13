@@ -122,16 +122,15 @@ class RateLimiterManager:
             await limiter.initialize()
             self.registerRateLimiter(limiterName, limiter)
 
-        for queueName, limiterName in config.get("queues", {}).items():
-            self.bindQueue(queueName, limiterName)
-
         if "default" not in self.listRateLimiters():
             defaultLimiter = SlidingWindowRateLimiter(maxRequests=10, windowSeconds=60)
             await defaultLimiter.initialize()
             self.registerRateLimiter("default", defaultLimiter)
             logger.debug("Default rate limiter not found, using SlidingWindowRateLimiter as default, dood!")
-
         self.setDefaultLimiter("default")
+
+        for queueName, limiterName in config.get("queues", {}).items():
+            self.bindQueue(queueName, limiterName)
 
         logger.debug("Loaded rate limiter configuration, dood!")
 
