@@ -146,7 +146,7 @@ class ConfigManager:
     def getRateLimiterConfig(self) -> RateLimiterManagerConfig:
         """Get ratelimiter-specific configuration."""
         return self.get("ratelimiter", {})
-    
+
     def getGeocodeMapsConfig(self) -> Dict[str, Any]:
         """Get geocode maps configuration."""
         return self.get("geocode-maps", {})
