@@ -1,7 +1,12 @@
 """TODO"""
 
-from typing import Any, Dict, NotRequired, TypedDict
+import sys
+from typing import Any, Dict, NotRequired
 
+if sys.version_info >= (3, 14): 
+    from typing import TypedDict 
+else: 
+    from typing_extensions import TypedDict 
 
 class RateLimiterConfig(TypedDict):
     """TODO"""
