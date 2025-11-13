@@ -111,8 +111,8 @@ class TestRateLimiterManager(unittest.IsolatedAsyncioTestCase):
         # Create mock limiters
         self.mockLimiter1 = MockRateLimiter()
         self.mockLimiter2 = MockRateLimiter()
-        self.realLimiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=10))
-        self.realLimiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=60))
+        self.realLimiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=2))
+        self.realLimiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=2))
 
     async def asyncTearDown(self):
         """Clean up after tests."""
@@ -376,7 +376,7 @@ class TestRateLimiterManager(unittest.IsolatedAsyncioTestCase):
             await self.manager.applyLimit("api_calls")
 
         elapsed = asyncio.get_event_loop().time() - start_time
-        self.assertGreaterEqual(elapsed, 8.0)  # Should be delayed
+        self.assertGreaterEqual(elapsed, 2.0)  # Should be delayed
 
         # Background jobs should still work immediately
         start_time = asyncio.get_event_loop().time()
