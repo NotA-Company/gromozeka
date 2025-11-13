@@ -20,7 +20,7 @@ tasks:
       - name: do-make-check-test
         image: docker.io/library/alpine:3.22
         script:
-          - apk add --no-cache gcc libmagic make musl-dev py3-pip python3 sqlite
+          - apk add --no-cache gcc git libmagic make musl-dev py3-pip python3 sqlite
           - make venv
           - make install
           - make check
