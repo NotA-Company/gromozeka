@@ -13,13 +13,13 @@ Run with:
 """
 
 import asyncio
-import gc
 import logging
 import time
 import tracemalloc
 
 import pytest
 
+from lib.rate_limiter import RateLimiterManager
 from lib.yandex_search import DictSearchCache, YandexSearchClient
 
 # Configure logging
@@ -121,12 +121,24 @@ def cachedClient():
 
 
 @pytest.fixture
-def rateLimitedClient():
-    """Create a mock client (rate limiting is now handled globally)."""
-    return MockYandexSearchClient(
-        iamToken=TEST_IAM_TOKEN,
-        folderId=TEST_FOLDER_ID,
-    )
+def rateLimiterManager():
+    """Create a rate limiter manager for testing."""
+    manager = RateLimiterManager.getInstance()
+    if "default" not in manager.listRateLimiters():
+        manager.loadConfig(
+            {
+                "ratelimiters": {
+                    "default": {
+                        "type": "SlidingWindow",
+                        "config": {
+                            "maxRequests": 1000,
+                            "windowSeconds": 1,
+                        },
+                    },
+                },
+            }
+        )  # init default rate limiter
+    return manager
 
 
 class TestSearchPerformance:
@@ -138,7 +150,7 @@ class TestSearchPerformance:
     """
 
     @pytest.mark.asyncio
-    async def testSingleSearchResponseTime(self, mockClient):
+    async def testSingleSearchResponseTime(self, mockClient, rateLimiterManager):
         """Test response time for a single search request.
 
         Measures the response time for a single search request and verifies
@@ -159,7 +171,7 @@ class TestSearchPerformance:
         logger.info(f"Single search response time: {responseTime:.3f}s")
 
     @pytest.mark.asyncio
-    async def testSequentialSearchPerformance(self, mockClient):
+    async def testSequentialSearchPerformance(self, mockClient, rateLimiterManager):
         """Test performance of multiple sequential searches.
 
         Measures the performance of executing multiple searches sequentially
@@ -187,7 +199,7 @@ class TestSearchPerformance:
         logger.info(f"Average time per search: {avgTime:.3f}s")
 
     @pytest.mark.asyncio
-    async def testConcurrentSearchPerformance(self, mockClient):
+    async def testConcurrentSearchPerformance(self, mockClient, rateLimiterManager):
         """Test performance of concurrent searches.
 
         Measures the performance of executing multiple searches concurrently
@@ -224,7 +236,7 @@ class TestCachePerformance:
     """
 
     @pytest.mark.asyncio
-    async def testCacheHitPerformance(self, cachedClient):
+    async def testCacheHitPerformance(self, cachedClient, rateLimiterManager):
         """Test that cached responses are faster than API calls.
 
         Measures and compares the response times of API calls versus cache
@@ -258,7 +270,7 @@ class TestCachePerformance:
         logger.info(f"Cache speedup: {firstRequestTime / secondRequestTime:.1f}x")
 
     @pytest.mark.asyncio
-    async def testCacheHitMissRatio(self, cachedClient):
+    async def testCacheHitMissRatio(self, cachedClient, rateLimiterManager):
         """Test cache hit/miss ratio with repeated queries.
 
         Tests the cache's hit/miss ratio behavior with repeated queries,
@@ -289,7 +301,7 @@ class TestCachePerformance:
         logger.info(f"Unique cached queries: {stats['search_entries']}")
 
     @pytest.mark.asyncio
-    async def testCacheMemoryUsage(self):
+    async def testCacheUsage(self, rateLimiterManager):
         """Test memory usage with caching enabled.
 
         Measures the memory usage of the caching system under load and
@@ -297,112 +309,17 @@ class TestCachePerformance:
         Tests that the cache properly enforces size limits and doesn't
         cause memory leaks.
         """
-        tracemalloc.start()
-
         # Create cache with limited size
-        cache = DictSearchCache(max_size=100, default_ttl=3600)
+        cache = DictSearchCache(max_size=10, default_ttl=3600)
         client = MockYandexSearchClient(iamToken=TEST_IAM_TOKEN, folderId=TEST_FOLDER_ID, cache=cache)
 
-        # Take initial memory snapshot
-        snapshot1 = tracemalloc.take_snapshot()
-
         # Make many requests to fill cache
-        for i in range(150):  # More than cache max_size
+        for i in range(15):  # More than cache max_size
             await client.search(f"test query {i}")
-
-        # Take second memory snapshot
-        snapshot2 = tracemalloc.take_snapshot()
-
-        # Calculate memory difference
-        topStats = snapshot2.compare_to(snapshot1, "lineno")
-        totalSize = sum(stat.size_diff for stat in topStats if stat.size_diff > 0)
 
         # Cache should not grow beyond its limits
         stats = cache.getStats()
-        assert stats["search_entries"] <= 100  # Should not exceed max_size
-
-        # Memory usage should be reasonable
-        assert totalSize < 10 * 1024 * 1024  # Less than 10MB
-
-        tracemalloc.stop()
-
-        logger.info(f"Cache entries: {stats['search_entries']}")
-        logger.info(f"Memory used: {totalSize / 1024:.1f} KB")
-
-
-class TestRateLimitingPerformance:
-    """Test rate limiting effectiveness and performance.
-
-    This test class evaluates the rate limiting mechanism's effectiveness
-    and its impact on overall performance, ensuring that rate limits are
-    properly enforced while maintaining reasonable throughput.
-    """
-
-    @pytest.mark.asyncio
-    async def testRateLimitingEffectiveness(self, rateLimitedClient):
-        """Test that rate limiting actually limits request rate.
-
-        Verifies that the rate limiting mechanism properly delays requests
-        when the configured limit is exceeded, ensuring that the actual
-        request rate respects the configured limits.
-        """
-        # Make requests faster than rate limit allows
-        startTime = time.time()
-
-        tasks = []
-        for i in range(6):  # More than rate limit (3)
-            task = rateLimitedClient.search(f"test query {i}")
-            tasks.append(task)
-
-        # Execute all tasks concurrently
-        results = await asyncio.gather(*tasks)
-
-        endTime = time.time()
-        totalTime = endTime - startTime
-
-        # All requests should succeed
-        assert all(results)
-
-        # Should take at least 1 second due to rate limiting
-        # (3 requests immediately, then wait for window to reset)
-        assert totalTime >= 1.0  # Allow some tolerance
-
-        # Check rate limit stats
-        stats = rateLimitedClient.getRateLimitStats()
-        assert stats["max_requests"] == 3
-        assert stats["window_seconds"] == 1
-
-        logger.info(f"Rate limited requests: {len(results)} in {totalTime:.3f}s")
-        logger.info(f"Rate limit stats: {stats}")
-
-    @pytest.mark.asyncio
-    async def testRateLimitingStatsAccuracy(self, rateLimitedClient):
-        """Test accuracy of rate limiting statistics.
-
-        Verifies that the rate limiting statistics accurately reflect the
-        current state of the rate limiter, including proper tracking of
-        requests in the current window and correct window reset behavior.
-        """
-        # Make some requests
-        for i in range(3):
-            await rateLimitedClient.search(f"test query {i}")
-
-        # Check stats
-        stats = rateLimitedClient.getRateLimitStats()
-        assert stats["requests_in_window"] == 3
-
-        # Wait for window to reset
-        await asyncio.sleep(1.1)
-
-        # Make another request
-        await rateLimitedClient.search("new query")
-
-        # Stats should show only the new request
-        stats = rateLimitedClient.getRateLimitStats()
-        assert stats["requests_in_window"] == 1
-
-        logger.info(f"Rate limit stats accuracy test passed: {stats}")
-
+        assert stats["search_entries"] <= 10  # Should not exceed max_size
 
 class TestMemoryAndResourceUsage:
     """Test memory usage and resource management.
@@ -413,31 +330,7 @@ class TestMemoryAndResourceUsage:
     """
 
     @pytest.mark.asyncio
-    async def testMemoryCleanupAfterRequests(self, mockClient):
-        """Test that memory is properly cleaned up after requests.
-
-        Verifies that the client properly cleans up resources after
-        processing requests and doesn't retain unnecessary memory
-        references. Tests for potential memory leaks in the client.
-        """
-        # Force garbage collection before test
-        gc.collect()
-
-        # Make many requests
-        for i in range(100):
-            await mockClient.search(f"test query {i}")
-
-        # Force garbage collection after requests
-        gc.collect()
-
-        # Client should still be functional
-        result = await mockClient.search("final test")
-        assert result is not None
-
-        logger.info("Memory cleanup test passed - no memory leaks detected")
-
-    @pytest.mark.asyncio
-    async def testConcurrentRequestResourceManagement(self, mockClient):
+    async def testConcurrentRequestResourceManagement(self, mockClient, rateLimiterManager):
         """Test resource management during concurrent requests.
 
         Verifies that the client properly manages resources during

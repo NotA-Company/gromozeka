@@ -126,7 +126,9 @@ class RateLimiterManager:
 
         if "default" not in self.listRateLimiters():
             # raise ValueError("Default rate limiter not found")
-            self.registerRateLimiter("default", SlidingWindowRateLimiter(maxRequests=10, windowSeconds=60))
+            defaultLimiter = SlidingWindowRateLimiter(maxRequests=10, windowSeconds=60)
+            # TODO: Somehow call `await defaultLimiter.initialize()`
+            self.registerRateLimiter("default", defaultLimiter)
             logger.debug("Default rate limiter not found, using SlidingWindowRateLimiter as default, dood!")
 
         self.setDefaultLimiter("default")
