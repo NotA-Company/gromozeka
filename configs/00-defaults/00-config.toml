@@ -87,6 +87,8 @@ request-timeout = 30
 ratelimiter-queue = "geocode-maps"
 
 
+ratelimiter-queue = "openweathermap"
+
 [yandex-search]
 enabled = false
 # Yandex Cloud credentials for Search API
