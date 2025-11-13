@@ -30,8 +30,8 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
     async def testCompleteWorkflow(self):
         """Test complete workflow: setup, bind queues, use them."""
         # Create different rate limiters for different purposes
-        api_limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=5, windowSeconds=2))
-        db_limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=10, windowSeconds=2))
+        api_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=2))
+        db_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=2))
 
         # Initialize limiters
         await api_limiter.initialize()
@@ -90,8 +90,8 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
     async def testDifferentRateLimitsForDifferentQueues(self):
         """Test different rate limits for different queues."""
         # Create limiters with different configurations
-        strict_limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=2, windowSeconds=1))
-        lenient_limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=10, windowSeconds=1))
+        strict_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=2, windowSeconds=1))
+        lenient_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=1))
 
         await strict_limiter.initialize()
         await lenient_limiter.initialize()
@@ -127,9 +127,9 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
     async def testConcurrentUsageAcrossMultipleQueues(self):
         """Test concurrent usage across multiple queues."""
         # Create multiple limiters
-        limiter1 = SlidingWindowRateLimiter(QueueConfig(maxRequests=3, windowSeconds=2))
-        limiter2 = SlidingWindowRateLimiter(QueueConfig(maxRequests=3, windowSeconds=2))
-        limiter3 = SlidingWindowRateLimiter(QueueConfig(maxRequests=3, windowSeconds=2))
+        limiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=2))
+        limiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=2))
+        limiter3 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=2))
 
         await limiter1.initialize()
         await limiter2.initialize()
@@ -171,8 +171,8 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def testStatisticsTrackingAcrossMultipleLimiters(self):
         """Test statistics tracking across multiple limiters."""
-        limiter1 = SlidingWindowRateLimiter(QueueConfig(maxRequests=5, windowSeconds=10))
-        limiter2 = SlidingWindowRateLimiter(QueueConfig(maxRequests=10, windowSeconds=10))
+        limiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=10))
+        limiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=10))
 
         await limiter1.initialize()
         await limiter2.initialize()
@@ -210,8 +210,8 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
     async def testCleanupAndReinitialization(self):
         """Test cleanup and reinitialization of the entire system."""
         # Create and setup limiters
-        limiter1 = SlidingWindowRateLimiter(QueueConfig(maxRequests=3, windowSeconds=1))
-        limiter2 = SlidingWindowRateLimiter(QueueConfig(maxRequests=3, windowSeconds=1))
+        limiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=1))
+        limiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=1))
 
         await limiter1.initialize()
         await limiter2.initialize()
@@ -239,7 +239,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.manager.getDefaultLimiter())
 
         # Reinitialize with new limiters
-        new_limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=5, windowSeconds=2))
+        new_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=2))
         await new_limiter.initialize()
 
         self.manager.registerRateLimiter("new_service", new_limiter)
@@ -257,8 +257,8 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
     async def testRealWorldScenarioYandexSearchClient(self):
         """Test real-world scenario similar to YandexSearchClient usage."""
         # Simulate YandexSearchClient rate limiting setup
-        search_limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=20, windowSeconds=60))
-        cache_limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=100, windowSeconds=60))
+        search_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=20, windowSeconds=60))
+        cache_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=100, windowSeconds=60))
 
         await search_limiter.initialize()
         await cache_limiter.initialize()
@@ -309,7 +309,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
         # Create multiple limiters
         limiters = []
         for i in range(5):
-            limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=5, windowSeconds=2))
+            limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=2))
             await limiter.initialize()
             limiters.append(limiter)
             self.manager.registerRateLimiter(f"service_{i}", limiter)
@@ -353,7 +353,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
     async def testDynamicQueueAndLimiterManagement(self):
         """Test dynamic addition and removal of queues and limiters."""
         # Start with one limiter
-        limiter1 = SlidingWindowRateLimiter(QueueConfig(maxRequests=3, windowSeconds=2))
+        limiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=2))
         await limiter1.initialize()
 
         self.manager.registerRateLimiter("initial", limiter1)
@@ -365,7 +365,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["requestsInWindow"], 1)
 
         # Add new limiter dynamically
-        limiter2 = SlidingWindowRateLimiter(QueueConfig(maxRequests=5, windowSeconds=2))
+        limiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=2))
         await limiter2.initialize()
 
         self.manager.registerRateLimiter("added", limiter2)
@@ -389,7 +389,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def testErrorRecoveryScenario(self):
         """Test error recovery and system resilience."""
-        limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=3, windowSeconds=1))
+        limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=1))
         await limiter.initialize()
 
         self.manager.registerRateLimiter("resilient", limiter)
@@ -415,7 +415,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def testPerformanceWithManyOperations(self):
         """Test performance with many rate limiting operations."""
-        limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=100, windowSeconds=5))
+        limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=100, windowSeconds=5))
         await limiter.initialize()
 
         self.manager.registerRateLimiter("performance", limiter)
@@ -456,9 +456,9 @@ class TestRateLimiterRealWorldScenarios(unittest.IsolatedAsyncioTestCase):
         """Test rate limiting for web API scenarios."""
 
         # Simulate different API endpoints with different limits
-        public_api = SlidingWindowRateLimiter(QueueConfig(maxRequests=10, windowSeconds=60))
-        premium_api = SlidingWindowRateLimiter(QueueConfig(maxRequests=100, windowSeconds=60))
-        internal_api = SlidingWindowRateLimiter(QueueConfig(maxRequests=1000, windowSeconds=60))
+        public_api = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=60))
+        premium_api = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=100, windowSeconds=60))
+        internal_api = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1000, windowSeconds=60))
 
         await public_api.initialize()
         await premium_api.initialize()
@@ -508,8 +508,8 @@ class TestRateLimiterRealWorldScenarios(unittest.IsolatedAsyncioTestCase):
         """Test rate limiting for database connection pooling."""
 
         # Simulate database connection limits
-        read_connections = SlidingWindowRateLimiter(QueueConfig(maxRequests=50, windowSeconds=1))
-        write_connections = SlidingWindowRateLimiter(QueueConfig(maxRequests=10, windowSeconds=1))
+        read_connections = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=50, windowSeconds=1))
+        write_connections = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=1))
 
         await read_connections.initialize()
         await write_connections.initialize()
