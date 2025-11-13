@@ -257,8 +257,8 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
     async def testRealWorldScenarioYandexSearchClient(self):
         """Test real-world scenario similar to YandexSearchClient usage."""
         # Simulate YandexSearchClient rate limiting setup
-        search_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=20, windowSeconds=60))
-        cache_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=100, windowSeconds=60))
+        search_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=20, windowSeconds=2))
+        cache_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=100, windowSeconds=2))
 
         await search_limiter.initialize()
         await cache_limiter.initialize()
@@ -283,7 +283,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
                 await self.manager.applyLimit("search_requests")
 
             search_elapsed = time.time() - start_time
-            self.assertGreaterEqual(search_elapsed, 30.0)  # Should be significantly delayed
+            self.assertGreaterEqual(search_elapsed, 2.0)  # Should be delayed
 
             # Cache operations should still be fast
             start_time = time.time()
@@ -456,7 +456,7 @@ class TestRateLimiterRealWorldScenarios(unittest.IsolatedAsyncioTestCase):
         """Test rate limiting for web API scenarios."""
 
         # Simulate different API endpoints with different limits
-        public_api = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=60))
+        public_api = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=2))
         premium_api = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=100, windowSeconds=60))
         internal_api = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1000, windowSeconds=60))
 

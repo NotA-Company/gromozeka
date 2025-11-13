@@ -24,7 +24,8 @@ async def test_dict_cache():
     print("Testing DictWeatherCache implementation...")
 
     # Initialize cache with 2 second TTL for testing
-    cache = DictWeatherCache(default_ttl=2)
+    cacheTTL = 1
+    cache = DictWeatherCache(default_ttl=cacheTTL)
 
     # Test data
     test_geocoding: GeocodingResult = {
@@ -135,10 +136,10 @@ async def test_dict_cache():
 
     # Test TTL expiration
     print("\n3. Testing TTL expiration...")
-    print("Waiting 3 seconds for TTL expiration...")
+    print(f"Waiting {cacheTTL} seconds for TTL expiration...")
     import asyncio
 
-    await asyncio.sleep(3)
+    await asyncio.sleep(cacheTTL)
 
     # Data should be expired now
     result = await cache.getGeocoging("Moscow,RU")
