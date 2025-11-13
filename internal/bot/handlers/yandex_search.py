@@ -108,8 +108,7 @@ class YandexSearchHandler(BaseBotHandler):
             cache=YandexSearchCache(database),
             cacheTTL=int(ysConfig.get("cache-ttl", 30)),
             useCache=True,
-            rateLimitRequests=int(ysConfig.get("rate-limit-requests", 10)),
-            rateLimitWindow=int(ysConfig.get("rate-limit-window", 60)),
+            rateLimiterQueue=ysConfig.get("ratelimiter-queue", "yandex-search"),
         )
         self.yandexSearchDefaults = ysConfig.get("defaults", {})
         ys_xml.DEBUG_PRINT_FULL = bool(ysConfig.get("dump-full-xml", False))

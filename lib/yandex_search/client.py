@@ -39,13 +39,13 @@ Example:
                     print(f"URL: {doc['url']}")
 """
 
-import asyncio
 import json
 import logging
-import time
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 import httpx
+
+from lib.rate_limiter import RateLimiterManager
 
 from .cache_interface import SearchCacheInterface
 from .models import (
@@ -103,8 +103,6 @@ class YandexSearchClient:
                 apiKey="your_api_key",
                 folderId="your_folder_id",
                 cache=cache,
-                rateLimitRequests=20,
-                rateLimitWindow=60
             )
 
             # Advanced search with custom parameters
@@ -116,6 +114,18 @@ class YandexSearchClient:
                 groupsOnPage=5
             )
     """
+
+    __slots__ = (
+        "iamToken",
+        "apiKey",
+        "folderId",
+        "requestTimeout",
+        "cache",
+        "cacheTTL",
+        "useCache",
+        "rateLimiterQueue",
+        "_rateLimiter",
+    )
 
     API_ENDPOINT = "https://searchapi.api.cloud.yandex.net/v2/web/search"
 
@@ -129,8 +139,7 @@ class YandexSearchClient:
         cache: Optional[SearchCacheInterface] = None,
         cacheTTL: Optional[int] = 3600,
         useCache: bool = True,
-        rateLimitRequests: int = 10,
-        rateLimitWindow: int = 60,
+        rateLimiterQueue: str = "yandex-search",
     ):
         """Initialize Yandex Search client with authentication and configuration.
 
@@ -152,17 +161,12 @@ class YandexSearchClient:
                 Can be overridden per request. Ignored if cache is None.
             useCache (bool): Enable/disable caching for all requests by default.
                 Can be overridden per request. Ignored if cache is None.
-            rateLimitRequests (int): Maximum requests allowed within rate limit window
-                (default: 10 requests). Must be positive integer.
-            rateLimitWindow (int): Rate limit time window in seconds (default: 60 seconds).
-                Uses sliding window algorithm. Must be positive integer.
-
+            rateLimiterQueue (str): Name of the rate limiter queue to use. Defaults to "yandex_search".
         Raises:
             ValueError: If neither iamToken nor apiKey is provided, or if folderId is empty.
-            ValueError: If rateLimitRequests or rateLimitWindow are not positive.
 
         Example:
-            Production-ready client with caching and rate limiting::
+            Production-ready client with caching::
 
                 from lib.yandex_search import DictSearchCache
 
@@ -170,9 +174,7 @@ class YandexSearchClient:
                 client = YandexSearchClient(
                     iamToken="your_iam_token",
                     folderId="your_folder_id",
-                    cache=cache,
-                    rateLimitRequests=20,
-                    rateLimitWindow=60
+                    cache=cache
                 )
 
             Simple client for testing::
@@ -195,14 +197,8 @@ class YandexSearchClient:
         self.cache = cache
         self.cacheTTL = cacheTTL
         self.useCache = useCache
-
-        # Rate limiting
-        self.rateLimitRequests = rateLimitRequests
-        self.rateLimitWindow = rateLimitWindow
-        self._requestTimes: List[float] = []
-        self._rateLimitLock = asyncio.Lock()
-
-        # No persistent session - create new session for each request
+        self.rateLimiterQueue = rateLimiterQueue
+        self._rateLimiter = RateLimiterManager.getInstance()
 
     async def search(
         self,
@@ -359,7 +355,7 @@ class YandexSearchClient:
                 logger.debug(f"Cache miss for query: {queryText}")
 
         # Apply rate limiting
-        await self._applyRateLimit()
+        await self._rateLimiter.applyLimit(self.rateLimiterQueue)
 
         # Make API request
         result = await self._makeRequest(request)
@@ -459,103 +455,3 @@ class YandexSearchClient:
         except Exception as e:
             logger.error(f"Unexpected error during API request: {e}")
             return None
-
-    async def _applyRateLimit(self) -> None:
-        """Apply rate limiting using sliding window algorithm to prevent API abuse.
-
-        This method implements a sophisticated sliding window rate limiter that
-        tracks request timestamps and ensures the request count doesn't exceed the
-        configured limit within the specified time window. When the limit is reached,
-        the method automatically sleeps until the oldest request falls outside
-        the window.
-
-        Algorithm Implementation:
-            1. Remove request timestamps outside the current time window
-            2. Check if remaining requests exceed the configured limit
-            3. If limit exceeded, calculate required wait time and sleep
-            4. Clean up old requests after waiting period
-            5. Add current request timestamp to tracking list
-
-        Thread Safety:
-            This method is thread-safe due to asyncio.Lock() usage, ensuring
-            atomic operations on the request tracking list in concurrent environments.
-
-        Note:
-            Rate limiting is applied per client instance. For global rate limiting
-            across multiple processes or servers, consider implementing an external
-            distributed rate limiter (e.g., Redis-based or database-backed).
-
-        Performance Considerations:
-            - The sliding window provides smooth request distribution
-            - Memory usage scales with request rate, not total requests
-            - Lock contention is minimal due to short critical sections
-        """
-        async with self._rateLimitLock:
-            currentTime = time.time()
-
-            # Remove old request times outside the window
-            self._requestTimes = [
-                reqTime for reqTime in self._requestTimes if currentTime - reqTime < self.rateLimitWindow
-            ]
-
-            # Check if we've exceeded the rate limit
-            if len(self._requestTimes) >= self.rateLimitRequests:
-                # Calculate how long to wait
-                oldestRequest = min(self._requestTimes)
-                waitTime = self.rateLimitWindow - (currentTime - oldestRequest)
-
-                if waitTime > 0:
-                    logger.debug(f"Rate limit reached, waiting {waitTime:.2f} seconds")
-                    await asyncio.sleep(waitTime)
-
-                    # Clean up old requests after waiting
-                    currentTime = time.time()
-                    self._requestTimes = [
-                        req_time for req_time in self._requestTimes if currentTime - req_time < self.rateLimitWindow
-                    ]
-
-            # Add current request time
-            self._requestTimes.append(currentTime)
-
-    def getRateLimitStats(self) -> Dict[str, Any]:
-        """Get current rate limiting statistics for monitoring and debugging.
-
-        This method provides real-time insights into the rate limiting status,
-        useful for monitoring API usage patterns, debugging rate limiting issues,
-        or implementing adaptive request strategies.
-
-        Returns:
-            Dict[str, Any]: Rate limiting statistics dictionary containing:
-                - requestsInWindow (int): Current requests in the active time window
-                - maxRequests (int): Maximum allowed requests per window
-                - windowSeconds (int): Time window duration in seconds
-                - resetTime (float): Unix timestamp when window will reset
-                    (oldest request time + window duration)
-
-        Example:
-            Monitoring rate limit usage::
-
-                stats = client.getRateLimitStats()
-                print(f"Used {stats['requestsInWindow']}/{stats['maxRequests']} requests")
-                print(f"Window resets at: {stats['resetTime']}")
-
-                # Calculate remaining requests
-                remaining = stats['maxRequests'] - stats['requestsInWindow']
-                print(f"Remaining requests: {remaining}")
-
-            Implementing adaptive delays::
-
-                stats = client.getRateLimitStats()
-                if stats['requestsInWindow'] >= stats['maxRequests'] * 0.8:
-                    # Approaching limit, add extra delay
-                    await asyncio.sleep(1.0)
-        """
-        currentTime = time.time()
-        recent_requests = [reqTime for reqTime in self._requestTimes if currentTime - reqTime < self.rateLimitWindow]
-
-        return {
-            "requests_in_window": len(recent_requests),
-            "max_requests": self.rateLimitRequests,
-            "window_seconds": self.rateLimitWindow,
-            "reset_time": max(recent_requests) + self.rateLimitWindow if recent_requests else currentTime,
-        }

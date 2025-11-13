@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 
 import tomli
 
+from lib.rate_limiter import RateLimiterManagerConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -140,6 +142,10 @@ class ConfigManager:
     def getLoggingConfig(self) -> Dict[str, Any]:
         """Get logging-specific configuration."""
         return self.get("logging", {})
+
+    def getRateLimiterConfig(self) -> RateLimiterManagerConfig:
+        """Get ratelimiter-specific configuration."""
+        return self.get("ratelimiter", {})
 
     def getModelsConfig(self) -> Dict[str, Any]:
         """Get models configuration for LLM manager, dood!"""
