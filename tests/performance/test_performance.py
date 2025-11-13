@@ -571,7 +571,6 @@ def testLargeDatabaseOperations(performanceDb):
     assert avgQueryTime < 100, f"Average query time {avgQueryTime:.2f}ms exceeds target (100ms)"
 
 
-
 # ============================================================================
 # Performance Profiling Tests
 # ============================================================================
