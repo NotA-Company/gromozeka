@@ -55,6 +55,7 @@ class OpenWeatherMapClient:
         weatherTTL: Optional[int] = 1800,  # 30 minutes
         requestTimeout: int = 10,
         defaultLanguage: str = "ru",
+        rateLimiterQueue: str = "openweathermap",
     ):
         """
         Initialize OpenWeatherMap client
@@ -67,6 +68,7 @@ class OpenWeatherMapClient:
             weatherTTL: Cache TTL for weather data (seconds)
             requestTimeout: HTTP request timeout (seconds)
             defaultLanguage: Default language for location names
+            rateLimiterQueue (str): Name of the rate limiter queue to use. Defaults to "openweathermap".
         """
         self.apiKey = apiKey
         self.weatherCache: CacheInterface[str, WeatherData] = (
@@ -79,7 +81,8 @@ class OpenWeatherMapClient:
         self.weatherTTL = weatherTTL
         self.requestTimeout = requestTimeout
         self.defaultLanguage = defaultLanguage
-        # No persistent session - create new session for each request
+        self.rateLimiterQueue = rateLimiterQueue
+        self._rateLimiter = RateLimiterManager.getInstance()
 
     async def getCoordinates(
         self, city: str, country: Optional[str] = None, state: Optional[str] = None, limit: int = 1
@@ -340,6 +343,7 @@ class OpenWeatherMapClient:
         """
         try:
             logger.debug(f"Making request to {url} with params: {params}")
+            await self._rateLimiter.applyLimit(self.rateLimiterQueue)
 
             # Create new session for each request
             async with httpx.AsyncClient(timeout=self.requestTimeout) as session:
