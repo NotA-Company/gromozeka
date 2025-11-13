@@ -103,7 +103,7 @@ class RateLimiterManager:
         """
         return cls()
 
-    def loadConfig(self, config: RateLimiterManagerConfig) -> None:
+    async def loadConfig(self, config: RateLimiterManagerConfig) -> None:
         """
         Load configuration from a dictionary.
 
@@ -119,15 +119,15 @@ class RateLimiterManager:
                 case _:
                     raise ValueError(f"Unknown rate limiter type '{limiterConfig['type']}'")
 
+            await limiter.initialize()
             self.registerRateLimiter(limiterName, limiter)
 
         for queueName, limiterName in config.get("queues", {}).items():
             self.bindQueue(queueName, limiterName)
 
         if "default" not in self.listRateLimiters():
-            # raise ValueError("Default rate limiter not found")
             defaultLimiter = SlidingWindowRateLimiter(maxRequests=10, windowSeconds=60)
-            # TODO: Somehow call `await defaultLimiter.initialize()`
+            await defaultLimiter.initialize()
             self.registerRateLimiter("default", defaultLimiter)
             logger.debug("Default rate limiter not found, using SlidingWindowRateLimiter as default, dood!")
 

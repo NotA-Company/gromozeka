@@ -124,18 +124,20 @@ def rateLimiterManager():
     """Create a rate limiter manager for testing."""
     manager = RateLimiterManager.getInstance()
     if "default" not in manager.listRateLimiters():
-        manager.loadConfig(
-            {
-                "ratelimiters": {
-                    "default": {
-                        "type": "SlidingWindow",
-                        "config": {
-                            "maxRequests": 1000,
-                            "windowSeconds": 1,
+        asyncio.run(
+            manager.loadConfig(
+                {
+                    "ratelimiters": {
+                        "default": {
+                            "type": "SlidingWindow",
+                            "config": {
+                                "maxRequests": 1000,
+                                "windowSeconds": 1,
+                            },
                         },
                     },
-                },
-            }
+                }
+            )
         )  # init default rate limiter
     return manager
 
