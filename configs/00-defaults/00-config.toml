@@ -66,6 +66,8 @@ request-timeout = 10
 # Default language for location names (ru, en, etc.)
 default-language = "ru"
 
+ratelimiter-queue = "openweathermap"
+
 [yandex-search]
 enabled = false
 # Yandex Cloud credentials for Search API
