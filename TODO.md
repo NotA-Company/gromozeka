@@ -1,4 +1,6 @@
 # Our TODO list
+- [ ] Add ability for different chats use different rate-limiters 
+- [ ] Add rate-limiters for weather and other external tools
 - [ ] Think about channels support
 - [ ] Fix found tool-calling bugs
 - [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
@@ -16,7 +18,8 @@
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
-- [ ] Add Better geocoder
+- [ ] Add Better geocoder (https://geocode.maps.co/docs/ looks good)
+- [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add Per PR tests (make lint + make test)
 - [ ] Add coverage badge?
 - [x] By default, use free openrouter models
