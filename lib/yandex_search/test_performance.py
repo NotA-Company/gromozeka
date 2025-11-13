@@ -15,7 +15,6 @@ Run with:
 import asyncio
 import logging
 import time
-import tracemalloc
 
 import pytest
 
@@ -320,6 +319,7 @@ class TestCachePerformance:
         # Cache should not grow beyond its limits
         stats = cache.getStats()
         assert stats["search_entries"] <= 10  # Should not exceed max_size
+
 
 class TestMemoryAndResourceUsage:
     """Test memory usage and resource management.
