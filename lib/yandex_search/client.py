@@ -354,9 +354,6 @@ class YandexSearchClient:
             else:
                 logger.debug(f"Cache miss for query: {queryText}")
 
-        # Apply rate limiting
-        await self._rateLimiter.applyLimit(self.rateLimiterQueue)
-
         # Make API request
         result = await self._makeRequest(request)
 
@@ -392,6 +389,8 @@ class YandexSearchClient:
         """
         try:
             logger.debug(f"Making search request: {request}")
+            # Apply rate limiting
+            await self._rateLimiter.applyLimit(self.rateLimiterQueue)
 
             # Prepare headers
             headers = {
