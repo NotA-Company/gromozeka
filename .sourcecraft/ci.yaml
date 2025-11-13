@@ -12,21 +12,13 @@ workflows:
 tasks:
   - name: do-make-test
     cubes: 
-      - name: prepare-environvent
+      - name: do-make-check-test
         image: docker.io/library/alpine:3.22
         script:
           - apk add --no-cache gcc libmagic make musl-dev py3-pip python3 sqlite
-      - name: make-venv
-        script:
           - make venv
-      - name: install-deps
-        script:
           - make install
-      - name: run-linter
-        script:
           - make check
-      - name: run-tests
-        script:
           - make test 
 
     
