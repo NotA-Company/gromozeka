@@ -97,6 +97,7 @@ class WeatherHandler(BaseBotHandler):
             weatherTTL=openWeatherMapConfig.get("weather-cache-ttl", None),
             requestTimeout=openWeatherMapConfig.get("request-timeout", 10),
             defaultLanguage=openWeatherMapConfig.get("default-language", "ru"),
+            rateLimiterQueue=openWeatherMapConfig.get("ratelimiter-queue", "openweathermap"),
         )
 
         self.llmService = LLMService.getInstance()

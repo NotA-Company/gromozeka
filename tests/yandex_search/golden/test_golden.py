@@ -9,37 +9,10 @@ import pytest
 from lib.aurumentation import baseGoldenDataProvider
 from lib.aurumentation.provider import GoldenDataProvider
 from lib.aurumentation.replayer import GoldenDataReplayer
-from lib.rate_limiter import RateLimiterManager, SlidingWindowRateLimiter
 from lib.yandex_search.client import YandexSearchClient
+from tests.lib_ratelimiter import initRateLimiter
 
 from . import GOLDEN_DATA_PATH
-
-
-@pytest.fixture
-async def rateLimiterManager():
-    """Set up rate limiter manager for tests."""
-    manager = RateLimiterManager()
-
-    # Register a test rate limiter with unique name
-    import uuid
-
-    from lib.rate_limiter.sliding_window import QueueConfig
-
-    unique_id = str(uuid.uuid4())[:8]
-    limiter_name = f"test_limiter_{unique_id}"
-
-    config = QueueConfig(maxRequests=100, windowSeconds=60)
-    limiter = SlidingWindowRateLimiter(config=config)
-    await limiter.initialize()
-    manager.registerRateLimiter(limiter_name, limiter)
-
-    # Bind the yandex_search queue to the test limiter
-    manager.bindQueue("yandex_search", limiter_name)
-
-    yield manager
-
-    # Cleanup
-    await manager.destroy()
 
 
 @pytest.fixture(scope="session")
@@ -67,9 +40,10 @@ async def testYandexSearchClientInitialization():
         'python programming & "machine learning"',
     ],
 )
-async def testSearchWithGoldenData(yandexSearchGoldenDataProvider, rateLimiterManager, query):
+async def testSearchWithGoldenData(yandexSearchGoldenDataProvider, query):
     """Test searching with different queries using golden data."""
     # Get the scenario with all golden data
+    await initRateLimiter()
     scenario = yandexSearchGoldenDataProvider.getScenario(None)
 
     # Use GoldenDataReplayer as context manager to patch httpx globally

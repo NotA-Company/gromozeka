@@ -23,6 +23,7 @@ config = {
 
 [ratelimiter.queues]
 yandex-search = "default"
+openweathermap = "default"
 
 [models.json-logging]
 # Log LLM request:responce into JSON format for debugging purposes
@@ -64,6 +65,8 @@ request-timeout = 10
 
 # Default language for location names (ru, en, etc.)
 default-language = "ru"
+
+ratelimiter-queue = "openweathermap"
 
 [yandex-search]
 enabled = false
