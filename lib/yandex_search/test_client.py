@@ -642,7 +642,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         await client.search("rate limit test")
 
         # Verify that the rate limiter manager was called with the correct queue
-        mockManager.applyLimit.assert_called_once_with("yandex_search")
+        mockManager.applyLimit.assert_called_once_with("yandex-search")
 
     def testCacheKeyGeneration(self):
         """Test cache key generation in cache.
