@@ -770,6 +770,14 @@ class SpamHandler(BaseBotHandler):
                             # It's spam, no further processing needed
                             return HandlerResultStatus.FINAL
 
+                    # We can't add cyrilic sumbols as command handler, so doing it manually
+                    spamCommands = ["/спам"]
+                    rawMessage = ensuredMessage.getRawMessageText()
+                    for spamCommand in spamCommands:
+                        if rawMessage and rawMessage[0] == "/" and rawMessage.lower().strip().startswith(spamCommand):
+                            await self.spam_command(update, context)
+                            return HandlerResultStatus.FINAL
+
                     return HandlerResultStatus.NEXT
                 except Exception as e:
                     logger.error(f"Error while checking spam: {e}")
@@ -946,7 +954,7 @@ class SpamHandler(BaseBotHandler):
     @commandHandlerExtended(
         commands=("spam",),
         shortDescription="Mark answered message as spam",
-        helpMessage=": Указать боту на сообщение со спамом (должно быть ответом на спам-сообщение).",
+        helpMessage="|`/спам`: Указать боту на сообщение со спамом (должно быть ответом на спам-сообщение).",
         suggestCategories={CommandPermission.ADMIN},
         availableFor={CommandPermission.GROUP},
         helpOrder=CommandHandlerOrder.SPAM,
