@@ -21,8 +21,17 @@ config = {
     "maxRequests": 5
 }
 
+[ratelimiter.ratelimiters.one-per-second]
+type = "SlidingWindow"
+config = {
+    "windowSeconds": 1,
+    "maxRequests": 1
+}
+
 [ratelimiter.queues]
 yandex-search = "default"
+openweathermap = "default"
+geocode-maps = "one-per-second" # Free Tier has a limit of 1-5 requests per second
 
 [models.json-logging]
 # Log LLM request:responce into JSON format for debugging purposes
@@ -64,6 +73,19 @@ request-timeout = 10
 
 # Default language for location names (ru, en, etc.)
 default-language = "ru"
+ratelimiter-queue = "geocode-maps"
+
+[geocode-maps]
+# Geocoder client for https://geocode.maps.co/
+# If enabled, will be used for geocoding instead of OpenWeatherMap one
+enabled = false
+# Geocoding API key from https://geocode.maps.co/
+api-key = "YOUR_GEOCODING_API_KEY"
+
+cache-ttl = 86400  # 60 * 60 * 24 = 1 day (coordinates rarely change)
+request-timeout = 30
+ratelimiter-queue = "geocode-maps"
+
 
 [yandex-search]
 enabled = false
