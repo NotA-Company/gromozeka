@@ -39,10 +39,13 @@ Example:
 from .interface import RateLimiterInterface
 from .manager import RateLimiterManager
 from .sliding_window import QueueConfig, SlidingWindowRateLimiter
+from .types import RateLimiterConfig, RateLimiterManagerConfig
 
 __all__ = [
     "RateLimiterInterface",
     "RateLimiterManager",
     "SlidingWindowRateLimiter",
     "QueueConfig",
+    "RateLimiterManagerConfig",
+    "RateLimiterConfig",
 ]

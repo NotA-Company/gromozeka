@@ -56,7 +56,7 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.config = QueueConfig(maxRequests=3, windowSeconds=2)
-        self.limiter = SlidingWindowRateLimiter(self.config)
+        self.limiter = SlidingWindowRateLimiter(config=self.config)
 
     async def asyncSetUp(self):
         """Async set up for test fixtures."""
@@ -68,7 +68,7 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
 
     async def testInitialization(self):
         """Test limiter initialization."""
-        limiter = SlidingWindowRateLimiter(self.config)
+        limiter = SlidingWindowRateLimiter(config=self.config)
         self.assertFalse(limiter._initialized)
 
         await limiter.initialize()
@@ -253,7 +253,7 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         """Test boundary conditions and edge cases."""
         # Test with very small window
         small_config = QueueConfig(maxRequests=1, windowSeconds=1)
-        small_limiter = SlidingWindowRateLimiter(small_config)
+        small_limiter = SlidingWindowRateLimiter(config=small_config)
         await small_limiter.initialize()
 
         try:
@@ -336,7 +336,7 @@ class TestSlidingWindowRateLimiterErrorHandling(unittest.IsolatedAsyncioTestCase
 
     async def asyncSetUp(self):
         """Set up test fixtures."""
-        self.limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=1, windowSeconds=1))
+        self.limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1, windowSeconds=1))
 
     async def asyncTearDown(self):
         """Clean up after tests."""
@@ -345,7 +345,7 @@ class TestSlidingWindowRateLimiterErrorHandling(unittest.IsolatedAsyncioTestCase
 
     async def testUninitializedLimiter(self):
         """Test behavior when using uninitialized limiter."""
-        limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=1, windowSeconds=1))
+        limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1, windowSeconds=1))
 
         # Should still work (initialization is mostly for logging)
         await limiter.applyLimit("test")
@@ -355,7 +355,7 @@ class TestSlidingWindowRateLimiterErrorHandling(unittest.IsolatedAsyncioTestCase
 
     async def testDestroyedLimiter(self):
         """Test behavior after limiter destruction."""
-        limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=1, windowSeconds=1))
+        limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1, windowSeconds=1))
         await limiter.initialize()
         await limiter.destroy()
 

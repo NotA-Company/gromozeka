@@ -44,24 +44,18 @@ class MockYandexSearchClient(YandexSearchClient):
     def __init__(self, **kwargs):
         """Initialize the mock client with performance test settings.
 
-        Sets up default test credentials and configures rate limiting for
-        performance testing. Prepares mock response data that matches the
-        structure of real API responses.
+        Sets up default test credentials for performance testing. Prepares mock
+        response data that matches the structure of real API responses.
 
         Args:
             **kwargs: Additional keyword arguments passed to the parent YandexSearchClient.
                      Default values are set for:
                      - iamToken: TEST_IAM_TOKEN
                      - folderId: TEST_FOLDER_ID
-                     - rateLimitRequests: 1000 (high limit for performance tests)
-                     - rateLimitWindow: 60 (60 second window)
         """
         # Set default test credentials
         kwargs.setdefault("iamToken", TEST_IAM_TOKEN)
         kwargs.setdefault("folderId", TEST_FOLDER_ID)
-        # Disable rate limiting by default for performance tests
-        kwargs.setdefault("rateLimitRequests", 1000)  # Very high limit
-        kwargs.setdefault("rateLimitWindow", 60)  # 60 second window
 
         # Initialize parent with all provided kwargs
         super().__init__(**kwargs)
@@ -128,12 +122,10 @@ def cachedClient():
 
 @pytest.fixture
 def rateLimitedClient():
-    """Create a mock client with strict rate limiting."""
+    """Create a mock client (rate limiting is now handled globally)."""
     return MockYandexSearchClient(
         iamToken=TEST_IAM_TOKEN,
         folderId=TEST_FOLDER_ID,
-        rateLimitRequests=3,
-        rateLimitWindow=1,  # 3 requests per 1 second
     )
 
 

@@ -22,6 +22,7 @@ from telegram.ext import (
 from internal.bot.models import CommandPermission
 from internal.services.queue_service.service import QueueService
 from lib.ai.manager import LLMManager
+from lib.rate_limiter import RateLimiterManager
 
 from ..config.manager import ConfigManager
 from ..database.wrapper import DatabaseWrapper
@@ -207,9 +208,17 @@ class BotApplication:
         logger.info("Application stopping, stopping Delayed Tasks Scheduler...")
         await self.queueService.beginShutdown()
         logger.info("Step 1 of shutdown is done...")
+
         if self._schedulerTask is not None:
             await self._schedulerTask
         logger.info("Step 2 of shutdown is done...")
+
+        # Destroy rate limiters
+        # TODO: should we move it into doExit handler?
+        logger.info("Destroying rate limiters...")
+        manager = RateLimiterManager.getInstance()
+        await manager.destroy()
+        logger.info("Rate limiters destroyed...")
 
     def run(self):
         """Start the bot."""

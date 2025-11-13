@@ -111,8 +111,8 @@ class TestRateLimiterManager(unittest.IsolatedAsyncioTestCase):
         # Create mock limiters
         self.mockLimiter1 = MockRateLimiter()
         self.mockLimiter2 = MockRateLimiter()
-        self.realLimiter1 = SlidingWindowRateLimiter(QueueConfig(maxRequests=5, windowSeconds=10))
-        self.realLimiter2 = SlidingWindowRateLimiter(QueueConfig(maxRequests=10, windowSeconds=60))
+        self.realLimiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=10))
+        self.realLimiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=60))
 
     async def asyncTearDown(self):
         """Clean up after tests."""
@@ -456,7 +456,7 @@ class TestRateLimiterManagerEdgeCases(unittest.IsolatedAsyncioTestCase):
         manager = RateLimiterManager.getInstance()
         await manager.destroy()  # Clean start
 
-        limiter = SlidingWindowRateLimiter(QueueConfig(maxRequests=1, windowSeconds=1))
+        limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1, windowSeconds=1))
         await limiter.initialize()
 
         manager.registerRateLimiter("test", limiter)

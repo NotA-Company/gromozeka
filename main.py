@@ -17,6 +17,7 @@ from internal.config.manager import ConfigManager
 from internal.database.manager import DatabaseManager
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
+from lib.rate_limiter import RateLimiterManager
 
 # Configure basic logging first
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -41,6 +42,10 @@ class GromozekBot:
 
         # Initialize LLM Manager
         self.llmManager = LLMManager(self.configManager.getModelsConfig())
+
+        # Initialize rate limiter manager
+        self.rateLimiterManager = RateLimiterManager.getInstance()
+        self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig())
 
         # Initialize bot application
         self.botApp = BotApplication(
