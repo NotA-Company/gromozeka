@@ -56,3 +56,4 @@ This file records architectural and implementation decisions.
 * Document all architectural decisions
 [2025-11-12 18:01:00] - Implemented complete rate limiter library with sliding window algorithm and singleton manager pattern. Created lib/rate_limiter/ package with RateLimiterInterface, SlidingWindowRateLimiter, QueueConfig, and RateLimiterManager. All code follows project conventions with camelCase naming, comprehensive docstrings, and Prinny personality logging.
 [2025-11-12 19:15:50] - Added __slots__ to YandexSearchClient class for memory optimization
+[2025-11-13 19:20:15] - Added .git to isort extend_skip configuration in pyproject.toml to ensure isort ignores the .git directory
