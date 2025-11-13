@@ -88,7 +88,8 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
 
         Args:
             config: Rate limit configuration to apply to all queues
-            TODO: Update
+            maxRequests: Maximum requests allowed within the time window
+            windowSeconds: Time window duration in seconds
         """
         if config is not None:
             self._config = config

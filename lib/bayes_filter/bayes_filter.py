@@ -197,7 +197,7 @@ class NaiveBayesFilter:
             tokenSpamProb = (pTokenSpam / (pTokenSpam + pTokenHam)) * 100
             tokenScores[token] = tokenSpamProb
 
-            # TODO: For debug purposes only
+            # Note: For debug purposes only
             maxLogP = max(logPSpam, logPHam)
             expSpam = math.exp(logPSpam - maxLogP)
             expHam = math.exp(logPHam - maxLogP)
