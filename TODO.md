@@ -20,8 +20,8 @@
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [ ] Add Better geocoder (https://geocode.maps.co/docs/ looks good)
 - [ ] think about https://download.geonames.org/export/dump/
-- [ ] Add Per PR tests (make lint + make test)
 - [ ] Add coverage badge?
+- [x] Add Per PR tests (make lint + make test)
 - [x] By default, use free openrouter models
 - [x] Add (if not) https://openrouter.ai/deepseek/deepseek-chat-v3.1:free and https://openrouter.ai/google/gemma-3-27b-it:free
 - [x] Drop\comment private-defaults and chat-defaults from default config
