@@ -22,7 +22,7 @@ config = {
 }
 
 [ratelimiter.queues]
-yandex_search = "default"
+yandex-search = "default"
 
 [models.json-logging]
 # Log LLM request:responce into JSON format for debugging purposes
