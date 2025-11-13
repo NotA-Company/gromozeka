@@ -6,6 +6,7 @@ Refactored modular version.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -45,7 +46,7 @@ class GromozekBot:
 
         # Initialize rate limiter manager
         self.rateLimiterManager = RateLimiterManager.getInstance()
-        self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig())
+        asyncio.run(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
         # Initialize bot application
         self.botApp = BotApplication(
