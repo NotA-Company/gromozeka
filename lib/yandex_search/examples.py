@@ -124,9 +124,6 @@ async def example_basic_search():
     else:
         print("No results found or error occurred")
 
-    # Clean up
-    await client._applyRateLimit()  # Just to show the method
-
 
 async def example_search_with_api_key():
     """Demonstrate search operations using API key authentication.
@@ -289,12 +286,10 @@ async def example_rate_limiting():
     """
     print("\n=== Example 5: Rate Limiting ===")
 
-    # Create client with strict rate limiting
+    # Create client (rate limiting is now handled globally)
     client = YandexSearchClient(
         apiKey=API_KEY,
         folderId=FOLDER_ID,
-        rateLimitRequests=2,  # Only 2 requests per window
-        rateLimitWindow=5,  # 5 second window
     )
 
     queries = ["python web frameworks", "javascript libraries", "rust programming", "go language features"]
@@ -303,10 +298,6 @@ async def example_rate_limiting():
 
     for i, query in enumerate(queries):
         print(f"\nRequest {i + 1}: {query}")
-
-        # Show rate limit stats before request
-        stats = client.getRateLimitStats()
-        print(f"Rate limit status: {stats['requests_in_window']}/{stats['max_requests']} requests")
 
         # Make the request
         start_time = asyncio.get_event_loop().time()
@@ -317,12 +308,6 @@ async def example_rate_limiting():
             print(f"  Found {results['found']} results in {end_time - start_time:.2f}s")
         else:
             print("  Request failed or no results")
-
-        # Show rate limit stats after request
-        stats = client.getRateLimitStats()
-        print(f"  Rate limit after: {stats['requests_in_window']}/{stats['max_requests']}")
-        if stats["requests_in_window"] >= stats["max_requests"]:
-            print("  Rate limit reached, next request will be delayed")
 
 
 async def example_error_handling():

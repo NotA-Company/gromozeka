@@ -276,3 +276,4 @@ The project uses a sophisticated golden data testing framework for API interacti
 * Support for multiple LLM backends simultaneously
 * **During code review:** Ensure all code passes formatting and linting checks
 * **CI/CD Integration:** These checks should be automated in the deployment pipeline
+[2025-11-12 18:01:00] - Added rate limiter library pattern to system architecture. Implemented singleton manager pattern following CacheService/QueueService conventions, sliding window algorithm for rate limiting, and abstract base class interface for extensibility. Pattern supports multiple independent queues with different rate limiter backends and auto-registration of queues.

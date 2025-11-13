@@ -3,6 +3,8 @@ from threading import RLock
 from typing import Any, Dict, List, Optional
 
 from .interface import RateLimiterInterface
+from .sliding_window import SlidingWindowRateLimiter
+from .types import RateLimiterManagerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,36 @@ class RateLimiterManager:
         """
         return cls()
 
+    def loadConfig(self, config: RateLimiterManagerConfig) -> None:
+        """
+        Load configuration from a dictionary.
+
+        Args:
+            config: Dictionary containing configuration data
+        """
+
+        for limiterName, limiterConfig in config.get("ratelimiters", {}).items():
+            limiter: Optional[RateLimiterInterface] = None
+            match limiterConfig["type"].lower():
+                case "slidingwindow":
+                    limiter = SlidingWindowRateLimiter(**limiterConfig["config"])
+                case _:
+                    raise ValueError(f"Unknown rate limiter type '{limiterConfig['type']}'")
+
+            self.registerRateLimiter(limiterName, limiter)
+
+        for queueName, limiterName in config.get("queues", {}).items():
+            self.bindQueue(queueName, limiterName)
+
+        if "default" not in self.listRateLimiters():
+            # raise ValueError("Default rate limiter not found")
+            self.registerRateLimiter("default", SlidingWindowRateLimiter(maxRequests=10, windowSeconds=60))
+            logger.debug("Default rate limiter not found, using SlidingWindowRateLimiter as default, dood!")
+
+        self.setDefaultLimiter("default")
+
+        logger.debug("Loaded rate limiter configuration, dood!")
+
     def registerRateLimiter(self, name: str, limiter: RateLimiterInterface) -> None:
         """
         Register a rate limiter instance with a name.
@@ -129,7 +161,7 @@ class RateLimiterManager:
             self._defaultLimiter = name
             logger.info(f"Set '{name}' as default rate limiter, dood!")
 
-        logger.info(f"Registered rate limiter '{name}', dood!")
+        logger.info(f"Registered rate limiter {type(limiter).__name__} with name '{name}', dood!")
 
     def setDefaultLimiter(self, name: str) -> None:
         """

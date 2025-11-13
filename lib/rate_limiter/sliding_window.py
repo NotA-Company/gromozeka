@@ -2,14 +2,14 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .interface import RateLimiterInterface
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class QueueConfig:
     """
     Configuration for rate limiting.
@@ -76,14 +76,27 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         >>> manager.bindQueue("postgres", "database")
     """
 
-    def __init__(self, config: QueueConfig):
+    def __init__(
+        self,
+        *,
+        config: Optional[QueueConfig] = None,
+        maxRequests: Optional[int] = None,
+        windowSeconds: Optional[int] = None,
+    ):
         """
         Initialize the sliding window rate limiter.
 
         Args:
             config: Rate limit configuration to apply to all queues
+            TODO: Update
         """
-        self._config = config
+        if config is not None:
+            self._config = config
+        else:
+            if maxRequests is None or windowSeconds is None:
+                raise ValueError("Either config or maxRequests and windowSeconds must be provided")
+            self._config = QueueConfig(maxRequests, windowSeconds)
+
         self._requestTimes: Dict[str, List[float]] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
         self._initialized = False
