@@ -13,6 +13,17 @@ path = "bot_data.db"
 max_connections = 5
 timeout = 30
 
+# [ratelimiter]
+[ratelimiter.ratelimiters.default]
+type = "SlidingWindow"
+config = {
+    "windowSeconds": 5,
+    "maxRequests": 5
+}
+
+[ratelimiter.queues]
+yandex_search = "default"
+
 [models.json-logging]
 # Log LLM request:responce into JSON format for debugging purposes
 enabled = false
@@ -66,11 +77,8 @@ cache-ttl = 86400  # 60 * 60 * 24 = 1 day (Search results shouldn't change often
 # API request timeout in seconds
 request-timeout = 30
 
-# Rate limiting settings
-rate-limit-requests = 10  # Maximum requests per time window
-rate-limit-window = 60    # Time window in seconds
-
 dump-full-xml = false     # If we need to dump whole XML in xml_parser debug logging 
+ratelimiter-queue = "yandex-search"
 
 # Default search parameters. Will be passed to search as `**kwargs`
 [yandex-search.defaults]
