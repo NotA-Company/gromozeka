@@ -161,7 +161,7 @@ class YandexSearchClient:
                 Can be overridden per request. Ignored if cache is None.
             useCache (bool): Enable/disable caching for all requests by default.
                 Can be overridden per request. Ignored if cache is None.
-            rateLimiterQueue (str): Name of the rate limiter queue to use. Defaults to "yandex_search".
+            rateLimiterQueue (str): Name of the rate limiter queue to use. Defaults to "yandex-search".
         Raises:
             ValueError: If neither iamToken nor apiKey is provided, or if folderId is empty.
 
