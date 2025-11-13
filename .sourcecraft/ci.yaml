@@ -1,0 +1,20 @@
+on:
+  pull_request:
+    - workflows: make-test
+  push:
+    - workflows: make-test
+
+workflows:
+  make-test:
+    tasks:
+      - do-make-test
+      
+tasks:
+  - name: do-make-test
+    cubes: 
+      - name: make-test
+        image: docker.io/library/alpine:3.22
+        script:
+          - apk add --no-cache libmagic make musl-dev py3-pip python3 sqlite 
+          - make venv install check test 
+    
