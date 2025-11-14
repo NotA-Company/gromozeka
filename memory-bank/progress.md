@@ -88,3 +88,9 @@ This file tracks the project's progress using a task list format.
 - Wrote comprehensive docstring for JsonKeyGenerator.__init__ method with examples
 - Removed unused json import to fix linting issues
 - All code passes formatting and linting checks
+[2025-11-14 10:53:40] - Fixed all TODOs in lib/yandex_search/cache_utils.py and lib/yandex_search/client.py
+- Added comprehensive module docstring for cache_utils.py explaining its purpose
+- Added detailed class docstring for SearchRequestKeyGenerator with usage example
+- Added complete method docstring for generateKey explaining the normalization process
+- Removed TODO comment from client.py
+- All code passes formatting, linting, and testing requirements

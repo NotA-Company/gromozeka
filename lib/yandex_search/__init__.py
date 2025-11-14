@@ -42,9 +42,14 @@ Example:
 
     Search with caching enabled::
 
-        from lib.yandex_search import DictSearchCache
+        from lib.cache import DictCache
+        from lib.yandex_search.cache_utils import SearchRequestKeyGenerator
 
-        cache = DictSearchCache(maxSize=100, defaultTtl=300)
+        cache = DictCache(
+            keyGenerator=SearchRequestKeyGenerator(),
+            maxSize=100,
+            defaultTtl=300
+        )
         client = YandexSearchClient(
             apiKey="your_api_key",
             folderId="your_folder_id",
@@ -56,8 +61,7 @@ Example:
 
 Components:
     YandexSearchClient: Main async client for API interactions
-    SearchCacheInterface: Abstract interface for cache implementations
-    DictSearchCache: In-memory cache implementation with TTL support
+    SearchRequestKeyGenerator: Cache key generator for search requests
     parseSearchResponse: XML response parser utility
     Various TypedDict models for type-safe API interactions
 
