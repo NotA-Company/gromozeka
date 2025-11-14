@@ -215,7 +215,7 @@ class DictCache(CacheInterface[K, V]):
             logger.error(f"Failed to set cache entry: {e}, dood!")
             return False
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """
         Clear all cached data, dood!
 

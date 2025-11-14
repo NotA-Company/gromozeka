@@ -11,7 +11,8 @@ from typing import List, Optional
 
 import httpx
 
-from .cache_interface import WeatherCacheInterface
+from lib.cache import CacheInterface, NullCache
+
 from .models import CombinedWeatherResult, CurrentWeather, DailyWeather, GeocodingResult, WeatherData
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,8 @@ class OpenWeatherMapClient:
     def __init__(
         self,
         apiKey: str,
-        cache: Optional[WeatherCacheInterface] = None,
+        weatherCache: Optional[CacheInterface[str, WeatherData]] = None,
+        geocodingCache: Optional[CacheInterface[str, GeocodingResult]] = None,
         geocodingTTL: Optional[int] = 2592000,  # 30 days
         weatherTTL: Optional[int] = 1800,  # 30 minutes
         requestTimeout: int = 10,
@@ -66,7 +68,12 @@ class OpenWeatherMapClient:
             defaultLanguage: Default language for location names
         """
         self.apiKey = apiKey
-        self.cache = cache
+        self.weatherCache: CacheInterface[str, WeatherData] = (
+            weatherCache if weatherCache is not None else NullCache[str, WeatherData]()
+        )
+        self.geocodingCache: CacheInterface[str, GeocodingResult] = (
+            geocodingCache if geocodingCache is not None else NullCache[str, GeocodingResult]()
+        )
         self.geocodingTTL = geocodingTTL
         self.weatherTTL = weatherTTL
         self.requestTimeout = requestTimeout
@@ -102,11 +109,10 @@ class OpenWeatherMapClient:
 
         # Check cache first
         try:
-            if self.cache is not None:
-                cachedData = await self.cache.getGeocoging(cacheKey, self.geocodingTTL)
-                if cachedData:
-                    logger.debug(f"Cache hit for geocoding: {cacheKey}")
-                    return cachedData
+            cachedData = await self.geocodingCache.get(cacheKey, self.geocodingTTL)
+            if cachedData:
+                logger.debug(f"Cache hit for geocoding: {cacheKey}")
+                return cachedData
         except Exception as e:
             logger.warning(f"Cache error for geocoding {cacheKey}: {e}")
 
@@ -139,9 +145,8 @@ class OpenWeatherMapClient:
 
         # Store in cache
         try:
-            if self.cache is not None:
-                await self.cache.setGeocoging(cacheKey, result)
-                logger.debug(f"Cached geocoding result: {cacheKey}")
+            await self.geocodingCache.set(cacheKey, result)
+            logger.debug(f"Cached geocoding result: {cacheKey}")
         except Exception as e:
             logger.warning(f"Failed to cache geocoding result {cacheKey}: {e}")
 
@@ -172,11 +177,10 @@ class OpenWeatherMapClient:
 
         # Check cache first
         try:
-            if self.cache is not None:
-                cachedData = await self.cache.getWeather(cacheKey, self.weatherTTL)
-                if cachedData:
-                    logger.debug(f"Cache hit for weather: {cacheKey}")
-                    return cachedData
+            cachedData = await self.weatherCache.get(cacheKey, self.weatherTTL)
+            if cachedData:
+                logger.debug(f"Cache hit for weather: {cacheKey}")
+                return cachedData
         except Exception as e:
             logger.warning(f"Cache error for weather {cacheKey}: {e}")
 
@@ -275,9 +279,8 @@ class OpenWeatherMapClient:
 
         # Store in cache
         try:
-            if self.cache is not None:
-                await self.cache.setWeather(cacheKey, result)
-                logger.debug(f"Cached weather result: {cacheKey}")
+            await self.weatherCache.set(cacheKey, result)
+            logger.debug(f"Cached weather result: {cacheKey}")
         except Exception as e:
             logger.warning(f"Failed to cache weather result {cacheKey}: {e}")
 

@@ -1875,7 +1875,7 @@ class DatabaseWrapper:
                     return self._validateDictIsCacheDict(row_dict)
                 return None
         except Exception as e:
-            logger.error(f"Failed to get weather cache: {e}")
+            logger.error(f"Failed to get cache entry: {e}")
             return None
 
     def setCacheEntry(self, key: str, data: str, cacheType: CacheType) -> bool:
@@ -1896,5 +1896,17 @@ class DatabaseWrapper:
                 )
                 return True
         except Exception as e:
-            logger.error(f"Failed to set weather cache: {e}")
+            logger.error(f"Failed to set cache entry: {e}")
             return False
+
+    def clearCache(self, cacheType: CacheType) -> None:
+        """TODO"""
+        try:
+            with self.getCursor() as cursor:
+                cursor.execute(
+                    f"""
+                    DELETE FROM cache_{cacheType}
+                    """
+                )
+        except Exception as e:
+            logger.error(f"Failed to clear cache {cacheType}: {e}")
