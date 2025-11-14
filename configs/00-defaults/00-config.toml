@@ -73,7 +73,8 @@ request-timeout = 10
 
 # Default language for location names (ru, en, etc.)
 default-language = "ru"
-ratelimiter-queue = "geocode-maps"
+
+ratelimiter-queue = "openweathermap"
 
 [geocode-maps]
 # Geocode Maps API api-key from https://geocode.maps.co/

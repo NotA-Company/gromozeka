@@ -10,6 +10,7 @@ from lib.aurumentation import baseGoldenDataProvider
 from lib.aurumentation.provider import GoldenDataProvider
 from lib.aurumentation.replayer import GoldenDataReplayer
 from lib.openweathermap.client import OpenWeatherMapClient
+from tests.lib_ratelimiter import initRateLimiter
 
 from . import GOLDEN_DATA_PATH
 
@@ -41,6 +42,7 @@ async def testOpenweathermapClientInitialization():
 async def testGetWeatherForCity(owmGoldenDataProvider, city, country_code, expected_name, expected_country):
     """Test getting weather for different cities using golden data."""
     # Get the scenario with all golden data
+    await initRateLimiter()
     scenario = owmGoldenDataProvider.getScenario(None)
 
     # Use GoldenDataReplayer as context manager to patch httpx globally
