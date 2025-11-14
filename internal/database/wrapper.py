@@ -1900,7 +1900,15 @@ class DatabaseWrapper:
             return False
 
     def clearCache(self, cacheType: CacheType) -> None:
-        """TODO"""
+        """
+        Clear all entries from a specific cache table.
+
+        Args:
+            cacheType: The type of cache to clear (WEATHER, GEOCODING, or YANDEX_SEARCH)
+
+        Raises:
+            Logs an error message if the cache clearing operation fails
+        """
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
