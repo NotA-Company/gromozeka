@@ -71,3 +71,7 @@ This file records architectural and implementation decisions.
 - Followed design document structure (lines 802-813) for consistency and completeness
 - Documentation maintains Prinny personality while providing professional technical content
 - All code quality checks passed: formatting, linting, and 1310 tests
+[2025-11-14 20:51:00] - Added __slots__ to GeocodeMapsClient class for memory optimization
+- Implemented __slots__ with all instance attributes: apiKey, searchCache, reverseCache, lookupCache, searchTTL, reverseTTL, lookupTTL, requestTimeout, acceptLanguage, rateLimiterQueue, _rateLimiter
+- Fixed test compatibility issues by updating test mocking pattern to use patch.object on client._rateLimiter.applyLimit instead of patching the _makeRequest method
+- All 1324 tests now pass successfully
