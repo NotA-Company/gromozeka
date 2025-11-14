@@ -67,6 +67,7 @@ Note:
 """
 
 from .cache_interface import SearchCacheInterface
+from .cache_utils import SearchRequestKeyGenerator
 from .client import YandexSearchClient
 from .dict_cache import DictSearchCache
 from .models import (
@@ -111,4 +112,5 @@ __all__ = [
     # Cache
     "SearchCacheInterface",
     "DictSearchCache",
+    "SearchRequestKeyGenerator",
 ]
