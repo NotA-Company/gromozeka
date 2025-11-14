@@ -51,3 +51,37 @@ class KeyGenerator(Protocol[T]):
             >>> print(key)  # "a1b2c3d4e5f6..." (SHA512 hash)
         """
         ...
+
+
+class ValueConverter(Protocol[V]):
+    """
+    Protocol for converting objects to cache and back
+
+    Type Parameters:
+        T: The type of objects that can be converted to cache values
+
+    """
+
+    def encode(self, obj: V) -> str:
+        """
+        Convert object to cache value, dood!
+
+        Args:
+            obj: The object to convert to a cache value
+
+        Returns:
+            str: A string representation suitable for use as a cache value
+        """
+        ...
+
+    def decode(self, value: str) -> V:
+        """
+        Decode cache value to object, dood!
+
+        Args:
+            value: The cache value to decode
+
+        Returns:
+            T: The decoded object
+        """
+        ...

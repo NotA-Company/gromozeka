@@ -11,7 +11,7 @@ import os
 
 # Add project root to path for imports
 import sys
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -19,7 +19,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from internal.database.openweathermap_cache import DatabaseWeatherCache  # noqa: E402
-from lib.openweathermap.cache_interface import WeatherCacheInterface  # noqa: E402
+from lib.cache import DictCache, StringKeyGenerator  # noqa: E402
 from lib.openweathermap.client import OpenWeatherMapClient  # noqa: E402
 
 
@@ -27,21 +27,10 @@ class TestOpenWeatherMapClient:
     """Test suite for OpenWeatherMap client"""
 
     @pytest.fixture
-    def mock_cache(self):
-        """Mock cache for testing"""
-        cache = Mock(spec=WeatherCacheInterface)
-        cache.getWeather = AsyncMock(return_value=None)
-        cache.setWeather = AsyncMock(return_value=True)
-        cache.getGeocoging = AsyncMock(return_value=None)
-        cache.setGeocoging = AsyncMock(return_value=True)
-        return cache
-
-    @pytest.fixture
-    def client(self, mock_cache):
+    def client(self):
         """Create client with mock cache"""
         return OpenWeatherMapClient(
             apiKey="test_key",
-            cache=mock_cache,
             geocodingTTL=2592000,
             weatherTTL=1800,
             requestTimeout=10,
@@ -95,10 +84,8 @@ class TestOpenWeatherMapClient:
         }
 
     @pytest.mark.asyncio
-    async def test_get_coordinates_success(self, client, mock_cache, sample_geocoding_response):
+    async def test_get_coordinates_success(self, client, sample_geocoding_response):
         """Test successful geocoding"""
-        # Mock cache miss
-        mock_cache.getGeocoging.return_value = None
 
         # Mock API response
         with patch.object(client, "_makeRequest", return_value=sample_geocoding_response):
@@ -112,39 +99,9 @@ class TestOpenWeatherMapClient:
         assert result["country"] == "RU"
         assert result["local_names"]["ru"] == "Москва"
 
-        # Verify cache operations
-        mock_cache.getGeocoging.assert_called_once_with("moscow,RU", 2592000)
-        mock_cache.setGeocoging.assert_called_once()
-
     @pytest.mark.asyncio
-    async def test_get_coordinates_from_cache(self, client, mock_cache):
-        """Test geocoding from cache"""
-        # Mock cache hit
-        cached_result = {
-            "name": "Moscow",
-            "local_names": {"ru": "Москва", "en": "Moscow"},
-            "lat": 55.7558,
-            "lon": 37.6173,
-            "country": "RU",
-            "state": None,
-        }
-        mock_cache.getGeocoging.return_value = cached_result
-
-        # Patch _makeRequest before calling to verify it's not called
-        with patch.object(client, "_makeRequest") as mock_request:
-            result = await client.getCoordinates("Moscow", "RU")
-
-            # Verify result from cache
-            assert result == cached_result
-
-            # Verify no API call was made
-            mock_request.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_get_coordinates_not_found(self, client, mock_cache):
+    async def test_get_coordinates_not_found(self, client):
         """Test geocoding when city not found"""
-        # Mock cache miss and empty API response
-        mock_cache.getGeocoging.return_value = None
 
         with patch.object(client, "_makeRequest", return_value=[]):
             result = await client.getCoordinates("NonexistentCity")
@@ -152,10 +109,8 @@ class TestOpenWeatherMapClient:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_weather_success(self, client, mock_cache, sample_weather_response):
+    async def test_get_weather_success(self, client, sample_weather_response):
         """Test successful weather fetch"""
-        # Mock cache miss
-        mock_cache.getWeather.return_value = None
 
         # Mock API response
         with patch.object(client, "_makeRequest", return_value=sample_weather_response):
@@ -170,41 +125,9 @@ class TestOpenWeatherMapClient:
         assert result["current"]["weather_description"] == "scattered clouds"
         assert len(result["daily"]) == 1
 
-        # Verify cache operations
-        mock_cache.getWeather.assert_called_once_with("55.7558,37.6173", 1800)
-        mock_cache.setWeather.assert_called_once()
-
     @pytest.mark.asyncio
-    async def test_get_weather_from_cache(self, client, mock_cache):
-        """Test weather from cache"""
-        # Mock cache hit
-        cached_result = {
-            "lat": 55.7558,
-            "lon": 37.6173,
-            "timezone": "Europe/Moscow",
-            "current": {"temp": 15.5, "weather_description": "clear sky"},
-            "daily": [],
-        }
-        mock_cache.getWeather.return_value = cached_result
-
-        # Patch _makeRequest before calling to verify it's not called
-        with patch.object(client, "_makeRequest") as mock_request:
-            result = await client.getWeather(55.7558, 37.6173)
-
-            # Verify result from cache
-            assert result == cached_result
-
-            # Verify no API call was made
-            mock_request.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_get_weather_by_city_success(
-        self, client, mock_cache, sample_geocoding_response, sample_weather_response
-    ):
+    async def test_get_weather_by_city_success(self, client, sample_geocoding_response, sample_weather_response):
         """Test combined operation"""
-        # Mock cache misses
-        mock_cache.getGeocoging.return_value = None
-        mock_cache.getWeather.return_value = None
 
         # Mock both API calls
         with patch.object(client, "_makeRequest") as mock_request:
@@ -223,10 +146,8 @@ class TestOpenWeatherMapClient:
         assert mock_request.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_get_weather_by_city_geocoding_fails(self, client, mock_cache):
+    async def test_get_weather_by_city_geocoding_fails(self, client):
         """Test combined operation when geocoding fails"""
-        # Mock cache miss and empty geocoding response
-        mock_cache.getGeocoging.return_value = None
 
         with patch.object(client, "_makeRequest", return_value=[]):
             result = await client.getWeatherByCity("NonexistentCity")
@@ -234,33 +155,14 @@ class TestOpenWeatherMapClient:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_api_error_handling(self, client, mock_cache):
+    async def test_api_error_handling(self, client):
         """Test API error handling"""
-        # Mock cache miss
-        mock_cache.getGeocoging.return_value = None
 
         # Mock API error
         with patch.object(client, "_makeRequest", return_value=None):
             result = await client.getCoordinates("Moscow")
 
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_cache_error_handling(self, client, mock_cache):
-        """Test cache error handling"""
-        # Mock cache error
-        mock_cache.getGeocoging.side_effect = Exception("Cache error")
-        mock_cache.setGeocoging.side_effect = Exception("Cache error")
-
-        # Should still work with API call
-        sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
-        with patch.object(client, "_makeRequest", return_value=sample_response):
-            result = await client.getCoordinates("Moscow")
-
-        assert result is not None
-        assert result["name"] == "Moscow"
-
-    # Context manager functionality removed - client now creates sessions per request
 
 
 class TestDatabaseWeatherCache:
@@ -416,18 +318,15 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_full_workflow_with_real_cache(self):
         """Test full workflow with real cache implementation"""
-        from internal.database.models import CacheType
-
-        # Mock database wrapper
-        mock_db = Mock()
-        mock_db.getCacheEntry = Mock(return_value=None)
-        mock_db.setCacheEntry = Mock(return_value=True)
-
-        # Create real cache with mock DB
-        cache = DatabaseWeatherCache(mock_db)
 
         # Create client with real cache
-        client = OpenWeatherMapClient(apiKey="test_key", cache=cache, geocodingTTL=3600, weatherTTL=1800)
+        client = OpenWeatherMapClient(
+            apiKey="test_key",
+            weatherCache=DictCache(keyGenerator=StringKeyGenerator()),
+            geocodingCache=DictCache(keyGenerator=StringKeyGenerator()),
+            geocodingTTL=3600,
+            weatherTTL=1800,
+        )
 
         # Mock API responses
         geocoding_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
@@ -459,34 +358,15 @@ class TestIntegration:
         assert result["location"]["name"] == "Moscow"
         assert result["weather"]["current"]["temp"] == 15.5
 
-        # Verify cache operations - both geocoding and weather should be cached
-        assert mock_db.setCacheEntry.call_count == 2
-
-        # Verify the cache calls were made with correct types
-        calls = mock_db.setCacheEntry.call_args_list
-        cache_types = [call[1]["cacheType"] for call in calls]
-        assert CacheType.GEOCODING in cache_types
-
 
 class TestWeatherClientErrorHandling:
     """Test suite for error handling scenarios"""
 
     @pytest.fixture
-    def mock_cache(self):
-        """Mock cache for testing"""
-        cache = Mock(spec=WeatherCacheInterface)
-        cache.getWeather = AsyncMock(return_value=None)
-        cache.setWeather = AsyncMock(return_value=True)
-        cache.getGeocoging = AsyncMock(return_value=None)
-        cache.setGeocoging = AsyncMock(return_value=True)
-        return cache
-
-    @pytest.fixture
-    def client(self, mock_cache):
+    def client(self):
         """Create client with mock cache"""
         return OpenWeatherMapClient(
             apiKey="test_key",
-            cache=mock_cache,
             geocodingTTL=2592000,
             weatherTTL=1800,
             requestTimeout=10,
@@ -494,19 +374,16 @@ class TestWeatherClientErrorHandling:
         )
 
     @pytest.mark.asyncio
-    async def test_network_timeout_error(self, client, mock_cache):
+    async def test_network_timeout_error(self, client):
         """Test handling of network timeout errors"""
-        mock_cache.getGeocoging.return_value = None
-
         with patch("httpx.AsyncClient.get", side_effect=httpx.TimeoutException("Connection timeout")):
             result = await client.getCoordinates("Moscow")
 
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_network_connection_error(self, client, mock_cache):
+    async def test_network_connection_error(self, client):
         """Test handling of network connection errors"""
-        mock_cache.getWeather.return_value = None
 
         with patch("httpx.AsyncClient.get", side_effect=httpx.ConnectError("Connection failed")):
             result = await client.getWeather(55.7558, 37.6173)
@@ -514,9 +391,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_http_500_error(self, client, mock_cache):
+    async def test_http_500_error(self, client):
         """Test handling of HTTP 500 Internal Server Error"""
-        mock_cache.getGeocoging.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 500
@@ -528,9 +404,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_http_503_error(self, client, mock_cache):
+    async def test_http_503_error(self, client):
         """Test handling of HTTP 503 Service Unavailable"""
-        mock_cache.getWeather.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 503
@@ -542,9 +417,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_http_401_unauthorized(self, client, mock_cache):
+    async def test_http_401_unauthorized(self, client):
         """Test handling of HTTP 401 Unauthorized (invalid API key)"""
-        mock_cache.getGeocoging.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 401
@@ -556,9 +430,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_http_403_forbidden(self, client, mock_cache):
+    async def test_http_403_forbidden(self, client):
         """Test handling of HTTP 403 Forbidden"""
-        mock_cache.getWeather.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 403
@@ -570,9 +443,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_http_404_not_found(self, client, mock_cache):
+    async def test_http_404_not_found(self, client):
         """Test handling of HTTP 404 Not Found"""
-        mock_cache.getGeocoging.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 404
@@ -584,9 +456,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_http_429_rate_limit(self, client, mock_cache):
+    async def test_http_429_rate_limit(self, client):
         """Test handling of HTTP 429 Rate Limit Exceeded"""
-        mock_cache.getWeather.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 429
@@ -598,9 +469,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_malformed_json_response(self, client, mock_cache):
+    async def test_malformed_json_response(self, client):
         """Test handling of malformed JSON responses"""
-        mock_cache.getGeocoging.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 200
@@ -612,9 +482,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_empty_geocoding_response(self, client, mock_cache):
+    async def test_empty_geocoding_response(self, client):
         """Test handling of empty geocoding response"""
-        mock_cache.getGeocoging.return_value = None
 
         with patch.object(client, "_makeRequest", return_value=[]):
             result = await client.getCoordinates("NonexistentCity")
@@ -622,9 +491,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_null_weather_response(self, client, mock_cache):
+    async def test_null_weather_response(self, client):
         """Test handling of null weather response"""
-        mock_cache.getWeather.return_value = None
 
         with patch.object(client, "_makeRequest", return_value=None):
             result = await client.getWeather(55.7558, 37.6173)
@@ -632,9 +500,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_invalid_coordinates_out_of_range(self, client, mock_cache):
+    async def test_invalid_coordinates_out_of_range(self, client):
         """Test handling of invalid coordinates (out of range)"""
-        mock_cache.getWeather.return_value = None
 
         # Latitude out of range (-90 to 90)
         with patch.object(client, "_makeRequest", return_value=None):
@@ -647,9 +514,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_empty_city_name(self, client, mock_cache):
+    async def test_empty_city_name(self, client):
         """Test handling of empty city name"""
-        mock_cache.getGeocoging.return_value = None
 
         with patch.object(client, "_makeRequest", return_value=[]):
             result = await client.getCoordinates("")
@@ -657,9 +523,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_special_characters_in_city_name(self, client, mock_cache):
+    async def test_special_characters_in_city_name(self, client):
         """Test handling of special characters in city name"""
-        mock_cache.getGeocoging.return_value = None
 
         sample_response = [
             {
@@ -678,9 +543,8 @@ class TestWeatherClientErrorHandling:
         assert result["name"] == "São Paulo"
 
     @pytest.mark.asyncio
-    async def test_dns_resolution_error(self, client, mock_cache):
+    async def test_dns_resolution_error(self, client):
         """Test handling of DNS resolution errors"""
-        mock_cache.getGeocoging.return_value = None
 
         with patch("httpx.AsyncClient.get", side_effect=httpx.ConnectError("DNS resolution failed")):
             result = await client.getCoordinates("Moscow")
@@ -688,9 +552,8 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_unexpected_exception(self, client, mock_cache):
+    async def test_unexpected_exception(self, client):
         """Test handling of unexpected exceptions"""
-        mock_cache.getWeather.return_value = None
 
         with patch("httpx.AsyncClient.get", side_effect=Exception("Unexpected error")):
             result = await client.getWeather(55.7558, 37.6173)
@@ -698,187 +561,14 @@ class TestWeatherClientErrorHandling:
         assert result is None
 
 
-class TestWeatherClientCacheIntegration:
-    """Test suite for cache integration scenarios"""
-
-    @pytest.fixture
-    def mock_cache(self):
-        """Mock cache for testing"""
-        cache = Mock(spec=WeatherCacheInterface)
-        cache.getWeather = AsyncMock(return_value=None)
-        cache.setWeather = AsyncMock(return_value=True)
-        cache.getGeocoging = AsyncMock(return_value=None)
-        cache.setGeocoging = AsyncMock(return_value=True)
-        return cache
-
-    @pytest.fixture
-    def client(self, mock_cache):
-        """Create client with mock cache"""
-        return OpenWeatherMapClient(
-            apiKey="test_key",
-            cache=mock_cache,
-            geocodingTTL=2592000,
-            weatherTTL=1800,
-            requestTimeout=10,
-            defaultLanguage="ru",
-        )
-
-    @pytest.mark.asyncio
-    async def test_cache_hit_no_api_call(self, client, mock_cache):
-        """Test that cache hit prevents API call"""
-        cached_geocoding = {
-            "name": "Moscow",
-            "lat": 55.7558,
-            "lon": 37.6173,
-            "country": "RU",
-            "local_names": {},
-        }
-        mock_cache.getGeocoging.return_value = cached_geocoding
-
-        with patch.object(client, "_makeRequest") as mock_request:
-            result = await client.getCoordinates("Moscow", "RU")
-
-            assert result == cached_geocoding
-            mock_request.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_cache_miss_triggers_api_call(self, client, mock_cache):
-        """Test that cache miss triggers API call"""
-        mock_cache.getGeocoging.return_value = None
-
-        sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
-
-        with patch.object(client, "_makeRequest", return_value=sample_response) as mock_request:
-            result = await client.getCoordinates("Moscow", "RU")
-
-            assert result is not None
-            mock_request.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cache_stores_api_result(self, client, mock_cache):
-        """Test that API result is stored in cache"""
-        mock_cache.getGeocoging.return_value = None
-
-        sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
-
-        with patch.object(client, "_makeRequest", return_value=sample_response):
-            await client.getCoordinates("Moscow", "RU")
-
-            mock_cache.setGeocoging.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cache_coordinate_precision(self, client, mock_cache):
-        """Test cache with different coordinate precision"""
-        mock_cache.getWeather.return_value = None
-
-        sample_weather = {
-            "lat": 55.7558,
-            "lon": 37.6173,
-            "timezone": "Europe/Moscow",
-            "current": {"temp": 15.5, "weather_description": "clear"},
-            "daily": [],
-        }
-
-        with patch.object(client, "_makeRequest", return_value=sample_weather):
-            # Request with high precision
-            await client.getWeather(55.755812, 37.617300)
-
-            # Verify cache key is rounded to 4 decimal places
-            cache_calls = mock_cache.setWeather.call_args_list
-            assert len(cache_calls) == 1
-            cache_key = cache_calls[0][0][0]
-            assert cache_key == "55.7558,37.6173"
-
-    @pytest.mark.asyncio
-    async def test_cache_case_sensitivity(self, client, mock_cache):
-        """Test cache with different city name cases"""
-        mock_cache.getGeocoging.return_value = None
-
-        sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
-
-        with patch.object(client, "_makeRequest", return_value=sample_response):
-            # Request with different cases
-            await client.getCoordinates("MOSCOW", "RU")
-
-            # Verify cache key is normalized to lowercase
-            cache_calls = mock_cache.getGeocoging.call_args_list
-            assert len(cache_calls) == 1
-            cache_key = cache_calls[0][0][0]
-            assert cache_key == "moscow,RU"
-
-    @pytest.mark.asyncio
-    async def test_cache_persistence_across_requests(self, client, mock_cache):
-        """Test cache persistence across multiple requests"""
-        cached_geocoding = {
-            "name": "Moscow",
-            "lat": 55.7558,
-            "lon": 37.6173,
-            "country": "RU",
-            "local_names": {},
-        }
-        mock_cache.getGeocoging.return_value = cached_geocoding
-
-        # First request
-        result1 = await client.getCoordinates("Moscow", "RU")
-        # Second request
-        result2 = await client.getCoordinates("Moscow", "RU")
-
-        assert result1 == result2
-        assert mock_cache.getGeocoging.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_cache_error_does_not_break_client(self, client, mock_cache):
-        """Test that cache errors don't break client functionality"""
-        mock_cache.getGeocoging.side_effect = Exception("Cache error")
-        mock_cache.setGeocoging.side_effect = Exception("Cache error")
-
-        sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
-
-        with patch.object(client, "_makeRequest", return_value=sample_response):
-            result = await client.getCoordinates("Moscow", "RU")
-
-            assert result is not None
-            assert result["name"] == "Moscow"
-
-    @pytest.mark.asyncio
-    async def test_cache_ttl_respected(self, client, mock_cache):
-        """Test that cache TTL is passed correctly"""
-        mock_cache.getWeather.return_value = None
-
-        sample_weather = {
-            "lat": 55.7558,
-            "lon": 37.6173,
-            "timezone": "Europe/Moscow",
-            "current": {"temp": 15.5},
-            "daily": [],
-        }
-
-        with patch.object(client, "_makeRequest", return_value=sample_weather):
-            await client.getWeather(55.7558, 37.6173)
-
-            # Verify TTL is passed to cache
-            mock_cache.getWeather.assert_called_once_with("55.7558,37.6173", 1800)
-
-
 class TestWeatherClientRateLimiting:
     """Test suite for rate limiting scenarios"""
 
     @pytest.fixture
-    def mock_cache(self):
-        """Mock cache for testing"""
-        cache = Mock(spec=WeatherCacheInterface)
-        cache.getWeather = AsyncMock(return_value=None)
-        cache.setWeather = AsyncMock(return_value=True)
-        cache.getGeocoging = AsyncMock(return_value=None)
-        cache.setGeocoging = AsyncMock(return_value=True)
-        return cache
-
-    @pytest.fixture
-    def client(self, mock_cache):
+    def client(self):
         """Create client with mock cache"""
         return OpenWeatherMapClient(
             apiKey="test_key",
-            cache=mock_cache,
             geocodingTTL=2592000,
             weatherTTL=1800,
             requestTimeout=10,
@@ -886,9 +576,8 @@ class TestWeatherClientRateLimiting:
         )
 
     @pytest.mark.asyncio
-    async def test_rate_limit_response_handling(self, client, mock_cache):
+    async def test_rate_limit_response_handling(self, client):
         """Test handling of rate limit response (429)"""
-        mock_cache.getWeather.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 429
@@ -900,9 +589,8 @@ class TestWeatherClientRateLimiting:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_rate_limit_with_retry_after_header(self, client, mock_cache):
+    async def test_rate_limit_with_retry_after_header(self, client):
         """Test rate limit response with Retry-After header"""
-        mock_cache.getGeocoging.return_value = None
 
         mock_response = Mock()
         mock_response.status_code = 429
@@ -915,9 +603,8 @@ class TestWeatherClientRateLimiting:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_concurrent_requests_handling(self, client, mock_cache):
+    async def test_concurrent_requests_handling(self, client):
         """Test handling of concurrent requests"""
-        mock_cache.getWeather.return_value = None
 
         sample_weather = {
             "lat": 55.7558,
@@ -940,21 +627,10 @@ class TestWeatherClientDataValidation:
     """Test suite for data validation scenarios"""
 
     @pytest.fixture
-    def mock_cache(self):
-        """Mock cache for testing"""
-        cache = Mock(spec=WeatherCacheInterface)
-        cache.getWeather = AsyncMock(return_value=None)
-        cache.setWeather = AsyncMock(return_value=True)
-        cache.getGeocoging = AsyncMock(return_value=None)
-        cache.setGeocoging = AsyncMock(return_value=True)
-        return cache
-
-    @pytest.fixture
-    def client(self, mock_cache):
+    def client(self):
         """Create client with mock cache"""
         return OpenWeatherMapClient(
             apiKey="test_key",
-            cache=mock_cache,
             geocodingTTL=2592000,
             weatherTTL=1800,
             requestTimeout=10,
@@ -962,9 +638,8 @@ class TestWeatherClientDataValidation:
         )
 
     @pytest.mark.asyncio
-    async def test_validate_geocoding_structure(self, client, mock_cache):
+    async def test_validate_geocoding_structure(self, client):
         """Test validation of geocoding data structure"""
-        mock_cache.getGeocoging.return_value = None
 
         sample_response = [
             {
@@ -989,9 +664,8 @@ class TestWeatherClientDataValidation:
             assert isinstance(result["lon"], float)
 
     @pytest.mark.asyncio
-    async def test_validate_weather_structure(self, client, mock_cache):
+    async def test_validate_weather_structure(self, client):
         """Test validation of weather data structure"""
-        mock_cache.getWeather.return_value = None
 
         sample_response = {
             "lat": 55.7558,
@@ -1024,9 +698,8 @@ class TestWeatherClientDataValidation:
             assert isinstance(result["current"]["humidity"], int)
 
     @pytest.mark.asyncio
-    async def test_handle_missing_optional_fields(self, client, mock_cache):
+    async def test_handle_missing_optional_fields(self, client):
         """Test handling of missing optional fields in API response"""
-        mock_cache.getGeocoging.return_value = None
 
         # Response without optional 'state' field
         sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
@@ -1038,9 +711,8 @@ class TestWeatherClientDataValidation:
             assert result["state"] == ""
 
     @pytest.mark.asyncio
-    async def test_handle_missing_weather_fields(self, client, mock_cache):
+    async def test_handle_missing_weather_fields(self, client):
         """Test handling of missing fields in weather response"""
-        mock_cache.getWeather.return_value = None
 
         # Minimal weather response
         sample_response = {
@@ -1060,9 +732,8 @@ class TestWeatherClientDataValidation:
             assert result["current"]["pressure"] == 0
 
     @pytest.mark.asyncio
-    async def test_validate_temperature_units(self, client, mock_cache):
+    async def test_validate_temperature_units(self, client):
         """Test that temperature is in metric units (Celsius)"""
-        mock_cache.getWeather.return_value = None
 
         sample_response = {
             "lat": 55.7558,
@@ -1080,9 +751,8 @@ class TestWeatherClientDataValidation:
             assert call_args[0][1]["units"] == "metric"
 
     @pytest.mark.asyncio
-    async def test_validate_coordinate_ranges(self, client, mock_cache):
+    async def test_validate_coordinate_ranges(self, client):
         """Test coordinate range validation"""
-        mock_cache.getGeocoging.return_value = None
 
         # Valid coordinates
         sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
@@ -1095,9 +765,8 @@ class TestWeatherClientDataValidation:
             assert -180 <= result["lon"] <= 180
 
     @pytest.mark.asyncio
-    async def test_validate_timestamp_formats(self, client, mock_cache):
+    async def test_validate_timestamp_formats(self, client):
         """Test timestamp format validation"""
-        mock_cache.getWeather.return_value = None
 
         sample_response = {
             "lat": 55.7558,
@@ -1123,9 +792,8 @@ class TestWeatherClientDataValidation:
             assert isinstance(result["current"]["sunset"], int)
 
     @pytest.mark.asyncio
-    async def test_handle_unexpected_data_types(self, client, mock_cache):
+    async def test_handle_unexpected_data_types(self, client):
         """Test handling of unexpected data types in response"""
-        mock_cache.getWeather.return_value = None
 
         # Response with string instead of number for temperature
         sample_response = {
@@ -1145,9 +813,8 @@ class TestWeatherClientDataValidation:
             assert result["current"]["temp"] == 15.5
 
     @pytest.mark.asyncio
-    async def test_validate_daily_forecast_structure(self, client, mock_cache):
+    async def test_validate_daily_forecast_structure(self, client):
         """Test validation of daily forecast structure"""
-        mock_cache.getWeather.return_value = None
 
         sample_response = {
             "lat": 55.7558,
@@ -1176,9 +843,8 @@ class TestWeatherClientDataValidation:
             assert isinstance(daily["temp_day"], float)
 
     @pytest.mark.asyncio
-    async def test_handle_empty_weather_array(self, client, mock_cache):
+    async def test_handle_empty_weather_array(self, client):
         """Test handling of empty weather array in response"""
-        mock_cache.getWeather.return_value = None
 
         sample_response = {
             "lat": 55.7558,

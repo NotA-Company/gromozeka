@@ -92,7 +92,7 @@ class CacheInterface(ABC, Generic[K, V]):
         pass
 
     @abstractmethod
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """
         Clear all cached data, dood!
 
