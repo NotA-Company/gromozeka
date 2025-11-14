@@ -833,7 +833,7 @@ class DatabaseWrapper:
                 cursor.execute(
                     """
                     UPDATE chat_messages
-                    SET category = :category
+                    SET message_category = :category
                     WHERE
                         chat_id = :chatId
                         AND message_id = :messageId
