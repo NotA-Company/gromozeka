@@ -15,7 +15,7 @@ from typing import Any
 
 import lib.utils as utils
 
-from .types import KeyGenerator
+from .types import K, KeyGenerator
 
 
 class StringKeyGenerator(KeyGenerator[str]):
@@ -123,7 +123,7 @@ class HashKeyGenerator(KeyGenerator[Any]):
         return hashlib.sha512(obj_str.encode("utf-8")).hexdigest()
 
 
-class JsonKeyGenerator(KeyGenerator[Any]):
+class JsonKeyGenerator(KeyGenerator[K]):
     """
     JSON serialization (+ optional SHA512 hash) key generator, dood!
 
@@ -186,12 +186,12 @@ class JsonKeyGenerator(KeyGenerator[Any]):
         self.sort_keys = sort_keys
         self.hash = hash
 
-    def generateKey(self, obj: Any) -> str:
+    def generateKey(self, obj: K | Any) -> str:
         """
         Generate SHA512 hash from JSON-serialized object, dood!
 
         Args:
-            obj: Any object to convert to cache key
+            obj: K or Any object to convert to cache key
 
         Returns:
             str: 128-character SHA512 hexadecimal hash
