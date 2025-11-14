@@ -32,18 +32,20 @@ import lib.utils as utils
 import lib.yandex_search as ys
 import lib.yandex_search.xml_parser as ys_xml
 from internal.config.manager import ConfigManager
+from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
+    CacheType,
     MessageCategory,
 )
 from internal.database.wrapper import DatabaseWrapper
-from internal.database.yandexsearch_cache import YandexSearchCache
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
     LLMManager,
     LLMParameterType,
 )
-from lib.yandex_search import YandexSearchClient
+from lib.cache import JsonValueConverter
+from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 from ..models import (
     CommandCategory,
@@ -105,9 +107,13 @@ class YandexSearchHandler(BaseBotHandler):
             apiKey=ysConfig["api-key"],
             folderId=ysConfig["folder-id"],
             requestTimeout=int(ysConfig.get("request-timeout", 30)),
-            cache=YandexSearchCache(database),
+            cache=GenericDatabaseCache(
+                database,
+                namespace=CacheType.YANDEX_SEARCH,
+                keyGenerator=SearchRequestKeyGenerator(),
+                valueConverter=JsonValueConverter(),
+            ),
             cacheTTL=int(ysConfig.get("cache-ttl", 30)),
-            useCache=True,
             rateLimiterQueue=ysConfig.get("ratelimiter-queue", "yandex-search"),
         )
         self.yandexSearchDefaults = ysConfig.get("defaults", {})
