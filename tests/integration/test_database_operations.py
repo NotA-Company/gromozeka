@@ -630,15 +630,11 @@ async def testChatMessagesCrud(populatedDb):
     assert message["message_text"] == "Test message"
     assert message["user_id"] == 1001
 
-    # UPDATE (via category update)
-    # Note: updateChatMessageCategory has a bug - it uses 'category' column which doesn't exist
-    # The correct column is 'message_category'. This test documents the bug.
     success = db.updateChatMessageCategory(123, 1, MessageCategory.BOT)
-    assert success is False, "updateChatMessageCategory should fail due to wrong column name"
+    assert success is True
 
-    # READ - message should still have original category
     message = db.getChatMessageByMessageId(123, 1)
-    assert message["message_category"] == MessageCategory.USER
+    assert message["message_category"] == MessageCategory.BOT
 
     # DELETE (not implemented, but we can test retrieval)
     messages = db.getChatMessagesSince(chatId=123)
