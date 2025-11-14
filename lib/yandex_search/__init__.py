@@ -66,10 +66,8 @@ Note:
     and a valid folder ID to function correctly.
 """
 
-from .cache_interface import SearchCacheInterface
 from .cache_utils import SearchRequestKeyGenerator
 from .client import YandexSearchClient
-from .dict_cache import DictSearchCache
 from .models import (
     ErrorResponse,
     FamilyMode,
@@ -110,7 +108,5 @@ __all__ = [
     "SortOrder",
     "SortSpec",
     # Cache
-    "SearchCacheInterface",
-    "DictSearchCache",
     "SearchRequestKeyGenerator",
 ]
