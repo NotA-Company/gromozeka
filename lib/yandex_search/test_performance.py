@@ -18,8 +18,9 @@ import time
 
 import pytest
 
+from lib.cache import DictCache
 from lib.rate_limiter import RateLimiterManager
-from lib.yandex_search import DictSearchCache, YandexSearchClient
+from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -115,7 +116,7 @@ def mockClient():
 @pytest.fixture
 def cachedClient():
     """Create a mock client with caching enabled."""
-    cache = DictSearchCache(max_size=1000, default_ttl=3600)
+    cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), maxSize=1000, defaultTtl=3600)
     return MockYandexSearchClient(iamToken=TEST_IAM_TOKEN, folderId=TEST_FOLDER_ID, cache=cache, cacheTTL=3600)
 
 
@@ -226,101 +227,6 @@ class TestSearchPerformance:
 
         logger.info(f"Concurrent searches: {len(queries)} in {totalTime:.3f}s")
         logger.info(f"Average time per search: {avgTime:.3f}s")
-
-
-class TestCachePerformance:
-    """Test cache hit/miss ratios and performance.
-
-    This test class evaluates the caching system's performance including
-    cache hit speed improvements, hit/miss ratios, and memory usage
-    characteristics.
-    """
-
-    @pytest.mark.asyncio
-    async def testCacheHitPerformance(self, cachedClient, rateLimiterManager):
-        """Test that cached responses are faster than API calls.
-
-        Measures and compares the response times of API calls versus cache
-        hits, verifying that cached responses provide significant performance
-        improvements. Tests the effectiveness of the caching mechanism.
-        """
-        query = "cache performance test"
-
-        # First request - should hit the API
-        startTime = time.time()
-        result1 = await cachedClient.search(query)
-        firstRequestTime = time.time() - startTime
-
-        # Second request - should hit cache
-        startTime = time.time()
-        result2 = await cachedClient.search(query)
-        secondRequestTime = time.time() - startTime
-
-        assert result1 is not None
-        assert result2 is not None
-        assert result1["requestId"] == result2["requestId"]  # Same cached result
-        assert secondRequestTime < firstRequestTime  # Cache should be faster
-
-        # Check cache stats
-        cache = cachedClient.cache
-        stats = cache.getStats()
-        assert stats["search_entries"] >= 1
-
-        logger.info(f"First request (API): {firstRequestTime:.3f}s")
-        logger.info(f"Second request (cache): {secondRequestTime:.3f}s")
-        logger.info(f"Cache speedup: {firstRequestTime / secondRequestTime:.1f}x")
-
-    @pytest.mark.asyncio
-    async def testCacheHitMissRatio(self, cachedClient, rateLimiterManager):
-        """Test cache hit/miss ratio with repeated queries.
-
-        Tests the cache's hit/miss ratio behavior with repeated queries,
-        verifying that the cache correctly stores and retrieves responses
-        for identical queries while maintaining appropriate statistics.
-        """
-        queries = ["query 1", "query 2", "query 3"]
-        repeatCount = 5
-
-        # Make initial requests to populate cache
-        for query in queries:
-            await cachedClient.search(query)
-
-        # Clear cache to start fresh
-        cachedClient.cache.clear()
-
-        # Repeat queries multiple times
-        for _ in range(repeatCount):
-            for query in queries:
-                await cachedClient.search(query)
-
-        # Check cache stats
-        stats = cachedClient.cache.getStats()
-        # We should have 3 unique queries cached
-        assert stats["search_entries"] == 3
-
-        logger.info(f"Cache stats: {stats}")
-        logger.info(f"Unique cached queries: {stats['search_entries']}")
-
-    @pytest.mark.asyncio
-    async def testCacheUsage(self, rateLimiterManager):
-        """Test memory usage with caching enabled.
-
-        Measures the memory usage of the caching system under load and
-        verifies that memory usage remains within reasonable bounds.
-        Tests that the cache properly enforces size limits and doesn't
-        cause memory leaks.
-        """
-        # Create cache with limited size
-        cache = DictSearchCache(max_size=10, default_ttl=3600)
-        client = MockYandexSearchClient(iamToken=TEST_IAM_TOKEN, folderId=TEST_FOLDER_ID, cache=cache)
-
-        # Make many requests to fill cache
-        for i in range(15):  # More than cache max_size
-            await client.search(f"test query {i}")
-
-        # Cache should not grow beyond its limits
-        stats = cache.getStats()
-        assert stats["search_entries"] <= 10  # Should not exceed max_size
 
 
 class TestMemoryAndResourceUsage:

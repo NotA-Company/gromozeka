@@ -25,10 +25,11 @@ from telegram.ext import ContextTypes
 
 import lib.utils as utils
 from internal.config.manager import ConfigManager
+from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
+    CacheType,
     MessageCategory,
 )
-from internal.database.openweathermap_cache import DatabaseWeatherCache
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
@@ -36,6 +37,7 @@ from lib.ai import (
     LLMManager,
     LLMParameterType,
 )
+from lib.cache import JsonValueConverter, StringKeyGenerator
 from lib.openweathermap import CombinedWeatherResult, OpenWeatherMapClient
 
 from .. import constants
@@ -92,7 +94,18 @@ class WeatherHandler(BaseBotHandler):
 
         self.openWeatherMapClient = OpenWeatherMapClient(
             apiKey=openWeatherMapConfig["api-key"],
-            cache=DatabaseWeatherCache(self.db),
+            weatherCache=GenericDatabaseCache(
+                self.db,
+                CacheType.WEATHER,
+                keyGenerator=StringKeyGenerator(),
+                valueConverter=JsonValueConverter(),
+            ),
+            geocodingCache=GenericDatabaseCache(
+                self.db,
+                CacheType.GEOCODING,
+                keyGenerator=StringKeyGenerator(),
+                valueConverter=JsonValueConverter(),
+            ),
             geocodingTTL=openWeatherMapConfig.get("geocoding-cache-ttl", None),
             weatherTTL=openWeatherMapConfig.get("weather-cache-ttl", None),
             requestTimeout=openWeatherMapConfig.get("request-timeout", 10),

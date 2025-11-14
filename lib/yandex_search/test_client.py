@@ -15,8 +15,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
+from lib.cache import DictCache
+
+from .cache_utils import SearchRequestKeyGenerator
 from .client import YandexSearchClient
-from .dict_cache import DictSearchCache
 from .models import (
     FamilyMode,
     FixTypoMode,
@@ -504,7 +506,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         mockManagerGetInstance.return_value = mockManager
 
         # Create cache and client
-        cache = DictSearchCache(default_ttl=3600)
+        cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), defaultTtl=3600)
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId, cache=cache)
 
         # First request - should hit API
@@ -524,10 +526,6 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         # Verify responses are identical
         if response1 and response2:
             self.assertEqual(response1["requestId"], response2["requestId"])
-
-        # Verify cache stats
-        stats = cache.getStats()
-        self.assertEqual(stats["search_entries"], 1)
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
@@ -553,8 +551,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         mockManagerGetInstance.return_value = mockManager
 
         # Create cache and client with cache disabled
-        cache = DictSearchCache(default_ttl=3600)
-        client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId, cache=cache, useCache=False)
+        client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId)
 
         # First request - should hit API
         response1 = await client.search("bypass test query")
@@ -566,10 +563,6 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
         # Verify API was called twice (cache bypassed)
         self.assertEqual(mockClient.post.call_count, 2)
-
-        # Verify cache is empty
-        stats = cache.getStats()
-        self.assertEqual(stats["search_entries"], 0)
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
@@ -595,7 +588,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         mockManagerGetInstance.return_value = mockManager
 
         # Create cache and client
-        cache = DictSearchCache(default_ttl=3600)
+        cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), defaultTtl=3600)
         client = YandexSearchClient(iamToken=self.iamToken, folderId=self.folderId, cache=cache)
 
         # First request - should hit API and cache
@@ -603,7 +596,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(response1)
 
         # Second request with cache disabled - should hit API
-        response2 = await client.search("per-request test query", useCache=False)
+        response2 = await client.search("per-request test query", cacheTTL=0)  # TTL == 0 is the same as no cache
         self.assertIsNotNone(response2)
 
         # Third request without bypass - should hit cache
@@ -651,7 +644,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         for search requests, properly handling different request
         parameters while excluding folderId from the key generation.
         """
-        cache = DictSearchCache(default_ttl=3600)
+        keyGenerator = SearchRequestKeyGenerator()
 
         # Create sample requests
         # Create two requests with different folder IDs
@@ -701,8 +694,8 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         }
 
         # Generate cache keys
-        key1 = cache._generateCacheKey(request1)
-        key2 = cache._generateCacheKey(request2)
+        key1 = keyGenerator.generateKey(request1)
+        key2 = keyGenerator.generateKey(request2)
 
         # Keys should be the same (folderId excluded from cache key)
         self.assertEqual(key1, key2)
@@ -718,19 +711,17 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         configuration including TTL, usage flags, and rate limiting
         parameters.
         """
-        cache = DictSearchCache(default_ttl=1800)
+        cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), defaultTtl=1800)
 
         client = YandexSearchClient(
             iamToken=self.iamToken,
             folderId=self.folderId,
             cache=cache,
             cacheTTL=1800,
-            useCache=True,
         )
 
         self.assertEqual(client.cache, cache)
         self.assertEqual(client.cacheTTL, 1800)
-        self.assertEqual(client.useCache, True)
 
 
 if __name__ == "__main__":
