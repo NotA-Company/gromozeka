@@ -58,11 +58,17 @@ async def test_cache_error_handling():
 
     mockResponse = [{"place_id": 123, "name": "Test", "lat": "52.5", "lon": "103.8"}]
 
-    with patch.object(client, "_makeRequest", return_value=mockResponse):
-        result = await client.search("Test Query")
+    with patch.object(client._rateLimiter, "applyLimit", new_callable=AsyncMock):
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mockResponse
+            mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
 
-        # Should still get result despite cache errors
-        assert result == mockResponse
+            result = await client.search("Test Query")
+
+            # Should still get result despite cache errors
+            assert result == mockResponse
 
 
 @pytest.mark.asyncio
@@ -159,33 +165,40 @@ async def test_search_parameter_validation():
 
     mockResponse = [{"place_id": 123, "name": "Test", "lat": "52.5", "lon": "103.8"}]
 
-    with patch.object(client, "_makeRequest", return_value=mockResponse) as mock_request:
-        # Test with all parameters
-        await client.search(
-            query="Test Query",
-            limit=5,
-            countrycodes="ru,us",
-            viewbox="103.0,52.0,104.0,53.0",
-            bounded=True,
-            addressdetails=False,
-            extratags=False,
-            namedetails=False,
-            dedupe=False,
-        )
+    with patch.object(client._rateLimiter, "applyLimit", new_callable=AsyncMock):
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mockResponse
+            mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
 
-        # Verify _makeRequest was called with correct params
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args[0][1]  # Get params dict
+            # Test with all parameters
+            await client.search(
+                query="Test Query",
+                limit=5,
+                countrycodes="ru,us",
+                viewbox="103.0,52.0,104.0,53.0",
+                bounded=True,
+                addressdetails=False,
+                extratags=False,
+                namedetails=False,
+                dedupe=False,
+            )
 
-        assert call_args["q"] == "Test Query"
-        assert call_args["limit"] == 5
-        assert call_args["countrycodes"] == "ru,us"
-        assert call_args["viewbox"] == "103.0,52.0,104.0,53.0"
-        assert call_args["bounded"] == 1
-        assert call_args["addressdetails"] == 0
-        assert call_args["extratags"] == 0
-        assert call_args["namedetails"] == 0
-        assert call_args["dedupe"] == 0
+            # Verify HTTP client was called with correct params
+            mock_client.return_value.__aenter__.return_value.get.assert_called_once()
+            call_args = mock_client.return_value.__aenter__.return_value.get.call_args[1]["params"]  # Get params dict
+
+            assert call_args["q"] == "Test Query"
+            assert call_args["limit"] == 5
+            assert call_args["countrycodes"] == "ru,us"
+            assert call_args["viewbox"] == "103.0,52.0,104.0,53.0"
+            assert call_args["bounded"] == 1
+            assert call_args["addressdetails"] == 0
+            assert call_args["extratags"] == 0
+            assert call_args["namedetails"] == 0
+            assert call_args["dedupe"] == 0
+            assert call_args["format"] == "jsonv2"
 
 
 @pytest.mark.asyncio
@@ -195,22 +208,29 @@ async def test_reverse_parameter_validation():
 
     mockResponse = {"place_id": 123, "name": "Test", "lat": "52.5", "lon": "103.8"}
 
-    with patch.object(client, "_makeRequest", return_value=mockResponse) as mock_request:
-        # Test with all parameters
-        await client.reverse(
-            lat=52.5443, lon=103.8882, zoom=15, addressdetails=False, extratags=False, namedetails=False
-        )
+    with patch.object(client._rateLimiter, "applyLimit", new_callable=AsyncMock):
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mockResponse
+            mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
 
-        # Verify _makeRequest was called with correct params
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args[0][1]  # Get params dict
+            # Test with all parameters
+            await client.reverse(
+                lat=52.5443, lon=103.8882, zoom=15, addressdetails=False, extratags=False, namedetails=False
+            )
 
-        assert call_args["lat"] == 52.5443
-        assert call_args["lon"] == 103.8882
-        assert call_args["zoom"] == 15
-        assert call_args["addressdetails"] == 0
-        assert call_args["extratags"] == 0
-        assert call_args["namedetails"] == 0
+            # Verify HTTP client was called with correct params
+            mock_client.return_value.__aenter__.return_value.get.assert_called_once()
+            call_args = mock_client.return_value.__aenter__.return_value.get.call_args[1]["params"]  # Get params dict
+
+            assert call_args["lat"] == 52.5443
+            assert call_args["lon"] == 103.8882
+            assert call_args["zoom"] == 15
+            assert call_args["addressdetails"] == 0
+            assert call_args["extratags"] == 0
+            assert call_args["namedetails"] == 0
+            assert call_args["format"] == "jsonv2"
 
 
 @pytest.mark.asyncio
@@ -220,31 +240,38 @@ async def test_lookup_parameter_validation():
 
     mockResponse = [{"place_id": 123, "name": "Test", "lat": "52.5", "lon": "103.8"}]
 
-    with patch.object(client, "_makeRequest", return_value=mockResponse) as mock_request:
-        # Test with all parameters
-        await client.lookup(
-            osmIds=["R2623018", "N107775"],
-            addressdetails=False,
-            extratags=False,
-            namedetails=False,
-            polygonGeojson=True,
-            polygonKml=True,
-            polygonSvg=True,
-            polygonText=True,
-        )
+    with patch.object(client._rateLimiter, "applyLimit", new_callable=AsyncMock):
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mockResponse
+            mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
 
-        # Verify _makeRequest was called with correct params
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args[0][1]  # Get params dict
+            # Test with all parameters
+            await client.lookup(
+                osmIds=["R2623018", "N107775"],
+                addressdetails=False,
+                extratags=False,
+                namedetails=False,
+                polygonGeojson=True,
+                polygonKml=True,
+                polygonSvg=True,
+                polygonText=True,
+            )
 
-        assert call_args["osm_ids"] == "N107775,R2623018"  # Sorted
-        assert call_args["addressdetails"] == 0
-        assert call_args["extratags"] == 0
-        assert call_args["namedetails"] == 0
-        assert call_args["polygon_geojson"] == 1
-        assert call_args["polygon_kml"] == 1
-        assert call_args["polygon_svg"] == 1
-        assert call_args["polygon_text"] == 1
+            # Verify HTTP client was called with correct params
+            mock_client.return_value.__aenter__.return_value.get.assert_called_once()
+            call_args = mock_client.return_value.__aenter__.return_value.get.call_args[1]["params"]  # Get params dict
+
+            assert call_args["osm_ids"] == "N107775,R2623018"  # Sorted
+            assert call_args["addressdetails"] == 0
+            assert call_args["extratags"] == 0
+            assert call_args["namedetails"] == 0
+            assert call_args["polygon_geojson"] == 1
+            assert call_args["polygon_kml"] == 1
+            assert call_args["polygon_svg"] == 1
+            assert call_args["polygon_text"] == 1
+            assert call_args["format"] == "jsonv2"
 
 
 @pytest.mark.asyncio
@@ -255,17 +282,23 @@ async def test_lookup_cache_behavior():
 
     mockResponse = [{"place_id": 123, "name": "Test", "lat": "52.5", "lon": "103.8"}]
 
-    with patch.object(client, "_makeRequest", return_value=mockResponse) as mock_request:
-        # First call - should hit API
-        result1 = await client.lookup(["R2623018", "N107775"])
+    with patch.object(client._rateLimiter, "applyLimit", new_callable=AsyncMock):
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mockResponse
+            mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
 
-        # Second call with IDs in different order - should hit cache
-        result2 = await client.lookup(["N107775", "R2623018"])
+            # First call - should hit API
+            result1 = await client.lookup(["R2623018", "N107775"])
 
-        assert result1 == result2 == mockResponse
+            # Second call with IDs in different order - should hit cache
+            result2 = await client.lookup(["N107775", "R2623018"])
 
-        # Verify only one API call was made
-        mock_request.assert_called_once()
+            assert result1 == result2 == mockResponse
+
+            # Verify only one API call was made
+            mock_client.return_value.__aenter__.return_value.get.assert_called_once()
 
 
 @pytest.mark.asyncio

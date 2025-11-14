@@ -55,6 +55,20 @@ class GeocodeMapsClient:
         >>> places = await client.lookup(["R2623018"])
     """
 
+    __slots__ = (
+        "apiKey",
+        "searchCache",
+        "reverseCache",
+        "lookupCache",
+        "searchTTL",
+        "reverseTTL",
+        "lookupTTL",
+        "requestTimeout",
+        "acceptLanguage",
+        "rateLimiterQueue",
+        "_rateLimiter",
+    )
+
     API_BASE_URL = "https://geocode.maps.co"
 
     def __init__(
@@ -401,8 +415,6 @@ class GeocodeMapsClient:
             url = f"{self.API_BASE_URL}/{endpoint}"
 
             # Add required parameters
-            # TODO: do not add api_key to params
-            params["api_key"] = self.apiKey
             params["format"] = "jsonv2"
             if self.acceptLanguage and "accept-language" not in params:
                 params["accept-language"] = self.acceptLanguage
