@@ -57,3 +57,17 @@ This file records architectural and implementation decisions.
 [2025-11-12 18:01:00] - Implemented complete rate limiter library with sliding window algorithm and singleton manager pattern. Created lib/rate_limiter/ package with RateLimiterInterface, SlidingWindowRateLimiter, QueueConfig, and RateLimiterManager. All code follows project conventions with camelCase naming, comprehensive docstrings, and Prinny personality logging.
 [2025-11-12 19:15:50] - Added __slots__ to YandexSearchClient class for memory optimization
 [2025-11-13 19:20:15] - Added .git to isort extend_skip configuration in pyproject.toml to ensure isort ignores the .git directory
+[2025-11-14 18:48:00] - Completed Phase 3 implementation of Geocode Maps API client with reverse() and lookup() methods
+- Implemented reverse() method with coordinate rounding to 4 decimal places for cache efficiency (~11m precision)
+- Implemented lookup() method with OSM ID sorting for consistent cache keys across different ID orderings
+- Both methods follow the established caching pattern from search() method with proper error handling
+- Used cast() from typing for proper type hints and cache storage type safety
+- All implementation follows project conventions: camelCase naming, comprehensive docstrings, and Prinny personality logging
+- Code passes all quality checks: formatting, linting, and testing (1310 tests passed)
+[2025-11-14 18:51:00] - Completed comprehensive documentation for Geocode Maps API client (Phase 4)
+- Created detailed README.md with complete API reference for all three endpoints
+- Documentation includes practical examples for basic and advanced usage scenarios
+- Added comprehensive sections on caching strategies, rate limiting configuration, and error handling
+- Followed design document structure (lines 802-813) for consistency and completeness
+- Documentation maintains Prinny personality while providing professional technical content
+- All code quality checks passed: formatting, linting, and 1310 tests
