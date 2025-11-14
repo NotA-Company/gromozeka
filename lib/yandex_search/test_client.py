@@ -19,7 +19,6 @@ from lib.cache import DictCache
 
 from .cache_utils import SearchRequestKeyGenerator
 from .client import YandexSearchClient
-from .dict_cache import DictSearchCache
 from .models import (
     FamilyMode,
     FixTypoMode,
@@ -645,7 +644,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         for search requests, properly handling different request
         parameters while excluding folderId from the key generation.
         """
-        cache = DictSearchCache(default_ttl=3600)
+        keyGenerator = SearchRequestKeyGenerator()
 
         # Create sample requests
         # Create two requests with different folder IDs
@@ -695,8 +694,8 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         }
 
         # Generate cache keys
-        key1 = cache._generateCacheKey(request1)
-        key2 = cache._generateCacheKey(request2)
+        key1 = keyGenerator.generateKey(request1)
+        key2 = keyGenerator.generateKey(request2)
 
         # Keys should be the same (folderId excluded from cache key)
         self.assertEqual(key1, key2)

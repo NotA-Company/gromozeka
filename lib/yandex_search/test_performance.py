@@ -18,8 +18,9 @@ import time
 
 import pytest
 
+from lib.cache import DictCache
 from lib.rate_limiter import RateLimiterManager
-from lib.yandex_search import DictSearchCache, YandexSearchClient
+from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -115,7 +116,7 @@ def mockClient():
 @pytest.fixture
 def cachedClient():
     """Create a mock client with caching enabled."""
-    cache = DictSearchCache(max_size=1000, default_ttl=3600)
+    cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), maxSize=1000, defaultTtl=3600)
     return MockYandexSearchClient(iamToken=TEST_IAM_TOKEN, folderId=TEST_FOLDER_ID, cache=cache, cacheTTL=3600)
 
 
