@@ -54,14 +54,15 @@ class TestNullCache:
         retrieved = await self.cache.get("test_key")
         assert retrieved is None
 
-    def test_clear_does_nothing(self):
+    @pytest.mark.asyncio
+    async def test_clear_does_nothing(self):
         """Test that clear() does nothing without errors, dood!"""
         # Should not raise any exceptions
-        self.cache.clear()
+        await self.cache.clear()
 
         # Multiple calls should also be fine
-        self.cache.clear()
-        self.cache.clear()
+        await self.cache.clear()
+        await self.cache.clear()
 
     def test_get_stats_returns_disabled(self):
         """Test that getStats() returns cache disabled indicator, dood!"""

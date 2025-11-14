@@ -77,7 +77,7 @@ class TestDictCacheBasic:
         assert await cache.get("key2") == "value2"
 
         # Clear cache
-        cache.clear()
+        await cache.clear()
 
         # Verify values are gone
         assert await cache.get("key1") is None
@@ -302,7 +302,7 @@ class TestDictCacheThreadSafety:
 
         async def clearer():
             await asyncio.sleep(0.05)  # Let writer start
-            cache.clear()
+            await cache.clear()
 
         # Run writer and clearer concurrently
         await asyncio.gather(writer(), clearer())

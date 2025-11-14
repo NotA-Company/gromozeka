@@ -56,7 +56,7 @@ class NullCache(CacheInterface[K, V]):
         """
         return True
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """
         Do nothing (no-op operation), dood!
 

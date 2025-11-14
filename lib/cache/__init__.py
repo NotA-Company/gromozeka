@@ -36,7 +36,8 @@ from .key_generator import HashKeyGenerator, JsonKeyGenerator, StringKeyGenerato
 from .null_cache import NullCache
 
 # Export core types and interfaces
-from .types import K, KeyGenerator, T, V
+from .types import K, KeyGenerator, T, V, ValueConverter
+from .value_converter import JsonValueConverter, StringValueConverter
 
 __version__ = "0.1.0"
 __author__ = "SourceCraft Code Assistant (Prinny Mode)"
@@ -44,6 +45,7 @@ __author__ = "SourceCraft Code Assistant (Prinny Mode)"
 __all__ = [
     # Core types
     "KeyGenerator",
+    "ValueConverter",
     "K",
     "V",
     "T",
@@ -56,4 +58,7 @@ __all__ = [
     "StringKeyGenerator",
     "HashKeyGenerator",
     "JsonKeyGenerator",
+    # Value Converters
+    "StringValueConverter",
+    "JsonValueConverter",
 ]
