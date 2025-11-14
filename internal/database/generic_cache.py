@@ -1,5 +1,9 @@
 """
-TODO
+Generic database cache implementation for the Telegram bot, dood!
+
+This module provides a database-backed cache implementation that uses the
+DatabaseWrapper to store and retrieve cached data. It supports different
+cache namespaces and configurable key/value conversion strategies, dood!
 """
 
 import logging
@@ -14,7 +18,37 @@ logger = logging.getLogger(__name__)
 
 
 class GenericDatabaseCache(CacheInterface[K, V]):
-    """TODO"""
+    """
+    Database-backed cache implementation, dood!
+
+    This cache implementation stores data in the database using the DatabaseWrapper.
+    It supports different cache namespaces for organizing data and uses configurable
+    key generators and value converters for flexible data handling, dood!
+
+    Type Parameters:
+        K: The key type (any hashable type)
+        V: The value type (any type)
+
+    Attributes:
+        db: DatabaseWrapper instance for database operations
+        namespace: CacheType enum value for organizing cache data
+        keyGenerator: KeyGenerator instance for converting keys to strings
+        valueConverter: ValueConverter instance for serializing/deserializing values
+
+    Example:
+        >>> from internal.database.wrapper import DatabaseWrapper
+        >>> from internal.database.models import CacheType
+        >>> from lib.cache import StringKeyGenerator
+        >>>
+        >>> db = DatabaseWrapper("path/to/db.sqlite")
+        >>> cache = GenericDatabaseCache[str, dict](
+        ...     db=db,
+        ...     namespace=CacheType.WEATHER,
+        ...     keyGenerator=StringKeyGenerator()
+        ... )
+        >>> await cache.set("moscow", {"temp": 20, "humidity": 50})
+        >>> weather = await cache.get("moscow")
+    """
 
     def __init__(
         self,
@@ -27,8 +61,12 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         Initialize cache with database wrapper
 
         Args:
-            db_wrapper: DatabaseWrapper instance from internal.database.wrapper
-            TODO: Update
+            db: DatabaseWrapper instance from internal.database.wrapper
+            namespace: CacheType enum value for organizing cache data
+            keyGenerator: Optional KeyGenerator instance for converting keys to strings.
+                         If None, uses HashKeyGenerator by default.
+            valueConverter: Optional ValueConverter instance for serializing/deserializing values.
+                           If None, uses JsonValueConverter by default.
         """
         self.db = db
         self.namespace = namespace
@@ -63,6 +101,20 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         self.db.clearCache(self.namespace)
 
     def getStats(self) -> Dict[str, Any]:
-        """TODO"""
-        # Add more stats, probably?
-        return {"enabled": True}
+        """
+        Get cache statistics, dood!
+
+        Returns basic statistics about the cache state including the namespace
+        and enabled status. Additional statistics could be added in the future
+        such as entry count, hit/miss ratios, and size information, dood!
+
+        Returns:
+            Dict[str, Any]: Dictionary containing cache statistics
+        """
+        return {
+            "enabled": True,
+            "namespace": self.namespace.value,
+            "backend": "database",
+            "keyGenerator": type(self.keyGenerator).__name__,
+            "valueConverter": type(self.valueConverter).__name__,
+        }

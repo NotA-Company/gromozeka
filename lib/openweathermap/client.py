@@ -61,7 +61,8 @@ class OpenWeatherMapClient:
 
         Args:
             apiKey: OpenWeatherMap API key
-            cache: Cache implementation (must implement WeatherCacheInterface)
+            weatherCache: Cache for weather data
+            geocodingCache: Cache for geocoding results
             geocodingTTL: Cache TTL for geocoding results (seconds)
             weatherTTL: Cache TTL for weather data (seconds)
             requestTimeout: HTTP request timeout (seconds)
