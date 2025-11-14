@@ -39,15 +39,17 @@ Example:
                     print(f"URL: {doc['url']}")
 """
 
+# TODO: Update\fix all docstrings, make them more compact
+
 import json
 import logging
 from typing import Optional
 
 import httpx
 
+from lib.cache import CacheInterface, NullCache
 from lib.rate_limiter import RateLimiterManager
 
-from .cache_interface import SearchCacheInterface
 from .models import (
     FamilyMode,
     FixTypoMode,
@@ -136,9 +138,8 @@ class YandexSearchClient:
         apiKey: Optional[str] = None,
         folderId: str = "",
         requestTimeout: int = 30,
-        cache: Optional[SearchCacheInterface] = None,
+        cache: Optional[CacheInterface[SearchRequest, SearchResponse]] = None,
         cacheTTL: Optional[int] = 3600,
-        useCache: bool = True,
         rateLimiterQueue: str = "yandex-search",
     ):
         """Initialize Yandex Search client with authentication and configuration.
@@ -158,8 +159,6 @@ class YandexSearchClient:
             cache (Optional[SearchCacheInterface]): Cache implementation for result caching.
                 If None, caching is disabled regardless of other cache settings.
             cacheTTL (Optional[int]): Default cache TTL in seconds (default: 3600 = 1 hour).
-                Can be overridden per request. Ignored if cache is None.
-            useCache (bool): Enable/disable caching for all requests by default.
                 Can be overridden per request. Ignored if cache is None.
             rateLimiterQueue (str): Name of the rate limiter queue to use. Defaults to "yandex_search".
         Raises:
@@ -194,9 +193,8 @@ class YandexSearchClient:
         self.apiKey = apiKey
         self.folderId = folderId
         self.requestTimeout = requestTimeout
-        self.cache = cache
+        self.cache: CacheInterface[SearchRequest, SearchResponse] = cache if cache is not None else NullCache()
         self.cacheTTL = cacheTTL
-        self.useCache = useCache
         self.rateLimiterQueue = rateLimiterQueue
         self._rateLimiter = RateLimiterManager.getInstance()
 
@@ -216,7 +214,7 @@ class YandexSearchClient:
         maxPassages: int = 2,
         region: str = "225",  # See https://yandex.cloud/ru/docs/search-api/reference/regions for examples
         l10n: Localization = Localization.LOCALIZATION_RU,
-        useCache: Optional[bool] = None,
+        cacheTTL: Optional[int] = None,
     ) -> Optional[SearchResponse]:
         """Perform search with comprehensive parameter control.
 
@@ -273,10 +271,6 @@ class YandexSearchClient:
                 - LOCALIZATION_EN: English
                 - LOCALIZATION_TR: Turkish
                 - Additional languages available
-            useCache (Optional[bool]): Cache override for this request.
-                If False, bypass cache for this request only.
-                If True, force cache usage (if available).
-                If None, uses client's default useCache setting.
 
         Returns:
             Optional[SearchResponse]: Search response dictionary with structure:
@@ -344,15 +338,13 @@ class YandexSearchClient:
             "responseFormat": ResponseFormat.FORMAT_XML,
         }
 
-        # Check cache first (if enabled and not bypassed)
-        effectiveUseCache = useCache if useCache is not None else self.useCache
-        if self.cache and effectiveUseCache:
-            cachedResult = await self.cache.getSearch(request, self.cacheTTL)
-            if cachedResult:
-                logger.debug(f"Cache hit for query: {queryText}")
-                return cachedResult
-            else:
-                logger.debug(f"Cache miss for query: {queryText}")
+        # Check cache first
+        cachedResult = await self.cache.get(request, cacheTTL if cacheTTL is not None else self.cacheTTL)
+        if cachedResult:
+            logger.debug(f"Cache hit for query: {queryText}")
+            return cachedResult
+        else:
+            logger.debug(f"Cache miss for query: {queryText}")
 
         # Apply rate limiting
         await self._rateLimiter.applyLimit(self.rateLimiterQueue)
@@ -361,8 +353,8 @@ class YandexSearchClient:
         result = await self._makeRequest(request)
 
         # Cache successful results
-        if result and self.cache and effectiveUseCache:
-            await self.cache.setSearch(request, result)
+        if result is not None:
+            await self.cache.set(request, result)
             logger.debug(f"Cached result for query: {queryText}")
 
         return result
