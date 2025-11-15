@@ -434,6 +434,7 @@ class GeocodeMapsClient:
                 if response.status_code == 200:
                     data = response.json()
                     logger.debug(f"API request successful: {response.status_code}")
+                    logger.debug(f"API response: {data}")
                     return data
 
                 elif response.status_code == 401:
