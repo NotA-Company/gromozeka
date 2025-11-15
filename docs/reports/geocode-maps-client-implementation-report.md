@@ -491,7 +491,7 @@ Potential improvements for future iterations:
 ### 12. References
 
 - **Design Document**: [`docs/design/geocode-maps-client-design-v1.md`](docs/design/geocode-maps-client-design-v1.md)
-- **API Documentation**: [`docs/other/Geocode-Maps-API.md`](docs/other/Geocode-Maps-API.md)
+- **API Documentation**: [`docs/other/geocode-maps/Geocode-Maps-API.md`](docs/other/geocode-maps/Geocode-Maps-API.md)
 - **Similar Implementations**:
   - [`lib/openweathermap/client.py`](lib/openweathermap/client.py) - Cache and rate limiting patterns
   - [`lib/yandex_search/client.py`](lib/yandex_search/client.py) - TypedDict and authentication patterns

@@ -29,7 +29,7 @@ Task: 4.0.0
 The implementation provides a complete solution for handling Telegram's MarkdownV2 format, which has specific escaping requirements that differ significantly from standard Markdown. The utilities enable the bot to safely format messages without formatting errors while providing validation to ensure message integrity.
 
 ### Implementation Approach
-- Analyzed Telegram MarkdownV2 specification from docs/other/telegram-markdown-v2.txt
+- Analyzed Telegram MarkdownV2 specification from docs/other/geocode-maps/telegram-markdown-v2.txt
 - Designed modular functions with clear separation of concerns
 - Implemented context-aware escaping for different markup contexts (general text, code blocks, link URLs)
 - Used placeholder technique to avoid conflicts between bold and italic processing

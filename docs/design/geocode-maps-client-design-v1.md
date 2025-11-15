@@ -51,7 +51,7 @@ Based on [`docs/design/geocode-maps-client-design-v0.md`](docs/design/geocode-ma
 
 ### API Endpoints
 
-The client must support three endpoints from [`docs/other/Geocode-Maps-API.md`](docs/other/Geocode-Maps-API.md):
+The client must support three endpoints from [`docs/other/geocode-maps/Geocode-Maps-API.md`](docs/other/geocode-maps/Geocode-Maps-API.md):
 
 1. **`/search`** - Forward geocoding (address → coordinates), dood
 2. **`/reverse`** - Reverse geocoding (coordinates → address), dood
@@ -107,7 +107,7 @@ All models will be defined in [`lib/geocode_maps/models.py`](lib/geocode_maps/mo
 
 ### Response Models
 
-Based on example responses in [`docs/other/`](docs/other/):
+Based on example responses in [`docs/other/geocode-maps/`](docs/other/geocode-maps/):
 
 #### Address Components
 
@@ -1063,7 +1063,7 @@ def test_address_optional_fields():
 ### Internal Documentation
 
 - [`docs/design/geocode-maps-client-design-v0.md`](docs/design/geocode-maps-client-design-v0.md) - Original requirements, dood
-- [`docs/other/Geocode-Maps-API.md`](docs/other/Geocode-Maps-API.md) - API reference documentation, dood
+- [`docs/other/geocode-maps/Geocode-Maps-API.md`](docs/other/geocode-maps/Geocode-Maps-API.md) - API reference documentation, dood
 - [`lib/openweathermap/client.py`](lib/openweathermap/client.py) - Reference implementation pattern, dood
 - [`lib/yandex_search/client.py`](lib/yandex_search/client.py) - Reference implementation pattern, dood
 - [`lib/cache/interface.py`](lib/cache/interface.py) - Cache interface documentation, dood
@@ -1071,9 +1071,9 @@ def test_address_optional_fields():
 
 ### Example Responses
 
-- [`docs/other/search-Angarsk-jsonv2.json`](docs/other/search-Angarsk-jsonv2.json) - Search endpoint example, dood
-- [`docs/other/reverse-Angarsk-jsonv2.json`](docs/other/reverse-Angarsk-jsonv2.json) - Reverse endpoint example, dood
-- [`docs/other/lookup-Angarsk-jsonv2.json`](docs/other/lookup-Angarsk-jsonv2.json) - Lookup endpoint example, dood
+- [`docs/other/geocode-maps/search-Angarsk-jsonv2.json`](docs/other/geocode-maps/search-Angarsk-jsonv2.json) - Search endpoint example, dood
+- [`docs/other/geocode-maps/reverse-Angarsk-jsonv2.json`](docs/other/geocode-maps/reverse-Angarsk-jsonv2.json) - Reverse endpoint example, dood
+- [`docs/other/geocode-maps/lookup-Angarsk-jsonv2.json`](docs/other/geocode-maps/lookup-Angarsk-jsonv2.json) - Lookup endpoint example, dood
 
 ### External Resources
 
