@@ -1,11 +1,9 @@
 # Task [X.Y.Z] Completion Report: [Task Name]
 
-**Phase:** [Phase X: Phase Name]
 **Category:** [Major Task Category]
 **Complexity:** [Simple/Moderate/Complex/Very Complex]
 **Report Date:** [YYYY-MM-DD]
 **Report Author:** [Developer/Team Member]
-**Task cost:** [$x.yz]
 
 ## Summary
 

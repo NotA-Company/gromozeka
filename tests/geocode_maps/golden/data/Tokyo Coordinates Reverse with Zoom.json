@@ -1,0 +1,63 @@
+{
+  "metadata": {
+    "name": "Tokyo Coordinates Reverse with Zoom",
+    "description": "Reverse geocode Tokyo coordinates with zoom parameter",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "reverse",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "lat": 35.6762,
+      "lon": 139.6503,
+      "zoom": 10
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://geocode.maps.co/reverse?lat=35.6762&lon=139.6503&addressdetails=1&extratags=1&namedetails=1&zoom=10&format=jsonv2",
+        "headers": {
+          "host": "geocode.maps.co",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1",
+          "authorization": "***MASKED***"
+        },
+        "params": {
+          "lat": "35.6762",
+          "lon": "139.6503",
+          "addressdetails": "1",
+          "extratags": "1",
+          "namedetails": "1",
+          "zoom": "10",
+          "format": "jsonv2"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sat, 15 Nov 2025 08:23:16 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "server": "cloudflare",
+          "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+          "vary": "Accept-Encoding",
+          "access-control-allow-origin": "*",
+          "cf-cache-status": "BYPASS",
+          "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=dLC5pS1ciaek5kONIiF5DLKvzR92FGcyVtGf2Md7HCe0JDzbV6Ooi9NFIrm9CUUpmvKHAs%2FZMDo%2F1cTQbEi6Zd9z7kZCRjUBenHQpG3cC0eY4NxghEs%2BCePx\"}]}",
+          "cf-ray": "99ed58754ef5dca1-FRA",
+          "alt-svc": "h3=\":443\"; ma=86400"
+        },
+        "content": "{\"place_id\":282047325,\"licence\":\"Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright\",\"osm_type\":\"relation\",\"osm_id\":1543055,\"lat\":\"35.6994929\",\"lon\":\"139.6362876\",\"category\":\"boundary\",\"type\":\"administrative\",\"place_rank\":16,\"importance\":0.5818312356256944,\"addresstype\":\"city\",\"name\":\"杉並区\",\"display_name\":\"杉並区, 東京都, 日本\",\"address\":{\"city\":\"杉並区\",\"ISO3166-2-lvl4\":\"JP-13\",\"country\":\"日本\",\"country_code\":\"jp\"},\"extratags\":{\"place\": \"city\", \"wikidata\": \"Q232631\", \"wikipedia\": \"ja:杉並区\", \"population\": \"540180\", \"start_date\": \"1947-05-03\", \"linked_place\": \"city\", \"wikimedia_commons\": \"Category:Suginami, Tokyo\"},\"namedetails\":{\"ref\": \"131156\", \"name\": \"杉並区\", \"name:en\": \"Suginami\", \"name:es\": \"Suginami\", \"name:fr\": \"Arrondissement de Suginami\", \"name:ja\": \"杉並区\", \"name:ru\": \"Сугинами\", \"name:zh\": \"杉並區\", \"name:ja-Hira\": \"すぎなみく\", \"name:ja-Latn\": \"Suginami-ku\", \"name:zh-Hans\": \"杉并区\", \"name:zh-Hant\": \"杉並區\", \"name:de\": \"Suginami\", \"_place_name:fr\": \"Suginami\", \"name:it\": \"Suginami\", \"name:ko\": \"스기나미구\", \"name:lt\": \"Suginamis\", \"name:pl\": \"Suginami\", \"name:ro\": \"Suginami\", \"name:th\": \"เขตซูงินามิ\", \"name:uk\": \"Суґінамі\"},\"boundingbox\":[\"35.6658826\",\"35.7314266\",\"139.5850878\",\"139.6677991\"]}"
+      },
+      "timestamp": "2025-11-15T08:23:16.077256+00:00"
+    }
+  ]
+}
