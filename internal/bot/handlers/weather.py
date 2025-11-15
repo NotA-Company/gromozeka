@@ -16,11 +16,13 @@ Dependencies:
     - LLM service for tool registration
 """
 
+# TODO: rewrite all docstrings and make them more compact
+
 import datetime
 import logging
 from typing import Any, Dict, Optional
 
-from telegram import Chat, Update
+from telegram import Update
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
@@ -37,18 +39,18 @@ from lib.ai import (
     LLMManager,
     LLMParameterType,
 )
-from lib.cache import JsonValueConverter, StringKeyGenerator
-from lib.openweathermap import CombinedWeatherResult, OpenWeatherMapClient
+from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
+from lib.geocode_maps import GeocodeMapsClient
+from lib.openweathermap import OpenWeatherMapClient, WeatherData
 
 from .. import constants
 from ..models import (
-    ChatSettingsKey,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
 )
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
 
@@ -113,31 +115,76 @@ class WeatherHandler(BaseBotHandler):
             rateLimiterQueue=openWeatherMapConfig.get("ratelimiter-queue", "openweathermap"),
         )
 
+        self.geocodeMapsClient: Optional[GeocodeMapsClient] = None
+        geocodeMapsConfig = self.configManager.getGeocodeMapsConfig()
+        # logger.debug(f"geocoderConfig: {utils.jsonDumps(geocodeMapsConfig, indent=2)}")
+        if geocodeMapsConfig.get("enabled"):
+            geocodeTTL = int(geocodeMapsConfig.get("cache-ttl", 2592000))
+            self.geocodeMapsClient = GeocodeMapsClient(
+                apiKey=geocodeMapsConfig["api-key"],
+                searchCache=GenericDatabaseCache(
+                    self.db, CacheType.GM_SEARCH, keyGenerator=JsonKeyGenerator(), valueConverter=JsonValueConverter()
+                ),
+                reverseCache=GenericDatabaseCache(
+                    self.db, CacheType.GM_REVERSE, keyGenerator=JsonKeyGenerator(), valueConverter=JsonValueConverter()
+                ),
+                lookupCache=GenericDatabaseCache(
+                    self.db, CacheType.GM_LOOKUP, keyGenerator=JsonKeyGenerator(), valueConverter=JsonValueConverter()
+                ),
+                searchTTL=geocodeTTL,
+                reverseTTL=geocodeTTL,
+                lookupTTL=geocodeTTL,
+                requestTimeout=geocodeMapsConfig.get("request-timeout", 10),
+                rateLimiterQueue=geocodeMapsConfig.get("ratelimiter-queue", "geocode-maps"),
+                acceptLanguage=geocodeMapsConfig.get("accept-language", "ru"),
+            )
+
         self.llmService = LLMService.getInstance()
 
-        self.llmService.registerTool(
-            name="get_weather_by_city",
-            description=(
-                "Get weather and forecast for given city. Return JSON of current weather "
-                "and weather forecast for next following days. "
-                "Temperature returned in Celsius."
-            ),
-            parameters=[
-                LLMFunctionParameter(
-                    name="city",
-                    description="City to get weather in",
-                    type=LLMParameterType.STRING,
-                    required=True,
+        if self.geocodeMapsClient is None:
+            # No Geocode Maps client, use simpler geocoder
+            self.llmService.registerTool(
+                name="get_weather_by_city",
+                description=(
+                    "Get weather and forecast for given city. Return JSON of current weather "
+                    "and weather forecast for next following days. "
+                    "Temperature returned in Celsius."
                 ),
-                LLMFunctionParameter(
-                    name="countryCode",
-                    description="ISO 3166 country code of city",
-                    type=LLMParameterType.STRING,
-                    required=False,
+                parameters=[
+                    LLMFunctionParameter(
+                        name="city",
+                        description="City to get weather in",
+                        type=LLMParameterType.STRING,
+                        required=True,
+                    ),
+                    LLMFunctionParameter(
+                        name="countryCode",
+                        description="ISO 3166 country code of city",
+                        type=LLMParameterType.STRING,
+                        required=False,
+                    ),
+                ],
+                handler=self._llmToolGetWeatherByCity,
+            )
+        else:
+            # Geocode Maps client activated - we can geocode any address
+            self.llmService.registerTool(
+                name="get_weather_by_address",
+                description=(
+                    "Get weather and forecast for given address or city. Return JSON of current weather "
+                    "and weather forecast for next following days. "
+                    "Temperature returned in Celsius."
                 ),
-            ],
-            handler=self._llmToolGetWeatherByCity,
-        )
+                parameters=[
+                    LLMFunctionParameter(
+                        name="address_or_city",
+                        description="Free-form address search query (For example: [<address>] <City>[, <Country>])",
+                        type=LLMParameterType.STRING,
+                        required=True,
+                    ),
+                ],
+                handler=self._llmToolGetWeatherByAddress,
+            )
 
         self.llmService.registerTool(
             name="get_weather_by_coords",
@@ -236,7 +283,54 @@ class WeatherHandler(BaseBotHandler):
             logger.error(f"Error getting weather: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
-    async def _formatWeather(self, weatherData: CombinedWeatherResult) -> str:
+    async def _llmToolGetWeatherByAddress(
+        self, extraData: Optional[Dict[str, Any]], address_or_city: str, **kwargs
+    ) -> str:
+        """TODO"""
+        try:
+            if self.geocodeMapsClient is None:
+                logger.error("Geocode Maps Client is not initialized somehow")
+                raise ValueError("Geocode Maps Client is not initialized")
+
+            geocodeRet = await self.geocodeMapsClient.search(address_or_city)
+            if not geocodeRet:
+                logger.error(f"Geocode Maps API returned '{geocodeRet}' for '{address_or_city}'")
+                return utils.jsonDumps({"done": False, "error": "Failed to locate given address"})
+            firstGeocodeRet = geocodeRet[0]
+            lat = float(firstGeocodeRet["lat"])
+            lon = float(firstGeocodeRet["lon"])
+            weatherRet = await self.openWeatherMapClient.getWeather(lat=lat, lon=lon)
+            if weatherRet is None:
+                logger.error(f"Weather API returned None for : {lat}:{lon} ({address_or_city})")
+                return utils.jsonDumps({"done": False, "error": "Failed to get weather"})
+
+            # Drop useless fields to reduce context
+            compactedGeocodeRet = {}
+            for k in ["osm_type", "lat", "lon", "category", "type", "addresstype", "name", "address", "extratags"]:
+                if k in firstGeocodeRet:
+                    compactedGeocodeRet[k] = firstGeocodeRet[k]
+
+            if "namedetails" in firstGeocodeRet:
+                neededLangs = [
+                    f"name:{k}" for k in constants.GEOCODER_LOCATION_LANGS + [self.geocodeMapsClient.acceptLanguage]
+                ] + ["name", "int_name"]
+                compactedGeocodeRet["namedetails"] = {k: v for k, v in firstGeocodeRet.items() if k in neededLangs}
+
+            for k in ["lon", "lat"]:
+                weatherRet.pop(k, None)
+
+            return utils.jsonDumps(
+                {
+                    "location": compactedGeocodeRet,
+                    "weather": weatherRet,
+                    "done": True,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error getting weather: {e}")
+            return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+
+    async def _formatWeather(self, weatherData: WeatherData, city: str, country: str) -> str:
         """Format weather data for user-friendly presentation, dood!
 
         Converts raw weather API response into a formatted markdown string
@@ -264,16 +358,14 @@ class WeatherHandler(BaseBotHandler):
             - Times are displayed in UTC timezone
             - City name prefers Russian localization if available
         """
-        cityName = weatherData["location"]["local_names"].get("ru", weatherData["location"]["name"])
-        country = weatherData["location"]["country"]
         # TODO: add convertation from code to name
-        weatherCurrent = weatherData["weather"]["current"]
+        weatherCurrent = weatherData["current"]
         weatherTime = str(datetime.datetime.fromtimestamp(weatherCurrent["dt"], tz=datetime.timezone.utc))
         pressureMmHg = int(weatherCurrent["pressure"] * constants.HPA_TO_MMHG)
         sunriseTime = datetime.datetime.fromtimestamp(weatherCurrent["sunrise"], tz=datetime.timezone.utc).timetz()
         sunsetTime = datetime.datetime.fromtimestamp(weatherCurrent["sunset"], tz=datetime.timezone.utc).timetz()
         return (
-            f"Погода в городе **{cityName}**, {country} на **{weatherTime}**:\n\n"
+            f"Погода в городе **{city}**, {country} на **{weatherTime}**:\n\n"
             f"{weatherCurrent['weather_description'].capitalize()}, облачность {weatherCurrent['clouds']}%\n"
             f"**Температура**: _{weatherCurrent['temp']} °C_\n"
             f"**Ощущается как**: _{weatherCurrent['feels_like']} °C_\n"
@@ -285,106 +377,14 @@ class WeatherHandler(BaseBotHandler):
             f"**Закат**: _{sunsetTime}_\n"
         )
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
-    ) -> HandlerResultStatus:
-        """Handle natural language weather requests in messages, dood!
-
-        Processes messages that mention the bot and contain weather-related queries
-        in Russian. Supports patterns like "погода в [город]" and "какая погода в [город]".
-
-        Args:
-            update: Telegram update object
-            context: Telegram context for the handler
-            ensuredMessage: Validated message object with user and chat info
-
-        Returns:
-            HandlerResultStatus indicating the result:
-            - FINAL: Weather request was processed and response sent
-            - SKIPPED: Message doesn't match weather request pattern
-            - ERROR: Failed to process weather request or ensuredMessage is None
-
-        Note:
-            - Only processes messages in PRIVATE, GROUP, or SUPERGROUP chats
-            - Requires bot to be mentioned at the beginning of the message
-            - Supports city name with optional country code (comma-separated)
-            - Logs warning if weather data cannot be retrieved
-        """
-        if ensuredMessage is None:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
-
-        chatType = ensuredMessage.chat.type
-
-        if chatType not in [Chat.PRIVATE, Chat.GROUP, Chat.SUPERGROUP]:
-            return HandlerResultStatus.SKIPPED
-
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
-            return HandlerResultStatus.SKIPPED
-
-        mentionedMe = self.checkEMMentionsMe(ensuredMessage)
-        if not mentionedMe.restText or (
-            not mentionedMe.byNick and (not mentionedMe.byName or mentionedMe.byName[0] > 0)
-        ):
-            return HandlerResultStatus.SKIPPED
-        # Proceed only if there is restText
-        #  + mentioned at begin of message (byNick is always at begin of message, so not separate check needed)
-
-        restText = mentionedMe.restText
-        restTextLower = restText.lower()
-
-        # Weather
-        weatherRequestList = [
-            "какая погода в городе ",
-            "какая погода в ",
-            "погода в городе ",
-            "погода в ",
-        ]
-        isWeatherRequest = False
-        reqContent = ""
-        for weatherReq in weatherRequestList:
-            if restTextLower.startswith(weatherReq):
-                reqContent = restText[len(weatherReq) :].strip().rstrip(" ?")
-                if reqContent:
-                    isWeatherRequest = True
-                    break
-
-        if not isWeatherRequest or not reqContent:
-            return HandlerResultStatus.SKIPPED
-
-        weatherLocation = reqContent.split(",")
-        city = weatherLocation[0].strip()
-        countryCode = None
-        if len(weatherLocation) > 1:
-            countryCode = weatherLocation[1].strip()
-
-        # TODO: Try to convert city to initial form (Москве -> Москва)
-        # TODO: Try to convert country to country code (Россия -> RU)
-
-        async with await self.startTyping(ensuredMessage) as typingManager:
-            weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
-            if weatherData is None:
-                logger.warning(f"Wasn't able to get weather for {city}, {countryCode}")
-                return HandlerResultStatus.ERROR
-
-            await self.sendMessage(
-                ensuredMessage,
-                await self._formatWeather(weatherData),
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
-            )
-        return HandlerResultStatus.FINAL
-
     ###
     # COMMANDS Handlers
     ###
 
     @commandHandlerExtended(
         commands=("weather",),
-        shortDescription="<city> [, <countryCode>] - Get weather for given city",
-        helpMessage=" `<city>` `[, <countryCode>]`: Показать погоду в указанном городе "
-        "(можно добавить 2х-буквенный код страны для уточнения).",
+        shortDescription="<address> - Get weather for given address",
+        helpMessage=" `<address>`: Показать погоду по указанному адресу.",
         suggestCategories={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
@@ -431,34 +431,63 @@ class WeatherHandler(BaseBotHandler):
             - Country code should be ISO 3166 format (e.g., RU, US, GB)
         """
         # Get Weather for given city (and country)
-        city = ""
-        countryCode: Optional[str] = None
+        address = ""
 
         if context.args:
-            argsStr = " ".join(context.args)
-            commaSplitted = argsStr.split(",")
-            city = commaSplitted[0]
-            if len(commaSplitted) > 1:
-                countryCode = commaSplitted[1]
+            address = " ".join(context.args)
         else:
             await self.sendMessage(
                 ensuredMessage,
-                messageText="Необходимо указать город для получения погоды.",
+                messageText="Необходимо указать адрес для получения погоды.",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
 
         try:
-            weatherData = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
-            if weatherData is None:
+            lon: Optional[float] = None
+            lat: Optional[float] = None
+            city: str = ""
+            country: str = ""
+
+            if self.geocodeMapsClient is None:
+                commaSplittedAddress = address.split(",")
+                city = commaSplittedAddress[0]
+                countryCode: Optional[str] = None
+                if len(commaSplittedAddress) > 1:
+                    countryCode = commaSplittedAddress[1]
+                cityLocation = await self.openWeatherMapClient.getCoordinates(city=city, country=countryCode)
+                if cityLocation is not None:
+                    lon = cityLocation["lon"]
+                    lat = cityLocation["lat"]
+                    city = cityLocation["local_names"].get("ru", cityLocation["name"])
+                    country = cityLocation["country"]
+            else:
+                geocodeRet = await self.geocodeMapsClient.search(address)
+                if geocodeRet:
+                    # logger.debug(f"Got location: {utils.jsonDumps(geocodeRet, indent=2)}")
+                    lat = float(geocodeRet[0]["lat"])
+                    lon = float(geocodeRet[0]["lon"])
+                    city = geocodeRet[0]["address"].get("city", "")
+                    country = geocodeRet[0]["address"].get("country", "")
+
+            if lon is None or lat is None:
                 await self.sendMessage(
                     ensuredMessage,
-                    f"Не удалось получить погоду для города {city}",
+                    "Не удалось найти указанный адрес",
                     messageCategory=MessageCategory.BOT_ERROR,
                 )
                 return
 
-            resp = await self._formatWeather(weatherData)
+            weatherRet = await self.openWeatherMapClient.getWeather(lat=lat, lon=lon)
+            if weatherRet is None:
+                await self.sendMessage(
+                    ensuredMessage,
+                    "Не удалось получить погоду для указанного адреса",
+                    messageCategory=MessageCategory.BOT_ERROR,
+                )
+                return
+
+            resp = await self._formatWeather(weatherRet, city=city, country=country)
 
             await self.sendMessage(
                 ensuredMessage,

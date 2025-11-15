@@ -16,17 +16,15 @@ timeout = 30
 # [ratelimiter]
 [ratelimiter.ratelimiters.default]
 type = "SlidingWindow"
-config = {
-    "windowSeconds": 5,
-    "maxRequests": 5
-}
+[ratelimiter.ratelimiters.default.config]
+windowSeconds = 5
+maxRequests = 5
 
 [ratelimiter.ratelimiters.one-per-second]
 type = "SlidingWindow"
-config = {
-    "windowSeconds": 1,
-    "maxRequests": 1
-}
+[ratelimiter.ratelimiters.one-per-second.config]
+windowSeconds = 1
+maxRequests = 1
 
 [ratelimiter.queues]
 yandex-search = "default"
@@ -82,9 +80,10 @@ enabled = false
 # Geocoding API key from https://geocode.maps.co/
 api-key = "YOUR_GEOCODING_API_KEY"
 
-cache-ttl = 86400  # 60 * 60 * 24 = 1 day (coordinates rarely change)
+cache-ttl = 2592000  # 60 * 60 * 24 * 30 = 30 days (coordinates rarely change)
 request-timeout = 30
 ratelimiter-queue = "geocode-maps"
+accept-language = "ru"
 
 
 ratelimiter-queue = "openweathermap"
