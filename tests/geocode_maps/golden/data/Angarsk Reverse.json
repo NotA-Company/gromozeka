@@ -1,0 +1,61 @@
+{
+  "metadata": {
+    "name": "Angarsk Reverse",
+    "description": "Reverse geocode Angarsk coordinates",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "reverse",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "lat": 52.5443,
+      "lon": 103.8882
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://geocode.maps.co/reverse?lat=52.5443&lon=103.8882&addressdetails=1&extratags=1&namedetails=1&format=jsonv2",
+        "headers": {
+          "host": "geocode.maps.co",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1",
+          "authorization": "***MASKED***"
+        },
+        "params": {
+          "lat": "52.5443",
+          "lon": "103.8882",
+          "addressdetails": "1",
+          "extratags": "1",
+          "namedetails": "1",
+          "format": "jsonv2"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sat, 15 Nov 2025 08:23:15 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "server": "cloudflare",
+          "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+          "vary": "Accept-Encoding",
+          "access-control-allow-origin": "*",
+          "cf-cache-status": "BYPASS",
+          "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=pCX5ea6BfyZVtnSsklXC0IvfkurxL9n%2FbCluMcFdfZ9TYYneZsdPRP2TEAfcNarK85xkMTglSnf39P59Gutn08M24WDeqEDR9dJXcLwLD9z3s9Buk%2FJ3qr16\"}]}",
+          "cf-ray": "99ed58718ba90e3a-AMS",
+          "alt-svc": "h3=\":443\"; ma=86400"
+        },
+        "content": "{\"place_id\":236550839,\"licence\":\"Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright\",\"osm_type\":\"way\",\"osm_id\":205445534,\"lat\":\"52.5443209\",\"lon\":\"103.8882077\",\"category\":\"highway\",\"type\":\"pedestrian\",\"place_rank\":26,\"importance\":0.05339440222781716,\"addresstype\":\"road\",\"name\":\"улица Ленина\",\"display_name\":\"улица Ленина, 63-й квартал, Ангарск, Ангарский городской округ, Иркутская область, Сибирский федеральный округ, 665830, Россия\",\"address\":{\"road\":\"улица Ленина\",\"neighbourhood\":\"63-й квартал\",\"city\":\"Ангарск\",\"county\":\"Ангарский городской округ\",\"state\":\"Иркутская область\",\"ISO3166-2-lvl4\":\"RU-IRK\",\"region\":\"Сибирский федеральный округ\",\"postcode\":\"665830\",\"country\":\"Россия\",\"country_code\":\"ru\"},\"extratags\":{\"area\": \"yes\", \"surface\": \"paving_stones\", \"name:etymology:wikidata\": \"Q1394\"},\"namedetails\":{\"name\": \"улица Ленина\"},\"boundingbox\":[\"52.5440595\",\"52.5444909\",\"103.8878043\",\"103.8886125\"]}"
+      },
+      "timestamp": "2025-11-15T08:23:15.687133+00:00"
+    }
+  ]
+}

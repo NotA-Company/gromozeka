@@ -1,0 +1,65 @@
+{
+  "metadata": {
+    "name": "Angarsk Relation Lookup",
+    "description": "Lookup Angarsk by relation ID",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "lookup",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "osmIds": [
+        "R2623018"
+      ]
+    },
+    "result_type": "list"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://geocode.maps.co/lookup?osm_ids=R2623018&addressdetails=1&extratags=1&namedetails=1&polygon_geojson=0&polygon_kml=0&polygon_svg=0&polygon_text=0&format=jsonv2",
+        "headers": {
+          "host": "geocode.maps.co",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1",
+          "authorization": "***MASKED***"
+        },
+        "params": {
+          "osm_ids": "R2623018",
+          "addressdetails": "1",
+          "extratags": "1",
+          "namedetails": "1",
+          "polygon_geojson": "0",
+          "polygon_kml": "0",
+          "polygon_svg": "0",
+          "polygon_text": "0",
+          "format": "jsonv2"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sat, 15 Nov 2025 08:23:16 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "server": "cloudflare",
+          "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+          "vary": "Accept-Encoding",
+          "access-control-allow-origin": "*",
+          "cf-cache-status": "DYNAMIC",
+          "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=YSTdHcOwe1a%2FO%2FvsGQvSC8hrFtEDtcn7ylloUzBjC5F645ZO%2Fym%2F6lnAFtgX%2FPfoPdAaed0Ju%2B4wB8W1Z4o%2FjNCVueVa5O3t4sPDLyYNtt6zB8wO0vH1ADg6\"}]}",
+          "cf-ray": "99ed5877ef0bdbfc-FRA",
+          "alt-svc": "h3=\":443\"; ma=86400"
+        },
+        "content": "[{\"place_id\":236581389,\"licence\":\"Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright\",\"osm_type\":\"relation\",\"osm_id\":2623018,\"lat\":\"52.5443167\",\"lon\":\"103.8882138\",\"category\":\"place\",\"type\":\"city\",\"place_rank\":16,\"importance\":0.548001909392609,\"addresstype\":\"city\",\"name\":\"Ангарск\",\"display_name\":\"Ангарск, Ангарский городской округ, Иркутская область, Сибирский федеральный округ, Россия\",\"address\":{\"city\":\"Ангарск\",\"county\":\"Ангарский городской округ\",\"state\":\"Иркутская область\",\"ISO3166-2-lvl4\":\"RU-IRK\",\"region\":\"Сибирский федеральный округ\",\"country\":\"Россия\",\"country_code\":\"ru\"},\"extratags\":{\"website\": \"http://www.angarsk-goradm.ru/\", \"wikidata\": \"Q103565\", \"fias:code\": \"82b6b7c8-82a4-44b2-8bc7-691373706b89\", \"wikipedia\": \"ru:Ангарск\", \"population\": \"222855\", \"start_date\": \"1948\", \"linked_place\": \"city\", \"official_status\": \"ru:город\", \"population:date\": \"2021-01-01\"},\"namedetails\":{\"name\": \"Ангарск\", \"name:de\": \"Angarsk\", \"name:en\": \"Angarsk\", \"name:et\": \"Angarsk\", \"name:fr\": \"Angarsk\", \"name:ja\": \"アンガルスク\", \"name:ru\": \"Ангарск\", \"name:uk\": \"Ангарськ\", \"name:zh\": \"安加尔斯克\", \"int_name\": \"Angarsk\", \"name:ar\": \"أنغارسك\", \"name:az\": \"Anqarsk\", \"name:ca\": \"Angarsk\", \"name:cs\": \"Angarsk\", \"name:cy\": \"Angarsk\", \"name:da\": \"Angarsk\", \"name:eo\": \"Angarsko\", \"name:es\": \"Angarsk\", \"name:eu\": \"Angarsk\", \"name:fa\": \"آنگارسک\", \"name:fi\": \"Angarsk\", \"name:he\": \"אנגרסק\", \"name:hr\": \"Angarsk\", \"name:hu\": \"Angarszk\", \"name:io\": \"Angarsk\", \"name:it\": \"Angarsk\", \"name:ko\": \"안가르스크\", \"name:lt\": \"Angarskas\", \"name:lv\": \"Angarska\", \"name:nb\": \"Angarsk\", \"name:nl\": \"Angarsk\", \"name:nn\": \"Angarsk\", \"name:pa\": \"ਅੰਗਾਰਸਕ\", \"name:pl\": \"Angarsk\", \"name:pt\": \"Angarsk\", \"name:ro\": \"Angarsk\", \"name:sk\": \"Angarsk\", \"name:sv\": \"Angarsk\", \"name:sw\": \"Angarsk\", \"name:tl\": \"Angarsk\", \"name:tr\": \"Angarsk\", \"name:ur\": \"انگارسک\", \"name:uz\": \"Angarsk\", \"name:vi\": \"Angarsk\", \"name:zh-Hant\": \"安加爾斯克\"},\"boundingbox\":[\"52.4308927\",\"52.6209015\",\"103.7979698\",\"104.0042765\"]}]"
+      },
+      "timestamp": "2025-11-15T08:23:16.630307+00:00"
+    }
+  ]
+}

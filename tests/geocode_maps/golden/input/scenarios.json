@@ -1,0 +1,110 @@
+[
+  {
+    "name": "Moscow RU Search",
+    "description": "Search for major city Moscow, RU",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "search",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "query": "Moscow Russian Federation"
+    }
+  },
+  {
+    "name": "Angarsk Russia Search",
+    "description": "Search for Angarsk, Russia",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "search",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "query": "Angarsk, Russia"
+    }
+  },
+  {
+    "name": "Tverskaya Street Search",
+    "description": "Search for specific street address",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "search",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "query": "1 Tverskaya Street, Moscow"
+    }
+  },
+  {
+    "name": "St.Petersburg Search",
+    "description": "Search for St.Petersburg with country code restriction",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "search",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "query": "St.Petersburg",
+      "countrycode": "RU"
+    }
+  },
+  {
+    "name": "Moscow cyrilic Search",
+    "description": "Search for Moscow with Russian language preference",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "search",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "query": "Москва"
+    }
+  },
+  {
+    "name": "Angarsk Reverse",
+    "description": "Reverse geocode Angarsk coordinates",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "reverse",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "lat": 52.5443,
+      "lon": 103.8882
+    }
+  },
+  {
+    "name": "Tokyo Coordinates Reverse with Zoom",
+    "description": "Reverse geocode Tokyo coordinates with zoom parameter",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "reverse",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "lat": 35.6762,
+      "lon": 139.6503,
+      "zoom": 10
+    }
+  },
+  {
+    "name": "Angarsk Relation Lookup",
+    "description": "Lookup Angarsk by relation ID",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "lookup",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "osmIds": ["R2623018"]
+    }
+  }
+]
