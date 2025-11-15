@@ -18,7 +18,7 @@
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
-- [ ] Add Better geocoder (https://geocode.maps.co/docs/ looks good)
+- [x] Add Better geocoder (https://geocode.maps.co/docs/ looks good)
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add coverage badge?
 - [x] Add Per PR tests (make lint + make test)
