@@ -2,7 +2,6 @@
 - [ ] Save info about used tools to put it into context
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
 - [ ] Add ability for different chats use different rate-limiters 
-- [ ] Add rate-limiters for weather and other external tools
 - [ ] Think about channels support
 - [ ] Fix found tool-calling bugs
 - [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
@@ -12,17 +11,18 @@
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
-- [ ] Add support for embeddings + Vector search oon chat's database
+- [ ] Add support for embeddings + Vector search on chat's database
 - [ ] Add support for local LLM-providers (Like Ollama or LLama.cpp)
 - [ ] Add commands for listing topics and renaming topics in DB
-- [ ] Run LLM and other requests in separate thread
+- [ ] Run LLM and other requests in separate threads
 - [ ] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
-- [x] Add Better geocoder (https://geocode.maps.co/docs/ looks good)
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add coverage badge?
+- [x] Add Better geocoder (https://geocode.maps.co/docs/ looks good)
+- [x] Add rate-limiters for weather and other external tools
 - [x] Add Per PR tests (make lint + make test)
 - [x] By default, use free openrouter models
 - [x] Add (if not) https://openrouter.ai/deepseek/deepseek-chat-v3.1:free and https://openrouter.ai/google/gemma-3-27b-it:free
