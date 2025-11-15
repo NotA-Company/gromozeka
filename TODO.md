@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
 - [ ] Add ability for different chats use different rate-limiters 
 - [ ] Add rate-limiters for weather and other external tools
 - [ ] Think about channels support
