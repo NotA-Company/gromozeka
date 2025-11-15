@@ -326,7 +326,7 @@ class WeatherHandler(BaseBotHandler):
             logger.error(f"Error getting weather: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
-    async def _formatWeather(self, weatherData: WeatherData, city: str, country: str) -> str:
+    async def _formatWeather(self, weatherData: WeatherData, location: str) -> str:
         """Format weather data for user-friendly presentation.
 
         Converts weather API response to formatted markdown string with conditions,
@@ -334,6 +334,7 @@ class WeatherHandler(BaseBotHandler):
 
         Args:
             weatherData: Weather result from OpenWeatherMap API
+            location: Location name
 
         Returns:
             Markdown-formatted string in Russian with weather info including
@@ -346,7 +347,7 @@ class WeatherHandler(BaseBotHandler):
         sunriseTime = datetime.datetime.fromtimestamp(weatherCurrent["sunrise"], tz=datetime.timezone.utc).timetz()
         sunsetTime = datetime.datetime.fromtimestamp(weatherCurrent["sunset"], tz=datetime.timezone.utc).timetz()
         return (
-            f"Погода в городе **{city}**, {country} на **{weatherTime}**:\n\n"
+            f"Погода в городе **{location}** на **{weatherTime}**:\n\n"
             f"{weatherCurrent['weather_description'].capitalize()}, облачность {weatherCurrent['clouds']}%\n"
             f"**Температура**: _{weatherCurrent['temp']} °C_\n"
             f"**Ощущается как**: _{weatherCurrent['feels_like']} °C_\n"
@@ -407,8 +408,8 @@ class WeatherHandler(BaseBotHandler):
         try:
             lon: Optional[float] = None
             lat: Optional[float] = None
-            city: str = ""
-            country: str = ""
+            locationStr: str = ""
+            # country: str = ""
 
             if self.geocodeMapsClient is None:
                 commaSplittedAddress = address.split(",")
@@ -420,16 +421,18 @@ class WeatherHandler(BaseBotHandler):
                 if cityLocation is not None:
                     lon = cityLocation["lon"]
                     lat = cityLocation["lat"]
-                    city = cityLocation["local_names"].get("ru", cityLocation["name"])
-                    country = cityLocation["country"]
+                    locationStr = cityLocation["local_names"].get("ru", cityLocation["name"])
+                    # country = cityLocation["country"]
             else:
                 geocodeRet = await self.geocodeMapsClient.search(address)
                 if geocodeRet:
                     # logger.debug(f"Got location: {utils.jsonDumps(geocodeRet, indent=2)}")
                     lat = float(geocodeRet[0]["lat"])
                     lon = float(geocodeRet[0]["lon"])
-                    city = geocodeRet[0]["address"].get("city", "")
-                    country = geocodeRet[0]["address"].get("country", "")
+                    locationStr = geocodeRet[0].get("display_name", "")
+                    if not locationStr:
+                        locationStr = geocodeRet[0]["address"].get("city", "")
+                    # country = geocodeRet[0]["address"].get("country", "")
 
             if lon is None or lat is None:
                 await self.sendMessage(
@@ -448,7 +451,7 @@ class WeatherHandler(BaseBotHandler):
                 )
                 return
 
-            resp = await self._formatWeather(weatherRet, city=city, country=country)
+            resp = await self._formatWeather(weatherRet, location=locationStr)
 
             await self.sendMessage(
                 ensuredMessage,
