@@ -360,7 +360,7 @@ class WeatherHandler(BaseBotHandler):
             .timetz()
         )
         return (
-            f"Погода в городе **{location}** на **{weatherTime}**:\n\n"
+            f"Погода в **{location}** на **{weatherTime}**:\n\n"
             f"{weatherCurrent['weather_description'].capitalize()}, облачность {weatherCurrent['clouds']}%\n"
             f"**Температура**: _{weatherCurrent['temp']} °C_\n"
             f"**Ощущается как**: _{weatherCurrent['feels_like']} °C_\n"
