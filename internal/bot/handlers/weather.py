@@ -341,11 +341,24 @@ class WeatherHandler(BaseBotHandler):
             city, conditions, temperature, pressure, humidity, UV, wind, and times.
         """
         # TODO: add convertation from code to name
+        tzOffset = weatherData["timezone_offset"]
+        targetTZ = datetime.timezone(datetime.timedelta(seconds=tzOffset))
         weatherCurrent = weatherData["current"]
-        weatherTime = str(datetime.datetime.fromtimestamp(weatherCurrent["dt"], tz=datetime.timezone.utc))
+
+        weatherTime = str(
+            datetime.datetime.fromtimestamp(weatherCurrent["dt"], tz=datetime.timezone.utc).astimezone(targetTZ)
+        )
         pressureMmHg = int(weatherCurrent["pressure"] * constants.HPA_TO_MMHG)
-        sunriseTime = datetime.datetime.fromtimestamp(weatherCurrent["sunrise"], tz=datetime.timezone.utc).timetz()
-        sunsetTime = datetime.datetime.fromtimestamp(weatherCurrent["sunset"], tz=datetime.timezone.utc).timetz()
+        sunriseTime = (
+            datetime.datetime.fromtimestamp(weatherCurrent["sunrise"], tz=datetime.timezone.utc)
+            .astimezone(targetTZ)
+            .timetz()
+        )
+        sunsetTime = (
+            datetime.datetime.fromtimestamp(weatherCurrent["sunset"], tz=datetime.timezone.utc)
+            .astimezone(targetTZ)
+            .timetz()
+        )
         return (
             f"Погода в городе **{location}** на **{weatherTime}**:\n\n"
             f"{weatherCurrent['weather_description'].capitalize()}, облачность {weatherCurrent['clouds']}%\n"
