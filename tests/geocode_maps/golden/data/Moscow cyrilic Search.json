@@ -1,0 +1,61 @@
+{
+  "metadata": {
+    "name": "Moscow cyrilic Search",
+    "description": "Search for Moscow with Russian language preference",
+    "module": "lib.geocode_maps.client",
+    "class": "GeocodeMapsClient",
+    "method": "search",
+    "init_kwargs": {
+      "apiKey": "${GEOCODE_MAPS_API_KEY}"
+    },
+    "kwargs": {
+      "query": "Москва"
+    },
+    "result_type": "list"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://geocode.maps.co/search?q=%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0&limit=10&addressdetails=1&extratags=1&namedetails=1&dedupe=1&format=jsonv2",
+        "headers": {
+          "host": "geocode.maps.co",
+          "accept": "*/*",
+          "accept-encoding": "gzip, deflate",
+          "connection": "keep-alive",
+          "user-agent": "python-httpx/0.28.1",
+          "authorization": "***MASKED***"
+        },
+        "params": {
+          "q": "Москва",
+          "limit": "10",
+          "addressdetails": "1",
+          "extratags": "1",
+          "namedetails": "1",
+          "dedupe": "1",
+          "format": "jsonv2"
+        },
+        "body": null
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sat, 15 Nov 2025 08:23:15 GMT",
+          "content-type": "application/json; charset=utf-8",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "server": "cloudflare",
+          "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+          "vary": "Accept-Encoding",
+          "access-control-allow-origin": "*",
+          "cf-cache-status": "BYPASS",
+          "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=9UlOmhHQ%2Flgv2xKDbH5%2F9sAFWStvSQ%2FlEJNIkJPSWuJaKhkoaIf7fy7VgrWSHZ003DKD1CYolct%2BOHvVAUb2A1FcakNPaCW20aT5fPDQXaqPbEmIjdf2BWdO\"}]}",
+          "cf-ray": "99ed586e6c6b9f20-FRA",
+          "alt-svc": "h3=\":443\"; ma=86400"
+        },
+        "content": "[{\"place_id\":214689807,\"licence\":\"Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright\",\"osm_type\":\"relation\",\"osm_id\":102269,\"lat\":\"55.6255780\",\"lon\":\"37.6063916\",\"category\":\"boundary\",\"type\":\"administrative\",\"place_rank\":8,\"importance\":0.8714639346925195,\"addresstype\":\"state\",\"name\":\"Москва\",\"display_name\":\"Москва, Центральный федеральный округ, Россия\",\"address\":{\"state\":\"Москва\",\"ISO3166-2-lvl4\":\"RU-MOW\",\"region\":\"Центральный федеральный округ\",\"country\":\"Россия\",\"country_code\":\"ru\"},\"extratags\":{\"ref:en\": \"MSK\", \"website\": \"https://mos.ru/\", \"wikidata\": \"Q649\", \"ssrf:code\": \"77\", \"wikipedia\": \"ru:Москва\", \"linked_place\": \"state\", \"gost_7.67-2003\": \"РОФ-МОС\", \"official_status\": \"ru:город федерального значения\"},\"namedetails\":{\"ref\": \"RU-MOW\", \"name\": \"Москва\", \"int_ref\": \"RU-MOW\", \"name:be\": \"Масква\", \"name:ca\": \"Moscou\", \"name:cs\": \"Moskva\", \"name:de\": \"Moskau\", \"name:en\": \"Moscow\", \"name:eo\": \"Moskvo\", \"name:es\": \"Moscú\", \"name:fi\": \"Moskova\", \"name:fr\": \"Moscou\", \"name:fy\": \"Moskou\", \"name:hr\": \"Moskva\", \"name:hu\": \"Moszkva\", \"name:ja\": \"モスクワ\", \"name:lt\": \"Maskva\", \"name:nl\": \"Moskou\", \"name:no\": \"Moskva\", \"name:pl\": \"Moskwa\", \"name:ro\": \"Moscova\", \"name:ru\": \"Москва\", \"name:sk\": \"Moskva\", \"name:sr\": \"Москва\", \"name:uk\": \"Москва\", \"name:zh\": \"莫斯科\", \"name:mdf\": \"Моску\", \"name:tzl\": \"Moscal\", \"ISO3166-2\": \"RU-MOW\", \"_place_ref\": \"МСК\", \"name:sr-Latn\": \"Moskva\", \"name:zh-Hans\": \"莫斯科\", \"name:zh-Hant\": \"莫斯科\", \"name:it\": \"Mosca\", \"_place_name:ja\": \"モスクワ連邦市\", \"name:pt\": \"Moscovo\", \"name:sv\": \"Moskva\", \"int_name\": \"Moscow\"},\"boundingbox\":[\"55.1421745\",\"56.0212238\",\"36.8031012\",\"37.9674277\"]},{\"place_id\":214608810,\"licence\":\"Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright\",\"osm_type\":\"relation\",\"osm_id\":2555133,\"lat\":\"55.7505412\",\"lon\":\"37.6174782\",\"category\":\"place\",\"type\":\"city\",\"place_rank\":16,\"importance\":0.8714639346925195,\"addresstype\":\"city\",\"name\":\"Москва\",\"display_name\":\"Москва, Центральный федеральный округ, Россия\",\"address\":{\"city\":\"Москва\",\"state\":\"Москва\",\"ISO3166-2-lvl4\":\"RU-MOW\",\"region\":\"Центральный федеральный округ\",\"country\":\"Россия\",\"country_code\":\"ru\"},\"extratags\":{\"ele\": \"130\", \"flag\": \"https://upload.wikimedia.org/wikipedia/commons/0/03/Flag_of_Moscow%2C_Russia.svg\", \"rank\": \"0\", \"sqkm\": \"2561.5\", \"image\": \"https://upload.wikimedia.org/wikipedia/commons/0/01/Moscow_July_2011-16.jpg\", \"capital\": \"yes\", \"wikidata\": \"Q649\", \"wikipedia\": \"ru:Москва\", \"is_capital\": \"country\", \"okato:user\": \"none\", \"population\": \"12700000\", \"start_date\": \"1147\", \"linked_place\": \"city\", \"contact:website\": \"https://www.mos.ru\", \"official_status\": \"ru:город\", \"population:date\": \"2021-01-01\"},\"namedetails\":{\"name\": \"Москва\", \"name:ab\": \"Москва\", \"name:af\": \"Moskou\", \"name:ak\": \"Moscow\", \"name:am\": \"ሞስኮ\", \"name:an\": \"Moscú\", \"name:ar\": \"موسكو\", \"name:av\": \"Москва\", \"name:ay\": \"Mosku\", \"name:az\": \"Moskva\", \"name:ba\": \"Мәскәү\", \"name:be\": \"Масква\", \"name:bg\": \"Москва\", \"name:bi\": \"Moskow\", \"name:bn\": \"মস্কো\", \"name:bo\": \"མོ་སི་ཁོ།\", \"name:br\": \"Moskov\", \"name:bs\": \"Moskva\", \"name:ca\": \"Moscou\", \"name:ce\": \"Москох\", \"name:ch\": \"Moscow\", \"name:co\": \"Moscù\", \"name:cs\": \"Moskva\", \"name:cu\": \"Москъва\", \"name:cv\": \"Мускав\", \"name:cy\": \"Moscfa\", \"name:da\": \"Moskva\", \"name:de\": \"Moskau\", \"name:dv\": \"މޮސްކޯ\", \"name:dz\": \"མོསི་ཀོ\", \"name:el\": \"Μόσχα\", \"name:en\": \"Moscow\", \"name:eo\": \"Moskvo\", \"name:es\": \"Moscú\", \"name:et\": \"Moskva\", \"name:eu\": \"Mosku\", \"name:fa\": \"مسکو\", \"name:fi\": \"Moskova\", \"name:fo\": \"Moskva\", \"name:fr\": \"Moscou\", \"name:fy\": \"Moskou\", \"name:ga\": \"Moscó\", \"name:gd\": \"Mosgo\", \"name:gl\": \"Moscova - Москва\", \"name:gn\": \"Mosku\", \"name:gv\": \"Moscow\", \"name:he\": \"מוסקווה\", \"name:hi\": \"मास्को\", \"name:hr\": \"Moskva\", \"name:ht\": \"Moskou\", \"name:hu\": \"Moszkva\", \"name:hy\": \"Մոսկվա\", \"name:ia\": \"Moscova\", \"name:id\": \"Moskwa\", \"name:ie\": \"Moskwa\", \"name:io\": \"Moskva\", \"name:is\": \"Moskva\", \"name:it\": \"Mosca\", \"name:iu\": \"ᒨᔅᑯ\", \"name:ja\": \"モスクワ\", \"name:jv\": \"Moskwa\", \"name:ka\": \"მოსკოვი\", \"name:kg\": \"Moskva\", \"name:kk\": \"Мәскеу\", \"name:kl\": \"Moskva\", \"name:kn\": \"ಮಾಸ್ಕೋ\", \"name:ko\": \"모스크바\", \"name:ku\": \"Moskow\", \"name:kv\": \"Мӧскуа\", \"name:kw\": \"Moskva\", \"name:ky\": \"Москва\", \"name:la\": \"Moscua\", \"name:lg\": \"Moosko\", \"name:li\": \"Moskou\", \"name:ln\": \"Moskú\", \"name:lt\": \"Maskva\", \"name:lv\": \"Maskava\", \"name:mg\": \"Moskva\", \"name:mi\": \"Mohikau\", \"name:mk\": \"Москва\", \"name:ml\": \"മോസ്കോ\", \"name:mn\": \"Москва\", \"name:mr\": \"मॉस्को\", \"name:ms\": \"Moscow\", \"name:mt\": \"Moska\", \"name:my\": \"မော်စကိုမြို့\", \"name:na\": \"Moscow\", \"name:nb\": \"Moskva\", \"name:nl\": \"Moskou\", \"name:nn\": \"Moskva\", \"name:no\": \"Moskva\", \"name:oc\": \"Moscòu\", \"name:os\": \"Мæскуы\", \"name:pl\": \"Moskwa\", \"name:ps\": \"مسکو\", \"name:pt\": \"Moscou\", \"name:qu\": \"Moskwa\", \"name:ro\": \"Moscova\", \"name:ru\": \"Москва\", \"name:sc\": \"Mosca\", \"name:se\": \"Moskva\", \"name:sg\": \"Moscow\", \"name:sh\": \"Moskva\", \"name:sk\": \"Moskva\", \"name:sl\": \"Moskva\", \"name:sm\": \"Moscow\", \"name:so\": \"Moskow\", \"name:sq\": \"Moska\", \"name:sr\": \"Москва\", \"name:ss\": \"Moscow\", \"name:st\": \"Moscow\", \"name:su\": \"Moskwa\", \"name:sv\": \"Moskva\", \"name:sw\": \"Moscow\", \"name:ta\": \"மாஸ்கோ\", \"name:te\": \"మాస్కో\", \"name:tg\": \"Маскав\", \"name:th\": \"มอสโก\", \"name:tk\": \"Moskwa\", \"name:tl\": \"Moscow\", \"name:tr\": \"Moskova\", \"name:tt\": \"Мәскәү\", \"name:ty\": \"Moscou\", \"name:ug\": \"Moskwa\", \"name:uk\": \"Москва\", \"name:ur\": \"ماسکو\", \"name:uz\": \"Moskva\", \"name:vi\": \"Mát-xcơ-va\", \"name:vo\": \"Moskva\", \"name:wa\": \"Moscou\", \"name:wo\": \"Mosku\", \"name:yi\": \"מאסקווע\", \"name:yo\": \"Mọsko\", \"name:za\": \"Moscow\", \"name:zh\": \"莫斯科\", \"name:zu\": \"IMoskwa\", \"int_name\": \"Moscow\", \"name:ace\": \"Moskow\", \"name:ang\": \"Moscoƿ\", \"name:arc\": \"ܡܘܣܩܒܐ\", \"name:arz\": \"موسكو\", \"name:ast\": \"Moscú\", \"name:bcl\": \"Mosku\", \"name:bxr\": \"Мушхаваа\", \"name:chm\": \"Моско\", \"name:ckb\": \"مۆسکۆ\", \"name:crh\": \"Moskva\", \"name:csb\": \"Mòskwa\", \"name:diq\": \"Moskowa\", \"name:dsb\": \"Moskwa\", \"name:eml\": \"Måssca\", \"name:ext\": \"Moscú\", \"name:frp\": \"Moscou\", \"name:frr\": \"Moskva\", \"name:gag\": \"Moskva\", \"name:gan\": \"莫斯科\", \"name:haw\": \"Mokekao\", \"name:hif\": \"Moscow\", \"name:hsb\": \"Moskwa\", \"name:ilo\": \"Moscow\", \"name:jbo\": \"moskovas\", \"name:kaa\": \"Máskew\", \"name:kab\": \"Mosku\", \"name:kbd\": \"Мэзкуу\", \"name:koi\": \"Мӧсква\", \"name:krc\": \"Москва\", \"name:lad\": \"Mosku\", \"name:lbe\": \"Москав\", \"name:lez\": \"Москва\", \"name:lij\": \"Mosca\", \"name:lmo\": \"Musca\", \"name:lzh\": \"莫斯科\", \"name:mdf\": \"Моску\", \"name:mhr\": \"Моско\", \"name:mrj\": \"Москва\", \"name:mwl\": \"Moscobo\", \"name:myv\": \"Москов ош\", \"name:mzn\": \"موسکو\", \"name:nah\": \"Moscohuia\", \"name:nan\": \"Bo̍k-su-kho\", \"name:nap\": \"Mosca\", \"name:nds\": \"Moskau\", \"name:nov\": \"Moskva\", \"name:nrm\": \"Moscou\", \"name:pap\": \"Moskou\", \"name:pcd\": \"Moscou\", \"name:pdc\": \"Moscow\", \"name:pms\": \"Mosca\", \"name:pnb\": \"ماسکو\", \"name:pnt\": \"Μόσχα\", \"name:rmy\": \"Moscova\", \"name:rue\": \"Москва\", \"name:sah\": \"Москва\", \"name:scn\": \"Mosca\", \"name:sco\": \"Moscow\", \"name:szl\": \"Moskwa\", \"name:tet\": \"Moskovu\", \"name:tpi\": \"Mosko\", \"name:tzl\": \"Moscal\", \"name:udm\": \"Муско\", \"name:vec\": \"Mosca\", \"name:vep\": \"Moskv\", \"name:vls\": \"Moskou\", \"name:vro\": \"Moskva\", \"name:war\": \"Moscow\", \"name:xal\": \"Москва балһсн\", \"name:xmf\": \"მოსკოვი\", \"name:yue\": \"莫斯科\", \"name:zea\": \"Moskou\", \"alt_name:vi\": \"Mạc Tư Khoa\", \"name:nds-nl\": \"Moskou\", \"name:simple\": \"Moscow\", \"name:bat-smg\": \"Maskva\", \"name:roa-rup\": \"Moscova\", \"name:roa-tara\": \"Mosche\", \"name:as\": \"মস্কো\", \"name:bh\": \"मास्को\", \"name:bm\": \"Moscow\", \"name:ff\": \"Moscow\", \"name:fj\": \"Mosiko\", \"name:ha\": \"Moscow\", \"name:ki\": \"Moscow\", \"name:km\": \"ម៉ូស្គូ\", \"name:ks\": \"ماسکو\", \"name:lb\": \"Moskau\", \"name:lo\": \"ມອສໂກ\", \"name:ne\": \"मस्को\", \"name:nv\": \"Halzhin Deezlíní\", \"name:ny\": \"Moscow\", \"name:om\": \"Mooskoo\", \"name:or\": \"ମସ୍କୋ\", \"name:pa\": \"ਮਾਸਕੋ\", \"_place_name:pt\": \"Moscovo\", \"name:rm\": \"Moscau\", \"name:rn\": \"Moscou\", \"name:sa\": \"मास्कोनगरम्\", \"name:sd\": \"ماسڪو\", \"name:si\": \"මොස්කව්\", \"name:sn\": \"Moscow\", \"name:to\": \"Mosekou\", \"name:tw\": \"Moskow\", \"_place_name:vi\": \"Moskva\", \"name:xh\": \"Moscou\", \"_place_name:yo\": \"Mọ́skò\", \"name:be-tarask\": \"Масква\", \"name:chu\": \"Москва̀\", \"_place_name:kaa\": \"Moskva\", \"_place_name:kab\": \"Musku\", \"_place_name:xal\": \"Москва\", \"name:pt-BR\": \"Moscou\", \"name:sr-Latn\": \"Moskva\", \"name:ru:word_stress\": \"Москва́\"},\"boundingbox\":[\"55.5166840\",\"55.9577717\",\"37.2905020\",\"37.9674277\"]}]"
+      },
+      "timestamp": "2025-11-15T08:23:15.024482+00:00"
+    }
+  ]
+}
