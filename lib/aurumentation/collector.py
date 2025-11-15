@@ -84,6 +84,8 @@ async def collectGoldenData(
         scenarios: List of test scenarios to execute
         outputDir: Directory to save golden data
         secrets: List of secret values to mask also possible to pass environment variable names with secret
+        aenterCallback: Optional callback function to execute when entering the recording context
+        aexitCallback: Optional callback function to execute when exiting the recording context
     """
     outputDir.mkdir(parents=True, exist_ok=True)
 

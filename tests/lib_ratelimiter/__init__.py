@@ -27,7 +27,7 @@ async def initRateLimiter(limiterName: str = "default", slow: bool = False) -> R
         >>> manager = await initRateLimiter("test_slow", slow=True)
     """
     manager = RateLimiterManager.getInstance()
-    # As it's singleton, it preserver across all tests, so we need to check if
+    # As it's singleton, it preserved across all tests, so we need to check if
     # This rate limiter isn't present yet
     if limiterName not in manager.listRateLimiters():
         await manager.loadConfig(
