@@ -166,7 +166,7 @@ class GeocodeMapsClient:
         #  covered by any backwards compatibility guarantees.
         # so we'll copy it before deleteing self from it
         cacheKey = locals().copy()
-        logger.debug(cacheKey)
+        # logger.debug(cacheKey)
         cacheKey.pop("self", None)
 
         # Check cache first

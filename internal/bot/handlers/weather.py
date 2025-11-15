@@ -1,23 +1,10 @@
-"""Weather handler module for Gromozeka bot, dood!
+"""Weather handler for Gromozeka bot with OpenWeatherMap API integration.
 
-This module provides weather-related functionality through OpenWeatherMap API integration.
-It handles weather commands, message-based weather requests, and registers LLM tools
-for weather data retrieval by city name or coordinates.
-
-The module includes:
-- Weather command handler (/weather)
-- Natural language weather request processing
-- LLM tool registration for AI-powered weather queries
-- Weather data formatting and presentation
-
-Dependencies:
-    - OpenWeatherMap API (requires valid API key)
-    - Database for caching weather and geocoding data
-    - LLM service for tool registration
+Provides weather commands, LLM tools for weather queries, and data formatting.
+Requires OpenWeatherMap API key, database for caching, and LLM service.
 """
 
-# TODO: rewrite all docstrings and make them more compact
-
+import asyncio
 import datetime
 import logging
 from typing import Any, Dict, Optional
@@ -56,35 +43,28 @@ logger = logging.getLogger(__name__)
 
 
 class WeatherHandler(BaseBotHandler):
-    """Handler for weather-related bot functionality, dood!
+    """Handler for weather-related bot functionality.
 
-    This class manages all weather-related operations including:
-    - Processing /weather commands
-    - Handling natural language weather requests in messages
-    - Registering and managing LLM tools for weather queries
-    - Formatting and presenting weather data to users
-
-    The handler integrates with OpenWeatherMap API and provides caching
-    through the database layer for improved performance.
+    Manages weather commands, LLM tools, and data formatting.
+    Integrates with OpenWeatherMap API and provides caching.
 
     Attributes:
-        openWeatherMapClient: Client for OpenWeatherMap API interactions
-        llmService: Service for LLM tool registration and management
+        openWeatherMapClient: OpenWeatherMap API client
+        llmService: LLM tool registration service
     """
 
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
-        """Initialize weather handler with required dependencies, dood!
+        """Initialize weather handler with dependencies.
 
-        Sets up OpenWeatherMap client with configuration and caching,
-        and registers LLM tools for weather data retrieval.
+        Sets up OpenWeatherMap client with caching and registers LLM tools.
 
         Args:
-            configManager: Configuration manager for accessing OpenWeatherMap settings
-            database: Database wrapper for caching and data persistence
+            configManager: Configuration manager for OpenWeatherMap settings
+            database: Database wrapper for caching
             llmManager: LLM manager for model interactions
 
         Raises:
-            RuntimeError: If OpenWeatherMap integration is not enabled in configuration
+            RuntimeError: If OpenWeatherMap integration is disabled
         """
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager)
@@ -123,13 +103,22 @@ class WeatherHandler(BaseBotHandler):
             self.geocodeMapsClient = GeocodeMapsClient(
                 apiKey=geocodeMapsConfig["api-key"],
                 searchCache=GenericDatabaseCache(
-                    self.db, CacheType.GM_SEARCH, keyGenerator=JsonKeyGenerator(), valueConverter=JsonValueConverter()
+                    self.db,
+                    CacheType.GM_SEARCH,
+                    keyGenerator=JsonKeyGenerator(hash=False),
+                    valueConverter=JsonValueConverter(),
                 ),
                 reverseCache=GenericDatabaseCache(
-                    self.db, CacheType.GM_REVERSE, keyGenerator=JsonKeyGenerator(), valueConverter=JsonValueConverter()
+                    self.db,
+                    CacheType.GM_REVERSE,
+                    keyGenerator=JsonKeyGenerator(hash=False),
+                    valueConverter=JsonValueConverter(),
                 ),
                 lookupCache=GenericDatabaseCache(
-                    self.db, CacheType.GM_LOOKUP, keyGenerator=JsonKeyGenerator(), valueConverter=JsonValueConverter()
+                    self.db,
+                    CacheType.GM_LOOKUP,
+                    keyGenerator=JsonKeyGenerator(hash=False),
+                    valueConverter=JsonValueConverter(),
                 ),
                 searchTTL=geocodeTTL,
                 reverseTTL=geocodeTTL,
@@ -213,28 +202,22 @@ class WeatherHandler(BaseBotHandler):
     async def _llmToolGetWeatherByCity(
         self, extraData: Optional[Dict[str, Any]], city: str, countryCode: Optional[str] = None, **kwargs
     ) -> str:
-        """LLM tool handler for retrieving weather by city name, dood!
+        """LLM tool handler for retrieving weather by city name.
 
-        This method is registered as an LLM tool and can be called by the AI
-        to fetch weather data for a specified city. It returns JSON-formatted
-        weather information including current conditions and forecast.
+        Fetches weather data for specified city and returns JSON-formatted results.
 
         Args:
-            extraData: Optional extra data passed by LLM service
-            city: Name of the city to get weather for
-            countryCode: Optional ISO 3166 country code for disambiguation
-            **kwargs: Additional keyword arguments (ignored)
+            extraData: Optional extra data from LLM service
+            city: City name to get weather for
+            countryCode: Optional ISO 3166 country code
+            **kwargs: Additional arguments (ignored)
 
         Returns:
-            JSON string containing weather data with structure:
-            - done: Boolean indicating success
-            - location: Geocoding information
-            - weather: Current weather and forecast data
-            - errorMessage: Error description if done is False
-
-        Note:
-            Filters location local_names to reduce context size by keeping
-            only languages defined in constants.GEOCODER_LOCATION_LANGS.
+            JSON string with weather data containing:
+            - done: Success status
+            - location: Geocoding info
+            - weather: Current weather and forecast
+            - errorMessage: Error description if failed
         """
         try:
             ret = await self.openWeatherMapClient.getWeatherByCity(city, countryCode)
@@ -255,23 +238,21 @@ class WeatherHandler(BaseBotHandler):
     async def _llmToolGetWeatherByCoords(
         self, extraData: Optional[Dict[str, Any]], lat: float, lon: float, **kwargs
     ) -> str:
-        """LLM tool handler for retrieving weather by coordinates, dood!
+        """LLM tool handler for retrieving weather by coordinates.
 
-        This method is registered as an LLM tool and can be called by the AI
-        to fetch weather data for a specific geographic location using latitude
-        and longitude coordinates.
+        Fetches weather data for specific geographic coordinates.
 
         Args:
-            extraData: Optional extra data passed by LLM service
-            lat: Latitude of the location
-            lon: Longitude of the location
-            **kwargs: Additional keyword arguments (ignored)
+            extraData: Optional extra data from LLM service
+            lat: Latitude of location
+            lon: Longitude of location
+            **kwargs: Additional arguments (ignored)
 
         Returns:
-            JSON string containing weather data with structure:
-            - done: Boolean indicating success
-            - weather: Current weather and forecast data
-            - errorMessage: Error description if done is False
+            JSON string with weather data containing:
+            - done: Success status
+            - weather: Current weather and forecast
+            - errorMessage: Error description if failed
         """
         try:
             ret = await self.openWeatherMapClient.getWeather(lat, lon)
@@ -286,7 +267,22 @@ class WeatherHandler(BaseBotHandler):
     async def _llmToolGetWeatherByAddress(
         self, extraData: Optional[Dict[str, Any]], address_or_city: str, **kwargs
     ) -> str:
-        """TODO"""
+        """LLM tool handler for retrieving weather by address.
+
+        Geocodes address and fetches weather data for the location.
+
+        Args:
+            extraData: Optional extra data from LLM service
+            address_or_city: Free-form address search query
+            **kwargs: Additional arguments (ignored)
+
+        Returns:
+            JSON string with weather data containing:
+            - done: Success status
+            - location: Geocoding info
+            - weather: Current weather and forecast
+            - errorMessage: Error description if failed
+        """
         try:
             if self.geocodeMapsClient is None:
                 logger.error("Geocode Maps Client is not initialized somehow")
@@ -331,32 +327,17 @@ class WeatherHandler(BaseBotHandler):
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
     async def _formatWeather(self, weatherData: WeatherData, city: str, country: str) -> str:
-        """Format weather data for user-friendly presentation, dood!
+        """Format weather data for user-friendly presentation.
 
-        Converts raw weather API response into a formatted markdown string
-        with current weather conditions, temperature, pressure, humidity,
-        wind, UV index, and sunrise/sunset times.
+        Converts weather API response to formatted markdown string with conditions,
+        temperature, pressure, humidity, wind, UV index, and sunrise/sunset.
 
         Args:
-            weatherData: Combined weather result from OpenWeatherMap API containing
-                        location info and current weather data
+            weatherData: Weather result from OpenWeatherMap API
 
         Returns:
-            Markdown-formatted string with weather information in Russian,
-            including:
-            - City name and country
-            - Weather description and cloud coverage
-            - Temperature (actual and feels-like)
-            - Pressure in mmHg
-            - Humidity percentage
-            - UV index
-            - Wind direction and speed
-            - Sunrise and sunset times
-
-        Note:
-            - Pressure is converted from hPa to mmHg using HPA_TO_MMHG constant
-            - Times are displayed in UTC timezone
-            - City name prefers Russian localization if available
+            Markdown-formatted string in Russian with weather info including
+            city, conditions, temperature, pressure, humidity, UV, wind, and times.
         """
         # TODO: add convertation from code to name
         weatherCurrent = weatherData["current"]
@@ -397,38 +378,18 @@ class WeatherHandler(BaseBotHandler):
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """Handle /weather command for retrieving weather information, dood!
+        """Handle /weather command for retrieving weather information.
 
-        Processes the /weather command with city name and optional country code
-        to fetch and display current weather conditions and forecast.
-
-        Command format: /weather <city> [, <countryCode>]
+        Processes /weather command with address to fetch and display weather.
 
         Args:
-            update: Telegram update object containing the command message
-            context: Telegram context with command arguments in context.args
+            ensuredMessage: Message wrapper for sending responses
+            typingManager: Typing indicator manager
+            update: Telegram update object
+            context: Telegram context with command arguments
 
         Returns:
-            None. Sends weather information or error message to the chat.
-
-        Behavior:
-            - Validates chat settings for weather command permission
-            - Requires admin privileges if weather is disabled in chat settings
-            - Parses city name and optional country code from arguments
-            - Fetches weather data from OpenWeatherMap API
-            - Formats and sends weather information as markdown
-            - Handles errors gracefully with user-friendly messages
-
-        Error cases:
-            - No arguments provided: Prompts user to specify city
-            - OpenWeatherMap client not configured: Notifies about missing setup
-            - Weather data unavailable: Informs about retrieval failure
-            - Exception during processing: Logs error and notifies user
-
-        Note:
-            - Saves command message to database with USER_COMMAND category
-            - Response is saved with BOT_COMMAND_REPLY or BOT_ERROR category
-            - Country code should be ISO 3166 format (e.g., RU, US, GB)
+            None. Sends weather info or error message to chat.
         """
         # Get Weather for given city (and country)
         address = ""
@@ -494,6 +455,83 @@ class WeatherHandler(BaseBotHandler):
                 resp,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
+        except Exception as e:
+            logger.error(f"Error while getting weather: {e}")
+            logger.exception(e)
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Ошибка при получении погоды.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+    @commandHandlerExtended(
+        commands=("geocode",),
+        shortDescription="<address> - Return geocoding result for given address",
+        helpMessage=" `<address>`: Показать результат геокодинга для указанного адреса.",
+        suggestCategories={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.DEFAULT},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.TOOLS,
+    )
+    async def geocode_command(
+        self,
+        ensuredMessage: EnsuredMessage,
+        typingManager: Optional[TypingManager],
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Handle /geocode command for retrieving geocoding information.
+
+        Processes /geocode command with address to fetch and display geocoding results.
+
+        Args:
+            ensuredMessage: Message wrapper for sending responses
+            typingManager: Typing indicator manager
+            update: Telegram update object
+            context: Telegram context with command arguments
+
+        Returns:
+            None. Sends geocoding info or error message to chat.
+        """
+        address = ""
+
+        if context.args:
+            address = " ".join(context.args)
+        else:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Необходимо указать адрес для получения данных.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        if self.geocodeMapsClient is None:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Провайдер геокодинга не настроен.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        try:
+            geocodeRet = await self.geocodeMapsClient.search(address)
+            if not geocodeRet:
+                await self.sendMessage(
+                    ensuredMessage,
+                    "Не удалось найти указанный адрес",
+                    messageCategory=MessageCategory.BOT_ERROR,
+                )
+                return
+
+            for geocode in geocodeRet:
+                await self.sendMessage(
+                    ensuredMessage,
+                    f"```json\n{utils.jsonDumps(geocode, indent=2)}\n```",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+                await asyncio.sleep(0.5)
+
         except Exception as e:
             logger.error(f"Error while getting weather: {e}")
             logger.exception(e)
