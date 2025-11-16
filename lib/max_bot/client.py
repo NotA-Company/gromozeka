@@ -8,8 +8,7 @@ the Max Messenger Bot API using httpx with proper authentication and error handl
 import asyncio
 import logging
 from collections.abc import Awaitable
-from pathlib import Path
-from typing import Any, AsyncIterator, BinaryIO, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from urllib.parse import urljoin
 
 import httpx
@@ -1878,8 +1877,10 @@ class MaxBotClient:
 
     async def uploadFile(
         self,
-        filePath: Union[str, Path],
-        uploadType: Union[str, UploadType],
+        filename: str,
+        data: bytes,
+        mimeType: str,
+        uploadType: UploadType,
         progressCallback: Optional[Callable[[int, int], None]] = None,
         chunkSize: int = 8192,
     ) -> Dict[str, Any]:
@@ -1893,6 +1894,7 @@ class MaxBotClient:
             uploadType: Type of file to upload ("image", "video", "audio", "file")
             progressCallback: Optional callback for upload progress (bytes_transferred, total_bytes)
             chunkSize: Size of chunks for upload (default: 8KB)
+            TODO: Fix
 
         Returns:
             Dictionary containing upload result with token and/or URL
@@ -1908,33 +1910,15 @@ class MaxBotClient:
             ...     token = result["token"]
             ...     # Use token to send photo in message
         """
-        from .file_utils import ProgressCallback, readFileAsync, sanitizeFilename, validateFileForUpload
 
         # Validate file for upload
-        if isinstance(uploadType, UploadType):
-            upload_type_str = uploadType.value
-        else:
-            upload_type_str = uploadType
-
-        validation_result = validateFileForUpload(filePath, upload_type_str)
 
         # Get upload URL
-        upload_info = await self.getUploadUrl(upload_type_str)
+        upload_info = await self.getUploadUrl(uploadType)
         upload_url = upload_info["url"]
 
-        # Read file content
-        file_content = await readFileAsync(filePath)
-
-        # Prepare multipart form data
-        filename = sanitizeFilename(validation_result["sanitized_name"])
-
-        # Create progress callback if provided
-        progress_tracker = None
-        if progressCallback:
-            progress_tracker = ProgressCallback(progressCallback, len(file_content))
-
         # Upload file
-        files = {"data": (filename, file_content, validation_result["mime_type"])}
+        files = {"data": (filename, data, mimeType)}
 
         try:
             # Make direct HTTP request to upload URL (not through our API)
@@ -1950,131 +1934,12 @@ class MaxBotClient:
                     raise MaxBotError(f"Upload failed with status {response.status_code}: {error_text.decode()}")
 
                 result = response.json()
-
-                # Update progress to completion
-                if progress_tracker:
-                    progress_tracker.finish()
-
                 return result
 
         except httpx.HTTPStatusError as e:
             raise MaxBotError(f"Upload failed: {e}")
         except Exception as e:
             raise MaxBotError(f"Upload error: {e}")
-
-    async def uploadPhoto(
-        self,
-        filePath: Union[str, Path],
-        progressCallback: Optional[Callable[[int, int], None]] = None,
-    ) -> Dict[str, Any]:
-        """Upload a photo file.
-
-        Convenience method for uploading photo files with proper validation.
-
-        Args:
-            filePath: Path to the photo file to upload
-            progressCallback: Optional callback for upload progress
-
-        Returns:
-            Dictionary containing upload result with photo token
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-            FileValidationError: If file is not a valid photo
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.uploadPhoto("/path/to/photo.jpg")
-            ...     photo_token = result["token"]
-        """
-        return await self.uploadFile(filePath, UploadType.IMAGE, progressCallback)
-
-    async def uploadVideo(
-        self,
-        filePath: Union[str, Path],
-        progressCallback: Optional[Callable[[int, int], None]] = None,
-    ) -> Dict[str, Any]:
-        """Upload a video file.
-
-        Convenience method for uploading video files with proper validation.
-        For videos, the token is returned in the initial getUploadUrl response.
-
-        Args:
-            filePath: Path to the video file to upload
-            progressCallback: Optional callback for upload progress
-
-        Returns:
-            Dictionary containing upload result with video token
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-            FileValidationError: If file is not a valid video
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.uploadVideo("/path/to/video.mp4")
-            ...     video_token = result["token"]
-        """
-        return await self.uploadFile(filePath, UploadType.VIDEO, progressCallback)
-
-    async def uploadAudio(
-        self,
-        filePath: Union[str, Path],
-        progressCallback: Optional[Callable[[int, int], None]] = None,
-    ) -> Dict[str, Any]:
-        """Upload an audio file.
-
-        Convenience method for uploading audio files with proper validation.
-        For audio files, the token is returned in the initial getUploadUrl response.
-
-        Args:
-            filePath: Path to the audio file to upload
-            progressCallback: Optional callback for upload progress
-
-        Returns:
-            Dictionary containing upload result with audio token
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-            FileValidationError: If file is not a valid audio file
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.uploadAudio("/path/to/audio.mp3")
-            ...     audio_token = result["token"]
-        """
-        return await self.uploadFile(filePath, UploadType.AUDIO, progressCallback)
-
-    async def uploadDocument(
-        self,
-        filePath: Union[str, Path],
-        progressCallback: Optional[Callable[[int, int], None]] = None,
-    ) -> Dict[str, Any]:
-        """Upload a document file.
-
-        Convenience method for uploading document files with proper validation.
-
-        Args:
-            filePath: Path to the document file to upload
-            progressCallback: Optional callback for upload progress
-
-        Returns:
-            Dictionary containing upload result with file token
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-            FileValidationError: If file is not a valid document
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.uploadDocument("/path/to/document.pdf")
-            ...     file_token = result["token"]
-        """
-        return await self.uploadFile(filePath, UploadType.FILE, progressCallback)
 
     # Download Methods
     async def getFileUrl(self, fileId: str) -> str:
@@ -2103,202 +1968,6 @@ class MaxBotClient:
         # This is a placeholder implementation
         raise MaxBotError(
             "Direct file URL retrieval is not supported by Max Messenger API. "
-            "Files should be accessed through message attachments."
-        )
-
-    async def downloadFile(
-        self,
-        fileId: str,
-        savePath: Union[str, Path],
-        progressCallback: Optional[Callable[[int, int], None]] = None,
-    ) -> bool:
-        """Download a file and save it to disk.
-
-        Downloads a file using its token and saves it to the specified path.
-        Supports progress tracking for large files.
-
-        Args:
-            fileId: Token or ID of the file to download
-            savePath: Path where to save the downloaded file
-            progressCallback: Optional callback for download progress
-
-        Returns:
-            True if file was downloaded successfully
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-            FileValidationError: If file cannot be saved
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     success = await client.downloadFile(
-            ...         "file_token_123",
-            ...         "/path/to/save/file.jpg"
-            ...     )
-        """
-        from .file_utils import writeFileAsync
-
-        # Get file content as bytes
-        file_content = await self.downloadFileBytes(fileId, progressCallback)
-
-        # Save to disk
-        await writeFileAsync(savePath, file_content)
-
-        return True
-
-    async def downloadFileBytes(
-        self,
-        fileId: str,
-        progressCallback: Optional[Callable[[int, int], None]] = None,
-    ) -> bytes:
-        """Download a file as bytes.
-
-        Downloads a file using its token and returns the content as bytes.
-        Supports progress tracking for large files.
-
-        Args:
-            fileId: Token or ID of the file to download
-            progressCallback: Optional callback for download progress
-
-        Returns:
-            File content as bytes
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     content = await client.downloadFileBytes("file_token_123")
-            ...     print(f"Downloaded {len(content)} bytes")
-        """
-        # Note: Max Messenger API doesn't seem to have a direct download endpoint
-        # This is a placeholder implementation that would need to be adapted
-        # based on the actual API documentation for file downloads
-        raise MaxBotError(
-            "Direct file download is not supported by Max Messenger API. "
-            "Files should be accessed through message attachments."
-        )
-
-    # Streaming Methods
-    async def uploadFileStream(
-        self,
-        stream: BinaryIO,
-        uploadType: Union[str, UploadType],
-        filename: str,
-        mimeType: str,
-        progressCallback: Optional[Callable[[int, int], None]] = None,
-    ) -> Dict[str, Any]:
-        """Upload a file from a stream.
-
-        Uploads a file from a file-like object (stream) instead of from disk.
-        Useful for uploading files that are generated in memory or received
-        from other sources.
-
-        Args:
-            stream: File-like object to read from
-            uploadType: Type of file to upload ("image", "video", "audio", "file")
-            filename: Name of the file being uploaded
-            mimeType: MIME type of the file
-            progressCallback: Optional callback for upload progress
-
-        Returns:
-            Dictionary containing upload result with token and/or URL
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-            FileValidationError: If stream cannot be read
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     with open("/path/to/file.jpg", "rb") as f:
-            ...         result = await client.uploadFileStream(
-            ...             f, "image", "photo.jpg", "image/jpeg"
-            ...         )
-        """
-        from .file_utils import ProgressCallback, sanitizeFilename
-
-        # Validate upload type
-        if isinstance(uploadType, UploadType):
-            upload_type_str = uploadType.value
-        else:
-            upload_type_str = uploadType
-
-        # Get upload URL
-        upload_info = await self.getUploadUrl(upload_type_str)
-        upload_url = upload_info["url"]
-
-        # Read stream content
-        stream.seek(0, 2)  # Seek to end
-        total_size = stream.tell()
-        stream.seek(0)  # Seek back to beginning
-
-        content = stream.read()
-
-        # Create progress callback if provided
-        progress_tracker = None
-        if progressCallback:
-            progress_tracker = ProgressCallback(progressCallback, total_size)
-
-        # Prepare multipart form data
-        sanitized_filename = sanitizeFilename(filename)
-        files = {"data": (sanitized_filename, content, mimeType)}
-
-        try:
-            # Make direct HTTP request to upload URL
-            client = self._getHttpClient()
-
-            # Remove content-type header for multipart uploads
-            headers = client.headers.copy()
-            headers.pop("Content-Type", None)
-
-            async with client.stream("POST", upload_url, files=files, headers=headers) as response:
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    raise MaxBotError(f"Upload failed with status {response.status_code}: {error_text.decode()}")
-
-                result = response.json()
-
-                # Update progress to completion
-                if progress_tracker:
-                    progress_tracker.finish()
-
-                return result
-
-        except httpx.HTTPStatusError as e:
-            raise MaxBotError(f"Upload failed: {e}")
-        except Exception as e:
-            raise MaxBotError(f"Upload error: {e}")
-
-    async def downloadFileStream(self, fileId: str) -> "AsyncIterator[bytes]":
-        """Download a file as an async stream.
-
-        Downloads a file using its token and returns an async iterator
-        that yields chunks of bytes. Useful for large files or when
-        you want to process the file as it's being downloaded.
-
-        Args:
-            fileId: Token or ID of the file to download
-
-        Yields:
-            Chunks of file content as bytes
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     async for chunk in client.downloadFileStream("file_token_123"):
-            ...         # Process chunk
-            ...         print(f"Received {len(chunk)} bytes")
-        """
-        # Note: Max Messenger API doesn't seem to have a direct download endpoint
-        # This is a placeholder implementation
-        raise MaxBotError(
-            "Direct file streaming is not supported by Max Messenger API. "
             "Files should be accessed through message attachments."
         )
 
