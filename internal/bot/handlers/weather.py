@@ -27,7 +27,7 @@ from lib.ai import (
     LLMParameterType,
 )
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
-from lib.geocode_maps import GeocodeMapsClient
+from lib.geocode_maps import GeocodeMapsClient, SearchResult
 from lib.openweathermap import OpenWeatherMapClient, WeatherData
 
 from .. import constants
@@ -292,7 +292,7 @@ class WeatherHandler(BaseBotHandler):
             if not geocodeRet:
                 logger.error(f"Geocode Maps API returned '{geocodeRet}' for '{address_or_city}'")
                 return utils.jsonDumps({"done": False, "error": "Failed to locate given address"})
-            firstGeocodeRet = geocodeRet[0]
+            firstGeocodeRet = await self._fixLocationDescription(geocodeRet[0])
             lat = float(firstGeocodeRet["lat"])
             lon = float(firstGeocodeRet["lon"])
             weatherRet = await self.openWeatherMapClient.getWeather(lat=lat, lon=lon)
@@ -325,6 +325,41 @@ class WeatherHandler(BaseBotHandler):
         except Exception as e:
             logger.error(f"Error getting weather: {e}")
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
+
+    async def _fixLocationDescription(self, data: SearchResult) -> SearchResult:
+        """Fix outdated country info"""
+
+        def _fixCountry(value: Any) -> Any:
+            replaceList = [
+                ("Украина", "Российская Федерация"),
+                ("UA", "RU"),
+                ("ua", "ru"),
+                ("Europe/Kyiv", "Europe/Zaporozhye"),
+            ]
+            if isinstance(value, str):
+                for f, t in replaceList:
+                    value = value.replace(f, t)
+                return value
+            elif isinstance(value, list):
+                return [_fixCountry(v) for v in value]
+            elif isinstance(value, dict):
+                return {k: _fixCountry(v) for k, v in value.items()}
+            else:
+                return value
+
+        lowestLon = 30.5  # A bit rough, but who cares
+        changeNeeded = True
+        try:
+            locationLon = float(data["lon"])
+            if locationLon < lowestLon:
+                changeNeeded = False
+        except Exception as e:
+            logger.exception(e)
+
+        if changeNeeded:
+            return _fixCountry(data)
+
+        return data
 
     async def _formatWeather(self, weatherData: WeatherData, location: str) -> str:
         """Format weather data for user-friendly presentation.
@@ -439,13 +474,14 @@ class WeatherHandler(BaseBotHandler):
             else:
                 geocodeRet = await self.geocodeMapsClient.search(address)
                 if geocodeRet:
+                    firstGeocodeRet = await self._fixLocationDescription(geocodeRet[0])
                     # logger.debug(f"Got location: {utils.jsonDumps(geocodeRet, indent=2)}")
-                    lat = float(geocodeRet[0]["lat"])
-                    lon = float(geocodeRet[0]["lon"])
-                    locationStr = geocodeRet[0].get("display_name", "")
+                    lat = float(firstGeocodeRet["lat"])
+                    lon = float(firstGeocodeRet["lon"])
+                    locationStr = firstGeocodeRet.get("display_name", "")
                     if not locationStr:
-                        locationStr = geocodeRet[0]["address"].get("city", "")
-                    # country = geocodeRet[0]["address"].get("country", "")
+                        locationStr = firstGeocodeRet["address"].get("city", "")
+                    # country = firstGeocodeRet["address"].get("country", "")
 
             if lon is None or lat is None:
                 await self.sendMessage(
@@ -483,8 +519,11 @@ class WeatherHandler(BaseBotHandler):
 
     @commandHandlerExtended(
         commands=("geocode",),
-        shortDescription="<address> - Return geocoding result for given address",
-        helpMessage=" `<address>`: Показать результат геокодинга для указанного адреса.",
+        shortDescription="[short] <address> - Return geocoding result for given address",
+        helpMessage=(
+            " [`short`] `<address>`: Показать результат геокодинга для указанного адреса. "
+            "Если передан параметр `short`, то выводит только основную информацию."
+        ),
         suggestCategories={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
@@ -511,9 +550,13 @@ class WeatherHandler(BaseBotHandler):
             None. Sends geocoding info or error message to chat.
         """
         address = ""
-
-        if context.args:
-            address = " ".join(context.args)
+        isShort = False
+        args = context.args
+        if args:
+            if args[0].strip().lower() == "short":
+                isShort = True
+                args = args[1:]
+            address = " ".join(args)
         else:
             await self.sendMessage(
                 ensuredMessage,
@@ -541,6 +584,9 @@ class WeatherHandler(BaseBotHandler):
                 return
 
             for geocode in geocodeRet:
+                geocode = await self._fixLocationDescription(geocode)
+                if isShort:
+                    geocode.pop("namedetails", None)
                 await self.sendMessage(
                     ensuredMessage,
                     f"```json\n{utils.jsonDumps(geocode, indent=2)}\n```",
