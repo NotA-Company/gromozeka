@@ -75,3 +75,11 @@ This file records architectural and implementation decisions.
 - Implemented __slots__ with all instance attributes: apiKey, searchCache, reverseCache, lookupCache, searchTTL, reverseTTL, lookupTTL, requestTimeout, acceptLanguage, rateLimiterQueue, _rateLimiter
 - Fixed test compatibility issues by updating test mocking pattern to use patch.object on client._rateLimiter.applyLimit instead of patching the _makeRequest method
 - All 1324 tests now pass successfully
+[2025-11-16 01:07:00] - Completed Phase 3: Basic Operations implementation for Max Bot Client
+- Implemented 12 new API methods following OpenAPI specification exactly
+- Used existing model classes for type safety and proper response parsing
+- Maintained async patterns and error handling consistency with existing codebase
+- Resolved import issues by importing SenderAction from constants module
+- Fixed parameter type handling for complex query parameters
+- All methods include comprehensive docstrings preserving OpenAPI descriptions
+- Implementation passes all quality checks and maintains backward compatibility
