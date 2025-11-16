@@ -97,6 +97,7 @@ class DatabaseWrapper:
     """
 
     def __init__(self, dbPath: str, maxConnections: int = 5, timeout: float = 30.0):
+        logger.info(f"Initializing SQLite database wrapper with path {dbPath}")
         self.dbPath = dbPath
         self.maxConnections = maxConnections
         self.timeout = timeout

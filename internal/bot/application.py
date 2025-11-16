@@ -19,14 +19,14 @@ from telegram.ext import (
     filters,
 )
 
-from internal.bot.models import CommandPermission
+from internal.config.manager import ConfigManager
+from internal.database.wrapper import DatabaseWrapper
 from internal.services.queue_service.service import QueueService
-from lib.ai.manager import LLMManager
+from lib.ai import LLMManager
 from lib.rate_limiter import RateLimiterManager
 
-from ..config.manager import ConfigManager
-from ..database.wrapper import DatabaseWrapper
 from .handlers import HandlersManager
+from .models import CommandPermission
 
 logger = logging.getLogger(__name__)
 

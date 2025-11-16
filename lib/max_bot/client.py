@@ -7,6 +7,7 @@ the Max Messenger Bot API using httpx with proper authentication and error handl
 
 import asyncio
 import logging
+from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any, AsyncIterator, BinaryIO, Callable, Dict, List, Optional, Union
 from urllib.parse import urljoin
@@ -48,6 +49,7 @@ from .models import (
     TextFormat,
     UpdateList,
 )
+from .models.update import Update
 
 logger = logging.getLogger(__name__)
 
@@ -206,12 +208,14 @@ class MaxBotClient:
         client = self._getHttpClient()
         url = self._buildUrl(endpoint)
 
+        isUpdatePolling = method == HTTP_GET and endpoint == "/updates"
+
         # Log request (without sensitive data)
         logger.debug(f"Making {method} request to {url}")
 
         last_exception = None
-
-        for attempt in range(self.maxRetries + 1):
+        attempt = 0
+        while attempt < self.maxRetries + 1:
             try:
                 response = await client.request(method, url, **kwargs)
 
@@ -236,6 +240,15 @@ class MaxBotClient:
             except httpx.HTTPStatusError as e:
                 last_exception = parseApiError(e.response.status_code, e.response.json() if e.response.content else {})
                 logger.warning(f"HTTP error on attempt {attempt + 1}: {last_exception}")
+            
+            except httpx.ReadTimeout as e:
+                if isUpdatePolling:
+                    # It is natural to get such error during polling
+                    #  if there is no updates. Just skip
+                    logger.debug("No updates for now...")
+                    continue
+                last_exception = NetworkError(f"Read timeout: {e}")
+                logger.warning(f"Read timeout on attempt {attempt + 1}: {e}")
 
             except httpx.RequestError as e:
                 last_exception = NetworkError(f"Network error: {e}")
@@ -257,6 +270,7 @@ class MaxBotClient:
                 delay = self.retryBackoffFactor * (2**attempt)
                 logger.debug(f"Retrying in {delay} seconds...")
                 await asyncio.sleep(delay)
+            attempt += 1
 
         # All retries exhausted
         logger.error(f"Request failed after {self.maxRetries + 1} attempts")
@@ -1081,10 +1095,10 @@ class MaxBotClient:
 
     async def startPolling(
         self,
-        handler: Callable[[Any], None],
+        handler: Callable[[Update], Union[None, Awaitable[None]]],
         types: Optional[List[str]] = None,
         timeout: int = 30,
-        errorHandler: Optional[Callable[[Exception], None]] = None,
+        errorHandler: Optional[Callable[[Exception], Union[None, Awaitable[None]]]] = None,
     ) -> None:
         """Start continuous polling loop.
 
@@ -1142,10 +1156,10 @@ class MaxBotClient:
 
     async def _pollingLoop(
         self,
-        handler: Callable[[Any], None],
+        handler: Callable[[Update], Union[None, Awaitable[None]]],
         types: Optional[List[str]],
         timeout: int,
-        errorHandler: Optional[Callable[[Exception], None]],
+        errorHandler: Optional[Callable[[Exception], Union[None, Awaitable[None]]]],
     ) -> None:
         """Internal polling loop that runs in background."""
         last_marker = None

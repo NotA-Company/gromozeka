@@ -6,11 +6,11 @@ for all attachment types in the Max Messenger Bot API.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
 
-class AttachmentType(str, Enum):
+class AttachmentType(StrEnum):
     """
     Base attachment type enum
     """
