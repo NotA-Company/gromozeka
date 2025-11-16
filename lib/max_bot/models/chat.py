@@ -6,21 +6,22 @@ ChatAdmin, ChatAdminPermission, ChatList, and ChatPatch models.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
 from .user import UserWithPhoto
 
 
-class ChatType(str, Enum):
+class ChatType(StrEnum):
     """
     Тип чата: диалог, чат
     """
 
     CHAT = "chat"
+    DIALOG = "dialog"
 
 
-class ChatStatus(str, Enum):
+class ChatStatus(StrEnum):
     """
     Статус чата для текущего бота
     """
@@ -35,7 +36,7 @@ class ChatStatus(str, Enum):
     """Чат был закрыт."""
 
 
-class ChatAdminPermission(str, Enum):
+class ChatAdminPermission(StrEnum):
     """
     Права администратора чата
     """

@@ -1,4 +1,7 @@
 # Our TODO list
+- [ ] General framework above Telegram and Max
+- [ ] Add ENV\.env support in config secrets
+- [ ] ConfigManager: Use TypedDict's
 - [ ] Save info about used tools to put it into context
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
 - [ ] Add ability for different chats use different rate-limiters 
