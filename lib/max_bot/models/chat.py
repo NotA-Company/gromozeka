@@ -18,7 +18,7 @@ class ChatType(StrEnum):
     """
 
     CHAT = "chat"
-    DIALOG = "dialog"
+    DIALOG = "dialog"  # NOTE: `dialog`` isn't present in swagger, however returned by Max API
 
 
 class ChatStatus(StrEnum):
@@ -150,83 +150,102 @@ class Chat:
         )
 
 
-@dataclass(slots=True)
 class ChatMember(UserWithPhoto):
     """
     Объект, описывающий участника чата
     """
 
-    last_access_time: int = 0
-    """Время последней активности пользователя в чате. Может быть устаревшим для суперчатов (равно времени вступления)"""  # noqa: E501
-    is_owner: bool = False
-    """Является ли пользователь владельцем чата"""
-    is_admin: bool = False
-    """Является ли пользователь администратором чата"""
-    join_time: int = 0
-    """Дата присоединения к чату в формате Unix time"""
-    permissions: Optional[List[ChatAdminPermission]] = None
-    """Перечень прав пользователя. Возможные значения:
-    - `"read_all_messages"` — Читать все сообщения.
-    - `"add_remove_members"` — Добавлять/удалять участников.
-    - `"add_admins"` — Добавлять администраторов.
-    - `"change_chat_info"` — Изменять информацию о чате.
-    - `"pin_message"` — Закреплять сообщения.
-    - `"write"` — Писать сообщения.
-    - `"edit_link"` — Изменять ссылку на чат.
-    """
-    alias: Optional[str] = None
-    """Заголовок, который будет показан на клиенте
+    __slots__ = ("last_access_time", "is_owner", "is_admin", "join_time", "permissions", "alias")
 
-    Если пользователь администратор или владелец и ему не установлено это название, то поле не передается, клиенты на своей стороне подменят на "владелец" или "админ"."""  # noqa: E501
+    # last_access_time: int = 0
+    # """Время последней активности пользователя в чате. Может быть устаревшим для суперчатов (равно времени вступления)"""  # noqa: E501
+    # is_owner: bool = False
+    # """Является ли пользователь владельцем чата"""
+    # is_admin: bool = False
+    # """Является ли пользователь администратором чата"""
+    # join_time: int = 0
+    # """Дата присоединения к чату в формате Unix time"""
+    # permissions: Optional[List[ChatAdminPermission]] = None
+    # """Перечень прав пользователя. Возможные значения:
+    # - `"read_all_messages"` — Читать все сообщения.
+    # - `"add_remove_members"` — Добавлять/удалять участников.
+    # - `"add_admins"` — Добавлять администраторов.
+    # - `"change_chat_info"` — Изменять информацию о чате.
+    # - `"pin_message"` — Закреплять сообщения.
+    # - `"write"` — Писать сообщения.
+    # - `"edit_link"` — Изменять ссылку на чат.
+    # """
+    # alias: Optional[str] = None
+    # """Заголовок, который будет показан на клиенте
+
+    # Если пользователь администратор или владелец и ему не установлено это название,
+    # то поле не передается, клиенты на своей стороне подменят на "владелец" или "админ".
+    # """
+
+    def __init__(
+        self,
+        *,
+        last_access_time: int,
+        is_owner: bool,
+        is_admin: bool,
+        join_time: int,
+        permissions: Optional[List[ChatAdminPermission]] = None,
+        alias: Optional[str] = None,
+        description: str | None = None,
+        avatar_url: str | None = None,
+        full_avatar_url: str | None = None,
+        user_id: int,
+        first_name: str,
+        last_name: str | None = None,
+        username: str | None = None,
+        is_bot: bool = False,
+        last_activity_time: int = 0,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(
+            description=description,
+            avatar_url=avatar_url,
+            full_avatar_url=full_avatar_url,
+            user_id=user_id,
+            first_name=first_name,
+            last_name=last_name,
+            username=username,
+            is_bot=is_bot,
+            last_activity_time=last_activity_time,
+            api_kwargs=api_kwargs,
+        )
+        self.last_access_time: int = last_access_time
+        self.is_owner: bool = is_owner
+        self.is_admin: bool = is_admin
+        self.join_time: int = join_time
+        self.permissions: Optional[List[ChatAdminPermission]] = permissions
+        self.alias: Optional[str] = alias
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatMember":
         """Create ChatMember instance from API response dictionary."""
         permissions_data = data.get("permissions")
         permissions = None
-        if permissions_data:
+        if permissions_data is not None:
             permissions = [ChatAdminPermission(perm) for perm in permissions_data]
 
         return cls(
-            user_id=data.get("user_id", 0),
-            first_name=data.get("first_name", ""),
-            last_name=data.get("last_name"),
-            name=data.get("name"),
-            username=data.get("username"),
-            is_bot=data.get("is_bot", False),
-            last_activity_time=data.get("last_activity_time", 0),
-            description=data.get("description"),
-            avatar_url=data.get("avatar_url"),
-            full_avatar_url=data.get("full_avatar_url"),
             last_access_time=data.get("last_access_time", 0),
             is_owner=data.get("is_owner", False),
             is_admin=data.get("is_admin", False),
             join_time=data.get("join_time", 0),
             permissions=permissions,
             alias=data.get("alias"),
-            api_kwargs={
-                k: v
-                for k, v in data.items()
-                if k
-                not in {
-                    "user_id",
-                    "first_name",
-                    "last_name",
-                    "name",
-                    "username",
-                    "is_bot",
-                    "last_activity_time",
-                    "description",
-                    "avatar_url",
-                    "full_avatar_url",
-                    "last_access_time",
-                    "is_owner",
-                    "is_admin",
-                    "join_time",
-                    "permissions",
-                    "alias",
-                }
-            },
+            description=data.get("description"),
+            avatar_url=data.get("avatar_url"),
+            full_avatar_url=data.get("full_avatar_url"),
+            user_id=data.get("user_id", 0),
+            first_name=data.get("first_name", ""),
+            last_name=data.get("last_name"),
+            username=data.get("username"),
+            is_bot=data.get("is_bot", False),
+            last_activity_time=data.get("last_activity_time", 0),
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 

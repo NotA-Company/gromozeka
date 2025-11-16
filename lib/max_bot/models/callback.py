@@ -44,13 +44,13 @@ class Callback(BaseMaxBotModel):
         self.user: User = user
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "Callback":
+    def from_dict(cls, data: Dict[str, Any]) -> "Callback":
         return cls(
             timestamp=data.get("timestamp", 0),
             callback_id=data.get("callback_id", ""),
             payload=data.get("payload", None),
             user=User.from_dict(data.get("user", {})),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -78,12 +78,12 @@ class CallbackAnswer(BaseMaxBotModel):
         self.notification: Optional[str] = notification
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "CallbackAnswer":
+    def from_dict(cls, data: Dict[str, Any]) -> "CallbackAnswer":
         message: Optional[NewMessageBody] = None
         if data.get("message", None) is not None:
             message = NewMessageBody.from_dict(data.get("message", {}))
         return cls(
             message=message,
             notification=data.get("notification", None),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )

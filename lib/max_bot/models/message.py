@@ -6,15 +6,15 @@ Recipient, MessageStat, MessageList, NewMessageBody, NewMessageLink,
 LinkedMessage, and SendMessageResult models.
 """
 
-from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
+from .base import BaseMaxBotModel
 from .chat import ChatType
 from .user import User
 
 
-class TextFormat(str, Enum):
+class TextFormat(StrEnum):
     """
     Формат текста сообщения
     """
@@ -23,29 +23,42 @@ class TextFormat(str, Enum):
     HTML = "html"
 
 
-class MessageLinkType(str, Enum):
+class MessageLinkType(StrEnum):
     """
     Тип связанного сообщения
     """
+
+    UNSPECIFIED = "UNSPECIFIED"
 
     FORWARD = "forward"
     REPLY = "reply"
 
 
-@dataclass(slots=True)
-class Recipient:
+class Recipient(BaseMaxBotModel):
     """
     Новый получатель сообщения. Может быть пользователем или чатом
     """
 
-    chat_id: Optional[int] = None
-    """ID чата"""
-    chat_type: ChatType = ChatType.CHAT
-    """Тип чата"""
-    user_id: Optional[int] = None
-    """ID пользователя, если сообщение было отправлено пользователю"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("chat_id", "chat_type", "user_id")
+    # chat_id: Optional[int] = None
+    # """ID чата"""
+    # chat_type: ChatType = ChatType.CHAT
+    # """Тип чата"""
+    # user_id: Optional[int] = None
+    # """ID пользователя, если сообщение было отправлено пользователю"""
+
+    def __init__(
+        self,
+        *,
+        chat_id: Optional[int] = None,
+        chat_type: ChatType,
+        user_id: Optional[int] = None,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.chat_id: Optional[int] = chat_id
+        self.chat_type: ChatType = chat_type
+        self.user_id: Optional[int] = user_id
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Recipient":
@@ -54,45 +67,69 @@ class Recipient:
             chat_id=data.get("chat_id"),
             chat_type=ChatType(data.get("chat_type", "chat")),
             user_id=data.get("user_id"),
-            api_kwargs={k: v for k, v in data.items() if k not in {"chat_id", "chat_type", "user_id"}},
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class MessageStat:
+class MessageStat(BaseMaxBotModel):
     """
     Статистика сообщения
     """
 
-    views: int = 0
-    """Количество просмотров"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("views",)
+    # views: int
+    # """Количество просмотров"""
+
+    def __init__(self, *, views: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(api_kwargs=api_kwargs)
+        self.views = views
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageStat":
         """Create MessageStat instance from API response dictionary."""
-        return cls(views=data.get("views", 0), api_kwargs={k: v for k, v in data.items() if k not in {"views"}})
+        return cls(
+            views=data.get("views", 0),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
-@dataclass(slots=True)
-class MessageBody:
+class MessageBody(BaseMaxBotModel):
     """
     Схема, представляющая тело сообщения
     """
 
-    mid: str
-    """Уникальный ID сообщения"""
-    seq: int = 0
-    """ID последовательности сообщения в чате"""
-    text: Optional[str] = None
-    """Новый текст сообщения"""
-    attachments: Optional[List[Dict[str, Any]]] = None
-    """Вложения сообщения. Могут быть одним из типов `Attachment`. Смотрите описание схемы"""
-    markup: Optional[List[Dict[str, Any]]] = None
-    """Разметка текста сообщения. Для подробной информации загляните в раздел [Форматирование](/docs-api#Форматирование%20текста)"""  # noqa: E501
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("mid", "seq", "text", "attachments", "markup")
+
+    # mid: str
+    # """Уникальный ID сообщения"""
+    # seq: int = 0
+    # """ID последовательности сообщения в чате"""
+    # text: Optional[str] = None
+    # """Новый текст сообщения"""
+    # attachments: Optional[List[Dict[str, Any]]] = None
+    # """Вложения сообщения. Могут быть одним из типов `Attachment`. Смотрите описание схемы"""
+    # markup: Optional[List[Dict[str, Any]]] = None
+    # """
+    # Разметка текста сообщения. Для подробной информации загляните в раздел
+    # [Форматирование](/docs-api#Форматирование%20текста)
+    # """
+
+    def __init__(
+        self,
+        *,
+        mid: str,
+        seq: int,
+        text: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        markup: Optional[List[Dict[str, Any]]] = None,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.mid: str = mid
+        self.seq: int = seq
+        self.text: Optional[str] = text
+        self.attachments: Optional[List[Dict[str, Any]]] = attachments
+        self.markup: Optional[List[Dict[str, Any]]] = markup
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageBody":
@@ -100,215 +137,271 @@ class MessageBody:
         return cls(
             mid=data.get("mid", ""),
             seq=data.get("seq", 0),
-            text=data.get("text"),
-            attachments=data.get("attachments"),
-            markup=data.get("markup"),
-            api_kwargs={k: v for k, v in data.items() if k not in {"mid", "seq", "text", "attachments", "markup"}},
+            text=data.get("text", None),
+            attachments=data.get("attachments", None),
+            markup=data.get("markup", None),
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class LinkedMessage:
+class LinkedMessage(BaseMaxBotModel):
     """
     Linked message model for forwards and replies
     """
 
-    type: MessageLinkType
-    """Тип связанного сообщения"""
-    sender: Optional[User] = None
-    """Пользователь, отправивший сообщение."""
-    chat_id: Optional[int] = None
-    """Чат, в котором сообщение было изначально опубликовано. Только для пересланных сообщений"""
-    message: Optional[MessageBody] = None
-    """Сообщение"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("type", "sender", "chat_id", "message")
+
+    # type: MessageLinkType
+    # """Тип связанного сообщения"""
+    # sender: Optional[User] = None
+    # """Пользователь, отправивший сообщение."""
+    # chat_id: Optional[int] = None
+    # """Чат, в котором сообщение было изначально опубликовано. Только для пересланных сообщений"""
+    # message: MessageBody
+    # """Сообщение"""
+
+    def __init__(
+        self,
+        *,
+        type: MessageLinkType,
+        sender: Optional[User] = None,
+        chat_id: Optional[int] = None,
+        message: MessageBody,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.type: MessageLinkType = type
+        self.sender: Optional[User] = sender
+        self.chat_id: Optional[int] = chat_id
+        self.message: MessageBody = message
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LinkedMessage":
         """Create LinkedMessage instance from API response dictionary."""
-        sender_data = data.get("sender")
+        sender_data = data.get("sender", None)
         sender = None
-        if sender_data:
+        if sender_data is not None:
             sender = User.from_dict(sender_data)
 
-        message_data = data.get("message")
-        message = None
-        if message_data:
-            message = MessageBody.from_dict(message_data)
-
         return cls(
-            type=MessageLinkType(data.get("type", "reply")),
+            type=MessageLinkType(data.get("type", MessageLinkType.UNSPECIFIED)),
             sender=sender,
             chat_id=data.get("chat_id"),
-            message=message,
+            message=MessageBody.from_dict(data.get("message", {})),
             api_kwargs={k: v for k, v in data.items() if k not in {"type", "sender", "chat_id", "message"}},
         )
 
 
-@dataclass(slots=True)
-class Message:
+class Message(BaseMaxBotModel):
     """
     Сообщение в чате
     """
 
-    recipient: Recipient
-    """Получатель сообщения. Может быть пользователем или чатом"""
-    body: MessageBody
-    """Содержимое сообщения. Текст + вложения. Может быть `null`, если сообщение содержит только пересланное сообщение"""  # noqa: E501
-    timestamp: int = 0
-    """Время создания сообщения в формате Unix-time"""
-    sender: Optional[User] = None
-    """Пользователь, отправивший сообщение"""
-    link: Optional[LinkedMessage] = None
-    """Пересланное или ответное сообщение"""
-    stat: Optional[MessageStat] = None
-    """Статистика сообщения."""
-    url: Optional[str] = None
-    """Публичная ссылка на сообщение. Может быть null для диалогов или не публичных чатов"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("sender", "recipient", "timestamp", "link", "message", "stat", "url")
+
+    # sender: User
+    # """Пользователь, отправивший сообщение"""
+    # recipient: Recipient
+    # """Получатель сообщения. Может быть пользователем или чатом"""
+    # timestamp: int
+    # """Время создания сообщения в формате Unix-time"""
+    # link: Optional[LinkedMessage] = None
+    # """Пересланное или ответное сообщение"""
+    # message: MessageBody  # NOTE: In swagger it's named `body`
+    # """
+    # Содержимое сообщения. Текст + вложения.
+    # Может быть `null`, если сообщение содержит только пересланное сообщение
+    # """
+    # stat: Optional[MessageStat] = None
+    # """Статистика сообщения."""
+    # url: Optional[str] = None
+    # """Публичная ссылка на сообщение. Может быть null для диалогов или не публичных чатов"""
+
+    def __init__(
+        self,
+        *,
+        sender: User,
+        recipient: Recipient,
+        timestamp: int,
+        link: Optional[LinkedMessage] = None,
+        message: MessageBody,  # NOTE: In swagger it's named `body`
+        stat: Optional[MessageStat] = None,
+        url: Optional[str] = None,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.sender: User = sender
+        self.recipient: Recipient = recipient
+        self.timestamp: int = timestamp
+        self.link: Optional[LinkedMessage] = link
+        self.message: MessageBody = message
+        self.stat: Optional[MessageStat] = stat
+        self.url: Optional[str] = url
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
         """Create Message instance from API response dictionary."""
-        recipient_data = data.get("recipient", {})
-        recipient = Recipient.from_dict(recipient_data)
 
-        body_data = data.get("body", {})
-        body = MessageBody.from_dict(body_data)
-
-        sender_data = data.get("sender")
-        sender = None
-        if sender_data:
-            sender = User.from_dict(sender_data)
-
-        link_data = data.get("link")
+        link_data = data.get("link", None)
         link = None
         if link_data:
             link = LinkedMessage.from_dict(link_data)
 
-        stat_data = data.get("stat")
+        stat_data = data.get("stat", None)
         stat = None
         if stat_data:
             stat = MessageStat.from_dict(stat_data)
 
         return cls(
-            recipient=recipient,
-            body=body,
+            sender=User.from_dict(data.get("sender", {})),
+            recipient=Recipient.from_dict(data.get("recipient", {})),
             timestamp=data.get("timestamp", 0),
-            sender=sender,
             link=link,
+            message=MessageBody.from_dict(data.get("message", {})),
             stat=stat,
             url=data.get("url"),
-            api_kwargs={
-                k: v
-                for k, v in data.items()
-                if k not in {"recipient", "body", "timestamp", "sender", "link", "stat", "url"}
-            },
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class MessageList:
+class MessageList(BaseMaxBotModel):
     """
     Пагинированный список сообщений
     """
 
-    messages: List[Message]
-    """Массив сообщений"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("messages",)
+
+    # messages: List[Message]
+    # """Массив сообщений"""
+
+    def __init__(self, *, messages: List[Message], api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(api_kwargs=api_kwargs)
+        self.messages: List[Message] = messages
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageList":
         """Create MessageList instance from API response dictionary."""
-        messages_data = data.get("messages", [])
-        messages = [Message.from_dict(msg) for msg in messages_data]
 
-        return cls(messages=messages, api_kwargs={k: v for k, v in data.items() if k not in {"messages"}})
+        return cls(
+            messages=[Message.from_dict(msg) for msg in data.get("messages", [])],
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
-@dataclass(slots=True)
-class NewMessageLink:
+class NewMessageLink(BaseMaxBotModel):
     """
     Link model for new messages (forward/reply)
     """
 
-    type: MessageLinkType
-    """Тип ссылки сообщения"""
-    mid: str
-    """ID сообщения исходного сообщения"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("type", "mid")
+
+    # type: MessageLinkType
+    # """Тип ссылки сообщения"""
+    # mid: str
+    # """ID сообщения исходного сообщения"""
+
+    def __init__(
+        self,
+        *,
+        type: MessageLinkType,
+        mid: str,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.type: MessageLinkType = type
+        self.mid: str = mid
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "NewMessageLink":
         """Create NewMessageLink instance from API response dictionary."""
         return cls(
-            type=MessageLinkType(data.get("type", "reply")),
+            type=MessageLinkType(data.get("type", MessageLinkType.UNSPECIFIED)),
             mid=data.get("mid", ""),
-            api_kwargs={k: v for k, v in data.items() if k not in {"type", "mid"}},
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class NewMessageBody:
+class NewMessageBody(BaseMaxBotModel):
     """
     New message body for sending messages
     """
 
-    text: Optional[str] = None
-    """Новый текст сообщения"""
-    attachments: Optional[List[Dict[str, Any]]] = None
-    """Вложения сообщения. Если пусто, все вложения будут удалены"""
-    link: Optional[NewMessageLink] = None
-    """Ссылка на сообщение"""
-    notify: bool = True
-    """Если false, участники чата не будут уведомлены (по умолчанию `true`)"""
-    format: Optional[TextFormat] = None
-    """Если установлен, текст сообщения будет форматирован данным способом. Для подробной информации загляните в раздел [Форматирование](/docs-api#Форматирование%20текста)"""  # noqa: E501
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("text", "attachments", "link", "notify", "format")
+
+    # text: Optional[str] = None
+    # """Новый текст сообщения"""
+    # attachments: Optional[List[Dict[str, Any]]] = None
+    # """Вложения сообщения. Если пусто, все вложения будут удалены"""
+    # link: Optional[NewMessageLink] = None
+    # """Ссылка на сообщение"""
+    # notify: bool = True
+    # """Если false, участники чата не будут уведомлены (по умолчанию `true`)"""
+    # format: Optional[TextFormat] = None
+    # """
+    # Если установлен, текст сообщения будет форматирован данным способом.
+    # Для подробной информации загляните в раздел
+    # [Форматирование](/docs-api#Форматирование%20текста)
+    # """
+
+    def __init__(
+        self,
+        *,
+        text: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        link: Optional[NewMessageLink] = None,
+        notify: bool = True,
+        format: Optional[TextFormat] = None,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.text: Optional[str] = text
+        self.attachments: Optional[List[Dict[str, Any]]] = attachments
+        self.link: Optional[NewMessageLink] = link
+        self.notify: bool = notify
+        self.format: Optional[TextFormat] = format
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "NewMessageBody":
         """Create NewMessageBody instance from API response dictionary."""
-        link_data = data.get("link")
+        link_data = data.get("link", None)
         link = None
         if link_data:
             link = NewMessageLink.from_dict(link_data)
 
-        format_data = data.get("format")
+        format_data = data.get("format", None)
         format_enum = None
         if format_data:
             format_enum = TextFormat(format_data)
 
         return cls(
-            text=data.get("text"),
-            attachments=data.get("attachments"),
+            text=data.get("text", None),
+            attachments=data.get("attachments", None),
             link=link,
             notify=data.get("notify", True),
             format=format_enum,
-            api_kwargs={k: v for k, v in data.items() if k not in {"text", "attachments", "link", "notify", "format"}},
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class SendMessageResult:
+class SendMessageResult(BaseMaxBotModel):
     """
     Result of sending a message
     """
 
-    message: Message
-    """Sent message"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("message",)
+
+    # message: Message
+    # """Sent message"""
+
+    def __init__(self, *, message: Message, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(api_kwargs=api_kwargs)
+        self.message: Message = message
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SendMessageResult":
         """Create SendMessageResult instance from API response dictionary."""
-        message_data = data.get("message", {})
-        message = Message.from_dict(message_data)
 
-        return cls(message=message, api_kwargs={k: v for k, v in data.items() if k not in {"message"}})
+        return cls(
+            message=Message.from_dict(data.get("message", {})),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
