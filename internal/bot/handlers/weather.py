@@ -483,8 +483,8 @@ class WeatherHandler(BaseBotHandler):
 
     @commandHandlerExtended(
         commands=("geocode",),
-        shortDescription="<address> - Return geocoding result for given address",
-        helpMessage=" `<address>`: Показать результат геокодинга для указанного адреса.",
+        shortDescription="[short] <address> - Return geocoding result for given address",
+        helpMessage=(" [`short`] `<address>`: Показать результат геокодинга для указанного адреса. " "Если передан параметр `short`, то выводит только основную информацию."),
         suggestCategories={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
@@ -511,9 +511,13 @@ class WeatherHandler(BaseBotHandler):
             None. Sends geocoding info or error message to chat.
         """
         address = ""
-
-        if context.args:
-            address = " ".join(context.args)
+        isShort = False
+        args = context.args
+        if args:
+            if args[0].strip().lower() == "short":
+                isShort = True
+                args = args[1:]
+            address = " ".join(args)
         else:
             await self.sendMessage(
                 ensuredMessage,
@@ -541,6 +545,8 @@ class WeatherHandler(BaseBotHandler):
                 return
 
             for geocode in geocodeRet:
+                if isShort:
+                    geocode.pop("address", None)
                 await self.sendMessage(
                     ensuredMessage,
                     f"```json\n{utils.jsonDumps(geocode, indent=2)}\n```",
