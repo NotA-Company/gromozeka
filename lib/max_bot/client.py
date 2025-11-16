@@ -14,6 +14,8 @@ from urllib.parse import urljoin
 
 import httpx
 
+from lib import utils
+
 from .constants import (
     API_BASE_URL,
     API_VERSION,
@@ -52,6 +54,8 @@ from .models import (
 from .models.update import Update
 
 logger = logging.getLogger(__name__)
+
+EXTENDED_DEBUG: bool = True
 
 
 class MaxBotClient:
@@ -240,12 +244,13 @@ class MaxBotClient:
             except httpx.HTTPStatusError as e:
                 last_exception = parseApiError(e.response.status_code, e.response.json() if e.response.content else {})
                 logger.warning(f"HTTP error on attempt {attempt + 1}: {last_exception}")
-            
+
             except httpx.ReadTimeout as e:
                 if isUpdatePolling:
                     # It is natural to get such error during polling
                     #  if there is no updates. Just skip
-                    logger.debug("No updates for now...")
+                    if EXTENDED_DEBUG:
+                        logger.debug("No updates for now...")
                     continue
                 last_exception = NetworkError(f"Read timeout: {e}")
                 logger.warning(f"Read timeout on attempt {attempt + 1}: {e}")
@@ -1054,9 +1059,42 @@ class MaxBotClient:
     ) -> UpdateList:
         """Get updates via long polling.
 
-        This method can be used to receive updates if your bot is not subscribed to WebHook.
-        The method uses long polling. Each update has its own sequence number.
-        The `marker` property in the response points to the next expected update.
+        URL: GET /updates
+        tags: ["subscriptions"]
+        summary: Получение обновлений
+        description:
+            Этот метод можно использовать для получения обновлений,
+            если ваш бот не подписан на WebHook.
+            Метод использует долгий опрос (long polling).
+
+            Каждое обновление имеет свой номер последовательности.
+            Свойство `marker` в ответе указывает на следующее ожидаемое обновление.
+
+            Все предыдущие обновления считаются завершенными после прохождения параметра `marker`.
+            Если параметр `marker` **не передан**, бот получит все обновления,
+            произошедшие после последнего подтверждения.
+
+        parameters:
+          - limit: int[1-1000], Default: 100
+            description: "Максимальное количество обновлений для получения"
+          - timeout: int[0-90], Default: 30
+            description: "Тайм-аут в секундах для долгого опроса",
+          - marker: Optional[int64]
+            description:
+                Если передан, бот получит обновления, которые еще не были получены.
+                Если не передан, получит все новые обновления
+          - types: Optional[List[str]]
+            description:
+                Список типов обновлений, которые бот хочет получить
+                (например, `message_created`, `message_callback`,...)",
+
+        responses:
+          - 200:
+            description: "Список обновлений"
+            "content": UpdateList
+          - 401: Unauthorized
+          - 405: NotAllowed
+          - 500: InternalError
 
         Args:
             lastEventId: If passed, bot will receive updates that haven't been received yet.
@@ -1091,6 +1129,8 @@ class MaxBotClient:
             params["types"] = ",".join(types)
 
         response = await self.get("/updates", params=params)
+        if EXTENDED_DEBUG:
+            logger.debug(f"Received updates: {utils.jsonDumps(response, indent=2)}")
         return UpdateList.from_dict(response)
 
     async def startPolling(

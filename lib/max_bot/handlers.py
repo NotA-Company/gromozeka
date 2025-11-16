@@ -12,15 +12,15 @@ from typing import Any, Awaitable, Callable, List, Optional, Union
 
 from .models.update import (
     BotAddedUpdate,
-    BotRemovedUpdate,
+    BotRemovedFromChatUpdate,
     BotStartedUpdate,
-    CallbackQueryUpdate,
-    ChatMemberDeleteUpdate,
-    ChatMemberEditUpdate,
-    ChatMemberNewUpdate,
-    MessageDeleteUpdate,
-    MessageEditUpdate,
-    MessageNewUpdate,
+    BotStoppedUpdate,
+    ChatTitleChangedUpdate,
+    MessageCallbackUpdate,
+    MessageChatCreatedUpdate,
+    MessageCreatedUpdate,
+    MessageEditedUpdate,
+    MessageRemovedUpdate,
     Update,
     UpdateType,
 )
@@ -90,12 +90,12 @@ class MessageHandler(Handler):
 
     def can_handle(self, update: Update) -> bool:
         """Check if this handler can handle the given update."""
-        if not isinstance(update, (MessageNewUpdate, MessageEditUpdate, MessageDeleteUpdate)):
+        if not isinstance(update, (MessageCreatedUpdate, MessageEditedUpdate, MessageRemovedUpdate)):
             return False
 
         if self.message_types:
             # Check if update type is in the allowed types
-            update_type_str = update.type.value
+            update_type_str = update.update_type.value
             return update_type_str in self.message_types
 
         return True
@@ -134,7 +134,7 @@ class CallbackQueryHandler(Handler):
 
     def can_handle(self, update: Update) -> bool:
         """Check if this handler can handle the given update."""
-        if not isinstance(update, CallbackQueryUpdate):
+        if not isinstance(update, MessageCallbackUpdate):
             return False
 
         if self.pattern:
@@ -178,12 +178,12 @@ class ChatMemberHandler(Handler):
 
     def can_handle(self, update: Update) -> bool:
         """Check if this handler can handle the given update."""
-        if not isinstance(update, (ChatMemberNewUpdate, ChatMemberEditUpdate, ChatMemberDeleteUpdate)):
+        if not isinstance(update, (BotStartedUpdate, BotStoppedUpdate, ChatTitleChangedUpdate)):
             return False
 
         if self.member_types:
             # Check if update type is in the allowed types
-            update_type_str = update.type.value
+            update_type_str = update.update_type.value
             return update_type_str in self.member_types
 
         return True
@@ -222,12 +222,12 @@ class BotEventHandler(Handler):
 
     def can_handle(self, update: Update) -> bool:
         """Check if this handler can handle the given update."""
-        if not isinstance(update, (BotStartedUpdate, BotAddedUpdate, BotRemovedUpdate)):
+        if not isinstance(update, (MessageChatCreatedUpdate, BotAddedUpdate, BotRemovedFromChatUpdate)):
             return False
 
         if self.event_types:
             # Check if update type is in the allowed types
-            update_type_str = update.type.value
+            update_type_str = update.update_type.value
             return update_type_str in self.event_types
 
         return True
@@ -270,10 +270,10 @@ class UpdateHandler(Handler):
             return True
 
         # Check if update type is in the allowed types
-        update_type_str = update.type.value
+        update_type_str = update.update_type.value
         for allowed_type in self.update_types:
             if isinstance(allowed_type, UpdateType):
-                if update.type == allowed_type:
+                if update.update_type == allowed_type:
                     return True
             else:
                 if update_type_str == allowed_type:
@@ -351,10 +351,10 @@ class HandlerRegistry:
         handlers = await self.get_handlers_for_update(update)
 
         if not handlers:
-            logger.debug(f"No handlers found for update type: {update.type}")
+            logger.debug(f"No handlers found for update type: {update.update_type}")
             return
 
-        logger.debug(f"Processing update {update.type} with {len(handlers)} handlers")
+        logger.debug(f"Processing update {update.update_type} with {len(handlers)} handlers")
 
         for handler in handlers:
             try:
