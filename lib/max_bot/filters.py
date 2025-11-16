@@ -442,7 +442,7 @@ class UpdateTypeFilter(Filter):
 
     def check(self, update: Update) -> bool:
         """Check if the update passes the update type filter."""
-        return update.type in self.updateTypes
+        return update.update_type in self.updateTypes
 
 
 # Combinable filters

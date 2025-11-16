@@ -36,6 +36,7 @@ class MaxBotApplication:
         # self.handlerManager = HandlersManager(configManager, database, llmManager)
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
+        self.client: Optional[maxBot.MaxBotClient] = None
 
     def run(self):
         """Start the bot."""
@@ -56,6 +57,12 @@ class MaxBotApplication:
 
     async def maxHandler(self, update: maxModels.Update) -> None:
         logger.debug(update)
+        if isinstance(update, maxModels.MessageCreatedUpdate):
+            logger.debug("It's new message, processing...")
+            # message = update.message
+            # self.database.saveChatMessage()
+        else:
+            logger.debug(f"It's {type(update).__name__}, ignoring for now...")
 
     async def maxExceptionHandler(self, exception: Exception) -> None:
         logger.exception(exception)
@@ -63,13 +70,13 @@ class MaxBotApplication:
     async def _runPolling(self):
         """Run the bot polling."""
 
-        maxClient = maxBot.MaxBotClient(self.botToken)
+        self.client = maxBot.MaxBotClient(self.botToken)
 
         try:
-            botInfo = await maxClient.getMyInfo()
+            botInfo = await self.client.getMyInfo()
             logger.debug(botInfo)
             logger.info("Start MAX polling....")
-            await maxClient.startPolling(
+            await self.client.startPolling(
                 handler=self.maxHandler,
                 types=None,
                 timeout=30,
@@ -77,9 +84,9 @@ class MaxBotApplication:
             )
 
             # TODO: Somehow allow to await it properly
-            if maxClient._pollingTask is not None:
-                await maxClient._pollingTask
+            if self.client._pollingTask is not None:
+                await self.client._pollingTask
             logger.info("After polling...")
         finally:
             logger.info("Work is done, exiting...")
-            await maxClient.aclose()
+            await self.client.aclose()
