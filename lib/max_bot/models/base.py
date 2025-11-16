@@ -7,13 +7,15 @@ from typing import Any, Dict, Iterator, Optional, Self
 
 logger = logging.getLogger(__name__)
 
+EXTRA_DEBUG = False
+
 
 class BaseMaxBotModel:
     """
     Base Class for all models from Max Messenger Bot API
     """
 
-    __slots__ = "api_kwargs"
+    __slots__ = ("api_kwargs",)
 
     api_kwargs: Dict[str, Any]
     """Raw API response data"""
@@ -26,6 +28,22 @@ class BaseMaxBotModel:
     def _getAttrsNames(self, includePrivate: bool) -> Iterator[str]:
         """TODO"""
         all_slots: Iterator[str] = (s for c in self.__class__.__mro__[:-1] for s in c.__slots__)
+
+        if includePrivate:
+            return all_slots
+        return (attr for attr in all_slots if not attr.startswith("_"))
+
+    @classmethod
+    def _getClassAttrsNames(cls, includePrivate: bool) -> Iterator[str]:
+        """TODO"""
+        all_slots: Iterator[str] = (s for c in cls.__mro__[:-1] for s in c.__slots__)
+
+        if EXTRA_DEBUG:
+            logger.debug(f"{cls.__name__}._getClassAttrsNames({includePrivate}):")
+            logger.debug(cls.__mro__)
+            for c in cls.__mro__[:-1]:
+                for s in c.__slots__:
+                    logger.debug(f"{s} of {c}")
 
         if includePrivate:
             return all_slots
@@ -68,15 +86,18 @@ class BaseMaxBotModel:
         return self.__repr__()
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "BaseMaxBotModel":
-        """Create BaseMaxBotModel instance from API response dictionary."""
-        ret = cls()
-        if store_api_kwargs:
-            ret.api_kwargs = data.copy()
+    def _getExtraKwargs(cls, api_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """TODO"""
+        known_args = list(cls._getClassAttrsNames(includePrivate=True))
+        ret = {k: v for k, v in api_kwargs.items() if k not in known_args}
         return ret
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BaseMaxBotModel":
+        """Create BaseMaxBotModel instance from API response dictionary."""
+        return cls(api_kwargs=data)
 
     def copy(self) -> Self:
         return self.__class__.from_dict(
             data=self.to_dict(includePrivate=True, recursive=True),
-            store_api_kwargs=bool(self.api_kwargs),
         )  # pyright: ignore[reportReturnType]
