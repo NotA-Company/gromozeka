@@ -54,6 +54,7 @@ from .models.update import Update
 
 logger = logging.getLogger(__name__)
 
+# Enable extended debug. Useful only for Client debugging
 EXTENDED_DEBUG: bool = True
 
 
