@@ -36,6 +36,12 @@ from .attachment import (
     UploadResult,
 )
 
+# Base model
+from .base import BaseMaxBotModel
+
+# Callback model
+from .callback import Callback, CallbackAnswer
+
 # Chat models
 from .chat import (
     Chat,
@@ -189,6 +195,11 @@ from .user import (
 )
 
 __all__ = [
+    # Base models (1)
+    "BaseMaxBotModel",
+    # Callback models (1)
+    "Callback",
+    "CallbackAnswer",
     # User models (5)
     "User",
     "UserWithPhoto",
