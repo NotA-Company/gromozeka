@@ -68,12 +68,12 @@ class Update(BaseMaxBotModel):
         self.timestamp: int = timestamp
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "Update":
+    def from_dict(cls, data: Dict[str, Any]) -> "Update":
         """Create Update instance from API response dictionary."""
         ret = cls(
             update_type=UpdateType(data.get("update_type", "unknown")),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
         return ret
 
@@ -107,13 +107,13 @@ class MessageCreatedUpdate(Update):
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "MessageCreatedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "MessageCreatedUpdate":
         """Create MessageNewUpdate instance from API response dictionary."""
         return cls(
             message=Message.from_dict(data.get("message", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -149,7 +149,7 @@ class MessageCallbackUpdate(Update):
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "MessageCallbackUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "MessageCallbackUpdate":
         """Create MessageCallbackUpdate instance from API response dictionary."""
         message: Optional[Message] = None
         if data.get("message", None) is not None:
@@ -160,7 +160,7 @@ class MessageCallbackUpdate(Update):
             message=message,
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -189,13 +189,13 @@ class MessageEditedUpdate(Update):
         self.message: Message = message
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "MessageEditedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "MessageEditedUpdate":
         """Create MessageEditedUpdate instance from API response dictionary."""
 
         return cls(
             message=Message.from_dict(data.get("message", {})),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -229,14 +229,14 @@ class MessageRemovedUpdate(Update):
         self.user_id: int = user_id
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "MessageRemovedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "MessageRemovedUpdate":
         """Create MessageRemovedUpdate instance from API response dictionary."""
         return cls(
             message_id=data.get("message_id", ""),
             chat_id=data.get("chat_id", 0),
             user_id=data.get("user_id", 0),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -269,14 +269,14 @@ class BotAddedUpdate(Update):
         self.is_channel: bool = is_channel
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "BotAddedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "BotAddedUpdate":
         """Create BotAddedUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
             user=User.from_dict(data.get("user", {})),
             is_channel=data.get("is_channel", False),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -309,14 +309,14 @@ class BotRemovedFromChatUpdate(Update):
         self.is_channel: bool = is_channel
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "BotRemovedFromChatUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "BotRemovedFromChatUpdate":
         """Create BotRemovedFromChatUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
             user=User.from_dict(data.get("user", {})),
             is_channel=data.get("is_channel", False),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -354,7 +354,7 @@ class DialogMutedUpdate(Update):
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "DialogMutedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "DialogMutedUpdate":
         """Create DialogMutedUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -362,7 +362,7 @@ class DialogMutedUpdate(Update):
             muted_until=data.get("muted_until", 0),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -396,7 +396,7 @@ class DialogUnmutedUpdate(Update):
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "DialogUnmutedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "DialogUnmutedUpdate":
         """Create DialogUnmutedUpdate instance from API response dictionary."""
 
         return cls(
@@ -404,7 +404,7 @@ class DialogUnmutedUpdate(Update):
             user=User.from_dict(data.get("user", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -438,14 +438,14 @@ class DialogClearedUpdate(Update):
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "DialogClearedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "DialogClearedUpdate":
         """Create DialogClearedUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
             user=User.from_dict(data.get("user", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -479,7 +479,7 @@ class DialogRemovedUpdate(Update):
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "DialogRemovedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "DialogRemovedUpdate":
         """Create DialogRemovedUpdate instance from API response dictionary."""
 
         return cls(
@@ -487,7 +487,7 @@ class DialogRemovedUpdate(Update):
             user=User.from_dict(data.get("user", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -527,7 +527,7 @@ class UserAddedToChatUpdate(Update):
         self.is_channel = is_channel
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "UserAddedToChatUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "UserAddedToChatUpdate":
         """Create UserAddedToChatUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -535,7 +535,7 @@ class UserAddedToChatUpdate(Update):
             inviter_id=data.get("inviter_id", None),
             is_channel=data.get("is_channel", False),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -577,7 +577,7 @@ class UserRemovedFromChatUpdate(Update):
         self.is_channel: bool = is_channel
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "UserRemovedFromChatUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "UserRemovedFromChatUpdate":
         """Create UserRemovedFromChatUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -585,7 +585,7 @@ class UserRemovedFromChatUpdate(Update):
             admin_id=data.get("admin_id", None),
             is_channel=data.get("is_channel", False),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -623,7 +623,7 @@ class BotStartedUpdate(Update):
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "BotStartedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "BotStartedUpdate":
         """Create BotStartedUpdate instance from API response dictionary."""
 
         return cls(
@@ -632,7 +632,7 @@ class BotStartedUpdate(Update):
             payload=data.get("payload", None),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -666,7 +666,7 @@ class BotStoppedUpdate(Update):
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "BotStoppedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "BotStoppedUpdate":
         """Create BotStoppedUpdate instance from API response dictionary."""
 
         return cls(
@@ -674,7 +674,7 @@ class BotStoppedUpdate(Update):
             user=User.from_dict(data.get("user", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -708,7 +708,7 @@ class ChatTitleChangedUpdate(Update):
         self.title: str = title
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "ChatTitleChangedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "ChatTitleChangedUpdate":
         """Create ChatTitleChangedUpdate instance from API response dictionary."""
 
         return cls(
@@ -716,7 +716,7 @@ class ChatTitleChangedUpdate(Update):
             user=User.from_dict(data.get("user", {})),
             title=data.get("title", ""),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -750,7 +750,7 @@ class MessageChatCreatedUpdate(Update):
         self.start_payload: Optional[str] = start_payload
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "MessageChatCreatedUpdate":
+    def from_dict(cls, data: Dict[str, Any]) -> "MessageChatCreatedUpdate":
         """Create MessageChatCreatedUpdate instance from API response dictionary."""
 
         return cls(
@@ -758,7 +758,7 @@ class MessageChatCreatedUpdate(Update):
             message_id=data.get("message_id", ""),
             start_payload=data.get("start_payload", None),
             timestamp=data.get("timestamp", 0),
-            api_kwargs=data.copy() if store_api_kwargs else None,
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -782,7 +782,7 @@ class UpdateList(BaseMaxBotModel):
         self.marker: Optional[int] = marker
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], store_api_kwargs: bool = False) -> "UpdateList":
+    def from_dict(cls, data: Dict[str, Any]) -> "UpdateList":
         """Create UpdateList instance from API response dictionary."""
         updates_data = data.get("updates", [])
         updates = []
@@ -799,41 +799,45 @@ class UpdateList(BaseMaxBotModel):
             # TODO: Make some map UpdateType -> class
             match updateType:
                 case UpdateType.MESSAGE_CREATED:
-                    updates.append(MessageCreatedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(MessageCreatedUpdate.from_dict(update_data))
                 case UpdateType.MESSAGE_CALLBACK:
-                    updates.append(MessageCallbackUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(MessageCallbackUpdate.from_dict(update_data))
                 case UpdateType.MESSAGE_EDITED:
-                    updates.append(MessageEditedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(MessageEditedUpdate.from_dict(update_data))
                 case UpdateType.MESSAGE_REMOVED:
-                    updates.append(MessageRemovedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(MessageRemovedUpdate.from_dict(update_data))
                 case UpdateType.BOT_ADDED:
-                    updates.append(BotAddedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(BotAddedUpdate.from_dict(update_data))
                 case UpdateType.BOT_REMOVED:
-                    updates.append(BotRemovedFromChatUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(BotRemovedFromChatUpdate.from_dict(update_data))
                 case UpdateType.DIALOG_MUTED:
-                    updates.append(DialogMutedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(DialogMutedUpdate.from_dict(update_data))
                 case UpdateType.DIALOG_UNMUTED:
-                    updates.append(DialogUnmutedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(DialogUnmutedUpdate.from_dict(update_data))
                 case UpdateType.DIALOG_CLEARED:
-                    updates.append(DialogClearedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(DialogClearedUpdate.from_dict(update_data))
                 case UpdateType.DIALOG_REMOVED:
-                    updates.append(DialogRemovedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(DialogRemovedUpdate.from_dict(update_data))
                 case UpdateType.USER_ADDED:
-                    updates.append(UserAddedToChatUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(UserAddedToChatUpdate.from_dict(update_data))
                 case UpdateType.USER_REMOVED:
-                    updates.append(UserRemovedFromChatUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(UserRemovedFromChatUpdate.from_dict(update_data))
                 case UpdateType.BOT_STARTED:
-                    updates.append(BotStartedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(BotStartedUpdate.from_dict(update_data))
                 case UpdateType.BOT_STOPPED:
-                    updates.append(BotStoppedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(BotStoppedUpdate.from_dict(update_data))
                 case UpdateType.CHAT_TITLE_CHANGED:
-                    updates.append(ChatTitleChangedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(ChatTitleChangedUpdate.from_dict(update_data))
                 case UpdateType.MESSAGE_CHAT_CREATED:
-                    updates.append(MessageChatCreatedUpdate.from_dict(update_data, store_api_kwargs))
+                    updates.append(MessageChatCreatedUpdate.from_dict(update_data))
                 case UpdateType.UNKNOWN:
-                    updates.append(Update.from_dict(update_data, store_api_kwargs))
+                    updates.append(Update.from_dict(update_data))
                 case _:
                     logger.error("Unreached code reached, it shouldn't happen")
                     updates.append(Update.from_dict(update_data))
 
-        return cls(updates=updates, marker=data.get("marker"), api_kwargs=data.copy() if store_api_kwargs else None)
+        return cls(
+            updates=updates,
+            marker=data.get("marker"),
+            api_kwargs=cls._getExtraKwargs(data),
+        )

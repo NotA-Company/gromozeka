@@ -26,8 +26,8 @@ class FilterHelper:
     def get_message_text(update: Update) -> Optional[str]:
         """Extract text from update."""
         message = FilterHelper.get_message(update)
-        if message and hasattr(message, "body") and message.body:
-            return getattr(message.body, "text", None)
+        if message and hasattr(message, "body") and message.message:
+            return getattr(message.message, "text", None)
         return None
 
     @staticmethod
@@ -175,8 +175,8 @@ class TextFilter(Filter):
     def _get_message_text(self, update: Update) -> Optional[str]:
         """Extract text from update."""
         message = getattr(update, "message", None)
-        if message and hasattr(message, "body") and message.body:
-            return getattr(message.body, "text", None)
+        if message and hasattr(message, "body") and message.message:
+            return getattr(message.message, "text", None)
         return None
 
     def _get_message(self, update: Update) -> Optional["Message"]:
@@ -293,8 +293,8 @@ class RegexFilter(Filter):
     def _get_message_text(self, update: Update) -> Optional[str]:
         """Extract text from update."""
         message = FilterHelper.get_message(update)
-        if message and hasattr(message, "body") and message.body:
-            return getattr(message.body, "text", None)
+        if message and hasattr(message, "body") and message.message:
+            return getattr(message.message, "text", None)
         return None
 
 
