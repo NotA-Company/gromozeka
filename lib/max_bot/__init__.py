@@ -53,10 +53,6 @@ from .exceptions import (
     parseApiError,
 )
 
-__version__ = API_VERSION
-__author__ = "Max Bot Client Library"
-__email__ = "support@max.ru"
-
 # Public API
 __all__ = [
     # Main client

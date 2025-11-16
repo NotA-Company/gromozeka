@@ -179,10 +179,10 @@ class Dispatcher:
             handlers = await self.handlerRegistry.get_handlers_for_update(update)
 
             if not handlers:
-                logger.debug(f"No handlers found for update type: {update.type}")
+                logger.debug(f"No handlers found for update type: {update.update_type}")
                 return
 
-            logger.debug(f"Dispatching update {update.type} to {len(handlers)} handlers")
+            logger.debug(f"Dispatching update {update.update_type} to {len(handlers)} handlers")
 
             # Execute handlers
             for handler in handlers:
@@ -327,7 +327,9 @@ class LoggingMiddleware(Middleware):
 
     async def process(self, update: Update, context: Dict[str, Any]) -> bool:
         """Log the update and continue processing."""
-        logger.log(self.logLevel, f"Processing update: {update.type} (ID: {getattr(update, 'update_id', 'N/A')})")
+        logger.log(
+            self.logLevel, f"Processing update: {update.update_type} (ID: {getattr(update, 'update_id', 'N/A')})"
+        )
         return True
 
 
