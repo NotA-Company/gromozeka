@@ -197,7 +197,7 @@ class Message(BaseMaxBotModel):
     Сообщение в чате
     """
 
-    __slots__ = ("sender", "recipient", "timestamp", "link", "message", "stat", "url")
+    __slots__ = ("sender", "recipient", "timestamp", "link", "body", "stat", "url")
 
     # sender: User
     # """Пользователь, отправивший сообщение"""
@@ -207,7 +207,7 @@ class Message(BaseMaxBotModel):
     # """Время создания сообщения в формате Unix-time"""
     # link: Optional[LinkedMessage] = None
     # """Пересланное или ответное сообщение"""
-    # message: MessageBody  # NOTE: In swagger it's named `body`
+    # message: MessageBody
     # """
     # Содержимое сообщения. Текст + вложения.
     # Может быть `null`, если сообщение содержит только пересланное сообщение
@@ -224,7 +224,7 @@ class Message(BaseMaxBotModel):
         recipient: Recipient,
         timestamp: int,
         link: Optional[LinkedMessage] = None,
-        message: MessageBody,  # NOTE: In swagger it's named `body`
+        body: MessageBody,
         stat: Optional[MessageStat] = None,
         url: Optional[str] = None,
         api_kwargs: Dict[str, Any] | None = None,
@@ -234,7 +234,7 @@ class Message(BaseMaxBotModel):
         self.recipient: Recipient = recipient
         self.timestamp: int = timestamp
         self.link: Optional[LinkedMessage] = link
-        self.message: MessageBody = message
+        self.body: MessageBody = body
         self.stat: Optional[MessageStat] = stat
         self.url: Optional[str] = url
 
@@ -257,7 +257,7 @@ class Message(BaseMaxBotModel):
             recipient=Recipient.from_dict(data.get("recipient", {})),
             timestamp=data.get("timestamp", 0),
             link=link,
-            message=MessageBody.from_dict(data.get("message", {})),
+            body=MessageBody.from_dict(data.get("body", {})),
             stat=stat,
             url=data.get("url"),
             api_kwargs=cls._getExtraKwargs(data),

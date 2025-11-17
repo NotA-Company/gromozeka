@@ -31,7 +31,12 @@ class MaxBotError(Exception):
         response: Raw API response data (if available)
     """
 
-    def __init__(self, message: str, code: Optional[str] = None, response: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        code: Optional[str] = None,
+        response: Optional[Dict[str, Any]] = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
@@ -99,7 +104,10 @@ class ValidationError(MaxBotError):
     """
 
     def __init__(
-        self, message: str, code: Optional[str] = ERROR_CODE_INVALID_REQUEST, response: Optional[Dict[str, Any]] = None
+        self,
+        message: str,
+        code: Optional[str] = ERROR_CODE_INVALID_REQUEST,
+        response: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message, code, response)
 

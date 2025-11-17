@@ -17,7 +17,6 @@ from lib import utils
 
 from .constants import (
     API_BASE_URL,
-    API_VERSION,
     CONTENT_TYPE_JSON,
     DEFAULT_TIMEOUT,
     HTTP_DELETE,
@@ -27,6 +26,7 @@ from .constants import (
     HTTP_PUT,
     MAX_RETRIES,
     RETRY_BACKOFF_FACTOR,
+    VERSION,
     SenderAction,
     UploadType,
 )
@@ -34,6 +34,7 @@ from .exceptions import (
     AuthenticationError,
     MaxBotError,
     NetworkError,
+    ValidationError,
     parseApiError,
 )
 from .models import (
@@ -43,6 +44,7 @@ from .models import (
     ChatList,
     ChatMembersList,
     Message,
+    MessageLinkType,
     MessageList,
     NewMessageBody,
     NewMessageLink,
@@ -162,11 +164,11 @@ class MaxBotClient:
                 base_url=self.baseUrl,
                 timeout=httpx.Timeout(self.timeout),
                 headers={
-                    "User-Agent": f"max-bot-client/{API_VERSION}",
+                    "User-Agent": f"Gromozeka/{VERSION}",
                     "Accept": CONTENT_TYPE_JSON,
                     "Content-Type": CONTENT_TYPE_JSON,
+                    "Authorization": self.accessToken,
                 },
-                params={"access_token": self.accessToken, "v": API_VERSION},
             )
             logger.debug("Created new HTTP client")
 
@@ -214,6 +216,9 @@ class MaxBotClient:
 
         isUpdatePolling = method == HTTP_GET and endpoint == "/updates"
 
+        if EXTENDED_DEBUG and not isUpdatePolling:
+            logger.debug(f"Making {method} request to {url} with body {kwargs}")
+
         # Log request (without sensitive data)
         logger.debug(f"Making {method} request to {url}")
 
@@ -239,11 +244,25 @@ class MaxBotClient:
                     error_data = {"message": response.text or "Unknown error"}
 
                 # Parse and raise appropriate exception
+                logger.warning(f"API error: {response.status_code} {error_data}")
                 raise parseApiError(response.status_code, error_data)
+
+            except AuthenticationError as e:
+                logger.error(f"Authentication error: {e}")
+                raise e
+
+            except ValidationError as e:
+                logger.error(f"Validation error: {e}")
+                logger.exception(e)
+                raise e
+
+            except MaxBotError as e:
+                last_exception = e
+                logger.warning(f"API error on attempt {attempt + 1}: {type(e).__name__}#{e}, {e.response}")
 
             except httpx.HTTPStatusError as e:
                 last_exception = parseApiError(e.response.status_code, e.response.json() if e.response.content else {})
-                logger.warning(f"HTTP error on attempt {attempt + 1}: {last_exception}")
+                logger.warning(f"HTTP error on attempt {attempt + 1}: {last_exception}, {type(e).__name__}#{e}")
 
             except httpx.ReadTimeout as e:
                 if isUpdatePolling:
@@ -252,23 +271,17 @@ class MaxBotClient:
                     if EXTENDED_DEBUG:
                         logger.debug("No updates for now...")
                     continue
-                last_exception = NetworkError(f"Read timeout: {e}")
-                logger.warning(f"Read timeout on attempt {attempt + 1}: {e}")
+                last_exception = NetworkError(f"Read timeout: {type(e).__name__}#{e}")
+                logger.warning(f"Read timeout on attempt {attempt + 1}: {type(e).__name__}#{e}")
 
             except httpx.RequestError as e:
-                last_exception = NetworkError(f"Network error: {e}")
-                logger.warning(f"Network error on attempt {attempt + 1}: {e}")
-
-            except MaxBotError as e:
-                # Don't retry authentication errors
-                if isinstance(e, AuthenticationError):
-                    raise e
-                last_exception = e
-                logger.warning(f"API error on attempt {attempt + 1}: {e}")
+                last_exception = NetworkError(f"Network error: {type(e).__name__}#{e}")
+                logger.warning(f"Network error on attempt {attempt + 1}: {type(e).__name__}#{e}")
 
             except Exception as e:
-                last_exception = MaxBotError(f"Unexpected error: {e}")
-                logger.warning(f"Unexpected error on attempt {attempt + 1}: {e}")
+                last_exception = MaxBotError(f"Unexpected error: {type(e).__name__}#{e}")
+                logger.warning(f"Unexpected error on attempt {attempt + 1}: {type(e).__name__}#{e}")
+                logger.exception(e)
 
             # Retry logic with exponential backoff
             if attempt < self.maxRetries:
@@ -727,6 +740,7 @@ class MaxBotClient:
     # Message Operations
     async def sendMessage(
         self,
+        *,
         chatId: Optional[int] = None,
         userId: Optional[int] = None,
         text: Optional[str] = None,
@@ -737,7 +751,7 @@ class MaxBotClient:
         format: Optional[TextFormat] = None,
         inlineKeyboard: Optional[Dict[str, Any]] = None,
         keyboard: Optional[Dict[str, Any]] = None,
-        disableLinkPreview: bool = False,
+        disableLinkPreview: Optional[bool] = None,
     ) -> SendMessageResult:
         """Send a message to a chat or user.
 
@@ -786,7 +800,6 @@ class MaxBotClient:
 
         # Add link if reply or forward
         if replyTo or forwardFrom:
-            from .models import MessageLinkType
 
             link_type = MessageLinkType.REPLY if replyTo else MessageLinkType.FORWARD
             link_mid = replyTo if replyTo else forwardFrom
@@ -798,7 +811,6 @@ class MaxBotClient:
         # Convert to dict for API
         body_data = {
             "text": message_body.text,
-            "attachments": message_body.attachments,
             "notify": message_body.notify,
         }
 
@@ -820,7 +832,7 @@ class MaxBotClient:
         if keyboard:
             final_attachments.append(keyboard)
 
-        if final_attachments:
+        if final_attachments or attachments is not None:
             body_data["attachments"] = final_attachments
 
         # Build query parameters
@@ -829,7 +841,7 @@ class MaxBotClient:
             query_params.append(f"chat_id={chatId}")
         if userId:
             query_params.append(f"user_id={userId}")
-        if disableLinkPreview:
+        if disableLinkPreview is not None:
             query_params.append(f"disable_link_preview={disableLinkPreview}")
 
         endpoint = "/messages"

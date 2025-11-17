@@ -10,6 +10,7 @@ from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.queue_service.service import QueueService
 from lib.ai import LLMManager
+from lib.ai.models import ModelMessage
 
 # from lib import utils
 # from lib.rate_limiter import RateLimiterManager
@@ -57,12 +58,41 @@ class MaxBotApplication:
 
     async def maxHandler(self, update: maxModels.Update) -> None:
         logger.debug(update)
+        if self.client is None:
+            raise RuntimeError("Client is not initialized")
+
         if isinstance(update, maxModels.MessageCreatedUpdate):
             logger.debug("It's new message, processing...")
-            # message = update.message
+            message = update.message
+            if message.recipient.chat_type == maxModels.ChatType.DIALOG and message.body.text:
+                logger.debug("It's dialog message, processing...")
+                llm = self.llmManager.getModel("yandexgpt")
+                if llm is None:
+                    logger.error("No LLM model found, exiting...")
+                    return
+                fallbackLLM = self.llmManager.getModel("yc/qwen3-235b-a22b-fp8")
+                if fallbackLLM is None:
+                    logger.error("No fallback LLM model found, exiting...")
+                    return
+                llmRet = await llm.generateTextWithFallBack(
+                    [ModelMessage(content=message.body.text)],
+                    fallbackLLM,
+                )
+                if llmRet is None:
+                    logger.error("No LLM response, exiting...")
+                    return
+                logger.debug(llmRet)
+                ret = await self.client.sendMessage(
+                    chatId=message.recipient.chat_id,
+                    userId=message.sender.user_id,
+                    text=llmRet.resultText,
+                    format=maxModels.TextFormat.MARKDOWN,
+                )
+                logger.debug(ret)
+            else:
+                logger.debug("It's not a dialog message, ignoring for now... ")
+
             # self.database.saveChatMessage()
-        else:
-            logger.debug(f"It's {type(update).__name__}, ignoring for now...")
 
     async def maxExceptionHandler(self, exception: Exception) -> None:
         logger.exception(exception)
