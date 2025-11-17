@@ -7,6 +7,8 @@ This module contains all constants and enums for the Max Messenger Bot API.
 from enum import StrEnum
 from typing import Final
 
+VERSION: Final[str] = "0.0.1"
+
 # API Configuration
 API_BASE_URL: Final[str] = "https://platform-api.max.ru"
 API_VERSION: Final[str] = "0.0.1"
@@ -48,42 +50,6 @@ ENDPOINT_SUBSCRIPTIONS: Final[str] = "/subscriptions"
 ENDPOINT_UPLOADS: Final[str] = "/uploads"
 ENDPOINT_UPDATES: Final[str] = "/updates"
 ENDPOINT_ANSWERS: Final[str] = "/answers"
-
-
-class ChatType(StrEnum):
-    """Chat type enum from OpenAPI specification"""
-
-    DIALOG = "dialog"
-    CHAT = "chat"
-    CHANNEL = "channel"
-
-
-class ChatStatus(StrEnum):
-    """Chat status enum from OpenAPI specification"""
-
-    ACTIVE = "active"
-    REMOVED = "removed"
-
-
-class UpdateType(StrEnum):
-    """Update type enum from OpenAPI specification"""
-
-    MESSAGE_CREATED = "message_created"
-    MESSAGE_EDITED = "message_edited"
-    MESSAGE_REMOVED = "message_removed"
-    MESSAGE_CALLBACK = "message_callback"
-    BOT_ADDED_TO_CHAT = "bot_added_to_chat"
-    BOT_REMOVED_FROM_CHAT = "bot_removed_from_chat"
-    BOT_STARTED = "bot_started"
-    BOT_STOPPED = "bot_stopped"
-    USER_ADDED_TO_CHAT = "user_added_to_chat"
-    USER_REMOVED_FROM_CHAT = "user_removed_from_chat"
-    CHAT_TITLE_CHANGED = "chat_title_changed"
-    MESSAGE_CHAT_CREATED = "message_chat_created"
-    DIALOG_MUTED = "dialog_muted"
-    DIALOG_UNMUTED = "dialog_unmuted"
-    DIALOG_CLEARED = "dialog_cleared"
-    DIALOG_REMOVED = "dialog_removed"
 
 
 class SenderAction(StrEnum):

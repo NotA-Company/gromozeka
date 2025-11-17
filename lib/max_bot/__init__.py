@@ -19,24 +19,13 @@ For more advanced usage and examples, see the README.md file.
 
 from .client import MaxBotClient
 from .constants import (
-    API_BASE_URL,
-    API_VERSION,
-    DEFAULT_TIMEOUT,
-    HTTP_DELETE,
-    HTTP_GET,
-    HTTP_PATCH,
-    HTTP_POST,
-    HTTP_PUT,
     MAX_FILE_SIZE,
     MAX_MESSAGE_LENGTH,
     MAX_RETRIES,
     AttachmentType,
     ButtonType,
-    ChatStatus,
-    ChatType,
     SenderAction,
     TextFormat,
-    UpdateType,
     UploadType,
 )
 from .exceptions import (
@@ -50,7 +39,6 @@ from .exceptions import (
     RateLimitError,
     ServiceUnavailableError,
     ValidationError,
-    parseApiError,
 )
 
 # Public API
@@ -58,22 +46,10 @@ __all__ = [
     # Main client
     "MaxBotClient",
     # Constants
-    "API_BASE_URL",
-    "API_VERSION",
-    "DEFAULT_TIMEOUT",
     "MAX_RETRIES",
     "MAX_MESSAGE_LENGTH",
     "MAX_FILE_SIZE",
-    # HTTP methods
-    "HTTP_GET",
-    "HTTP_POST",
-    "HTTP_PUT",
-    "HTTP_DELETE",
-    "HTTP_PATCH",
     # Enums
-    "ChatType",
-    "ChatStatus",
-    "UpdateType",
     "SenderAction",
     "UploadType",
     "TextFormat",
@@ -90,10 +66,4 @@ __all__ = [
     "ServiceUnavailableError",
     "NetworkError",
     "ConfigurationError",
-    "parseApiError",
 ]
-
-# Set default logging level
-import logging
-
-logging.getLogger(__name__).addHandler(logging.NullHandler())
