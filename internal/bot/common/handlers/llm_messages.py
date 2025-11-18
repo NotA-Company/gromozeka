@@ -23,10 +23,21 @@ import random
 import re
 from typing import Any, Dict, List, Optional
 
-from telegram import Chat, Update
+import telegram
+from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
+import lib.max_bot.models as maxModels
+from internal.bot import constants
+from internal.bot.models import (
+    BotProvider,
+    ChatSettingsKey,
+    ChatType,
+    EnsuredMessage,
+    LLMMessageFormat,
+    MessageType,
+)
 from internal.config.manager import ConfigManager
 from internal.database.models import ChatMessageDict, MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -39,13 +50,6 @@ from lib.ai import (
     ModelRunResult,
 )
 
-from .. import constants
-from ..models import (
-    ChatSettingsKey,
-    EnsuredMessage,
-    LLMMessageFormat,
-    MessageType,
-)
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager
 
 logger = logging.getLogger(__name__)
@@ -64,7 +68,9 @@ class LLMMessageHandler(BaseBotHandler):
         llmService (LLMService): Singleton service for LLM operations
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """
         Initialize the LLM message handler, dood!
 
@@ -73,7 +79,7 @@ class LLMMessageHandler(BaseBotHandler):
             database (DatabaseWrapper): Database wrapper for message storage and retrieval
             llmManager (LLMManager): Manager for LLM model instances and operations
         """
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 
@@ -131,7 +137,7 @@ class LLMMessageHandler(BaseBotHandler):
             fallbackModel=fallbackModel,
             messages=messages,
             useTools=useTools,
-            callId=f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}",
+            callId=f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}",
             callback=processIntermediateMessages,
             extraData={
                 "ensuredMessage": ensuredMessage,
@@ -179,7 +185,7 @@ class LLMMessageHandler(BaseBotHandler):
             messageHistoryStr += f"\t{repr(msg)}\n"
         logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
         llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
         mlRet: Optional[ModelRunResult] = None
@@ -263,7 +269,8 @@ class LLMMessageHandler(BaseBotHandler):
                 [ModelMessage(content=imagePrompt)], fallbackImageLLM
             )
             logger.debug(
-                f"Generated image Data: {imgMLRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+                f"Generated image Data: {imgMLRet} for mcID: "
+                f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
             )
 
             if imgMLRet.status == ModelResultStatus.FINAL and imgMLRet.mediaData is not None:
@@ -335,19 +342,22 @@ class LLMMessageHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        chat = ensuredMessage.chat
-        if chat.type not in [Chat.PRIVATE, Chat.GROUP, Chat.SUPERGROUP]:
-            logger.error(f"Unsupported chat type: {chat.type}")
+        chat = ensuredMessage.recipient
+        if chat.chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
+            logger.error(f"Unsupported chat type: {chat.chatType}")
             return HandlerResultStatus.SKIPPED
 
-        message = ensuredMessage.getBaseMessage()
+        if self.botProvider == BotProvider.TELEGRAM:
+            message = ensuredMessage.getBaseMessage()
+            if not isinstance(message, telegram.Message):
+                raise ValueError("Message is not a Telegram message")
 
-        if message.is_automatic_forward:
-            # Automatic forward from licked Channel
-            # TODO: Somehow process automatic forwards
-            # TODO: Think about handleRandomMessage here
-            # return HandlerResultStatus.FINAL
-            return HandlerResultStatus.NEXT
+            if message.is_automatic_forward:
+                # Automatic forward from linked Channel
+                # TODO: Somehow process automatic forwards
+                # TODO: Think about handleRandomMessage here
+                # return HandlerResultStatus.FINAL
+                return HandlerResultStatus.NEXT
 
         # Check if message is a reply to our message
         # TODO: Move to separate handler?
@@ -399,16 +409,29 @@ class LLMMessageHandler(BaseBotHandler):
         if not ensuredMessage.isReply or ensuredMessage.replyId is None:
             return False
 
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_REPLY].toBool():
             return False
 
         message = ensuredMessage.getBaseMessage()
         isReplyToMyMessage = False
         if (
-            message.reply_to_message
+            self.botProvider == BotProvider.TELEGRAM
+            and isinstance(message, telegram.Message)
+            and message.reply_to_message
             and message.reply_to_message.from_user
-            and message.reply_to_message.from_user.id == context.bot.id
+            and message.reply_to_message.from_user.id == await self.getBotId()
+        ):
+            isReplyToMyMessage = True
+
+        elif (
+            self.botProvider == BotProvider.MAX
+            and isinstance(message, maxModels.Message)
+            and self._maxBot is not None
+            and message.link
+            and message.link.type == maxModels.MessageLinkType.REPLY
+            and message.link.sender
+            and message.link.sender.user_id == await self.getBotId()
         ):
             isReplyToMyMessage = True
 
@@ -423,7 +446,7 @@ class LLMMessageHandler(BaseBotHandler):
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
             parentId = ensuredMessage.replyId
-            chat = ensuredMessage.chat
+            chat = ensuredMessage.recipient
 
             storedMessages: List[ModelMessage] = []
 
@@ -433,10 +456,12 @@ class LLMMessageHandler(BaseBotHandler):
             )
             if storedMsg is None:
                 logger.error("Failed to get parent message")
-                if not message.reply_to_message:
-                    logger.error("message.reply_to_message is None, but should be Message()")
+                ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
+
+                if ensuredReply is None:
+                    logger.error("ensuredReply is None, but should be EnsuredMessage()")
                     return False
-                ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
+
                 storedMessages.append(
                     await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant")
                 )
@@ -517,12 +542,11 @@ class LLMMessageHandler(BaseBotHandler):
                 or if mention handling is disabled in chat settings
         """
 
-        message = ensuredMessage.getBaseMessage()
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
 
-        mentionedMe = self.checkEMMentionsMe(ensuredMessage)
+        mentionedMe = await self.checkEMMentionsMe(ensuredMessage)
         if mentionedMe.byName is None and mentionedMe.byNick is None:
             return False
 
@@ -542,7 +566,7 @@ class LLMMessageHandler(BaseBotHandler):
                 today = datetime.datetime.now(datetime.timezone.utc)
                 today = today.replace(hour=0, minute=0, second=0, microsecond=0)
                 users = self.db.getChatUsers(
-                    chatId=ensuredMessage.chat.id,
+                    chatId=ensuredMessage.recipient.id,
                     limit=100,
                     seenSince=today,
                 )
@@ -577,38 +601,39 @@ class LLMMessageHandler(BaseBotHandler):
             ]
 
             # Add Parent message if any
-            if ensuredMessage.isReply and message.reply_to_message:
-                ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
-                self._updateEMessageUserData(ensuredReply)
-                if ensuredReply.messageType == MessageType.TEXT:
-                    reqMessages.append(
-                        await ensuredReply.toModelMessage(
-                            self.db,
-                            format=llmMessageFormat,
-                            role=("assistant" if ensuredReply.user.id == context.bot.id else "user"),
-                        ),
-                    )
-                else:
-                    # Not text message, try to get it content from DB
-                    storedReply = self.db.getChatMessageByMessageId(
-                        chatId=ensuredReply.chat.id,
-                        messageId=ensuredReply.messageId,
-                    )
-                    if storedReply is None:
-                        logger.error(
-                            f"Failed to get parent message (ChatId: {ensuredReply.chat.id}, "
-                            f"MessageId: {ensuredReply.messageId})"
-                        )
-                    else:
-                        eStoredReply = EnsuredMessage.fromDBChatMessage(storedReply)
-                        self._updateEMessageUserData(eStoredReply)
+            if ensuredMessage.isReply:
+                ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
+                if ensuredReply is not None:
+                    self._updateEMessageUserData(ensuredReply)
+                    if ensuredReply.messageType == MessageType.TEXT:
                         reqMessages.append(
-                            await eStoredReply.toModelMessage(
+                            await ensuredReply.toModelMessage(
                                 self.db,
                                 format=llmMessageFormat,
-                                role=("assistant" if ensuredReply.user.id == context.bot.id else "user"),
+                                role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
                             ),
                         )
+                    else:
+                        # Not text message, try to get it content from DB
+                        storedReply = self.db.getChatMessageByMessageId(
+                            chatId=ensuredReply.recipient.id,
+                            messageId=ensuredReply.messageId,
+                        )
+                        if storedReply is None:
+                            logger.error(
+                                f"Failed to get parent message (ChatId: {ensuredReply.recipient.id}, "
+                                f"MessageId: {ensuredReply.messageId})"
+                            )
+                        else:
+                            eStoredReply = EnsuredMessage.fromDBChatMessage(storedReply)
+                            self._updateEMessageUserData(eStoredReply)
+                            reqMessages.append(
+                                await eStoredReply.toModelMessage(
+                                    self.db,
+                                    format=llmMessageFormat,
+                                    role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
+                                ),
+                            )
 
             # Add user message
             reqMessages.append(
@@ -660,7 +685,7 @@ class LLMMessageHandler(BaseBotHandler):
                 to skip admins)
         """
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
             # logger.debug(
@@ -670,7 +695,7 @@ class LLMMessageHandler(BaseBotHandler):
             return False
 
         answerToAdmin = chatSettings[ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN].toBool()
-        if (not answerToAdmin) and await self.isAdmin(ensuredMessage.user, ensuredMessage.chat, False):
+        if (not answerToAdmin) and await self.isAdmin(ensuredMessage.sender, ensuredMessage.recipient, False):
             # logger.debug(f"answerToAdmin is {answerToAdmin}, skipping")
             return False
 
@@ -686,7 +711,7 @@ class LLMMessageHandler(BaseBotHandler):
 
             # Handle LLM Action
             parentId = ensuredMessage.replyId
-            chat = ensuredMessage.chat
+            chatId = ensuredMessage.recipient.id
 
             storedMessages: List[ModelMessage] = []
             _storedMessages: List[ChatMessageDict] = []
@@ -696,7 +721,7 @@ class LLMMessageHandler(BaseBotHandler):
                 # It's some thread, get whole thread into context
                 # TODO: If thread is too long, compress it somehow
                 storedMsg = self.db.getChatMessageByMessageId(
-                    chatId=chat.id,
+                    chatId=chatId,
                     messageId=parentId,
                 )
                 if storedMsg is None or storedMsg["root_message_id"] is None:
@@ -704,7 +729,7 @@ class LLMMessageHandler(BaseBotHandler):
                     return False
 
                 _storedMessages = self.db.getChatMessagesByRootId(
-                    chatId=chat.id,
+                    chatId=chatId,
                     rootMessageId=storedMsg["root_message_id"],
                     threadId=ensuredMessage.threadId,
                 )
@@ -713,7 +738,7 @@ class LLMMessageHandler(BaseBotHandler):
                 _storedMessages = list(
                     reversed(
                         self.db.getChatMessagesSince(
-                            chatId=ensuredMessage.chat.id,
+                            chatId=chatId,
                             threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
                             limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
                             # messageCategory=[MessageCategory.USER, MessageCategory.BOT],

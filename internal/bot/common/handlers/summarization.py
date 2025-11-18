@@ -13,11 +13,27 @@ import time
 from typing import Any, Dict, List, Optional
 
 import telegram
-from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, User
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.bot import constants
+from internal.bot.models import (
+    BotProvider,
+    ButtonDataKey,
+    ButtonSummarizationAction,
+    CallbackDataDict,
+    ChatSettingsKey,
+    ChatSettingsValue,
+    ChatType,
+    CommandCategory,
+    CommandHandlerOrder,
+    CommandPermission,
+    EnsuredMessage,
+    LLMMessageFormat,
+    MessageSender,
+)
 from internal.bot.utils import telegramMessageFromDBMessage
 from internal.database.models import (
     ChatInfoDict,
@@ -30,19 +46,6 @@ from lib.ai import (
 )
 from lib.markdown import markdownToMarkdownV2
 
-from .. import constants
-from ..models import (
-    ButtonDataKey,
-    ButtonSummarizationAction,
-    CallbackDataDict,
-    ChatSettingsKey,
-    ChatSettingsValue,
-    CommandCategory,
-    CommandHandlerOrder,
-    CommandPermission,
-    EnsuredMessage,
-    LLMMessageFormat,
-)
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -84,13 +87,10 @@ class SummarizationHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        chat = ensuredMessage.chat
-        chatType = chat.type
-
-        if chatType != Chat.PRIVATE:
+        if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
-        user = ensuredMessage.user
+        user = ensuredMessage.sender
         userId = user.id
         messageText = ensuredMessage.getRawMessageText()
 
@@ -328,7 +328,9 @@ class SummarizationHandler(BaseBotHandler):
             )
             time.sleep(0.5)
 
-    async def _handle_summarization(self, data: Dict[str | int, Any], messageId: int, user: User, bot: telegram.Bot):
+    async def _handle_summarization(
+        self, data: Dict[str | int, Any], messageId: int, user: MessageSender, bot: telegram.Bot
+    ):
         """
         Handle the summarization process for messages, dood!
 
@@ -664,7 +666,7 @@ class SummarizationHandler(BaseBotHandler):
         if dbMessage is None:
             logger.error(f"summarization: Message #{user.id}:{messageId} not found in Database")
             await bot.edit_message_text(
-                f"Товарищ {user.full_name}, произошла чудовищная ошибка!",
+                f"Товарищ {user.name}, произошла чудовищная ошибка!",
                 chat_id=user.id,
                 message_id=messageId,
             )
@@ -682,9 +684,9 @@ class SummarizationHandler(BaseBotHandler):
 
         try:
             if repliedMessage is not None:
-                ensuredMessage = EnsuredMessage.fromMessage(repliedMessage)
+                ensuredMessage = EnsuredMessage.fromTelegramMessage(repliedMessage)
             else:
-                ensuredMessage = EnsuredMessage.fromMessage(message)
+                ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
         except Exception as e:
             logger.error(f"summarization: Error ensuring message: {type(e).__name__}{e}")
             logger.exception(e)
@@ -774,6 +776,14 @@ class SummarizationHandler(BaseBotHandler):
             Bot owner can bypass this restriction in private chats.
         """
         message = ensuredMessage.getBaseMessage()
+        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Команда не поддержана на данной платформе",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
 
         commandStr = ""
         for entityStr in message.parse_entities([MessageEntityType.BOT_COMMAND]).values():
@@ -784,8 +794,8 @@ class SummarizationHandler(BaseBotHandler):
 
         maxMessages: Optional[int] = utils.extractInt(context.args)
 
-        match ensuredMessage.chat.type:
-            case Chat.PRIVATE:
+        match ensuredMessage.recipient.chatType:
+            case ChatType.PRIVATE:
                 # In private chat - start summarization wizard
                 if maxMessages is None:
                     maxMessages = 0
@@ -807,7 +817,7 @@ class SummarizationHandler(BaseBotHandler):
                         },
                         # {"s": jsonAction, "c": chatId, "m": maxMessages},
                         messageId=msg.id,
-                        user=ensuredMessage.user,
+                        user=ensuredMessage.sender,
                         bot=context.bot,
                     )
                 else:
@@ -815,7 +825,7 @@ class SummarizationHandler(BaseBotHandler):
 
                 return
 
-            case Chat.GROUP | Chat.SUPERGROUP:
+            case ChatType.GROUP:
                 # Summary command print summary for whole chat.
                 # Topic-summary prints summary for current topic, we threat default topic as 0
                 today = datetime.datetime.now(datetime.timezone.utc)
@@ -825,10 +835,10 @@ class SummarizationHandler(BaseBotHandler):
                 if isTopicSummary:
                     threadId = ensuredMessage.threadId if ensuredMessage.threadId else 0
 
-                chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+                chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
                 return await self._doSummarization(
                     ensuredMessage=ensuredMessage,
-                    chatId=ensuredMessage.chat.id,
+                    chatId=ensuredMessage.recipient.id,
                     threadId=threadId,
                     chatSettings=chatSettings,
                     maxMessages=maxMessages,
@@ -837,7 +847,7 @@ class SummarizationHandler(BaseBotHandler):
                 )
 
             case _:
-                logger.error(f"Unsupported chat type for Summarization: {ensuredMessage.chat.type}")
+                logger.error(f"Unsupported chat type for Summarization: {ensuredMessage.recipient.chatType}")
 
     async def buttonHandler(
         self,
@@ -872,7 +882,7 @@ class SummarizationHandler(BaseBotHandler):
             logger.error("handle_button: query is None")
             return HandlerResultStatus.FATAL
 
-        user = query.from_user
+        user = MessageSender.fromTelegramUser(query.from_user)
 
         if query.message is None:
             logger.error(f"handle_button: message is None in {query}")

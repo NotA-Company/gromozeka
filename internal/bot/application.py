@@ -25,8 +25,8 @@ from internal.services.queue_service.service import QueueService
 from lib.ai import LLMManager
 from lib.rate_limiter import RateLimiterManager
 
-from .handlers import HandlersManager
-from .models import CommandPermission
+from .common.handlers import HandlersManager
+from .models import BotProvider, CommandPermission
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class BotApplication:
         self.database = database
         self.llmManager = llmManager
         self.application = None
-        self.handlerManager = HandlersManager(configManager, database, llmManager)
+        self.handlerManager = HandlersManager(configManager, database, llmManager, BotProvider.TELEGRAM)
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
 
@@ -140,7 +140,7 @@ class BotApplication:
         if self.application is None:
             raise RuntimeError("Application not initialized")
 
-        self.handlerManager.injectBot(application.bot)
+        self.handlerManager.injectTGBot(application.bot)
         self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # Configure Commands

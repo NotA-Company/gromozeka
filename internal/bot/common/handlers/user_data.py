@@ -10,10 +10,22 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import telegram
-from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, User
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.bot.models import (
+    BotProvider,
+    ButtonDataKey,
+    ButtonUserDataConfigAction,
+    CallbackDataDict,
+    ChatType,
+    CommandCategory,
+    CommandHandlerOrder,
+    CommandPermission,
+    EnsuredMessage,
+    MessageSender,
+)
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -26,15 +38,6 @@ from lib.ai import (
 )
 from lib.markdown.parser import markdownToMarkdownV2
 
-from ..models import (
-    ButtonDataKey,
-    ButtonUserDataConfigAction,
-    CallbackDataDict,
-    CommandCategory,
-    CommandHandlerOrder,
-    CommandPermission,
-    EnsuredMessage,
-)
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -48,7 +51,9 @@ class UserDataHandler(BaseBotHandler):
         llmService (LLMService): Service for LLM tool registration and management.
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """
         Initialize handler and register 'add_user_data' LLM tool, dood!
 
@@ -58,7 +63,7 @@ class UserDataHandler(BaseBotHandler):
             llmManager (LLMManager): LLM manager for AI model interactions.
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 
@@ -122,7 +127,12 @@ class UserDataHandler(BaseBotHandler):
         if not isinstance(ensuredMessage, EnsuredMessage):
             raise RuntimeError("ensuredMessage should be instance of EnsuredMessage")
 
-        self.cache.setChatUserData(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id, key=key, value=data)
+        self.cache.setChatUserData(
+            chatId=ensuredMessage.recipient.id,
+            userId=ensuredMessage.sender.id,
+            key=key,
+            value=data,
+        )
 
         return utils.jsonDumps({"done": True, "key": key, "data": data})
 
@@ -149,13 +159,12 @@ class UserDataHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        if ensuredMessage.chat.type != Chat.PRIVATE:
+        if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
-        user = ensuredMessage.user
-        userId = user.id
+        user = ensuredMessage.sender
         messageText = ensuredMessage.getRawMessageText()
-        userDataConfig = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.UserDataConfig)
+        userDataConfig = self.cache.getUserState(userId=user.id, stateKey=UserActiveActionEnum.UserDataConfig)
         if userDataConfig is None:
             return HandlerResultStatus.SKIPPED
 
@@ -174,7 +183,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: CallbackDataDict,
         messageId: int,
-        user: User,
+        user: MessageSender,
         bot: telegram.Bot,
     ) -> None:
         """
@@ -229,7 +238,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: CallbackDataDict,
         messageId: int,
-        user: User,
+        user: MessageSender,
         bot: telegram.Bot,
     ) -> None:
         """
@@ -341,7 +350,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: CallbackDataDict,
         messageId: int,
-        user: User,
+        user: MessageSender,
         bot: telegram.Bot,
     ) -> None:
         """
@@ -395,7 +404,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: CallbackDataDict,
         messageId: int,
-        user: User,
+        user: MessageSender,
         bot: telegram.Bot,
     ) -> None:
         """
@@ -453,7 +462,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: CallbackDataDict,
         messageId: int,
-        user: User,
+        user: MessageSender,
         bot: telegram.Bot,
     ) -> None:
         """
@@ -549,7 +558,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: CallbackDataDict,
         messageId: int,
-        user: User,
+        user: MessageSender,
         bot: telegram.Bot,
     ) -> None:
         """
@@ -621,7 +630,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: CallbackDataDict,
         messageId: int,
-        user: User,
+        user: MessageSender,
         bot: telegram.Bot,
     ) -> None:
         """
@@ -691,7 +700,7 @@ class UserDataHandler(BaseBotHandler):
             logger.error("buttonHandler: query is None")
             return HandlerResultStatus.FATAL
 
-        user = query.from_user
+        user = MessageSender.fromTelegramUser(query.from_user)
 
         if query.message is None:
             logger.error(f"buttonHandler: message is None in {query}")
@@ -739,9 +748,9 @@ class UserDataHandler(BaseBotHandler):
 
         targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
-            targetChatId = ensuredMessage.chat.id
+            targetChatId = ensuredMessage.recipient.id
 
-        userData = self.cache.getChatUserData(chatId=targetChatId, userId=ensuredMessage.user.id)
+        userData = self.cache.getChatUserData(chatId=targetChatId, userId=ensuredMessage.sender.id)
 
         await self.sendMessage(
             ensuredMessage,
@@ -785,7 +794,7 @@ class UserDataHandler(BaseBotHandler):
                     ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Init,
                 },
                 msg.message_id,
-                ensuredMessage.user,
+                ensuredMessage.sender,
                 context.bot,
             )
         else:

@@ -31,6 +31,13 @@ from telegram.ext import ContextTypes
 import lib.utils as utils
 import lib.yandex_search as ys
 import lib.yandex_search.xml_parser as ys_xml
+from internal.bot.models import (
+    BotProvider,
+    CommandCategory,
+    CommandHandlerOrder,
+    CommandPermission,
+    EnsuredMessage,
+)
 from internal.config.manager import ConfigManager
 from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
@@ -47,12 +54,6 @@ from lib.ai import (
 from lib.cache import JsonValueConverter
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
-from ..models import (
-    CommandCategory,
-    CommandHandlerOrder,
-    CommandPermission,
-    EnsuredMessage,
-)
 from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,9 @@ class YandexSearchHandler(BaseBotHandler):
         llmService (LLMService): Service for LLM tool registration and management
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """
         Initialize the Yandex Search handler with required services and configuration.
 
@@ -97,7 +100,7 @@ class YandexSearchHandler(BaseBotHandler):
             RuntimeError: If Yandex Search integration is not enabled in configuration
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
         ysConfig = self.configManager.getYandexSearchConfig()
         if not ysConfig.get("enabled", False):

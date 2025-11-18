@@ -9,18 +9,19 @@ from typing import Dict, List, Optional, Sequence
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from internal.config.manager import ConfigManager
-from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
-from lib.ai import LLMManager
-
-from ..models import (
+from internal.bot.models import (
+    BotProvider,
     CommandCategory,
     CommandHandlerInfo,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
 )
+from internal.config.manager import ConfigManager
+from internal.database.models import MessageCategory
+from internal.database.wrapper import DatabaseWrapper
+from lib.ai import LLMManager
+
 from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,12 @@ class HelpHandler(BaseBotHandler):
         configManager: ConfigManager,
         database: DatabaseWrapper,
         llmManager: LLMManager,
+        botProvider: BotProvider,
         commandsGetter: CommandHandlerGetterInterface,
     ):
         """Initialize handlers with database and LLM model."""
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
         self.commandsGetter = commandsGetter
 
     @commandHandlerExtended(
@@ -66,7 +68,7 @@ class HelpHandler(BaseBotHandler):
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle the /help command."""
-        isBotOwner = await self.isAdmin(ensuredMessage.user, allowBotOwners=True)
+        isBotOwner = await self.isAdmin(ensuredMessage.sender, allowBotOwners=True)
 
         commands: Dict[CommandHandlerOrder, List[str]] = {}
         for commandOrder in CommandHandlerOrder:

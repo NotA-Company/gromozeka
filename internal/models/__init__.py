@@ -6,7 +6,11 @@ to avoid circular dependencies.
 """
 
 from .shared_enums import MessageType
+from .types import MessageIdType
 
 __all__ = [
+    # Shared enums
     "MessageType",
+    # Types
+    "MessageIdType",
 ]

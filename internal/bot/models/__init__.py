@@ -23,10 +23,11 @@ from .command_handlers import (
 from .delayed_tasks import DelayedTask, DelayedTaskFunction
 
 # Ensured Message (already exists)
-from .ensured_message import EnsuredMessage, MentionCheckResult, MessageSender
+from .ensured_message import ChatType, EnsuredMessage, MentionCheckResult, MessageRecipient, MessageSender
 
 # Enums
 from .enums import (
+    BotProvider,
     ButtonConfigureAction,
     ButtonDataKey,
     ButtonSummarizationAction,
@@ -42,6 +43,7 @@ from .user_metadata import UserMetadataDict
 
 __all__ = [
     # Enums
+    "BotProvider",
     "ButtonConfigureAction",
     "ButtonDataKey",
     "ButtonSummarizationAction",
@@ -73,4 +75,6 @@ __all__ = [
     "EnsuredMessage",
     "MentionCheckResult",
     "MessageSender",
+    "MessageRecipient",
+    "ChatType",
 ]

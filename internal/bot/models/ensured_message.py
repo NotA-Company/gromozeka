@@ -23,14 +23,18 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from enum import StrEnum
+from typing import Any, Dict, Optional, Sequence, Tuple
 
+import telegram
 import telegram.constants
-from telegram import Chat, Message, User
 
+import lib.max_bot as maxBot
+import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.database.wrapper import DatabaseWrapper
+from internal.models import MessageIdType
 from lib.ai.models import ModelMessage
 
 from ...models import MessageType
@@ -42,6 +46,63 @@ logger = logging.getLogger(__name__)
 MAX_MEDIA_AWAIT_SECS = 300  # 5 minutes
 MEDIA_AWAIT_DELAY = 2.5
 WORD_BREAKERS = ' \t\n\r\f\v.,;:?!…()[]{}<>«»„“”‘’"-–—+=×*÷=<>=≠≤≥%&|\\/@#$№©™®_.'  # Provided By Alice
+
+
+class ChatType(StrEnum):
+
+    PRIVATE = "private"
+    GROUP = "group"
+    CHANNEL = "channel"
+
+
+class MessageRecipient:
+    """TODO"""
+
+    __slots__ = ("id", "chatType")
+
+    def __init__(self, id: int, chatType: ChatType) -> None:
+        self.id = id
+        self.chatType = chatType
+
+    def __str__(self) -> str:
+        return f"{self.chatType.value}#{self.id}"
+
+    @classmethod
+    def fromTelegramChat(cls, chat: telegram.Chat) -> "MessageRecipient":
+        """TODO"""
+        chatType: ChatType = ChatType.GROUP
+        match chat.type:
+            case telegram.constants.ChatType.SENDER | telegram.constants.ChatType.PRIVATE:
+                chatType = ChatType.PRIVATE
+            case telegram.constants.ChatType.GROUP | telegram.constants.ChatType.SUPERGROUP:
+                chatType = ChatType.GROUP
+            case telegram.constants.ChatType.CHANNEL:
+                chatType = ChatType.CHANNEL
+            case _:
+                logger.warning(f"Unsupported chat type: {chat.type}")
+
+        return cls(chat.id, chatType)
+
+    @classmethod
+    def fromMaxRecipient(cls, recipient: maxModels.Recipient) -> "MessageRecipient":
+        """TODO"""
+        chatType: ChatType = ChatType.GROUP
+        match recipient.chat_type:
+            case maxModels.ChatType.DIALOG:
+                chatType = ChatType.PRIVATE
+            case maxModels.ChatType.CHAT:
+                chatType = ChatType.GROUP
+            case maxModels.ChatType.CHANNEL:
+                chatType = ChatType.CHANNEL
+            case _:
+                logger.warning(f"Unsupported chat type: {recipient.chat_type}")
+
+        recepientId = recipient.chat_id
+        if recepientId is None:
+            logger.error(f"Recipient ID is None: {recipient}")
+            recepientId = 0
+
+        return cls(recepientId, chatType)
 
 
 class MessageSender:
@@ -92,7 +153,7 @@ class MessageSender:
         return MessageSender(self.id, self.name, self.username)
 
     @classmethod
-    def fromUser(cls, user: User) -> "MessageSender":
+    def fromTelegramUser(cls, user: telegram.User) -> "MessageSender":
         """
         Create a MessageSender from a Telegram User object, dood!
 
@@ -105,7 +166,7 @@ class MessageSender:
         return cls(user.id, user.full_name, user.name)
 
     @classmethod
-    def fromChat(cls, chat: Chat) -> "MessageSender":
+    def fromTelegramChat(cls, chat: telegram.Chat) -> "MessageSender":
         """
         Create a MessageSender from a Telegram Chat object, dood!
 
@@ -117,6 +178,14 @@ class MessageSender:
             Username is prefixed with @ if available, dood.
         """
         return cls(chat.id, chat.effective_name or "", f"@{chat.username}" if chat.username else "")
+
+    @classmethod
+    def fromMaxUser(cls, sender: maxModels.User) -> "MessageSender":
+        """TODO"""
+        full_name = sender.first_name
+        if sender.last_name:
+            full_name += " " + sender.last_name
+        return cls(sender.user_id, full_name.strip(), f"@{sender.username}" if sender.username else "")
 
 
 @dataclass
@@ -145,6 +214,7 @@ class MentionCheckResult:
 
 class EnsuredMessage:
     """
+    TODO: rewrite
     Wrapper class that ensures presence of essential Telegram message attributes, dood!
 
     This class processes Telegram Message objects or database chat messages, extracting
@@ -202,7 +272,7 @@ class EnsuredMessage:
         "user",
         "chat",
         "sender",
-        "messageId",
+        "recipient" "messageId",
         "date",
         "messageText",
         "messageType",
@@ -217,15 +287,16 @@ class EnsuredMessage:
         "mediaId",
         "_mediaProcessingInfo",
         "userData",
-        "_rawMessageText",
+        "_parsedMessageText",
         "_mentionCheckResult",
     )
 
     def __init__(
         self,
-        user: User,
-        chat: Chat,
-        messageId: int,
+        *,
+        sender: MessageSender,
+        recipient: MessageRecipient,
+        messageId: MessageIdType,
         date: datetime.datetime,
         messageText: str = "",
         messageType: MessageType = MessageType.UNKNOWN,
@@ -241,20 +312,19 @@ class EnsuredMessage:
             messageText: The text content of the message (default: empty string)
             messageType: The type of message (default: MessageType.UNKNOWN)
         """
-        self._message: Optional[Message] = None
+        self._message: Optional[telegram.Message | maxModels.Message] = None
 
-        self.user: User = user
-        self.chat: Chat = chat
-        self.sender: MessageSender = MessageSender.fromUser(user)
+        self.sender: MessageSender = sender
+        self.recipient: MessageRecipient = recipient
 
-        self.messageId: int = messageId
+        self.messageId: MessageIdType = messageId
         self.date: datetime.datetime = date
         self.messageText: str = messageText
-        self._rawMessageText: str = messageText  # Message text without any formating
+        self._parsedMessageText: str = messageText  # Message text unparsed into Markdown\MarkdownV2
         self.messageType: MessageType = messageType
 
         # If this is reply, then set replyId and replyText
-        self.replyId: Optional[int] = None
+        self.replyId: Optional[MessageIdType] = None
         self.replyText: Optional[str] = None
         self.isReply: bool = False
         self.isQuote: bool = False
@@ -272,7 +342,63 @@ class EnsuredMessage:
         self._mentionCheckResult: Optional[MentionCheckResult] = None
 
     @classmethod
-    def fromMessage(cls, message: Message) -> "EnsuredMessage":
+    def fromMaxMessage(cls, message: maxModels.Message) -> "EnsuredMessage":
+        """
+        TODO
+        """
+
+        messageText: str = ""
+        messageType: MessageType = MessageType.TEXT
+        parsedMessageText: str = ""  # Message text parsed to Markdown
+        if message.body.text:
+            # TODO: think about parsing Entities to Markdown, but without escaping
+            # messageText = message.text_markdown_v2
+            messageText = message.body.text
+            parsedMessageText = message.body.text
+        elif message.link and message.link.type == maxModels.MessageLinkType.FORWARD and message.link.message.text:
+            # TODO: Add originalAuthor info
+            messageText = message.link.message.text
+            parsedMessageText = message.link.message.text
+            # It's forward, get text from forward
+
+        else:
+            raise ValueError("No text found. Media messages are not supported yet")
+
+        if messageType == MessageType.TEXT:
+            if not message.body.text:
+                # Probably not a text message, just log it for now
+                logger.error(f"Message text undefined: {message}")
+                messageType = MessageType.UNKNOWN
+
+        ensuredMessage = EnsuredMessage(
+            sender=MessageSender.fromMaxUser(message.sender),
+            recipient=MessageRecipient.fromMaxRecipient(message.recipient),
+            messageId=message.body.mid,
+            date=datetime.datetime.fromtimestamp(message.timestamp, datetime.timezone.utc),
+            messageText=messageText,
+            messageType=messageType,
+        )
+        ensuredMessage.setBaseMessage(message)
+        ensuredMessage.setParsedMessageText(parsedMessageText)
+
+        # If this is reply, then set replyId and replyText
+        if message.link and message.link.type == maxModels.MessageLinkType.REPLY:
+            # If reply_to_message is message about creating topic, then it isn't reply
+            repliedMessage = message.link.message
+            ensuredMessage.replyId = repliedMessage.mid
+            ensuredMessage.isReply = True
+            if repliedMessage.text:
+                ensuredMessage.replyText = repliedMessage.text  # TODO: Parse markup
+
+        # NOTE: No Quote support in Max
+
+        # NOTE: No Topics support in Max
+
+        logger.debug(f"Ensured Message from Max: {ensuredMessage}")
+        return ensuredMessage
+
+    @classmethod
+    def fromTelegramMessage(cls, message: telegram.Message) -> "EnsuredMessage":
         """
         Create an EnsuredMessage from a Telegram Message object, dood!
 
@@ -298,16 +424,16 @@ class EnsuredMessage:
 
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
-        rawMessageText: str = ""  # Message text without any formating
+        parsedMessageText: str = ""  # Message text parsed to MarkdownV2
         if message.text:
             # TODO: think about parsing Entities to Markdown, but without escaping
             # messageText = message.text_markdown_v2
             messageText = message.text
-            rawMessageText = message.text
+            parsedMessageText = message.text
         elif message.caption:
             # messageText = message.caption_markdown_v2
             messageText = message.caption
-            rawMessageText = message.caption
+            parsedMessageText = message.caption
 
         # If there are photo in message, set proper type + handle caption (if any) as messageText
         if message.photo:
@@ -381,16 +507,22 @@ class EnsuredMessage:
                 logger.error(f"Message text undefined: {message}")
                 messageType = MessageType.UNKNOWN
 
+        sender: Optional[MessageSender] = None
+        if message.sender_chat:
+            sender = MessageSender.fromTelegramChat(message.sender_chat)
+        else:
+            sender = MessageSender.fromTelegramUser(message.from_user)
+
         ensuredMessage = EnsuredMessage(
-            user=message.from_user,
-            chat=message.chat,
+            sender=sender,
+            recipient=MessageRecipient.fromTelegramChat(message.chat),
             messageId=message.message_id,
             date=message.date,
             messageText=messageText,
             messageType=messageType,
         )
         ensuredMessage.setBaseMessage(message)
-        ensuredMessage.setRawMessageText(rawMessageText)
+        ensuredMessage.setParsedMessageText(parsedMessageText)
 
         # If this is reply, then set replyId and replyText
         if message.reply_to_message:
@@ -412,11 +544,6 @@ class EnsuredMessage:
             ensuredMessage.isTopicMessage = True
             ensuredMessage.threadId = message.message_thread_id
 
-        if message.sender_chat:
-            ensuredMessage.setSender(message.sender_chat)
-        else:
-            ensuredMessage.setSender(message.from_user)
-
         logger.debug(f"Ensured Message from Telegram: {ensuredMessage}")
         return ensuredMessage
 
@@ -436,18 +563,14 @@ class EnsuredMessage:
             A fully initialized EnsuredMessage instance populated with database data
         """
         ensuredMessage = EnsuredMessage(
-            user=User(
-                id=data["user_id"],
-                first_name=data["full_name"],
-                is_bot=data["message_category"] == "bot",
-                username=data["username"].lstrip("@"),
-            ),
-            chat=Chat(
-                id=data["chat_id"],
-                type=(
-                    telegram.constants.ChatType.PRIVATE
-                    if data["user_id"] == data["chat_id"]
-                    else telegram.constants.ChatType.SUPERGROUP
+            sender=MessageSender(id=data["user_id"], name=data["full_name"], username=data["username"]),
+            recipient=MessageRecipient(
+                data["chat_id"],
+                chatType=(
+                    # TODO: Think about fetching real chat type from DB
+                    ChatType.PRIVATE
+                    if data["chat_id"] > 0
+                    else ChatType.GROUP
                 ),
             ),
             messageId=data["message_id"],
@@ -484,7 +607,7 @@ class EnsuredMessage:
         """
         self.userData = userData.copy()
 
-    def getBaseMessage(self) -> Message:
+    def getBaseMessage(self) -> telegram.Message | maxModels.Message:
         """
         Get the original Telegram Message object, dood!
 
@@ -498,7 +621,7 @@ class EnsuredMessage:
             raise ValueError("Message is not set")
         return self._message
 
-    def setBaseMessage(self, message: Message):
+    def setBaseMessage(self, message: telegram.Message | maxModels.Message):
         """
         Set the original Telegram Message object, dood!
 
@@ -507,14 +630,14 @@ class EnsuredMessage:
         """
         self._message = message
 
-    def setRawMessageText(self, rawMessageText: str):
+    def setParsedMessageText(self, rawMessageText: str):
         """
         Set the raw message text without any formatting, dood!
 
         Args:
             rawMessageText: The unformatted message text
         """
-        self._rawMessageText = rawMessageText
+        self._parsedMessageText = rawMessageText
 
     def getRawMessageText(self) -> str:
         """
@@ -523,7 +646,7 @@ class EnsuredMessage:
         Returns:
             The unformatted message text
         """
-        return self._rawMessageText
+        return self._parsedMessageText
 
     def setMediaId(self, mediaId: str):
         """
@@ -648,14 +771,14 @@ class EnsuredMessage:
         await self.updateMediaContent(db)
 
         messageText = self.messageText if replaceMessageText is None else replaceMessageText
-        userName = self.user.name
+        userName = self.sender.username
         if stripAtsign:
             userName = userName.lstrip("@")
         match format:
             case LLMMessageFormat.JSON:
                 ret = {
                     "login": userName,
-                    "name": self.user.full_name,
+                    "name": self.sender.name,
                     "date": self.date.isoformat(),
                     "messageId": self.messageId,
                     "type": str(self.messageType),
@@ -745,7 +868,7 @@ class EnsuredMessage:
             quoteText = f"{quoteText[:25]}...({len(quoteText)})"
         ret = {
             "sender": self.sender,
-            "chat.id": self.chat.id,
+            "recipient": self.recipient,
             "messageId": self.messageId,
             "date": self.date.isoformat(),
             "messageType": self.messageType,
@@ -765,28 +888,6 @@ class EnsuredMessage:
             if ret[key] is None:
                 ret.pop(key, None)
         return utils.jsonDumps(ret, compact=False, sort_keys=False)
-
-    def setSender(self, sender: Union[User, Chat, MessageSender]):
-        """
-        Set the sender information from User, Chat, or MessageSender, dood!
-
-        This method accepts different types of sender objects and converts them
-        to a MessageSender instance, creating a copy to avoid external modifications.
-
-        Args:
-            sender: The sender object (User, Chat, or MessageSender)
-
-        Raises:
-            ValueError: If an invalid sender type is provided, dood.
-        """
-        if isinstance(sender, User):
-            self.sender = MessageSender.fromUser(sender)
-        elif isinstance(sender, Chat):
-            self.sender = MessageSender.fromChat(sender)
-        elif isinstance(sender, MessageSender):
-            self.sender = sender.copy()
-        else:
-            raise ValueError(f"Invalid sender type: {type(sender)}")
 
     def clearMentionCheckResult(self) -> None:
         """
@@ -823,7 +924,7 @@ class EnsuredMessage:
         if not customMentions:
             logger.error("No custom mentions found")
 
-        messageText = self._rawMessageText
+        messageText = self._parsedMessageText
         messageTextLower = messageText.lower()
         offset = 0
 
@@ -883,3 +984,34 @@ class EnsuredMessage:
 
         self._mentionCheckResult = ret
         return ret
+
+    def getEnsuredRepliedToMessage(self) -> Optional["EnsuredMessage"]:
+        """
+        Get the message that this message is replying to, dood.
+
+        Returns:
+            EnsuredMessage object if this message is a reply, dood. None otherwise.
+        """
+        if not self.isReply:
+            return None
+        if self._message is None:
+            logger.error("getEnsuredRepliedToMessage(): message is None")
+            return None
+
+        message = self.getBaseMessage()
+        if isinstance(message, telegram.Message):
+            if not message.reply_to_message:
+                logger.error(
+                    "getEnsuredRepliedToMessage(): message.reply_to_message is None, but should be telegram Message()"
+                )
+                return None
+            return EnsuredMessage.fromTelegramMessage(message.reply_to_message)
+        elif isinstance(message, maxModels.Message):
+            linkedMessage = maxBot.MessageLinkToMessage(message)
+            if linkedMessage is None:
+                logger.error("getEnsuredRepliedToMessage(): message.link is None, but should be max Message()")
+                return None
+            return EnsuredMessage.fromMaxMessage(linkedMessage)
+
+        logger.error(f"getEnsuredRepliedToMessage(): message has unexpected type: {type(message)}")
+        return None

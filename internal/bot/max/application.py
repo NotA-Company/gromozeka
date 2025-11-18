@@ -6,14 +6,15 @@ from typing import Optional
 
 import lib.max_bot as maxBot
 import lib.max_bot.models as maxModels
+from internal.bot.common.handlers.manager import HandlersManager
+from internal.bot.models import BotProvider, EnsuredMessage
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.queue_service.service import QueueService
 from lib.ai import LLMManager
-from lib.ai.models import ModelMessage
 
 # from lib import utils
-# from lib.rate_limiter import RateLimiterManager
+from lib.rate_limiter import RateLimiterManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,40 @@ class MaxBotApplication:
         self.botToken = botToken
         self.database = database
         self.llmManager = llmManager
-        self.application = None
-        # self.handlerManager = HandlersManager(configManager, database, llmManager)
+
+        self.handlerManager = HandlersManager(configManager, database, llmManager, BotProvider.MAX)
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
         self.client: Optional[maxBot.MaxBotClient] = None
+
+    async def postInit(self, *args, **kwargs):
+        """Post-initialization tasks."""
+        if self.client is None:
+            raise RuntimeError("Client is not initialized")
+
+        self.handlerManager.injectMaxBot(self.client)
+        self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
+
+        # TODO: set commands
+
+    async def postStop(self, *args, **kwargs) -> None:
+        """
+        TODO
+        """
+        logger.info("Application stopping, stopping Delayed Tasks Scheduler...")
+        await self.queueService.beginShutdown()
+        logger.info("Step 1 of shutdown is done...")
+
+        if self._schedulerTask is not None:
+            await self._schedulerTask
+        logger.info("Step 2 of shutdown is done...")
+
+        # Destroy rate limiters
+        # TODO: should we move it into doExit handler?
+        logger.info("Destroying rate limiters...")
+        manager = RateLimiterManager.getInstance()
+        await manager.destroy()
+        logger.info("Rate limiters destroyed...")
 
     def run(self):
         """Start the bot."""
@@ -46,10 +76,6 @@ class MaxBotApplication:
             sys.exit(1)
 
         random.seed()
-
-        # Create application
-
-        # Setup handlers
 
         logger.info("Starting Gromozeka Max bot, dood!")
 
@@ -64,35 +90,13 @@ class MaxBotApplication:
         if isinstance(update, maxModels.MessageCreatedUpdate):
             logger.debug("It's new message, processing...")
             message = update.message
-            if message.recipient.chat_type == maxModels.ChatType.DIALOG and message.body.text:
-                logger.debug("It's dialog message, processing...")
-                llm = self.llmManager.getModel("yandexgpt")
-                if llm is None:
-                    logger.error("No LLM model found, exiting...")
-                    return
-                fallbackLLM = self.llmManager.getModel("yc/qwen3-235b-a22b-fp8")
-                if fallbackLLM is None:
-                    logger.error("No fallback LLM model found, exiting...")
-                    return
-                llmRet = await llm.generateTextWithFallBack(
-                    [ModelMessage(content=message.body.text)],
-                    fallbackLLM,
-                )
-                if llmRet is None:
-                    logger.error("No LLM response, exiting...")
-                    return
-                logger.debug(llmRet)
-                ret = await self.client.sendMessage(
-                    chatId=message.recipient.chat_id,
-                    userId=message.sender.user_id,
-                    text=llmRet.resultText,
-                    format=maxModels.TextFormat.MARKDOWN,
-                )
-                logger.debug(ret)
-            else:
-                logger.debug("It's not a dialog message, ignoring for now... ")
+            ensuredMessage = EnsuredMessage.fromMaxMessage(message)
+
+            await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
 
             # self.database.saveChatMessage()
+        else:
+            logger.debug(f"UpdateType is {update.update_type}, ignoring for now...")
 
     async def maxExceptionHandler(self, exception: Exception) -> None:
         logger.exception(exception)
@@ -105,6 +109,8 @@ class MaxBotApplication:
         try:
             botInfo = await self.client.getMyInfo()
             logger.debug(botInfo)
+
+            await self.postInit()
             logger.info("Start MAX polling....")
             await self.client.startPolling(
                 handler=self.maxHandler,
@@ -119,4 +125,5 @@ class MaxBotApplication:
             logger.info("After polling...")
         finally:
             logger.info("Work is done, exiting...")
+            await self.postStop()
             await self.client.aclose()

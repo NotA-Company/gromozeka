@@ -388,41 +388,6 @@ def mockLlmManager():
 
 
 # ============================================================================
-# Handler Fixtures
-# ============================================================================
-
-
-@pytest.fixture
-def mockBaseHandler(mockBot, mockDatabaseWrapper, mockConfigManager, mockLlmManager):
-    """
-    Create a mock BaseHandler with dependencies.
-
-    Args:
-        mockBot: Mocked bot instance
-        mockDatabaseWrapper: Mocked database
-        mockConfigManager: Mocked config manager
-        mockLlmManager: Mocked LLM manager
-
-    Returns:
-        Mock: Mocked BaseHandler instance
-
-    Example:
-        async def testHandler(mockBaseHandler):
-            await mockBaseHandler.sendMessage(chat_id=123, text="test")
-    """
-    from internal.bot.handlers.base import BaseBotHandler
-
-    handler = BaseBotHandler(
-        configManager=mockConfigManager,
-        database=mockDatabaseWrapper,
-        llmManager=mockLlmManager,
-    )
-    handler.injectBot(mockBot)
-
-    return handler
-
-
-# ============================================================================
 # Test Data Fixtures
 # ============================================================================
 

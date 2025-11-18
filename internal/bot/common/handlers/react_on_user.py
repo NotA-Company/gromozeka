@@ -10,21 +10,24 @@ import logging
 from typing import Dict, Optional
 
 import telegram
-from telegram import Chat, Message, Update
+from telegram import Update
 from telegram.ext import ContextTypes
 
-from internal.database.models import MessageCategory
-from lib import utils
-
-from ..models import (
+from internal.bot.models import (
+    BotProvider,
     ChatSettingsKey,
     ChatSettingsValue,
+    ChatType,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    MessageRecipient,
     MessageSender,
 )
+from internal.database.models import MessageCategory
+from lib import utils
+
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -39,7 +42,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
     # Handling messages
     ###
 
-    def _getMessageAuthor(self, message: Message) -> MessageSender:
+    def _getMessageAuthor(self, message: telegram.Message) -> MessageSender:
         # We use MessageSender here to not invent new type
         ret = MessageSender(0, "", "")
         if message.forward_origin:
@@ -63,9 +66,9 @@ class ReactOnUserMessageHandler(BaseBotHandler):
 
         # Not forward, check sender
         if message.sender_chat:
-            ret = MessageSender.fromChat(message.sender_chat)
+            ret = MessageSender.fromTelegramChat(message.sender_chat)
         elif message.from_user:
-            ret = MessageSender.fromUser(message.from_user)
+            ret = MessageSender.fromTelegramUser(message.from_user)
 
         return ret
 
@@ -99,13 +102,16 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        authorToEmojiMap = self._getAuthorToEmojiMap(ensuredMessage.chat.id)
+        message = ensuredMessage.getBaseMessage()
+
+        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            return HandlerResultStatus.SKIPPED
+
+        authorToEmojiMap = self._getAuthorToEmojiMap(ensuredMessage.recipient.id)
 
         if not authorToEmojiMap:
             # No users to react, no reaction needed
             return HandlerResultStatus.SKIPPED
-
-        message = ensuredMessage.getBaseMessage()
 
         sender = self._getMessageAuthor(message)
         emoji = authorToEmojiMap.get(sender.id, authorToEmojiMap.get(sender.username.lower(), None))
@@ -138,6 +144,14 @@ class ReactOnUserMessageHandler(BaseBotHandler):
     ) -> None:
         """Bun bip bop"""
         message = ensuredMessage.getBaseMessage()
+        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Команда не поддержана на данной платформе",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
 
         replyMessage = message.reply_to_message
         if replyMessage is None:
@@ -145,13 +159,14 @@ class ReactOnUserMessageHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение.",
                 messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
             )
             return
 
         args = context.args or []
         targetChatId = utils.extractInt(args)
         if targetChatId is None:
-            targetChatId = ensuredMessage.chat.id
+            targetChatId = ensuredMessage.recipient.id
         else:
             args = args[1:]
 
@@ -167,10 +182,12 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        targetChat = Chat(id=targetChatId, type=Chat.PRIVATE if targetChatId > 0 else Chat.SUPERGROUP)
-        targetChat.set_bot(message.get_bot())
+        targetChat = MessageRecipient(
+            id=targetChatId,
+            chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP,
+        )
 
-        if not await self.isAdmin(user=ensuredMessage.user, chat=targetChat):
+        if not await self.isAdmin(user=ensuredMessage.sender, chat=targetChat):
             await self.sendMessage(
                 ensuredMessage,
                 messageText="У Вас нет прав для выполнения данной команды.",
@@ -227,6 +244,14 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         The command must be sent as a reply to the message from which to remove the reaction.
         """
         message = ensuredMessage.getBaseMessage()
+        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Команда не поддержана на данной платформе",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
 
         replyMessage = message.reply_to_message
         if replyMessage is None:
@@ -234,17 +259,20 @@ class ReactOnUserMessageHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение.",
                 messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
             )
             return
 
         targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
-            targetChatId = ensuredMessage.chat.id
+            targetChatId = ensuredMessage.recipient.id
 
-        targetChat = Chat(id=targetChatId, type=Chat.PRIVATE if targetChatId > 0 else Chat.SUPERGROUP)
-        targetChat.set_bot(message.get_bot())
+        targetChat = MessageRecipient(
+            id=targetChatId,
+            chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP,
+        )
 
-        if not await self.isAdmin(user=ensuredMessage.user, chat=targetChat):
+        if not await self.isAdmin(user=ensuredMessage.sender, chat=targetChat):
             await self.sendMessage(
                 ensuredMessage,
                 messageText="У Вас нет прав для выполнения данной команды.",
@@ -303,18 +331,19 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         This command displays statistics about reactions in the specified chat,
         including the number of reactions and which users have reacted to messages.
         """
-        message = ensuredMessage.getBaseMessage()
 
         logger.debug(f"Args: {context.args}")
         targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
-            targetChatId = ensuredMessage.chat.id
+            targetChatId = ensuredMessage.recipient.id
 
         logger.debug(f"chatId: {targetChatId}")
-        targetChat = Chat(id=targetChatId, type=Chat.PRIVATE if targetChatId > 0 else Chat.SUPERGROUP)
-        targetChat.set_bot(message.get_bot())
+        targetChat = MessageRecipient(
+            id=targetChatId,
+            chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP,
+        )
 
-        if not await self.isAdmin(user=ensuredMessage.user, chat=targetChat):
+        if not await self.isAdmin(user=ensuredMessage.sender, chat=targetChat):
             await self.sendMessage(
                 ensuredMessage,
                 messageText="У Вас нет прав для выполнения данной команды.",

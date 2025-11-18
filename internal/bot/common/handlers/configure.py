@@ -16,19 +16,12 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import telegram
-from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, User
-from telegram.constants import ChatType
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
-from internal.config.manager import ConfigManager
-from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
-from internal.services.cache.types import UserActiveActionEnum
-from lib.ai.manager import LLMManager
-from lib.markdown import markdownToMarkdownV2
-
-from ..models import (
+from internal.bot.models import (
+    BotProvider,
     ButtonConfigureAction,
     ButtonDataKey,
     CallbackDataDict,
@@ -36,12 +29,22 @@ from ..models import (
     ChatSettingsPage,
     ChatSettingsType,
     ChatSettingsValue,
+    ChatType,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    MessageRecipient,
+    MessageSender,
     getChatSettingsInfo,
 )
+from internal.config.manager import ConfigManager
+from internal.database.models import MessageCategory
+from internal.database.wrapper import DatabaseWrapper
+from internal.services.cache.types import UserActiveActionEnum
+from lib.ai.manager import LLMManager
+from lib.markdown import markdownToMarkdownV2
+
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -65,7 +68,9 @@ class ConfigureCommandHandler(BaseBotHandler):
     - Cancel: Exit configuration wizard
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """
         Initialize the configuration handler with required dependencies, dood!
 
@@ -86,7 +91,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             - Populates self.selectableModels with choosable model names
             - Logs the list of selectable models at debug level
         """
-        super().__init__(configManager, database, llmManager)
+        super().__init__(configManager, database, llmManager, botProvider=botProvider)
 
         selectableModels: List[str] = []
 
@@ -127,10 +132,10 @@ class ConfigureCommandHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        if ensuredMessage.chat.type != Chat.PRIVATE:
+        if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
-        user = ensuredMessage.user
+        user = ensuredMessage.sender
         userId = user.id
         messageText = ensuredMessage.getRawMessageText()
         activeConfigure = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
@@ -149,7 +154,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         return HandlerResultStatus.FINAL
 
     async def chatConfiguration_Init(
-        self, data: Dict[str | int, Any], messageId: int, user: User, chatId: Optional[int], bot: telegram.Bot
+        self, data: Dict[str | int, Any], messageId: int, user: MessageSender, chatId: Optional[int], bot: telegram.Bot
     ) -> None:
         """
         Display the initial list of chats that the user can configure, dood!
@@ -188,14 +193,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
 
         for chat in userChats:
-            chatObj = Chat(
-                id=chat["chat_id"],
-                type=chat["type"],
-                title=chat["title"],
-                username=chat["username"],
-                is_forum=chat["is_forum"],
-            )
-            chatObj.set_bot(bot)
+            chatObj = MessageRecipient(id=chat["chat_id"], chatType=ChatType(chat["type"]))
 
             targetChatSettings = self.getChatSettings(chat["chat_id"])
             # Show chat only if:
@@ -238,7 +236,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         )
 
     async def chatConfiguration_ConfigureChat(
-        self, data: Dict[str | int, Any], messageId: int, user: User, chatId: Optional[int], bot: telegram.Bot
+        self, data: Dict[str | int, Any], messageId: int, user: MessageSender, chatId: Optional[int], bot: telegram.Bot
     ) -> None:
         """
         Display configuration settings page for a specific chat, dood!
@@ -385,7 +383,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
     async def chatConfiguration_ConfigureKey(
-        self, data: Dict[str | int, Any], messageId: int, user: User, chatId: Optional[int], bot: telegram.Bot
+        self, data: Dict[str | int, Any], messageId: int, user: MessageSender, chatId: Optional[int], bot: telegram.Bot
     ) -> None:
         """
         Display configuration options for a specific setting key, dood!
@@ -593,7 +591,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
 
     async def chatConfiguration_SetValue(
-        self, data: Dict[str | int, Any], messageId: int, user: User, chatId: Optional[int], bot: telegram.Bot
+        self, data: Dict[str | int, Any], messageId: int, user: MessageSender, chatId: Optional[int], bot: telegram.Bot
     ) -> None:
         """
         Update a chat setting with a new value, dood!
@@ -749,7 +747,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
     async def _handle_chat_configuration(
-        self, data: Dict[str | int, Any], messageId: int, user: User, bot: telegram.Bot
+        self, data: Dict[str | int, Any], messageId: int, user: MessageSender, bot: telegram.Bot
     ) -> None:
         """
         Route configuration actions to appropriate handlers with permission checks, dood!
@@ -784,11 +782,8 @@ class ConfigureCommandHandler(BaseBotHandler):
         chatId = data.get(ButtonDataKey.ChatId, None)
         if chatId is not None:
             # User configuring some chat, check permissions
-            chatObj = Chat(
-                id=chatId,
-                type=Chat.PRIVATE if chatId > 0 else Chat.GROUP,
-            )
-            chatObj.set_bot(bot)
+            # TODO: get proper chatType
+            chatObj = MessageRecipient(id=chatId, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP)
 
             targetChatSettings = self.getChatSettings(chatId)
             # Allow to configure only if:
@@ -901,14 +896,14 @@ class ConfigureCommandHandler(BaseBotHandler):
                         ButtonDataKey.ChatId: targetChatId,
                     },
                     messageId=msg.id,
-                    user=ensuredMessage.user,
+                    user=ensuredMessage.sender,
                     bot=context.bot,
                 )
             else:
                 await self._handle_chat_configuration(
                     {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init},
                     messageId=msg.id,
-                    user=ensuredMessage.user,
+                    user=ensuredMessage.sender,
                     bot=context.bot,
                 )
         else:
@@ -946,7 +941,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             logger.error("handle_button: query is None")
             return HandlerResultStatus.FATAL
 
-        user = query.from_user
+        user = MessageSender.fromTelegramUser(query.from_user)
 
         if query.message is None:
             logger.error(f"handle_button: message is None in {query}")

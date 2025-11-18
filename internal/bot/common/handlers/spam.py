@@ -19,12 +19,27 @@ import time
 import zlib
 from typing import Any, Dict, List, Optional, Set
 
-from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+import telegram
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram._utils.entities import parse_message_entity
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.bot.models import (
+    BotProvider,
+    ButtonDataKey,
+    CallbackDataDict,
+    ChatSettingsKey,
+    ChatType,
+    CommandCategory,
+    CommandHandlerOrder,
+    CommandPermission,
+    DelayedTaskFunction,
+    EnsuredMessage,
+    MessageRecipient,
+    MessageSender,
+)
 from internal.config.manager import ConfigManager
 from internal.database.bayes_storage import DatabaseBayesStorage
 from internal.database.models import (
@@ -33,20 +48,11 @@ from internal.database.models import (
     SpamReason,
 )
 from internal.database.wrapper import DatabaseWrapper
+from internal.models import MessageIdType
 from internal.services.cache import HCSpamWarningMessageInfo
 from lib.ai import LLMManager
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
 
-from ..models import (
-    ButtonDataKey,
-    CallbackDataDict,
-    ChatSettingsKey,
-    CommandCategory,
-    CommandHandlerOrder,
-    CommandPermission,
-    DelayedTaskFunction,
-    EnsuredMessage,
-)
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -74,7 +80,9 @@ class SpamHandler(BaseBotHandler):
         - User unbanning with automatic ham learning
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """
         Initialize spam handlers with database and LLM model, dood!
 
@@ -95,7 +103,7 @@ class SpamHandler(BaseBotHandler):
             - Trigram tokenization enabled
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
         self.spamButtonSalt = self.config.get("spam-button-salt", str(self.botOwners))
         # self.config = configManager.getBotConfig()
@@ -117,12 +125,23 @@ class SpamHandler(BaseBotHandler):
 
         logger.info("Initialized Bayes spam filter, dood!")
 
-    def _makeSpamButtonSignature(self, message: Message, extra: Any = None) -> str:
-        userId = message.from_user.id if message.from_user else message.chat.id
-        str = f"{message.message_id}:{message.chat.id}:{userId}:{message.text}:{self.spamButtonSalt}:{extra}"
+    def _makeSpamButtonSignature(self, message: EnsuredMessage, extra: Any = None) -> str:
+        signatureStr = ":".join(
+            [
+                str(v)
+                for v in [
+                    message.messageId,
+                    message.recipient.id,
+                    message.sender.id,
+                    message.messageText,
+                    self.spamButtonSalt,
+                    extra,
+                ]
+            ]
+        )
         # Adler32 isn't proper function to make hashes, but who cares?
         # We just need some easy protection against users who tried to mark as spam some definetly-not-a-spam messages
-        hashed = zlib.adler32(str.encode("utf-8", "ignore"))
+        hashed = zlib.adler32(signatureStr.encode("utf-8", "ignore"))
         return hex(hashed)[2:]
 
     def _rememberSpamWarningMessage(self, message: Message) -> None:
@@ -194,16 +213,20 @@ class SpamHandler(BaseBotHandler):
         """
 
         message = ensuredMessage.getBaseMessage()
-        if message.is_automatic_forward:
+        if isinstance(message, telegram.Message) and message.is_automatic_forward:
             # https://docs.python-telegram-bot.org/en/stable/telegram.message.html#telegram.Message.is_automatic_forward
             # It's a automatic forward from linked Channel. Its not spam.
             return False
 
         sender = ensuredMessage.sender
-        chatId = ensuredMessage.chat.id
+        chatId = ensuredMessage.recipient.id
 
         if sender.id == chatId:
             # If sender ID == chat ID, then it is anonymous admin, so it isn't spam
+            return False
+
+        if ensuredMessage.recipient.chatType != ChatType.GROUP:
+            # There can't be spam in non-Group chat
             return False
 
         if not ensuredMessage.messageText:
@@ -233,7 +256,7 @@ class SpamHandler(BaseBotHandler):
         if maxCheckMessages != 0 and userMessages >= maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
             if not userInfo["is_spammer"]:
-                await self.markAsHam(message=message)
+                await self.markAsHam(message=ensuredMessage)
             return False
 
         userMetadata = self.parseUserMetadata(userInfo=userInfo)
@@ -280,39 +303,43 @@ class SpamHandler(BaseBotHandler):
             logger.info(f"SPAM: Found {len(sameSpamMessages)} spam messages, so deciding, that it is SPAM")
             spamScore = max(spamScore, 100)
 
-        messageText = ensuredMessage.messageText
-        entities = message.entities
-        if message.text:
-            messageText = message.text
+        # TODO: Entities Parsing is supported for TelegramOnly for now
+        if isinstance(message, telegram.Message):
+            messageText = ensuredMessage.messageText
             entities = message.entities
-        elif message.caption:
-            messageText = message.caption
-            entities = message.caption_entities
-        else:
-            logger.error(
-                f"SPAM: {chatId}#{ensuredMessage.messageId}: " "text and caption are empty while messageText isn't/"
-            )
+            if message.text:
+                messageText = message.text
+                entities = message.entities
+            elif message.caption:
+                messageText = message.caption
+                entities = message.caption_entities
+            else:
+                logger.error(
+                    f"SPAM: {chatId}#{ensuredMessage.messageId}: " "text and caption are empty while messageText isn't/"
+                )
 
-        if messageText and entities:
-            for entity in entities:
-                match entity.type:
-                    case MessageEntityType.URL | MessageEntityType.TEXT_LINK:
-                        # Any URL looks like a spam
-                        spamScore = spamScore + 60
-                        logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
-                    case MessageEntityType.MENTION:
-                        mentionStr = parse_message_entity(messageText, entity)
-                        chatUser = self.db.getChatUserByUsername(chatId=ensuredMessage.chat.id, username=mentionStr)
-                        if chatUser is None:
-                            # Mentioning user not from chat looks like spam
+            if messageText and entities:
+                for entity in entities:
+                    match entity.type:
+                        case MessageEntityType.URL | MessageEntityType.TEXT_LINK:
+                            # Any URL looks like a spam
                             spamScore = spamScore + 60
-                            logger.debug(f"SPAM: Found mention ({mentionStr}) in message, adding 60 to spam score")
-                            if mentionStr.endswith("bot"):
-                                spamScore = spamScore + 40
-                                logger.debug(
-                                    f"SPAM: Found mention of bot ({mentionStr}) in message, "
-                                    "adding 40 more to spam score"
-                                )
+                            logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
+                        case MessageEntityType.MENTION:
+                            mentionStr = parse_message_entity(messageText, entity)
+                            chatUser = self.db.getChatUserByUsername(
+                                chatId=ensuredMessage.recipient.id, username=mentionStr
+                            )
+                            if chatUser is None:
+                                # Mentioning user not from chat looks like spam
+                                spamScore = spamScore + 60
+                                logger.debug(f"SPAM: Found mention ({mentionStr}) in message, adding 60 to spam score")
+                                if mentionStr.endswith("bot"):
+                                    spamScore = spamScore + 40
+                                    logger.debug(
+                                        f"SPAM: Found mention of bot ({mentionStr}) in message, "
+                                        "adding 40 more to spam score"
+                                    )
 
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
         banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
@@ -371,7 +398,7 @@ class SpamHandler(BaseBotHandler):
                 )
             else:
                 logger.error("Wasn't been able to send SPAM notification")
-            await self.markAsSpam(message=message, reason=SpamReason.AUTO, score=spamScore)
+            await self.markAsSpam(ensuredMessage=ensuredMessage, reason=SpamReason.AUTO, score=spamScore)
             return True
         elif spamScore >= warnTreshold:
             logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage}")
@@ -389,7 +416,7 @@ class SpamHandler(BaseBotHandler):
                                 callback_data=utils.packDict(
                                     {
                                         ButtonDataKey.SpamAction: True,
-                                        ButtonDataKey.ActionHash: self._makeSpamButtonSignature(message, True),
+                                        ButtonDataKey.ActionHash: self._makeSpamButtonSignature(ensuredMessage, True),
                                     }
                                 ),
                             ),
@@ -398,7 +425,7 @@ class SpamHandler(BaseBotHandler):
                                 callback_data=utils.packDict(
                                     {
                                         ButtonDataKey.SpamAction: False,
-                                        ButtonDataKey.ActionHash: self._makeSpamButtonSignature(message, False),
+                                        ButtonDataKey.ActionHash: self._makeSpamButtonSignature(ensuredMessage, False),
                                     }
                                 ),
                             ),
@@ -414,7 +441,7 @@ class SpamHandler(BaseBotHandler):
 
         return False
 
-    async def markAsSpam(self, message: Message, reason: SpamReason, score: Optional[float] = None):
+    async def markAsSpam(self, ensuredMessage: EnsuredMessage, reason: SpamReason, score: Optional[float] = None):
         """
         Mark message as spam, ban user, and delete message, dood!
 
@@ -439,20 +466,19 @@ class SpamHandler(BaseBotHandler):
             - Bayes filter learns from spam if auto-learning is enabled
             - Up to 10 recent user messages can be deleted if configured
         """
-        ensuredMessage = EnsuredMessage.fromMessage(message)
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-        bot = message.get_bot()
+        message = ensuredMessage.getBaseMessage()
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
         logger.debug(
-            f"Handling spam message: #{ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+            f"Handling spam message: #{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
             f" '{ensuredMessage.messageText}'"
             f" from {ensuredMessage.sender}. Reason: {reason}"
         )
 
-        chatId = ensuredMessage.chat.id
+        chatId = ensuredMessage.recipient.id
         userId = ensuredMessage.sender.id
 
-        if await self.isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat):
+        if await self.isAdmin(user=ensuredMessage.sender, chat=ensuredMessage.recipient):
             # It is admin, do nothing
             logger.warning(f"Tried to mark Admin {ensuredMessage.sender} as SPAM")
             await self.sendMessage(
@@ -482,7 +508,8 @@ class SpamHandler(BaseBotHandler):
             try:
                 await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
                 logger.debug(
-                    f"Bayes filter learned spam message: {ensuredMessage.chat.id}:{ensuredMessage.messageId}, dood!"
+                    "Bayes filter learned spam message: "
+                    f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}, dood!"
                 )
             except Exception as e:
                 logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
@@ -497,17 +524,26 @@ class SpamHandler(BaseBotHandler):
                 score=score if score is not None else 0,
             )
 
-        await bot.delete_message(chat_id=chatId, message_id=ensuredMessage.messageId)
-        logger.debug("Deleted spam message")
-        if message.sender_chat is not None:
-            await bot.ban_chat_sender_chat(chat_id=chatId, sender_chat_id=message.sender_chat.id)
-        if message.from_user is not None:
-            await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
+        if (
+            self.botProvider == BotProvider.TELEGRAM
+            and self._tgBot is not None
+            and isinstance(message, telegram.Message)
+        ):
+            bot = self._tgBot
+            await bot.delete_message(chat_id=chatId, message_id=int(ensuredMessage.messageId))
+            logger.debug("Deleted spam message")
+            if message.sender_chat is not None:
+                await bot.ban_chat_sender_chat(chat_id=chatId, sender_chat_id=message.sender_chat.id)
+            if message.from_user is not None:
+                await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
+            else:
+                logger.error(f"message.from_user is None (sender is {ensuredMessage.sender})")
         else:
-            logger.error(f"message.from_user is None (sender is {ensuredMessage.sender})")
+            # TODO: Support Max
+            logger.error(f"Deleteing spam messages is not supported in {self.botProvider}")
 
         self.db.markUserIsSpammer(chatId=chatId, userId=userId, isSpammer=True)
-        logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.chat}")
+        logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.recipient}")
         if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
             maxMessagesToDelete = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
             # Cap max messages to delete by some saint number
@@ -518,7 +554,7 @@ class SpamHandler(BaseBotHandler):
                 limit=maxMessagesToDelete,
             )
             logger.debug(f"Trying to delete more user messages: {userMessages}")
-            messageIds: List[int] = []
+            messageIds: List[MessageIdType] = []
             for msg in userMessages:
                 if msg["message_id"] != ensuredMessage.messageId:
                     messageIds.append(msg["message_id"])
@@ -552,12 +588,19 @@ class SpamHandler(BaseBotHandler):
 
             try:
                 if messageIds:
-                    await bot.delete_messages(chat_id=chatId, message_ids=messageIds)
+                    if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
+                        await self._tgBot.delete_messages(chat_id=chatId, message_ids=[int(mid) for mid in messageIds])
+                    elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+                        await self._maxBot.deleteMessages([str(mid) for mid in messageIds])
+                    else:
+                        # TODO: Support Max
+                        logger.error(f"Deleteing spam messages is not supported in {self.botProvider}")
+
             except Exception as e:
                 logger.error("Failed during deleteing spam message:")
                 logger.exception(e)
 
-    async def markAsHam(self, message: Message) -> bool:
+    async def markAsHam(self, message: EnsuredMessage) -> bool:
         """
         Mark message as ham (not spam) for Bayes filter learning, dood!
 
@@ -574,12 +617,12 @@ class SpamHandler(BaseBotHandler):
             - Only messages with text can be learned
             - Failures are logged but don't raise exceptions
         """
-        if not message.text:
+        if not message.messageText:
             return False
 
         try:
-            await self.bayesFilter.learnHam(messageText=message.text, chatId=message.chat_id)
-            logger.debug(f"Bayes filter learned ham message: {message.chat.id}:{message.message_id}, dood!")
+            await self.bayesFilter.learnHam(messageText=message.messageText, chatId=message.recipient.id)
+            logger.debug(f"Bayes filter learned ham message: {message.recipient.id}:{message.messageId}, dood!")
             return True
         except Exception as e:
             logger.error(f"Failed to learn ham message in Bayes filter: {e}, dood!")
@@ -754,16 +797,13 @@ class SpamHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        chat = ensuredMessage.chat
-        chatType = chat.type
-
-        match chatType:
-            case Chat.PRIVATE:
+        match ensuredMessage.recipient.chatType:
+            case ChatType.PRIVATE:
                 # No need to check spam in private messages
                 return HandlerResultStatus.SKIPPED
-            case Chat.GROUP | Chat.SUPERGROUP:
+            case ChatType.GROUP:
                 try:
-                    chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+                    chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
                     if chatSettings[ChatSettingsKey.DETECT_SPAM].toBool():
                         if await self.checkSpam(ensuredMessage):
@@ -816,8 +856,8 @@ class SpamHandler(BaseBotHandler):
             logger.error(f"handle_button: message {message} not Message in {query}")
             return HandlerResultStatus.FATAL
 
-        user = query.from_user
-        chat = message.chat
+        user = MessageSender.fromTelegramUser(query.from_user)
+        chat = MessageRecipient.fromTelegramChat(message.chat)
 
         if message.from_user is None or message.from_user.id != context.bot.id:
             logger.error(f"handle_button: Base message from {message.from_user}, not bot (#{context.bot.id})")
@@ -841,9 +881,10 @@ class SpamHandler(BaseBotHandler):
                 return HandlerResultStatus.FATAL
 
         repliedMessage = message.reply_to_message
+        eRepliedMessage = EnsuredMessage.fromTelegramMessage(message.reply_to_message)
 
         passedHash = data.get(ButtonDataKey.ActionHash, None)
-        neededHash = self._makeSpamButtonSignature(repliedMessage, spamAction)
+        neededHash = self._makeSpamButtonSignature(eRepliedMessage, spamAction)
 
         if passedHash != neededHash:
             logger.error(f"handle_button: passed hash {passedHash} does not match needed hash {neededHash} in {query}")
@@ -867,7 +908,7 @@ class SpamHandler(BaseBotHandler):
 
         if spamAction:
             # Mark As SPAM will doo what we need: mark message, add to db, ban user, delete messages
-            await self.markAsSpam(repliedMessage, markReason, 100)
+            await self.markAsSpam(eRepliedMessage, markReason, 100)
 
         else:
             # Mark As HAM will only learn Bayes as HAM, all other things need to be done manually
@@ -875,7 +916,7 @@ class SpamHandler(BaseBotHandler):
             hamUserId = repliedMessage.from_user.id if repliedMessage.from_user is not None else 0
             hamPrefix = "НЕ "
             if messageText:
-                await self.markAsHam(repliedMessage)
+                await self.markAsHam(eRepliedMessage)
 
                 self.db.addHamMessage(
                     chatId=chat.id,
@@ -896,10 +937,10 @@ class SpamHandler(BaseBotHandler):
                     )
 
         # We need to fallback somewhere, let's fallback to called user
-        reportedUser = repliedMessage.from_user if repliedMessage.from_user else user
+        reportedUser = MessageSender.fromTelegramUser(repliedMessage.from_user) if repliedMessage.from_user else user
         await message.edit_text(
-            f"[{user.full_name}](tg://user?id={user.id}) подтвердил, что "
-            f"[{reportedUser.full_name}](tg://user?id={reportedUser.id}) {hamPrefix}Спаммер \n"
+            f"[{user.name}](tg://user?id={user.id}) подтвердил, что "
+            f"[{reportedUser.name}](tg://user?id={reportedUser.id}) {hamPrefix}Спаммер \n"
             "\\(Данное сообщение будет удалено в течение минуты\\)",
             parse_mode="MarkdownV2",
         )
@@ -993,27 +1034,33 @@ class SpamHandler(BaseBotHandler):
             - User reports require explicit permission in chat settings
         """
 
-        message = ensuredMessage.getBaseMessage()
-        isAdmin = await self.isAdmin(user=ensuredMessage.user, chat=ensuredMessage.chat)
+        repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
+        isAdmin = await self.isAdmin(user=ensuredMessage.sender, chat=ensuredMessage.recipient)
 
         logger.debug(
             "Got /spam command \n"
-            f"from User({ensuredMessage.user}) "
-            f"in Chat({ensuredMessage.chat}) \n"
-            f"to Message({message.reply_to_message}) \n"
+            f"from User({ensuredMessage.sender}) "
+            f"in Chat({ensuredMessage.recipient}) \n"
+            f"to Message({repliedMessage}) \n"
             f"isAdmin: {isAdmin}"
         )
 
-        if message.reply_to_message is not None:
-            replyMessage = message.reply_to_message
+        if repliedMessage is not None:
             await self.markAsSpam(
-                replyMessage,
+                repliedMessage,
                 reason=SpamReason.ADMIN if isAdmin else SpamReason.USER,
                 score=100 if isAdmin else 50,  # TODO: Think about score for user
             )
 
         # Delete command message to reduce flood
-        await message.delete()
+        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
+            await self._tgBot.delete_message(
+                chat_id=ensuredMessage.recipient.id, message_id=int(ensuredMessage.messageId)
+            )
+        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+            await self._maxBot.deleteMessages([str(ensuredMessage.messageId)])
+        else:
+            logger.error(f"Can't delete message in {self.botProvider} platform")
 
     @commandHandlerExtended(
         commands=("pretrain_bayes",),
@@ -1061,16 +1108,16 @@ class SpamHandler(BaseBotHandler):
             - Can be run multiple times to improve accuracy
             - Only available in private chats with the bot
         """
-        message = ensuredMessage.getBaseMessage()
 
         targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
-            targetChatId = ensuredMessage.chat.id
+            targetChatId = ensuredMessage.recipient.id
 
-        targetChat = Chat(id=targetChatId, type=Chat.PRIVATE if targetChatId > 0 else Chat.SUPERGROUP)
-        targetChat.set_bot(message.get_bot())
+        targetChat = MessageRecipient(
+            id=targetChatId, chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP
+        )
 
-        if not await self.isAdmin(user=ensuredMessage.user, chat=targetChat):
+        if not await self.isAdmin(user=ensuredMessage.sender, chat=targetChat):
             await self.sendMessage(
                 ensuredMessage,
                 messageText="У Вас нет прав для выполнения данной команды.",
@@ -1136,6 +1183,15 @@ class SpamHandler(BaseBotHandler):
         """
         message = ensuredMessage.getBaseMessage()
 
+        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Команда не поддержана на данной платформе",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
         commandStr = ""
         for entityStr in message.parse_entities([MessageEntityType.BOT_COMMAND]).values():
             commandStr = entityStr
@@ -1155,14 +1211,14 @@ class SpamHandler(BaseBotHandler):
 
         targetChatId = utils.extractInt(context.args)
         if targetChatId is None:
-            targetChatId = ensuredMessage.chat.id
+            targetChatId = ensuredMessage.recipient.id
             # If it's quote from another chat, use it as chatId
             if message.external_reply and message.external_reply.chat:
                 targetChatId = message.external_reply.chat.id
 
-        chatObj = Chat(id=targetChatId, type=Chat.PRIVATE if targetChatId > 0 else Chat.SUPERGROUP)
-        chatObj.set_bot(context.bot)
-        isAdmin = await self.isAdmin(ensuredMessage.user, chatObj, allowBotOwners=True)
+        chatObj = MessageRecipient(id=targetChatId, chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP)
+
+        isAdmin = await self.isAdmin(ensuredMessage.sender, chatObj, allowBotOwners=True)
 
         if not isAdmin:
             await self.sendMessage(
@@ -1255,12 +1311,19 @@ class SpamHandler(BaseBotHandler):
             - Useful for testing filter accuracy before deployment
         """
         message = ensuredMessage.getBaseMessage()
+        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Команда не поддержана на данной платформе",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
 
         self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
-        chatType = ensuredMessage.chat.type
-        if chatType != Chat.PRIVATE:
-            logger.error(f"Unsupported chat type for /get_spam_score command: {chatType}")
+        if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
+            logger.error(f"Unsupported chat type for /get_spam_score command: {ensuredMessage.recipient.chatType}")
             return
 
         repliedText = ensuredMessage.replyText or ensuredMessage.quoteText
@@ -1272,7 +1335,7 @@ class SpamHandler(BaseBotHandler):
             )
             return
 
-        chatId = ensuredMessage.chat.id
+        chatId = ensuredMessage.recipient.id
         # If it's quote from another chat, use it as chatId
         if message.external_reply and message.external_reply.chat:
             chatId = message.external_reply.chat.id
@@ -1342,16 +1405,24 @@ class SpamHandler(BaseBotHandler):
             - Useful for correcting false positives and improving filter accuracy
         """
         message = ensuredMessage.getBaseMessage()
+        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Команда не поддержана на данной платформе",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
 
         user: Optional[ChatUserDict] = None
         if context.args:
             username = context.args[0]
             if not username.startswith("@"):
                 username = "@" + username
-            user = self.db.getChatUserByUsername(ensuredMessage.chat.id, username)
+            user = self.db.getChatUserByUsername(ensuredMessage.recipient.id, username)
 
         if user is None and message.reply_to_message and message.reply_to_message.from_user:
-            user = self.db.getChatUser(chatId=ensuredMessage.chat.id, userId=message.reply_to_message.from_user.id)
+            user = self.db.getChatUser(chatId=ensuredMessage.recipient.id, userId=message.reply_to_message.from_user.id)
 
         if user is None:
             await self.sendMessage(
