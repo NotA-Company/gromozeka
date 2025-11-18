@@ -11,6 +11,7 @@ VERSION: Final[str] = "0.0.1"
 
 # API Configuration
 API_BASE_URL: Final[str] = "https://platform-api.max.ru"
+# API_BASE_URL: Final[str] = "https://botapi.max.ru"
 API_VERSION: Final[str] = "0.0.1"
 DEFAULT_TIMEOUT: Final[int] = 30
 MAX_RETRIES: Final[int] = 3
