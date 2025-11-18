@@ -22,6 +22,11 @@ Adopt Handlers:
 - [ ] weather.py
 - [ ] yandex_search.py
 
+- [ ] Fix docstrings
+- [ ] Drop dataclasses
+- [ ] review models
+- [ ] ensuredMessage: support miltiple media
+
 # Our TODO list
 - [ ] General framework above Telegram and Max
 - [ ] Add ENV\.env support in config secrets

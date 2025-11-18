@@ -277,7 +277,7 @@ class LLMMessageHandler(BaseBotHandler):
                     await self.sendMessage(
                         ensuredMessage,
                         photoData=imgMLRet.mediaData,
-                        photoCaption=lmRetText,
+                        messageText=lmRetText,
                         mediaPrompt=imagePrompt,
                         addMessagePrefix=imgAddPrefix,
                         typingManager=typingManager if stopTypingOnSend else None,

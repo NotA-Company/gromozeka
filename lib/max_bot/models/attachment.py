@@ -6,7 +6,6 @@ for all attachment types in the Max Messenger Bot API.
 """
 
 import logging
-from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Dict, Optional
 
@@ -60,38 +59,6 @@ class Attachment(BaseMaxBotModel):
         )
 
 
-class PhotoAttachmentPayload(BaseMaxBotModel):
-    """TODO"""
-
-    # photo_id: int
-    # """Уникальный ID этого изображения"""
-    # "token": str
-    # """
-    #  Используйте `token`, если вы пытаетесь
-    #  повторно использовать одно и то же вложение в другом сообщении.
-    # """
-    # url: str
-    # """URL изображения"""
-
-    __slots__ = ("photo_id", "token", "url")
-
-    def __init__(self, *, photo_id: int, token: str, url: str, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(api_kwargs=api_kwargs)
-        self.photo_id: int = photo_id
-        self.token: str = token
-        self.url: str = url
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PhotoAttachmentPayload":
-        """Create PhotoAttachmentPayload instance from API response dictionary."""
-        return cls(
-            photo_id=data.get("photo_id", 0),
-            token=data.get("token", ""),
-            url=data.get("url", ""),
-            api_kwargs=cls._getExtraKwargs(data),
-        )
-
-
 class AttachmentPayload(BaseMaxBotModel):
     """Base payload class for attachments with URL field."""
 
@@ -125,6 +92,37 @@ class MediaAttachmentPayload(AttachmentPayload):
         return cls(
             url=data.get("url", ""),
             token=data.get("token", ""),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
+
+
+class PhotoAttachmentPayload(AttachmentPayload):
+    """TODO"""
+
+    # photo_id: int
+    # """Уникальный ID этого изображения"""
+    # "token": str
+    # """
+    #  Используйте `token`, если вы пытаетесь
+    #  повторно использовать одно и то же вложение в другом сообщении.
+    # """
+    # url: str
+    # """URL изображения"""
+
+    __slots__ = ("photo_id", "token")
+
+    def __init__(self, *, photo_id: int, token: str, url: str, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(url=url, api_kwargs=api_kwargs)
+        self.photo_id: int = photo_id
+        self.token: str = token
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PhotoAttachmentPayload":
+        """Create PhotoAttachmentPayload instance from API response dictionary."""
+        return cls(
+            photo_id=data.get("photo_id", 0),
+            token=data.get("token", ""),
+            url=data.get("url", ""),
             api_kwargs=cls._getExtraKwargs(data),
         )
 
@@ -639,55 +637,6 @@ class DataAttachment(Attachment):
         return cls(
             data=data.get("data", ""),
             api_kwargs=cls._getExtraKwargs(data),
-        )
-
-
-@dataclass(slots=True)
-class UploadRequest:
-    """
-    Base upload request for attachments
-    """
-
-    filename: str
-    """Name of the file to upload"""
-    content_type: str
-    """MIME type of the file"""
-    data: bytes
-    """Binary data of the file"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "UploadRequest":
-        """Create UploadRequest instance from API response dictionary."""
-        return cls(
-            filename=data.get("filename", ""),
-            content_type=data.get("content_type", "application/octet-stream"),
-            data=data.get("data", b""),
-            api_kwargs={k: v for k, v in data.items() if k not in {"filename", "content_type", "data"}},
-        )
-
-
-@dataclass(slots=True)
-class UploadResult:
-    """
-    Result of an upload operation
-    """
-
-    token: str
-    """Token for accessing the uploaded file"""
-    url: Optional[str] = None
-    """URL for accessing the uploaded file (if available)"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "UploadResult":
-        """Create UploadResult instance from API response dictionary."""
-        return cls(
-            token=data.get("token", ""),
-            url=data.get("url"),
-            api_kwargs={k: v for k, v in data.items() if k not in {"token", "url"}},
         )
 
 

@@ -39,6 +39,7 @@ from .exceptions import (
 )
 from .models import (
     Attachment,
+    AttachmentPayload,
     BotInfo,
     Chat,
     ChatAdmin,
@@ -52,10 +53,13 @@ from .models import (
     NewMessageLink,
     PhotoAttachment,
     PhotoAttachmentPayload,
+    PhotoUploadResult,
     ReplyKeyboardAttachment,
     SendMessageResult,
     TextFormat,
     UpdateList,
+    UploadedAttachment,
+    UploadedPhoto,
     UploadEndpoint,
     UploadType,
 )
@@ -174,12 +178,17 @@ class MaxBotClient:
                 timeout=httpx.Timeout(self.timeout),
                 headers={
                     "User-Agent": f"Gromozeka/{VERSION}",
-                    "Accept": CONTENT_TYPE_JSON,
-                    "Content-Type": CONTENT_TYPE_JSON,
-                    "Authorization": self.accessToken,
                 },
             )
             logger.debug("Created new HTTP client")
+
+        self._httpClient.headers.update(
+            {
+                "Accept": CONTENT_TYPE_JSON,
+                "Content-Type": CONTENT_TYPE_JSON,
+                "Authorization": self.accessToken,
+            }
+        )
 
         return self._httpClient
 
@@ -849,7 +858,7 @@ class MaxBotClient:
             final_attachments.append(replyKeyboard)
 
         if final_attachments or attachments is not None:
-            body_data["attachments"] = final_attachments
+            body_data["attachments"] = [v.to_dict(recursive=True) for v in final_attachments]
 
         # Build query parameters
         query_params = []
@@ -1538,13 +1547,14 @@ class MaxBotClient:
         data: bytes,
         mimeType: str,
         uploadType: UploadType,
-    ) -> Dict[str, Any]:
+    ) -> UploadedAttachment:
         """TODO"""
 
         # Validate file for upload
 
         # Get upload URL
         uploadInfo = await self.getUploadUrl(uploadType)
+        logger.debug(f"Upload info: {uploadInfo}")
         uploadUrl = uploadInfo.url
 
         # Upload file
@@ -1555,21 +1565,67 @@ class MaxBotClient:
             client = self._getHttpClient()
 
             # Remove content-type header for multipart uploads
-            headers = client.headers.copy()
-            headers.pop("Content-Type", None)
+            client.headers.pop("Content-Type", None)
+            client.headers.pop("Accept", None)
+            client.headers.pop("Authorization", None)
 
-            async with client.stream("POST", uploadUrl, files=files, headers=headers) as response:
+            async with client.stream("POST", uploadUrl, files=files) as response:
                 if response.status_code != 200:
                     error_text = await response.aread()
                     raise MaxBotError(f"Upload failed with status {response.status_code}: {error_text.decode()}")
 
+                await response.aread()
+                # logger.debug(ret)
+                # logger.debug(response.headers)
+                # logger.debug(response.encoding)
+                # logger.debug(response.charset_encoding)
+                # logger.debug(response.content)
+                # logger.debug(response.request)
+                # logger.debug(response.request.headers)
+
                 result = response.json()
-                return result
+                # {"error_msg":"...","error_code":"4","error_data":"BAD_REQUEST"}'
+                if "error_msg" in result:
+                    logger.error(result)
+                    raise MaxBotError(message=result.get["error_msg"], code=result.get("error_code"), response=result)
+
+                match uploadType:
+                    case UploadType.IMAGE:
+                        return UploadedPhoto(uploadEndpoint=uploadInfo, payload=PhotoUploadResult.from_dict(result))
+                    case _:
+                        logger.error(f"Unsupported UploadType {uploadType}, result: {result}")
+                        return UploadedAttachment(uploadEndpoint=uploadInfo, api_kwargs=result)
 
         except httpx.HTTPStatusError as e:
             raise MaxBotError(f"Upload failed: {e}")
         except Exception as e:
             raise MaxBotError(f"Upload error: {e}")
+
+    async def downloadAttachmentPayload(self, attachmentPayload: AttachmentPayload | str) -> Optional[bytes]:
+        # TODO: Properly process Video
+        url = attachmentPayload if isinstance(attachmentPayload, str) else attachmentPayload.url
+
+        try:
+            client = self._getHttpClient()
+
+            # Remove content-type header for multipart uploads
+            client.headers.pop("Content-Type", None)
+            client.headers.pop("Accept", None)
+            client.headers.pop("Authorization", None)
+
+            logger.debug(f"Downloading attachment payload from {url}")
+            ret = await client.get(url)
+
+            # logger.debug(ret)
+            # logger.debug(ret.headers)
+            # logger.debug(ret.encoding)
+            # logger.debug(ret.charset_encoding)
+
+            return ret.content
+        except Exception as e:
+            logger.error(f"Failed to download attachment: {type(e).__name__}#{e}")
+            logger.exception(e)
+            return None
 
     # Keyboard Helper Methods
     def createInlineKeyboard(self, buttons: List[List[Button]]) -> InlineKeyboardAttachment:

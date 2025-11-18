@@ -199,7 +199,7 @@ class MediaHandler(BaseBotHandler):
         ret = await self.sendMessage(
             ensuredMessage,
             photoData=mlRet.mediaData,
-            photoCaption=image_description,
+            messageText=image_description,
             mediaPrompt=image_prompt,
             addMessagePrefix=imgAddPrefix,
         )
@@ -660,7 +660,7 @@ class MediaHandler(BaseBotHandler):
         await self.sendMessage(
             ensuredMessage,
             photoData=mlRet.mediaData,
-            photoCaption=(
+            messageText=(
                 "Сгенерировал изображение по Вашему запросу:\n```\n"
                 f"{prompt[:MessageLimit.CAPTION_LENGTH - 60]}"
                 "\n```"
