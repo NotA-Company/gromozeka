@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from .base import BaseMaxBotModel
 from .chat import ChatType
-from .user import User
+from .user import UserWithPhoto
 
 
 class TextFormat(StrEnum):
@@ -153,7 +153,7 @@ class LinkedMessage(BaseMaxBotModel):
 
     # type: MessageLinkType
     # """Тип связанного сообщения"""
-    # sender: Optional[User] = None
+    # sender: Optional[UserWithPhoto] = None
     # """Пользователь, отправивший сообщение."""
     # chat_id: Optional[int] = None
     # """Чат, в котором сообщение было изначально опубликовано. Только для пересланных сообщений"""
@@ -164,14 +164,14 @@ class LinkedMessage(BaseMaxBotModel):
         self,
         *,
         type: MessageLinkType,
-        sender: Optional[User] = None,
+        sender: Optional[UserWithPhoto] = None,
         chat_id: Optional[int] = None,
         message: MessageBody,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.type: MessageLinkType = type
-        self.sender: Optional[User] = sender
+        self.sender: Optional[UserWithPhoto] = sender
         self.chat_id: Optional[int] = chat_id
         self.message: MessageBody = message
 
@@ -181,7 +181,7 @@ class LinkedMessage(BaseMaxBotModel):
         sender_data = data.get("sender", None)
         sender = None
         if sender_data is not None:
-            sender = User.from_dict(sender_data)
+            sender = UserWithPhoto.from_dict(sender_data)
 
         return cls(
             type=MessageLinkType(data.get("type", MessageLinkType.UNSPECIFIED)),
@@ -199,7 +199,7 @@ class Message(BaseMaxBotModel):
 
     __slots__ = ("sender", "recipient", "timestamp", "link", "body", "stat", "url")
 
-    # sender: User
+    # sender: UserWithPhoto
     # """Пользователь, отправивший сообщение"""
     # recipient: Recipient
     # """Получатель сообщения. Может быть пользователем или чатом"""
@@ -220,7 +220,7 @@ class Message(BaseMaxBotModel):
     def __init__(
         self,
         *,
-        sender: User,
+        sender: UserWithPhoto,
         recipient: Recipient,
         timestamp: int,
         link: Optional[LinkedMessage] = None,
@@ -230,7 +230,7 @@ class Message(BaseMaxBotModel):
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(api_kwargs=api_kwargs)
-        self.sender: User = sender
+        self.sender: UserWithPhoto = sender
         self.recipient: Recipient = recipient
         self.timestamp: int = timestamp
         self.link: Optional[LinkedMessage] = link
@@ -253,7 +253,7 @@ class Message(BaseMaxBotModel):
             stat = MessageStat.from_dict(stat_data)
 
         return cls(
-            sender=User.from_dict(data.get("sender", {})),
+            sender=UserWithPhoto.from_dict(data.get("sender", {})),
             recipient=Recipient.from_dict(data.get("recipient", {})),
             timestamp=data.get("timestamp", 0),
             link=link,
