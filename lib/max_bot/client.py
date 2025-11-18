@@ -179,6 +179,7 @@ class MaxBotClient:
                 headers={
                     "User-Agent": f"Gromozeka/{VERSION}",
                 },
+                # params={"v": "0.0.1"},
             )
             logger.debug("Created new HTTP client")
 
