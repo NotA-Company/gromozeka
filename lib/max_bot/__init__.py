@@ -26,7 +26,6 @@ from .constants import (
     ButtonType,
     SenderAction,
     TextFormat,
-    UploadType,
 )
 from .exceptions import (
     APIError,
@@ -52,7 +51,6 @@ __all__ = [
     "MAX_FILE_SIZE",
     # Enums
     "SenderAction",
-    "UploadType",
     "TextFormat",
     "ButtonType",
     "AttachmentType",

@@ -27,13 +27,32 @@ All models use dataclass with slots for memory efficiency and include:
 # Attachment models
 from .attachment import (
     Attachment,
-    AttachmentList,
+    AttachmentPayload,
     AttachmentType,
-    InteractiveAttachment,
+    AudioAttachment,
+    ContactAttachment,
+    ContactAttachmentPayload,
+    DataAttachment,
+    FileAttachment,
+    FileAttachmentPayload,
+    InlineKeyboardAttachment,
     KeyboardAttachment,
-    MediaAttachment,
+    LocationAttachment,
+    MediaAttachmentPayload,
+    PhotoAttachment,
+    PhotoAttachmentPayload,
+    ReplyKeyboardAttachment,
+    ShareAttachment,
+    ShareAttachmentPayload,
+    StickerAttachment,
+    StickerAttachmentPayload,
     UploadRequest,
     UploadResult,
+    VideoAttachment,
+    VideoAttachmentDetails,
+    VideoThumbnail,
+    VideoUrls,
+    attachmentFromDict,
 )
 
 # Base model
@@ -55,48 +74,6 @@ from .chat import (
     ChatType,
 )
 
-# Common models
-from .common import (
-    AudioToken,
-    FileInfo,
-    FileToken,
-    Image,
-    PaginationInfo,
-    PhotoToken,
-    TokenInfo,
-    UploadEndpoint,
-    VideoToken,
-)
-
-# Interactive models
-from .interactive import (
-    Contact,
-    ContactRequest,
-    Location,
-    LocationRequest,
-    Share,
-    ShareRequest,
-    Sticker,
-    StickerRequest,
-)
-
-# Keyboard models
-from .keyboard import (
-    Button,
-    ButtonType,
-    CallbackButton,
-    ChatButton,
-    InlineKeyboardAttachment,
-    Keyboard,
-    LinkButton,
-    MessageButton,
-    OpenAppButton,
-    ReplyButton,
-    ReplyKeyboardAttachment,
-    RequestContactButton,
-    RequestGeoLocationButton,
-)
-
 # Markup models
 from .markup import (
     BoldMarkup,
@@ -116,18 +93,6 @@ from .markup import (
     TextLinkMarkup,
     UnderlineMarkup,
     UrlMarkup,
-)
-
-# Media models
-from .media import (
-    Audio,
-    AudioUploadRequest,
-    File,
-    FileUploadRequest,
-    Photo,
-    PhotoUploadRequest,
-    Video,
-    VideoUploadRequest,
 )
 
 # Message models
@@ -155,6 +120,7 @@ from .response import (
     ErrorCode,
     IdResponse,
     ListResponse,
+    PaginationInfo,
     ResponseStatus,
     SimpleQueryResult,
     Subscription,
@@ -183,6 +149,10 @@ from .update import (
     UpdateType,
     UserAddedToChatUpdate,
     UserRemovedFromChatUpdate,
+)
+from .upload import (
+    UploadEndpoint,
+    UploadType,
 )
 
 # User models
@@ -228,47 +198,34 @@ __all__ = [
     "SendMessageResult",
     "TextFormat",
     "MessageLinkType",
-    # Attachment models (8)
+    # Attachment models (25)
     "Attachment",
     "AttachmentType",
-    "MediaAttachment",
-    "InteractiveAttachment",
+    "PhotoAttachment",
+    "PhotoAttachmentPayload",
+    "AttachmentPayload",
+    "MediaAttachmentPayload",
+    "FileAttachmentPayload",
+    "AudioAttachment",
+    "FileAttachment",
+    "LocationAttachment",
+    "StickerAttachment",
+    "StickerAttachmentPayload",
+    "ShareAttachment",
+    "ShareAttachmentPayload",
+    "ContactAttachment",
+    "ContactAttachmentPayload",
+    "VideoAttachment",
+    "VideoThumbnail",
+    "VideoUrls",
+    "VideoAttachmentDetails",
     "KeyboardAttachment",
-    "AttachmentList",
-    "UploadRequest",
-    "UploadResult",
-    # Media models (8)
-    "Photo",
-    "Video",
-    "Audio",
-    "File",
-    "PhotoUploadRequest",
-    "VideoUploadRequest",
-    "AudioUploadRequest",
-    "FileUploadRequest",
-    # Interactive models (8)
-    "Contact",
-    "Location",
-    "Share",
-    "Sticker",
-    "ContactRequest",
-    "LocationRequest",
-    "ShareRequest",
-    "StickerRequest",
-    # Keyboard models (13)
-    "Button",
-    "ButtonType",
-    "CallbackButton",
-    "LinkButton",
-    "RequestContactButton",
-    "RequestGeoLocationButton",
-    "ChatButton",
-    "OpenAppButton",
-    "MessageButton",
-    "ReplyButton",
-    "Keyboard",
     "InlineKeyboardAttachment",
     "ReplyKeyboardAttachment",
+    "DataAttachment",
+    "UploadRequest",
+    "UploadResult",
+    "attachmentFromDict",
     # Update models (18)
     "Update",
     "UpdateType",
@@ -289,17 +246,8 @@ __all__ = [
     "BotAddedUpdate",
     "BotRemovedFromChatUpdate",
     "MessageCallbackUpdate",
-    # Common models (9)
-    "Image",
-    "PhotoToken",
-    "VideoToken",
-    "AudioToken",
-    "FileToken",
-    "UploadEndpoint",
-    "TokenInfo",
-    "FileInfo",
-    "PaginationInfo",
     # Response models (13)
+    "PaginationInfo",
     "ResponseStatus",
     "ErrorCode",
     "Error",
@@ -331,4 +279,7 @@ __all__ = [
     "EmailMarkup",
     "PhoneMarkup",
     "MarkupList",
+    # Upload Models
+    "UploadType",
+    "UploadEndpoint",
 ]

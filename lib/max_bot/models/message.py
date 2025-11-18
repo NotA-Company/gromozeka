@@ -9,6 +9,7 @@ LinkedMessage, and SendMessageResult models.
 from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
+from .attachment import Attachment, attachmentFromDict
 from .base import BaseMaxBotModel
 from .chat import ChatType
 from .user import UserWithPhoto
@@ -106,7 +107,7 @@ class MessageBody(BaseMaxBotModel):
     # """ID последовательности сообщения в чате"""
     # text: Optional[str] = None
     # """Новый текст сообщения"""
-    # attachments: Optional[List[Dict[str, Any]]] = None
+    # attachments: Optional[List[Attachment]] = None
     # """Вложения сообщения. Могут быть одним из типов `Attachment`. Смотрите описание схемы"""
     # markup: Optional[List[Dict[str, Any]]] = None
     # """
@@ -120,7 +121,7 @@ class MessageBody(BaseMaxBotModel):
         mid: str,
         seq: int,
         text: Optional[str] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None,
+        attachments: Optional[List[Attachment]] = None,
         markup: Optional[List[Dict[str, Any]]] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
@@ -128,17 +129,22 @@ class MessageBody(BaseMaxBotModel):
         self.mid: str = mid
         self.seq: int = seq
         self.text: Optional[str] = text
-        self.attachments: Optional[List[Dict[str, Any]]] = attachments
+        self.attachments: Optional[List[Attachment]] = attachments
         self.markup: Optional[List[Dict[str, Any]]] = markup
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageBody":
         """Create MessageBody instance from API response dictionary."""
+        attachments = None
+        attachmentsData = data.get("attachments", None)
+        if isinstance(attachmentsData, list):
+            attachments = [attachmentFromDict(v) for v in attachmentsData]
+
         return cls(
             mid=data.get("mid", ""),
             seq=data.get("seq", 0),
             text=data.get("text", None),
-            attachments=data.get("attachments", None),
+            attachments=attachments,
             markup=data.get("markup", None),
             api_kwargs=cls._getExtraKwargs(data),
         )
@@ -330,7 +336,7 @@ class NewMessageBody(BaseMaxBotModel):
 
     # text: Optional[str] = None
     # """Новый текст сообщения"""
-    # attachments: Optional[List[Dict[str, Any]]] = None
+    # attachments: Optional[List[Attachment]] = None
     # """Вложения сообщения. Если пусто, все вложения будут удалены"""
     # link: Optional[NewMessageLink] = None
     # """Ссылка на сообщение"""
@@ -347,7 +353,7 @@ class NewMessageBody(BaseMaxBotModel):
         self,
         *,
         text: Optional[str] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None,
+        attachments: Optional[List[Attachment]] = None,
         link: Optional[NewMessageLink] = None,
         notify: bool = True,
         format: Optional[TextFormat] = None,
@@ -355,7 +361,7 @@ class NewMessageBody(BaseMaxBotModel):
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.text: Optional[str] = text
-        self.attachments: Optional[List[Dict[str, Any]]] = attachments
+        self.attachments: Optional[List[Attachment]] = attachments
         self.link: Optional[NewMessageLink] = link
         self.notify: bool = notify
         self.format: Optional[TextFormat] = format
@@ -373,9 +379,14 @@ class NewMessageBody(BaseMaxBotModel):
         if format_data:
             format_enum = TextFormat(format_data)
 
+        attachments = None
+        attachmentsData = data.get("attachments", None)
+        if isinstance(attachmentsData, list):
+            attachments = [attachmentFromDict(v) for v in attachmentsData]
+
         return cls(
             text=data.get("text", None),
-            attachments=data.get("attachments", None),
+            attachments=attachments,
             link=link,
             notify=data.get("notify", True),
             format=format_enum,

@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 import httpx
 
 from lib import utils
+from lib.max_bot.models.keyboard import Button, Keyboard
 
 from .constants import (
     API_BASE_URL,
@@ -28,7 +29,6 @@ from .constants import (
     RETRY_BACKOFF_FACTOR,
     VERSION,
     SenderAction,
-    UploadType,
 )
 from .exceptions import (
     AuthenticationError,
@@ -38,19 +38,26 @@ from .exceptions import (
     parseApiError,
 )
 from .models import (
+    Attachment,
     BotInfo,
     Chat,
     ChatAdmin,
     ChatList,
     ChatMembersList,
+    InlineKeyboardAttachment,
     Message,
     MessageLinkType,
     MessageList,
     NewMessageBody,
     NewMessageLink,
+    PhotoAttachment,
+    PhotoAttachmentPayload,
+    ReplyKeyboardAttachment,
     SendMessageResult,
     TextFormat,
     UpdateList,
+    UploadEndpoint,
+    UploadType,
 )
 from .models.update import Update
 
@@ -753,13 +760,13 @@ class MaxBotClient:
         chatId: Optional[int] = None,
         userId: Optional[int] = None,
         text: Optional[str] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None,
+        attachments: Optional[List[Attachment]] = None,
         replyTo: Optional[str] = None,
         forwardFrom: Optional[str] = None,
         notify: bool = True,
         format: Optional[TextFormat] = None,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
+        inlineKeyboard: Optional[InlineKeyboardAttachment] = None,
+        replyKeyboard: Optional[ReplyKeyboardAttachment] = None,
         disableLinkPreview: Optional[bool] = None,
     ) -> SendMessageResult:
         """Send a message to a chat or user.
@@ -838,8 +845,8 @@ class MaxBotClient:
         if inlineKeyboard:
             final_attachments.append(inlineKeyboard)
 
-        if keyboard:
-            final_attachments.append(keyboard)
+        if replyKeyboard:
+            final_attachments.append(replyKeyboard)
 
         if final_attachments or attachments is not None:
             body_data["attachments"] = final_attachments
@@ -1359,68 +1366,6 @@ class MaxBotClient:
         response = await self.get("/subscriptions")
         return response
 
-    # Attachment Methods
-    async def sendAttachment(
-        self,
-        attachments: List[Dict[str, Any]],
-        chatId: Optional[int] = None,
-        userId: Optional[int] = None,
-        text: Optional[str] = None,
-        replyTo: Optional[str] = None,
-        forwardFrom: Optional[str] = None,
-        notify: bool = True,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
-        format: Optional[TextFormat] = None,
-        disableLinkPreview: bool = False,
-    ) -> SendMessageResult:
-        """Send a message with attachments to a chat or user.
-
-        Sends a message with attachments to a chat or user with various options.
-
-        Args:
-            chatId: ID of the chat to send message to
-            userId: ID of the user to send message to
-            attachments: List of message attachments
-            text: Message text (optional)
-            replyTo: Message ID to reply to (optional)
-            forwardFrom: Message ID to forward from (optional)
-            notify: Whether to notify users (default: True)
-            inlineKeyboard: Inline keyboard attachment (optional)
-            keyboard: Reply keyboard attachment (optional)
-            format: Text formatting (markdown/html) (optional)
-            disableLinkPreview: Whether to disable link preview (default: False)
-
-        Returns:
-            Sent message information
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     attachments = [{"type": "photo", "payload": {"token": "photo_token"}}]
-            ...     result = await client.sendAttachment(
-            ...         chatId=12345,
-            ...         attachments=attachments,
-            ...         text="Look at this photo!"
-            ...     )
-        """
-        return await self.sendMessage(
-            chatId=chatId,
-            userId=userId,
-            text=text,
-            attachments=attachments,
-            replyTo=replyTo,
-            forwardFrom=forwardFrom,
-            notify=notify,
-            format=format,
-            inlineKeyboard=inlineKeyboard,
-            keyboard=keyboard,
-            disableLinkPreview=disableLinkPreview,
-        )
-
     async def sendPhoto(
         self,
         photoToken: str,
@@ -1430,8 +1375,8 @@ class MaxBotClient:
         replyTo: Optional[str] = None,
         forwardFrom: Optional[str] = None,
         notify: bool = True,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
+        inlineKeyboard: Optional[InlineKeyboardAttachment] = None,
+        replyKeyboard: Optional[ReplyKeyboardAttachment] = None,
         format: Optional[TextFormat] = None,
         disableLinkPreview: bool = False,
     ) -> SendMessageResult:
@@ -1467,9 +1412,15 @@ class MaxBotClient:
             ...         text="Check out this photo!"
             ...     )
         """
-        photo_attachment = {"type": "photo", "payload": {"token": photoToken}}
+        photo_attachment = PhotoAttachment(
+            payload=PhotoAttachmentPayload(
+                photo_id=0,
+                token=photoToken,
+                url="",
+            )
+        )
 
-        return await self.sendAttachment(
+        return await self.sendMessage(
             attachments=[photo_attachment],
             chatId=chatId,
             userId=userId,
@@ -1478,387 +1429,7 @@ class MaxBotClient:
             forwardFrom=forwardFrom,
             notify=notify,
             inlineKeyboard=inlineKeyboard,
-            keyboard=keyboard,
-            format=format,
-            disableLinkPreview=disableLinkPreview,
-        )
-
-    async def sendVideo(
-        self,
-        videoToken: str,
-        chatId: Optional[int] = None,
-        userId: Optional[int] = None,
-        text: Optional[str] = None,
-        replyTo: Optional[str] = None,
-        forwardFrom: Optional[str] = None,
-        notify: bool = True,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
-        format: Optional[TextFormat] = None,
-        disableLinkPreview: bool = False,
-    ) -> SendMessageResult:
-        """Send a video message to a chat or user.
-
-        Sends a video message to a chat or user with optional text and keyboards.
-
-        Args:
-            chatId: ID of the chat to send message to
-            userId: ID of the user to send message to
-            videoToken: Token for the video attachment
-            text: Message text (optional)
-            replyTo: Message ID to reply to (optional)
-            forwardFrom: Message ID to forward from (optional)
-            notify: Whether to notify users (default: True)
-            inlineKeyboard: Inline keyboard attachment (optional)
-            keyboard: Reply keyboard attachment (optional)
-            format: Text formatting (markdown/html) (optional)
-            disableLinkPreview: Whether to disable link preview (default: False)
-
-        Returns:
-            Sent message information
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.sendVideo(
-            ...         chatId=12345,
-            ...         videoToken="video_token_123",
-            ...         text="Check out this video!"
-            ...     )
-        """
-        video_attachment = {"type": "video", "payload": {"token": videoToken}}
-
-        return await self.sendAttachment(
-            attachments=[video_attachment],
-            chatId=chatId,
-            userId=userId,
-            text=text,
-            replyTo=replyTo,
-            forwardFrom=forwardFrom,
-            notify=notify,
-            inlineKeyboard=inlineKeyboard,
-            keyboard=keyboard,
-            format=format,
-            disableLinkPreview=disableLinkPreview,
-        )
-
-    async def sendAudio(
-        self,
-        audioToken: str,
-        chatId: Optional[int] = None,
-        userId: Optional[int] = None,
-        text: Optional[str] = None,
-        replyTo: Optional[str] = None,
-        forwardFrom: Optional[str] = None,
-        notify: bool = True,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
-        format: Optional[TextFormat] = None,
-        disableLinkPreview: bool = False,
-    ) -> SendMessageResult:
-        """Send an audio message to a chat or user.
-
-        Sends an audio message to a chat or user with optional text and keyboards.
-
-        Args:
-            chatId: ID of the chat to send message to
-            userId: ID of the user to send message to
-            audioToken: Token for the audio attachment
-            text: Message text (optional)
-            replyTo: Message ID to reply to (optional)
-            forwardFrom: Message ID to forward from (optional)
-            notify: Whether to notify users (default: True)
-            inlineKeyboard: Inline keyboard attachment (optional)
-            keyboard: Reply keyboard attachment (optional)
-            format: Text formatting (markdown/html) (optional)
-            disableLinkPreview: Whether to disable link preview (default: False)
-
-        Returns:
-            Sent message information
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.sendAudio(
-            ...         chatId=12345,
-            ...         audioToken="audio_token_123",
-            ...         text="Listen to this audio!"
-            ...     )
-        """
-        audio_attachment = {"type": "audio", "payload": {"token": audioToken}}
-
-        return await self.sendAttachment(
-            attachments=[audio_attachment],
-            chatId=chatId,
-            userId=userId,
-            text=text,
-            replyTo=replyTo,
-            forwardFrom=forwardFrom,
-            notify=notify,
-            inlineKeyboard=inlineKeyboard,
-            keyboard=keyboard,
-            format=format,
-            disableLinkPreview=disableLinkPreview,
-        )
-
-    async def sendFile(
-        self,
-        fileToken: str,
-        chatId: Optional[int] = None,
-        userId: Optional[int] = None,
-        text: Optional[str] = None,
-        replyTo: Optional[str] = None,
-        forwardFrom: Optional[str] = None,
-        notify: bool = True,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
-        format: Optional[TextFormat] = None,
-        disableLinkPreview: bool = False,
-    ) -> SendMessageResult:
-        """Send a file message to a chat or user.
-
-        Sends a file message to a chat or user with optional text and keyboards.
-
-        Args:
-            chatId: ID of the chat to send message to
-            userId: ID of the user to send message to
-            fileToken: Token for the file attachment
-            text: Message text (optional)
-            replyTo: Message ID to reply to (optional)
-            forwardFrom: Message ID to forward from (optional)
-            notify: Whether to notify users (default: True)
-            inlineKeyboard: Inline keyboard attachment (optional)
-            keyboard: Reply keyboard attachment (optional)
-            format: Text formatting (markdown/html) (optional)
-            disableLinkPreview: Whether to disable link preview (default: False)
-
-        Returns:
-            Sent message information
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.sendFile(
-            ...         chatId=12345,
-            ...         fileToken="file_token_123",
-            ...         text="Here's the file you requested"
-            ...     )
-        """
-        file_attachment = {"type": "file", "payload": {"token": fileToken}}
-
-        return await self.sendAttachment(
-            attachments=[file_attachment],
-            chatId=chatId,
-            userId=userId,
-            text=text,
-            replyTo=replyTo,
-            forwardFrom=forwardFrom,
-            notify=notify,
-            inlineKeyboard=inlineKeyboard,
-            keyboard=keyboard,
-            format=format,
-            disableLinkPreview=disableLinkPreview,
-        )
-
-    async def sendContact(
-        self,
-        contact: Dict[str, Any],
-        chatId: Optional[int] = None,
-        userId: Optional[int] = None,
-        text: Optional[str] = None,
-        replyTo: Optional[str] = None,
-        forwardFrom: Optional[str] = None,
-        notify: bool = True,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
-        format: Optional[TextFormat] = None,
-        disableLinkPreview: bool = False,
-    ) -> SendMessageResult:
-        """Send a contact message to a chat or user.
-
-        Sends a contact message to a chat or user with optional text and keyboards.
-
-        Args:
-            chatId: ID of the chat to send message to
-            userId: ID of the user to send message to
-            contact: Contact information dictionary
-            text: Message text (optional)
-            replyTo: Message ID to reply to (optional)
-            forwardFrom: Message ID to forward from (optional)
-            notify: Whether to notify users (default: True)
-            inlineKeyboard: Inline keyboard attachment (optional)
-            keyboard: Reply keyboard attachment (optional)
-            format: Text formatting (markdown/html) (optional)
-            disableLinkPreview: Whether to disable link preview (default: False)
-
-        Returns:
-            Sent message information
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     contact = {
-            ...         "name": "John Doe",
-            ...         "phone": "+1234567890"
-            ...     }
-            ...     result = await client.sendContact(
-            ...         chatId=12345,
-            ...         contact=contact,
-            ...         text="Here's John's contact info"
-            ...     )
-        """
-        contact_attachment = {"type": "contact", "payload": contact}
-
-        return await self.sendAttachment(
-            attachments=[contact_attachment],
-            chatId=chatId,
-            userId=userId,
-            text=text,
-            replyTo=replyTo,
-            forwardFrom=forwardFrom,
-            notify=notify,
-            inlineKeyboard=inlineKeyboard,
-            keyboard=keyboard,
-            format=format,
-            disableLinkPreview=disableLinkPreview,
-        )
-
-    async def sendLocation(
-        self,
-        location: Dict[str, Any],
-        chatId: Optional[int] = None,
-        userId: Optional[int] = None,
-        text: Optional[str] = None,
-        replyTo: Optional[str] = None,
-        forwardFrom: Optional[str] = None,
-        notify: bool = True,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
-        format: Optional[TextFormat] = None,
-        disableLinkPreview: bool = False,
-    ) -> SendMessageResult:
-        """Send a location message to a chat or user.
-
-        Sends a location message to a chat or user with optional text and keyboards.
-
-        Args:
-            chatId: ID of the chat to send message to
-            userId: ID of the user to send message to
-            location: Location information with latitude and longitude
-            text: Message text (optional)
-            replyTo: Message ID to reply to (optional)
-            forwardFrom: Message ID to forward from (optional)
-            notify: Whether to notify users (default: True)
-            inlineKeyboard: Inline keyboard attachment (optional)
-            keyboard: Reply keyboard attachment (optional)
-            format: Text formatting (markdown/html) (optional)
-            disableLinkPreview: Whether to disable link preview (default: False)
-
-        Returns:
-            Sent message information
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     location = {
-            ...         "latitude": 55.7558,
-            ...         "longitude": 37.6173
-            ...     }
-            ...     result = await client.sendLocation(
-            ...         chatId=12345,
-            ...         location=location,
-            ...         text="Here's my location"
-            ...     )
-        """
-        location_attachment = {"type": "location", "payload": location}
-
-        return await self.sendAttachment(
-            attachments=[location_attachment],
-            chatId=chatId,
-            userId=userId,
-            text=text,
-            replyTo=replyTo,
-            forwardFrom=forwardFrom,
-            notify=notify,
-            inlineKeyboard=inlineKeyboard,
-            keyboard=keyboard,
-            format=format,
-            disableLinkPreview=disableLinkPreview,
-        )
-
-    async def sendSticker(
-        self,
-        stickerId: str,
-        chatId: Optional[int] = None,
-        userId: Optional[int] = None,
-        text: Optional[str] = None,
-        replyTo: Optional[str] = None,
-        forwardFrom: Optional[str] = None,
-        notify: bool = True,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
-        keyboard: Optional[Dict[str, Any]] = None,
-        format: Optional[TextFormat] = None,
-        disableLinkPreview: bool = False,
-    ) -> SendMessageResult:
-        """Send a sticker message to a chat or user.
-
-        Sends a sticker message to a chat or user with optional text and keyboards.
-
-        Args:
-            chatId: ID of the chat to send message to
-            userId: ID of the user to send message to
-            stickerId: ID of the sticker to send
-            text: Message text (optional)
-            replyTo: Message ID to reply to (optional)
-            forwardFrom: Message ID to forward from (optional)
-            notify: Whether to notify users (default: True)
-            inlineKeyboard: Inline keyboard attachment (optional)
-            keyboard: Reply keyboard attachment (optional)
-            format: Text formatting (markdown/html) (optional)
-            disableLinkPreview: Whether to disable link preview (default: False)
-
-        Returns:
-            Sent message information
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.sendSticker(
-            ...         chatId=12345,
-            ...         stickerId="sticker_123",
-            ...         text="😀"
-            ...     )
-        """
-        sticker_attachment = {"type": "sticker", "payload": {"code": stickerId}}
-
-        return await self.sendAttachment(
-            attachments=[sticker_attachment],
-            chatId=chatId,
-            userId=userId,
-            text=text,
-            replyTo=replyTo,
-            forwardFrom=forwardFrom,
-            notify=notify,
-            inlineKeyboard=inlineKeyboard,
-            keyboard=keyboard,
+            replyKeyboard=replyKeyboard,
             format=format,
             disableLinkPreview=disableLinkPreview,
         )
@@ -1866,36 +1437,100 @@ class MaxBotClient:
     # Phase 6: File Operations
 
     # Upload Methods
-    async def getUploadUrl(self, uploadType: Union[str, UploadType]) -> Dict[str, Any]:
-        """Get upload URL for a specific file type.
-
-        Returns a URL for subsequent file upload. The URL can be used for
-        multipart upload (simpler) or resumable upload (more reliable).
-
-        Args:
-            uploadType: Type of file to upload ("image", "video", "audio", "file")
-
-        Returns:
-            Dictionary containing upload URL and optional token for video/audio
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.getUploadUrl("image")
-            ...     upload_url = result["url"]
-            ...     # Use upload_url to upload the file
+    async def getUploadUrl(self, uploadType: UploadType) -> UploadEndpoint:
         """
-        if isinstance(uploadType, UploadType):
-            upload_type_str = uploadType.value
-        else:
-            upload_type_str = uploadType
+        Возвращает URL для последующей загрузки файла.
 
-        params = {"type": upload_type_str}
-        response = await self.get("/uploads", params=params)
-        return response
+        Поддерживаются два типа загрузки:
+        - **Multipart upload** — более простой, но менее надежный способ.
+          В этом случае используется заголовок `Content-Type: multipart/form-data`.
+          Этот способ имеет ограничения:
+            - Максимальный размер файла: 4 ГБ
+            - Можно загружать только один файл за раз
+            - Невозможно перезапустить загрузку, если она была остановлена
+
+        - **Resumable upload** — более надежный способ, если заголовок
+          `Content-Type` не равен `multipart/form-data`.
+          Этот способ позволяет загружать файл частями и возобновить загрузку
+          с последней успешно загруженной части в случае ошибок.
+
+        Пример использования cURL для загрузки файла:
+
+        ```shell
+        curl -i -X POST \
+            -H "Content-Type: multipart/form-data" \
+           -F "data=@movie.pdf" "%UPLOAD_URL%"
+        ```
+
+        Где %UPLOAD_URL% — это URL из результата метода в примере cURL запроса
+
+        **Для загрузки видео и аудио:**
+        1. Когда получаем ссылку на загрузку видео или аудио
+          (`POST /uploads` с `type` = `video` или `type` = `audio`),
+          вместе с `url` в ответе приходит `token`, который нужно
+          использовать в сообщении (когда формируете `body` с `attachments`)
+          в `POST /messages`
+        2. После загрузки видео или аудио (по `url` из шага выше) сервер возвращает `retval`
+        3. C этого момента можно использовать `token`, чтобы прикреплять вложение в сообщение бота
+
+        Механика отличается от `type` = `image` | `file`, где `token` возвращается
+          в ответе на загрузку изображения или файла
+
+        ## Прикрепление медиа
+        Медиафайлы прикрепляются к сообщениям поэтапно:
+
+        1. Получите URL для загрузки медиафайлов
+        2. Загрузите бинарные данные соответствующего формата по полученному URL
+        3. После успешной загрузки получите JSON-объект в ответе. Используйте этот объект для создания вложения.
+          Структура вложения:
+            - `type`: тип медиа (например, `"video"`)
+            - `payload`: JSON-объект, который вы получили
+
+        Пример для видео:
+        1. Получите URL для загрузки
+        ```bash
+        curl -X POST 'https://platform-api.max.ru/uploads?type=video' \
+            -H 'Authorization: Bearer %access_token%'
+        ```
+
+        Ответ:
+        ```json
+        {
+            "url": "https://vu.mycdn.me/upload.do…"
+        }
+        ```
+
+        2. Загрузите видео по URL
+        ```bash
+        curl -i -X POST -H "Content-Type: multipart/form-data" \
+            -F \"data=@movie.mp4\" \"https://vu.mycdn.me/upload.do…"
+        ```
+
+        Ответ:
+        ```json
+        {
+            "token": "_3R..."
+        }
+        ```
+
+        3. Отправьте сообщение с вложением
+        ```json
+        {
+            "text": "Message with video",
+            "attachments": [
+            {
+                "type": "video",
+                "payload": {
+                    "token": "_3Rarhcf1PtlMXy8jpgie8Ai_KARnVFYNQTtmIRWNh4"
+                }
+            }
+            ]
+        }
+        ```
+        """
+
+        response = await self.post(f"/uploads?type={uploadType.value}")
+        return UploadEndpoint.from_dict(response)
 
     async def uploadFile(
         self,
@@ -1903,41 +1538,14 @@ class MaxBotClient:
         data: bytes,
         mimeType: str,
         uploadType: UploadType,
-        progressCallback: Optional[Callable[[int, int], None]] = None,
-        chunkSize: int = 8192,
     ) -> Dict[str, Any]:
-        """Upload a file to Max Messenger servers.
-
-        Uploads a file using multipart form data. Validates the file before upload
-        and supports progress tracking for large files.
-
-        Args:
-            filePath: Path to the file to upload
-            uploadType: Type of file to upload ("image", "video", "audio", "file")
-            progressCallback: Optional callback for upload progress (bytes_transferred, total_bytes)
-            chunkSize: Size of chunks for upload (default: 8KB)
-            TODO: Fix
-
-        Returns:
-            Dictionary containing upload result with token and/or URL
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-            FileValidationError: If file validation fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.uploadFile("/path/to/photo.jpg", "image")
-            ...     token = result["token"]
-            ...     # Use token to send photo in message
-        """
+        """TODO"""
 
         # Validate file for upload
 
         # Get upload URL
-        upload_info = await self.getUploadUrl(uploadType)
-        upload_url = upload_info["url"]
+        uploadInfo = await self.getUploadUrl(uploadType)
+        uploadUrl = uploadInfo.url
 
         # Upload file
         files = {"data": (filename, data, mimeType)}
@@ -1950,7 +1558,7 @@ class MaxBotClient:
             headers = client.headers.copy()
             headers.pop("Content-Type", None)
 
-            async with client.stream("POST", upload_url, files=files, headers=headers) as response:
+            async with client.stream("POST", uploadUrl, files=files, headers=headers) as response:
                 if response.status_code != 200:
                     error_text = await response.aread()
                     raise MaxBotError(f"Upload failed with status {response.status_code}: {error_text.decode()}")
@@ -1963,38 +1571,8 @@ class MaxBotClient:
         except Exception as e:
             raise MaxBotError(f"Upload error: {e}")
 
-    # Download Methods
-    async def getFileUrl(self, fileId: str) -> str:
-        """Get download URL for a file.
-
-        Note: The Max Messenger API doesn't provide a direct method to get
-        download URLs. Files are typically accessed through their tokens
-        in message attachments. This method is provided for completeness
-        but may not be functional with the current API.
-
-        Args:
-            fileId: ID or token of the file to get URL for
-
-        Returns:
-            Download URL for the file
-
-        Raises:
-            MaxBotError: If the API doesn't support this operation
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     url = await client.getFileUrl("file_token_123")
-            ...     # Use URL to download the file
-        """
-        # Note: Max Messenger API doesn't seem to have a direct file URL endpoint
-        # This is a placeholder implementation
-        raise MaxBotError(
-            "Direct file URL retrieval is not supported by Max Messenger API. "
-            "Files should be accessed through message attachments."
-        )
-
     # Keyboard Helper Methods
-    def createInlineKeyboard(self, buttons: List[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    def createInlineKeyboard(self, buttons: List[List[Button]]) -> InlineKeyboardAttachment:
         """Create an inline keyboard attachment.
 
         Creates an inline keyboard attachment from a 2D array of button dictionaries.
@@ -2017,14 +1595,14 @@ class MaxBotClient:
             ...     ]
             ... ])
         """
-        return {"type": "inline_keyboard", "payload": {"buttons": buttons}}
+        return InlineKeyboardAttachment(payload=Keyboard(buttons=buttons))
 
     def createReplyKeyboard(
         self,
-        buttons: List[List[Dict[str, Any]]],
+        buttons: List[List[Button]],
         oneTime: bool = False,
         resize: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> ReplyKeyboardAttachment:
         """Create a reply keyboard attachment.
 
         Creates a reply keyboard attachment from a 2D array of button dictionaries.
@@ -2049,16 +1627,15 @@ class MaxBotClient:
             ...     ]
             ... ], oneTime=True)
         """
-        return {
-            "type": "reply_keyboard",
-            "payload": {
-                "buttons": buttons,
-                "one_time": oneTime,
-                "resize_keyboard": resize,
-            },
-        }
+        return ReplyKeyboardAttachment(
+            payload=Keyboard(
+                buttons=buttons,
+                one_time_keyboard=oneTime,
+                resize_keyboard=resize,
+            )
+        )
 
-    def removeKeyboard(self) -> Dict[str, Any]:
+    def removeKeyboard(self) -> ReplyKeyboardAttachment:
         """Create a keyboard removal attachment.
 
         Creates an attachment that removes the current reply keyboard.
@@ -2071,10 +1648,4 @@ class MaxBotClient:
             >>> remove_kb = client.removeKeyboard()
             >>> await client.sendMessage(chatId=12345, text="Keyboard removed", keyboard=remove_kb)
         """
-        return {
-            "type": "reply_keyboard",
-            "payload": {
-                "buttons": [],
-                "remove_keyboard": True,
-            },
-        }
+        return ReplyKeyboardAttachment(payload=Keyboard(buttons=[], remove_keyboard=True))
