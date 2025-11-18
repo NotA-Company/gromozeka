@@ -13,7 +13,7 @@ from .base import BaseMaxBotModel
 from .callback import Callback
 from .chat import Chat
 from .message import Message
-from .user import User
+from .user import UserWithPhoto
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ class BotAddedUpdate(Update):
     __slots__ = ("chat_id", "user", "is_channel")
     # chat_id: int
     # """ID чата, куда был добавлен бот"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, добавивший бота в чат"""
     # is_channel: bool
     # """Указывает, был ли бот добавлен в канал или нет"""
@@ -258,14 +258,14 @@ class BotAddedUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         is_channel: bool,
         timestamp: int,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.is_channel: bool = is_channel
 
     @classmethod
@@ -273,7 +273,7 @@ class BotAddedUpdate(Update):
         """Create BotAddedUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             is_channel=data.get("is_channel", False),
             timestamp=data.get("timestamp", 0),
             api_kwargs=cls._getExtraKwargs(data),
@@ -288,7 +288,7 @@ class BotRemovedFromChatUpdate(Update):
     __slots__ = ("chat_id", "user", "is_channel")
     # chat_id: int
     # """ID чата, откуда был удален бот"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, удаливший бота из чата"""
     # is_channel: bool
     # """Указывает, был ли бот удален из канала или нет"""
@@ -298,14 +298,14 @@ class BotRemovedFromChatUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         is_channel: bool,
         timestamp: int,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.is_channel: bool = is_channel
 
     @classmethod
@@ -313,7 +313,7 @@ class BotRemovedFromChatUpdate(Update):
         """Create BotRemovedFromChatUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             is_channel=data.get("is_channel", False),
             timestamp=data.get("timestamp", 0),
             api_kwargs=cls._getExtraKwargs(data),
@@ -329,7 +329,7 @@ class DialogMutedUpdate(Update):
 
     # chat_id: int
     # """ID чата, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, который отключил уведомления"""
     # muted_until: int
     # """Время в формате Unix, до наступления которого диалог был отключен"""
@@ -341,7 +341,7 @@ class DialogMutedUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         muted_until: int,
         user_locale: Optional[str] = None,
         timestamp: int,
@@ -349,7 +349,7 @@ class DialogMutedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.muted_until: int = muted_until
         self.user_locale: Optional[str] = user_locale
 
@@ -358,7 +358,7 @@ class DialogMutedUpdate(Update):
         """Create DialogMutedUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             muted_until=data.get("muted_until", 0),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
@@ -375,7 +375,7 @@ class DialogUnmutedUpdate(Update):
 
     # chat_id: int
     # """ID чата, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, который включил уведомления"""
     # user_locale: Optional[str]
     # """Текущий язык пользователя в формате IETF BCP 47"""
@@ -385,14 +385,14 @@ class DialogUnmutedUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         user_locale: Optional[str] = None,
         timestamp: int,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
@@ -401,7 +401,7 @@ class DialogUnmutedUpdate(Update):
 
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
             api_kwargs=cls._getExtraKwargs(data),
@@ -417,7 +417,7 @@ class DialogClearedUpdate(Update):
 
     # chat_id: int
     # """ID чата, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, который включил уведомления"""
     # user_locale: Optional[str]
     # """Текущий язык пользователя в формате IETF BCP 47"""
@@ -427,14 +427,14 @@ class DialogClearedUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         user_locale: Optional[str] = None,
         timestamp: int,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
@@ -442,7 +442,7 @@ class DialogClearedUpdate(Update):
         """Create DialogClearedUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
             api_kwargs=cls._getExtraKwargs(data),
@@ -458,7 +458,7 @@ class DialogRemovedUpdate(Update):
 
     # chat_id: int
     # """ID чата, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, который удалил чат"""
     # user_locale: Optional[str]
     # """Текущий язык пользователя в формате IETF BCP 47"""
@@ -468,14 +468,14 @@ class DialogRemovedUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         user_locale: Optional[str] = None,
         timestamp: int,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
@@ -484,7 +484,7 @@ class DialogRemovedUpdate(Update):
 
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
             api_kwargs=cls._getExtraKwargs(data),
@@ -499,7 +499,7 @@ class UserAddedToChatUpdate(Update):
     __slots__ = ("chat_id", "user", "inviter_id", "is_channel")
     # chat_id: int
     # """ID чата, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, добавленный в чат"""
     # inviter_id: Optional[int],
     # """
@@ -514,7 +514,7 @@ class UserAddedToChatUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         inviter_id: Optional[int] = None,
         is_channel: bool,
         timestamp: int,
@@ -531,7 +531,7 @@ class UserAddedToChatUpdate(Update):
         """Create UserAddedToChatUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             inviter_id=data.get("inviter_id", None),
             is_channel=data.get("is_channel", False),
             timestamp=data.get("timestamp", 0),
@@ -549,7 +549,7 @@ class UserRemovedFromChatUpdate(Update):
 
     # chat_id: int
     # """ID чата, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, удаленный из чата"""
     # admin_id: Optional[int]
     # """
@@ -564,7 +564,7 @@ class UserRemovedFromChatUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         admin_id: Optional[int] = None,
         is_channel: bool,
         timestamp: int,
@@ -572,7 +572,7 @@ class UserRemovedFromChatUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.admin_id: Optional[int] = admin_id
         self.is_channel: bool = is_channel
 
@@ -581,7 +581,7 @@ class UserRemovedFromChatUpdate(Update):
         """Create UserRemovedFromChatUpdate instance from API response dictionary."""
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             admin_id=data.get("admin_id", None),
             is_channel=data.get("is_channel", False),
             timestamp=data.get("timestamp", 0),
@@ -598,7 +598,7 @@ class BotStartedUpdate(Update):
 
     # chat_id: int
     # """ID диалога, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, который нажал кнопку 'Start'"""
     # payload: Optional[str] # Max 512
     # """Дополнительные данные из дип-линков, переданные при запуске бота"""
@@ -610,7 +610,7 @@ class BotStartedUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         payload: Optional[str] = None,
         user_locale: Optional[str] = None,
         timestamp: int,
@@ -618,7 +618,7 @@ class BotStartedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.payload: Optional[str] = payload
         self.user_locale: Optional[str] = user_locale
 
@@ -628,7 +628,7 @@ class BotStartedUpdate(Update):
 
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             payload=data.get("payload", None),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
@@ -645,7 +645,7 @@ class BotStoppedUpdate(Update):
 
     # chat_id: int
     # """ID диалога, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, который остановил чат"""
     # user_locale: Optional[str]
     # """Текущий язык пользователя в формате IETF BCP 47"""
@@ -655,14 +655,14 @@ class BotStoppedUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         user_locale: Optional[str] = None,
         timestamp: int,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.user_locale: Optional[str] = user_locale
 
     @classmethod
@@ -671,7 +671,7 @@ class BotStoppedUpdate(Update):
 
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             user_locale=data.get("user_locale", None),
             timestamp=data.get("timestamp", 0),
             api_kwargs=cls._getExtraKwargs(data),
@@ -687,7 +687,7 @@ class ChatTitleChangedUpdate(Update):
 
     # chat_id: int
     # """ID чата, где произошло событие"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, который изменил название"""
     # title: str
     # """Новое название"""
@@ -697,14 +697,14 @@ class ChatTitleChangedUpdate(Update):
         self,
         *,
         chat_id: int,
-        user: User,
+        user: UserWithPhoto,
         title: str,
         timestamp: int,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
-        self.user: User = user
+        self.user: UserWithPhoto = user
         self.title: str = title
 
     @classmethod
@@ -713,7 +713,7 @@ class ChatTitleChangedUpdate(Update):
 
         return cls(
             chat_id=data.get("chat_id", 0),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             title=data.get("title", ""),
             timestamp=data.get("timestamp", 0),
             api_kwargs=cls._getExtraKwargs(data),

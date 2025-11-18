@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 from .base import BaseMaxBotModel
 from .message import NewMessageBody
-from .user import User
+from .user import UserWithPhoto
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class Callback(BaseMaxBotModel):
     # """Текущий ID клавиатуры"""
     # payload: Optional[str]
     # """Токен кнопки"""
-    # user: User
+    # user: UserWithPhoto
     # """Пользователь, нажавший на кнопку"""
 
     def __init__(
@@ -34,14 +34,14 @@ class Callback(BaseMaxBotModel):
         timestamp: int,
         callback_id: str,
         payload: Optional[str] = None,
-        user: User,
+        user: UserWithPhoto,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.timestamp: int = timestamp
         self.callback_id: str = callback_id
         self.payload: Optional[str] = payload
-        self.user: User = user
+        self.user: UserWithPhoto = user
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Callback":
@@ -49,7 +49,7 @@ class Callback(BaseMaxBotModel):
             timestamp=data.get("timestamp", 0),
             callback_id=data.get("callback_id", ""),
             payload=data.get("payload", None),
-            user=User.from_dict(data.get("user", {})),
+            user=UserWithPhoto.from_dict(data.get("user", {})),
             api_kwargs=cls._getExtraKwargs(data),
         )
 
