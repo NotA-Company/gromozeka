@@ -204,7 +204,7 @@ class TestChatMessageOperations:
 
         message = inMemoryDb.getChatMessageByMessageId(sampleChatId, 300)
         assert message is not None
-        assert message["message_id"] == 300
+        assert int(message["message_id"]) == 300
         assert message["message_text"] == "Find me"
         assert message["username"] == "testuser"
 
@@ -336,7 +336,7 @@ class TestChatMessageOperations:
 
         replies = inMemoryDb.getChatMessagesByRootId(sampleChatId, rootId)
         assert len(replies) == 3
-        assert all(msg["root_message_id"] == rootId for msg in replies)
+        assert all(int(msg["root_message_id"]) == rootId for msg in replies)
 
     def testGetChatMessagesByUser(self, inMemoryDb, sampleChatId):
         """Test retrieving messages by user ID."""
