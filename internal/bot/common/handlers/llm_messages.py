@@ -666,8 +666,8 @@ class LLMMessageHandler(BaseBotHandler):
 
         randomFloat = random.random()
         treshold = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
-        # logger.debug(f"Random float: {randomFloat}, need: {treshold}")
         if treshold < randomFloat:
+            # logger.debug(f"Random float: {randomFloat}, need: {treshold}")
             return False
 
         logger.debug(f"Random float: {randomFloat} < {treshold}, answering to message")

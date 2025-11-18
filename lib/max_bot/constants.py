@@ -66,15 +66,6 @@ class SenderAction(StrEnum):
     TYPING_OFF = "typing_off"
 
 
-class UploadType(StrEnum):
-    """Upload type enum from OpenAPI specification"""
-
-    IMAGE = "image"
-    VIDEO = "video"
-    AUDIO = "audio"
-    FILE = "file"
-
-
 class TextFormat(StrEnum):
     """Text format enum from OpenAPI specification"""
 

@@ -6,13 +6,11 @@ InlineKeyboardAttachment, and ReplyKeyboardAttachment models.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
-from .attachment import AttachmentType, KeyboardAttachment
 
-
-class ButtonType(str, Enum):
+class ButtonType(StrEnum):
     """
     Button type enum
     """
@@ -245,6 +243,8 @@ class Keyboard:
     """Whether to hide the keyboard after a button is pressed"""
     selective: bool = False
     """Whether to show the keyboard only to specific users"""
+    remove_keyboard: Optional[bool] = None
+    """Whether to remove the keyboard after a button is pressed"""
     api_kwargs: Dict[str, Any] = field(default_factory=dict)
     """Raw API response data"""
 
@@ -291,54 +291,4 @@ class Keyboard:
                 for k, v in data.items()
                 if k not in {"buttons", "resize_keyboard", "one_time_keyboard", "selective"}
             },
-        )
-
-
-@dataclass(slots=True)
-class InlineKeyboardAttachment(KeyboardAttachment):
-    """
-    Inline keyboard attachment that appears below a message
-    """
-
-    keyboard: Keyboard
-    """Keyboard layout for the inline keyboard"""
-
-    def __post_init__(self):
-        """Set the attachment type to inline_keyboard."""
-        self.type = AttachmentType.INLINE_KEYBOARD
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "InlineKeyboardAttachment":
-        """Create InlineKeyboardAttachment instance from API response dictionary."""
-        keyboard_data = data.get("keyboard", {})
-        keyboard = Keyboard.from_dict(keyboard_data)
-
-        return cls(
-            type=AttachmentType.INLINE_KEYBOARD,
-            keyboard=keyboard,
-        )
-
-
-@dataclass(slots=True)
-class ReplyKeyboardAttachment(KeyboardAttachment):
-    """
-    Reply keyboard attachment that replaces the user's keyboard
-    """
-
-    keyboard: Keyboard
-    """Keyboard layout for the reply keyboard"""
-
-    def __post_init__(self):
-        """Set the attachment type to reply_keyboard."""
-        self.type = AttachmentType.REPLY_KEYBOARD
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ReplyKeyboardAttachment":
-        """Create ReplyKeyboardAttachment instance from API response dictionary."""
-        keyboard_data = data.get("keyboard", {})
-        keyboard = Keyboard.from_dict(keyboard_data)
-
-        return cls(
-            type=AttachmentType.REPLY_KEYBOARD,
-            keyboard=keyboard,
         )
