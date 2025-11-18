@@ -15,11 +15,24 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import magic
-from telegram import Chat, Update
+import telegram
+from telegram import Update
 from telegram.constants import ChatAction, MessageEntityType, MessageLimit
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.bot import constants
+from internal.bot.models import (
+    BotProvider,
+    ChatSettingsKey,
+    ChatType,
+    CommandCategory,
+    CommandHandlerOrder,
+    CommandPermission,
+    EnsuredMessage,
+    LLMMessageFormat,
+    MessageType,
+)
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -33,16 +46,6 @@ from lib.ai import (
     ModelResultStatus,
 )
 
-from .. import constants
-from ..models import (
-    ChatSettingsKey,
-    CommandCategory,
-    CommandHandlerOrder,
-    CommandPermission,
-    EnsuredMessage,
-    LLMMessageFormat,
-    MessageType,
-)
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -69,7 +72,9 @@ class MediaHandler(BaseBotHandler):
                        chat settings, and database operations
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """
         Initialize the MediaHandler with required dependencies, dood!
 
@@ -87,7 +92,7 @@ class MediaHandler(BaseBotHandler):
             - Initializes base handler functionality
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 
@@ -162,16 +167,18 @@ class MediaHandler(BaseBotHandler):
         typingManager.action = ChatAction.UPLOAD_PHOTO
         typingManager.maxTimeout = typingManager.maxTimeout + 300
         await typingManager.sendTypingAction()
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
         logger.debug(
             f"Generating image: {image_prompt}. Image description: {image_description}, "
-            f"mcID: {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+            f"mcID: {ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
         )
         imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
         fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
 
         mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=image_prompt)], fallbackImageLLM)
-        logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
+        logger.debug(
+            f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
+        )
         if mlRet.status != ModelResultStatus.FINAL:
             ret = await self.sendMessage(
                 ensuredMessage,
@@ -236,16 +243,16 @@ class MediaHandler(BaseBotHandler):
             # Not new message, Skip
             return HandlerResultStatus.SKIPPED
 
-        chatType = ensuredMessage.chat.type
+        chatType = ensuredMessage.recipient.chatType
 
-        if chatType not in [Chat.PRIVATE, Chat.GROUP, Chat.SUPERGROUP]:
+        if chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
             return HandlerResultStatus.SKIPPED
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return HandlerResultStatus.SKIPPED
 
-        mentionedMe = self.checkEMMentionsMe(ensuredMessage)
+        mentionedMe = await self.checkEMMentionsMe(ensuredMessage)
         if not mentionedMe.restText or (
             not mentionedMe.byNick and (not mentionedMe.byName or mentionedMe.byName[0] > 0)
         ):
@@ -274,14 +281,17 @@ class MediaHandler(BaseBotHandler):
         if not isWhatThere:
             return HandlerResultStatus.SKIPPED
 
-        message = ensuredMessage.getBaseMessage()
-        if not ensuredMessage.isReply or not message.reply_to_message:
+        if not ensuredMessage.isReply:
             logger.warning(
-                f"WhatsThere triggered on non-reply message {ensuredMessage.chat.id}:{ensuredMessage.messageId}"
+                f"WhatsThere triggered on non-reply message {ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
             )
             return HandlerResultStatus.ERROR
 
-        ensuredReply = EnsuredMessage.fromMessage(message.reply_to_message)
+        ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
+        if ensuredReply is None:
+            logger.error("ensuredReply is None, but should be EnsuredMessage()")
+            return HandlerResultStatus.ERROR
+
         response = constants.DUNNO_EMOJI
         if ensuredReply.messageType == MessageType.TEXT:
             logger.debug("WhatsThere triggered on TEXT message")
@@ -295,11 +305,11 @@ class MediaHandler(BaseBotHandler):
         async with await self.startTyping(ensuredMessage) as typingManager:
             # Not text message, try to get it's content from DB
             storedReply = self.db.getChatMessageByMessageId(
-                chatId=ensuredReply.chat.id,
+                chatId=ensuredReply.recipient.id,
                 messageId=ensuredReply.messageId,
             )
             if storedReply is None:
-                logger.error(f"Failed to get parent message #{ensuredReply.chat.id}:{ensuredReply.messageId}")
+                logger.error(f"Failed to get parent message #{ensuredReply.recipient.id}:{ensuredReply.messageId}")
             else:
                 eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply)
                 await eStoredMsg.updateMediaContent(self.db)
@@ -364,8 +374,16 @@ class MediaHandler(BaseBotHandler):
         """
         # Analyse media with given prompt. Should be reply to message with media.
         message = ensuredMessage.getBaseMessage()
+        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Команда не поддержана на данной платформе",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
 
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
         if not ensuredMessage.isReply or not message.reply_to_message:
             await self.sendMessage(
@@ -377,7 +395,7 @@ class MediaHandler(BaseBotHandler):
             return
 
         parentMessage = message.reply_to_message
-        parentEnsuredMessage = ensuredMessage.fromMessage(parentMessage)
+        parentEnsuredMessage = ensuredMessage.fromTelegramMessage(parentMessage)
 
         commandStr = ""
         prompt = ensuredMessage.messageText
@@ -530,7 +548,7 @@ class MediaHandler(BaseBotHandler):
         # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
         message = ensuredMessage.getBaseMessage()
 
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
         prompt = ensuredMessage.messageText
 
@@ -561,7 +579,7 @@ class MediaHandler(BaseBotHandler):
             ]
             for msg in reversed(
                 self.db.getChatMessagesByUser(
-                    ensuredMessage.chat.id,
+                    ensuredMessage.recipient.id,
                     ensuredMessage.sender.id,
                     limit=10,
                 )
@@ -585,7 +603,9 @@ class MediaHandler(BaseBotHandler):
                 prompt = llmRet.resultText
             else:
                 # Fallback to something static
-                prompt = f"Draw image of {ensuredMessage.sender} in chat `{ensuredMessage.chat.title}`"
+                chatInfo = self.getChatInfo(ensuredMessage.recipient.id)
+                chatTitle = chatInfo["title"] if chatInfo is not None else str(ensuredMessage.recipient)
+                prompt = f"Draw image of {ensuredMessage.sender} in chat `{chatTitle}`"
 
         logger.debug(f"Prompt: '{prompt}'")
 
@@ -607,7 +627,9 @@ class MediaHandler(BaseBotHandler):
         fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
 
         mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
-        logger.debug(f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.chat.id}:{ensuredMessage.messageId}")
+        logger.debug(
+            f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
+        )
         if mlRet.status != ModelResultStatus.FINAL:
             await self.sendMessage(
                 ensuredMessage,

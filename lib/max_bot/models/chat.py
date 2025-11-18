@@ -19,6 +19,7 @@ class ChatType(StrEnum):
 
     CHAT = "chat"
     DIALOG = "dialog"  # NOTE: `dialog`` isn't present in swagger, however returned by Max API
+    CHANNEL = "channel"
 
 
 class ChatStatus(StrEnum):

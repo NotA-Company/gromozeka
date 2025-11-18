@@ -40,6 +40,7 @@ from .exceptions import (
     ServiceUnavailableError,
     ValidationError,
 )
+from .utils import MessageLinkToMessage
 
 # Public API
 __all__ = [
@@ -66,4 +67,6 @@ __all__ = [
     "ServiceUnavailableError",
     "NetworkError",
     "ConfigurationError",
+    # Utils
+    "MessageLinkToMessage",
 ]

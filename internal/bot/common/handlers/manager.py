@@ -5,9 +5,14 @@ Bot handlers manager
 import logging
 from typing import List, Optional, Sequence, Set
 
-from telegram import Message, Update
+import telegram
 from telegram.ext import ContextTypes, ExtBot
 
+import lib.max_bot as maxBot
+
+# import lib.max_bot.models as maxModels
+from internal.bot.common.models import UpdateObjectType
+from internal.bot.models import BotProvider, CommandHandlerInfo, EnsuredMessage
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache import CacheService
@@ -15,7 +20,6 @@ from internal.services.queue_service import QueueService
 from lib import utils
 from lib.ai import LLMManager
 
-from ..models import CommandHandlerInfo, EnsuredMessage
 from .base import BaseBotHandler, HandlerResultStatus
 from .common import CommonHandler
 from .configure import ConfigureCommandHandler
@@ -39,10 +43,13 @@ class HandlersManager(CommandHandlerGetterInterface):
     Bot handlers manager
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         self.configManager = configManager
         self.db = database
         self.llmManager = llmManager
+        self.botProvider: BotProvider = botProvider
 
         self.cache = CacheService.getInstance()
         self.cache.injectDatabase(self.db)
@@ -51,39 +58,43 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self.handlers: List[BaseBotHandler] = [
             # Should be first to check for spam before other handlers
-            SpamHandler(configManager, database, llmManager),
+            SpamHandler(configManager, database, llmManager, botProvider),
             # Should be before MessagePreprocessorHandler to not save configuration answers
-            ConfigureCommandHandler(configManager, database, llmManager),
-            SummarizationHandler(configManager, database, llmManager),
+            ConfigureCommandHandler(configManager, database, llmManager, botProvider),
+            SummarizationHandler(configManager, database, llmManager, botProvider),
             # Should be before other handlers to ensure message saving + media processing
-            MessagePreprocessorHandler(configManager, database, llmManager),
+            MessagePreprocessorHandler(configManager, database, llmManager, botProvider),
             #
-            ReactOnUserMessageHandler(configManager, database, llmManager),
+            ReactOnUserMessageHandler(configManager, database, llmManager, botProvider),
             #
-            UserDataHandler(configManager, database, llmManager),
-            DevCommandsHandler(configManager, database, llmManager),
-            MediaHandler(configManager, database, llmManager),
-            CommonHandler(configManager, database, llmManager),
+            UserDataHandler(configManager, database, llmManager, botProvider),
+            DevCommandsHandler(configManager, database, llmManager, botProvider),
+            MediaHandler(configManager, database, llmManager, botProvider),
+            CommonHandler(configManager, database, llmManager, botProvider),
             # Special case - help command require all command handlers information
-            HelpHandler(configManager, database, llmManager, self),
+            HelpHandler(configManager, database, llmManager, botProvider, self),
         ]
 
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
         openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
         if openWeatherMapConfig.get("enabled", False):
-            self.handlers.append(WeatherHandler(configManager, database, llmManager))
+            self.handlers.append(WeatherHandler(configManager, database, llmManager, botProvider))
         yandexSearchConfig = self.configManager.getYandexSearchConfig()
         if yandexSearchConfig.get("enabled", False):
-            self.handlers.append(YandexSearchHandler(configManager, database, llmManager))
+            self.handlers.append(YandexSearchHandler(configManager, database, llmManager, botProvider))
 
         self.handlers.append(
             # Should be last messageHandler as it can handle any message
-            LLMMessageHandler(configManager, database, llmManager)
+            LLMMessageHandler(configManager, database, llmManager, botProvider)
         )
 
-    def injectBot(self, bot: ExtBot) -> None:
+    def injectTGBot(self, bot: ExtBot) -> None:
         for handler in self.handlers:
-            handler.injectBot(bot)
+            handler.injectTGBot(bot)
+
+    def injectMaxBot(self, bot: maxBot.MaxBotClient):
+        for handler in self.handlers:
+            handler.injectMaxBot(bot)
 
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
         ret: List[CommandHandlerInfo] = []
@@ -91,7 +102,36 @@ class HandlersManager(CommandHandlerGetterInterface):
             ret.extend(handler.getCommandHandlers())
         return ret
 
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handleNewMessage(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> None:
+        resultSet: Set[HandlerResultStatus] = set()
+        for handler in self.handlers:
+            ret = await handler.newMessageHandler(ensuredMessage, updateObj)
+            resultSet.add(ret)
+            match ret:
+                case HandlerResultStatus.FINAL:
+                    logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
+                    break
+                case HandlerResultStatus.SKIPPED:
+                    # logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
+                    continue
+                case HandlerResultStatus.NEXT:
+                    logger.debug(f"Handler {type(handler).__name__} returned NEXT")
+                    continue
+                case HandlerResultStatus.ERROR:
+                    logger.error(f"Handler {type(handler).__name__} returned ERROR")
+                    continue
+                case HandlerResultStatus.FATAL:
+                    logger.error(f"Handler {type(handler).__name__} returned FATAL, stop processing")
+                    break
+                case _:
+                    logger.error(f"Unknown handler result: {ret}")
+
+        logger.debug(
+            f"Handled message from {ensuredMessage.sender}: {ensuredMessage.messageText[:50]}... "
+            f"(resultSet: {resultSet})"
+        )
+
+    async def handle_message(self, update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
         logger.debug(f"Handling message Update#{update.update_id}")
 
@@ -104,9 +144,9 @@ class HandlersManager(CommandHandlerGetterInterface):
             # logger.debug(f"Message: {message}")
             logger.debug(f"Message: {utils.dumpMessage(message)}")
             try:
-                ensuredMessage = EnsuredMessage.fromMessage(message)
+                ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
                 ensuredMessage.setUserData(
-                    self.cache.getChatUserData(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id)
+                    self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
                 )
             except Exception as e:
                 logger.error(f"Error while ensuring message {message}")
@@ -143,7 +183,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         else:
             logger.debug(f"Handled not-a-message: #{update.update_id}, resultSet: {resultSet})")
 
-    async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handle_button(self, update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle button presses."""
         logger.debug(f"handle_button: {update}")
 
@@ -168,7 +208,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             logger.error(f"handle_button: message is None in {query}")
             return
 
-        if not isinstance(query.message, Message):
+        if not isinstance(query.message, telegram.Message):
             logger.error(f"handle_button: message is not a Message in {query}")
             return
 

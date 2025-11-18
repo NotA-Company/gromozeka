@@ -13,6 +13,15 @@ from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.bot.models import (
+    BotProvider,
+    CallbackDataDict,
+    CommandCategory,
+    CommandHandlerOrder,
+    CommandPermission,
+    DelayedTaskFunction,
+    EnsuredMessage,
+)
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -21,14 +30,6 @@ from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask
 from lib.ai import LLMFunctionParameter, LLMManager, LLMParameterType
 
-from ..models import (
-    CallbackDataDict,
-    CommandCategory,
-    CommandHandlerOrder,
-    CommandPermission,
-    DelayedTaskFunction,
-    EnsuredMessage,
-)
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,9 @@ class ExampleHandler(BaseBotHandler):
     implementation for other bot handlers.
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """
         Initialize example handler with database and LLM model, dood!
 
@@ -61,7 +64,7 @@ class ExampleHandler(BaseBotHandler):
             - LLM tool registration for example text processing
             - Example command handling capabilities
         """
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
         self.queueService = QueueService.getInstance()
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)

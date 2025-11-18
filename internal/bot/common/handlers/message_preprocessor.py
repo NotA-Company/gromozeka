@@ -13,9 +13,9 @@ from typing import Optional
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from internal.bot.models import EnsuredMessage, MessageType
 from internal.database.models import MessageCategory
 
-from ..models import EnsuredMessage, MessageType
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)

@@ -13,6 +13,14 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.bot import constants
+from internal.bot.models import (
+    BotProvider,
+    CommandCategory,
+    CommandHandlerOrder,
+    CommandPermission,
+    EnsuredMessage,
+)
 from internal.config.manager import ConfigManager
 from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
@@ -30,13 +38,6 @@ from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
 from lib.geocode_maps import GeocodeMapsClient, SearchResult
 from lib.openweathermap import OpenWeatherMapClient, WeatherData
 
-from .. import constants
-from ..models import (
-    CommandCategory,
-    CommandHandlerOrder,
-    CommandPermission,
-    EnsuredMessage,
-)
 from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,9 @@ class WeatherHandler(BaseBotHandler):
         llmService: LLM tool registration service
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """Initialize weather handler with dependencies.
 
         Sets up OpenWeatherMap client with caching and registers LLM tools.
@@ -67,7 +70,7 @@ class WeatherHandler(BaseBotHandler):
             RuntimeError: If OpenWeatherMap integration is disabled
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
         openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
         if not openWeatherMapConfig.get("enabled", False):

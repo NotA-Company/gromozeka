@@ -14,7 +14,7 @@ import sys
 from typing import List, Optional
 
 from internal.bot.application import BotApplication
-from internal.bot_max.application import MaxBotApplication
+from internal.bot.max.application import MaxBotApplication
 from internal.config.manager import ConfigManager
 from internal.database.manager import DatabaseManager
 from lib.ai.manager import LLMManager
