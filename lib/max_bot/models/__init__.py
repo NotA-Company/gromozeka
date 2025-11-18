@@ -46,8 +46,6 @@ from .attachment import (
     ShareAttachmentPayload,
     StickerAttachment,
     StickerAttachmentPayload,
-    UploadRequest,
-    UploadResult,
     VideoAttachment,
     VideoAttachmentDetails,
     VideoThumbnail,
@@ -151,6 +149,14 @@ from .update import (
     UserRemovedFromChatUpdate,
 )
 from .upload import (
+    AttachmentRequest,
+    PhotoAttachmentRequest,
+    PhotoAttachmentRequestPayload,
+    PhotoToken,
+    PhotoTokens,
+    PhotoUploadResult,
+    UploadedAttachment,
+    UploadedPhoto,
     UploadEndpoint,
     UploadType,
 )
@@ -223,8 +229,6 @@ __all__ = [
     "InlineKeyboardAttachment",
     "ReplyKeyboardAttachment",
     "DataAttachment",
-    "UploadRequest",
-    "UploadResult",
     "attachmentFromDict",
     # Update models (18)
     "Update",
@@ -280,6 +284,14 @@ __all__ = [
     "PhoneMarkup",
     "MarkupList",
     # Upload Models
+    "AttachmentRequest",
+    "PhotoAttachmentRequest",
+    "PhotoAttachmentRequestPayload",
+    "PhotoToken",
+    "PhotoTokens",
+    "PhotoUploadResult",
+    "UploadedAttachment",
+    "UploadedPhoto",
     "UploadType",
     "UploadEndpoint",
 ]

@@ -33,7 +33,6 @@ import magic
 import telegram
 import telegram.ext as telegramExt
 from telegram import Chat, MessageEntity, Update
-from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
@@ -833,7 +832,6 @@ class BaseBotHandler(CommandHandlerMixin):
         *,
         addMessagePrefix: str = "",
         photoData: Optional[bytes] = None,
-        photoCaption: Optional[str] = None,
         sendMessageKWargs: Optional[Dict[str, Any]] = None,
         tryMarkdownV2: bool = True,
         tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
@@ -853,7 +851,6 @@ class BaseBotHandler(CommandHandlerMixin):
                     messageText=messageText,
                     addMessagePrefix=addMessagePrefix,
                     photoData=photoData,
-                    photoCaption=photoCaption,
                     sendMessageKWargs=sendMessageKWargs,
                     tryMarkdownV2=tryMarkdownV2,
                     tryParseInputJSON=tryParseInputJSON,
@@ -871,7 +868,6 @@ class BaseBotHandler(CommandHandlerMixin):
                     messageText=messageText,
                     addMessagePrefix=addMessagePrefix,
                     photoData=photoData,
-                    photoCaption=photoCaption,
                     sendMessageKWargs=sendMessageKWargs,
                     tryMarkdownV2=tryMarkdownV2,
                     tryParseInputJSON=tryParseInputJSON,
@@ -893,7 +889,6 @@ class BaseBotHandler(CommandHandlerMixin):
         *,
         addMessagePrefix: str = "",
         photoData: Optional[bytes] = None,
-        photoCaption: Optional[str] = None,
         sendMessageKWargs: Optional[Dict[str, Any]] = None,
         tryMarkdownV2: bool = True,
         tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
@@ -937,13 +932,33 @@ class BaseBotHandler(CommandHandlerMixin):
                 "format": maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
             }
         )
+        attachments: Optional[List[maxModels.Attachment]] = []
 
         try:
             if photoData is not None:
-                # TODO: Support proto
-                pass
-            elif messageText is not None:
-                # Send text
+                mimeType = magic.from_buffer(photoData, mime=True)
+                ext = mimeType.split("/")[1]
+                ret = await self._maxBot.uploadFile(
+                    filename=f"generated_image.{ext}",
+                    data=photoData,
+                    mimeType=mimeType,
+                    uploadType=maxModels.UploadType.IMAGE,
+                )
+                if isinstance(ret, maxModels.UploadedPhoto):
+                    attachments.append(
+                        maxModels.PhotoAttachmentRequest(
+                            payload=maxModels.PhotoAttachmentRequestPayload(
+                                photos=ret.payload.photos,
+                            )
+                        )
+                    )
+
+            if messageText is not None or attachments:
+                # Send Message
+                if not attachments:
+                    attachments = None
+                if messageText is None:
+                    messageText = ""
 
                 if not skipLogs:
                     logger.debug(f"Sending reply to {replyToMessage}")
@@ -956,9 +971,11 @@ class BaseBotHandler(CommandHandlerMixin):
                     ]
                 for _messageText in messageTextList:
                     ret = await self._maxBot.sendMessage(
-                        text=_messageText,
+                        text=addMessagePrefix + _messageText,
+                        attachments=attachments,
                         **replyKwargs,
                     )
+                    attachments = None  # Send attachments with first message only
                     replyMessageList.append(ret.message)
 
             try:
@@ -976,9 +993,10 @@ class BaseBotHandler(CommandHandlerMixin):
                         if replyText.startswith(addMessagePrefix):
                             replyText = replyText[len(addMessagePrefix) :]
                             ensuredReplyMessage.messageText = replyText
-                    # if replyMessage.photo:
-                    #     media = await self.processImage(ensuredReplyMessage, mediaPrompt)
-                    #     ensuredReplyMessage.setMediaProcessingInfo(media)
+                    if replyMessage.body.attachments:
+                        # TODO: Process whole list
+                        mediaList = await self.processMaxMedia(ensuredReplyMessage, mediaPrompt)
+                        ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
 
                     self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
 
@@ -1013,7 +1031,6 @@ class BaseBotHandler(CommandHandlerMixin):
         *,
         addMessagePrefix: str = "",
         photoData: Optional[bytes] = None,
-        photoCaption: Optional[str] = None,
         sendMessageKWargs: Optional[Dict[str, Any]] = None,
         tryMarkdownV2: bool = True,
         tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
@@ -1096,9 +1113,9 @@ class BaseBotHandler(CommandHandlerMixin):
                 )
 
                 replyMessage: Optional[telegram.Message] = None
-                if tryMarkdownV2 and photoCaption is not None:
+                if tryMarkdownV2 and messageText is not None:
                     try:
-                        messageTextParsed = markdownToMarkdownV2(addMessagePrefix + photoCaption)
+                        messageTextParsed = markdownToMarkdownV2(addMessagePrefix + messageText)
                         # logger.debug(f"Sending MarkdownV2: {replyText}")
                         replyMessage = await message.reply_photo(
                             caption=messageTextParsed,
@@ -1110,8 +1127,8 @@ class BaseBotHandler(CommandHandlerMixin):
                         # Probably error in markdown formatting, fallback to raw text
 
                 if replyMessage is None:
-                    _photoCaption = photoCaption if photoCaption is not None else ""
-                    replyMessage = await message.reply_photo(caption=addMessagePrefix + _photoCaption, **replyKwargs)
+                    _messageText = messageText if messageText is not None else ""
+                    replyMessage = await message.reply_photo(caption=addMessagePrefix + _messageText, **replyKwargs)
                 if replyMessage is not None:
                     replyMessageList.append(replyMessage)
 
@@ -1187,8 +1204,8 @@ class BaseBotHandler(CommandHandlerMixin):
                             replyText = replyText[len(addMessagePrefix) :]
                             ensuredReplyMessage.messageText = replyText
                     if replyMessage.photo:
-                        media = await self.processImage(ensuredReplyMessage, mediaPrompt)
-                        ensuredReplyMessage.setMediaProcessingInfo(media)
+                        media = await self.processTelegramImage(ensuredReplyMessage, mediaPrompt)
+                        ensuredReplyMessage.addMediaProcessingInfo(media)
 
                     if isGroupChat or isPrivate:
                         self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
@@ -1578,7 +1595,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
             description = llmRet.resultText
             self.db.updateMediaAttachment(
-                fileUniqueId=fileUniqueId,
+                mediaId=fileUniqueId,
                 status=MediaStatus.DONE,
                 description=description,
             )
@@ -1587,204 +1604,14 @@ class BaseBotHandler(CommandHandlerMixin):
         except Exception as e:
             logger.error(f"Failed to parse image: {e}")
             self.db.updateMediaAttachment(
-                fileUniqueId=fileUniqueId,
+                mediaId=fileUniqueId,
                 status=MediaStatus.FAILED,
             )
             return False
 
         # ret['content'] = llmRet.resultText
 
-    async def _processMedia(
-        self,
-        ensuredMessage: EnsuredMessage,
-        media: _BaseMedium,
-        metadata: Dict[str, Any],
-        mediaForLLM: Optional[_BaseMedium] = None,
-        prompt: Optional[str] = None,
-    ) -> MediaProcessingInfo:
-        """
-        Process media attachment from message (image/sticker), dood!
-
-        Handles media download, database storage, MIME type detection,
-        and optional LLM-based image parsing. Creates background task
-        for async image analysis.
-
-        Currently supports only image/* MIME types for LLM parsing.
-
-        Args:
-            ensuredMessage: Message containing the media
-            media: Media object to process (best quality)
-            metadata: Media metadata dictionary (dimensions, etc.)
-            mediaForLLM: Optional different media size for LLM (e.g., smaller)
-            prompt: Optional custom prompt for image parsing
-
-        Returns:
-            [`MediaProcessingInfo`](internal/bot/models/media.py) with processing task and metadata
-
-        Raises:
-            ValueError: If media type is TEXT or UNKNOWN
-            RuntimeError: If bot not initialized or media type mismatch in database
-        """
-        # Currently we support only image/ media.
-        # If we'll want to support other types, then need to
-        # find all "image/" entries in this function and fix
-        mediaStatus = MediaStatus.NEW
-        localUrl: Optional[str] = None
-        mimeType: Optional[str] = None
-        mediaType = ensuredMessage.messageType
-        if mediaForLLM is None:
-            mediaForLLM = media
-
-        if mediaType in [MessageType.TEXT, MessageType.UNKNOWN]:
-            raise ValueError(f"Media type {mediaType} is not supported")
-
-        logger.debug(f"Processing media: {media}")
-        ret = MediaProcessingInfo(
-            id=media.file_unique_id,
-            task=None,
-            type=mediaType,
-        )
-
-        # First check if we have the photo in the database already
-        mediaAttachment = self.db.getMediaAttachment(ret.id)
-        hasMediaAttachment = mediaAttachment is not None
-        if mediaAttachment is not None:
-            logger.debug(f"Media#{ret.id} already in database")
-            if mediaAttachment["media_type"] != mediaType:
-                raise RuntimeError(
-                    f"Media#{ret.id} already present in database and it is not an "
-                    f"{mediaType} but {mediaAttachment['media_type']}"
-                )
-
-            # Only skip processing if Media in DB is in right status
-            match MediaStatus(mediaAttachment["status"]):
-                case MediaStatus.DONE:
-                    ret.task = makeEmptyAsyncTask()
-                    return ret
-
-                case MediaStatus.PENDING:
-                    try:
-                        mediaDate = mediaAttachment["updated_at"]
-                        if not isinstance(mediaDate, datetime.datetime):
-                            logger.error(
-                                f"{mediaType}#{ret.id} `updated_at` is not a datetime: "
-                                f"{type(mediaDate).__name__}({mediaDate})"
-                            )
-                            mediaDate = datetime.datetime.fromisoformat(mediaDate)
-
-                        if utils.getAgeInSecs(mediaDate) > constants.PROCESSING_TIMEOUT:
-                            logger.warning(
-                                f"{mediaType}#{ret.id} already in database but in status "
-                                f"{mediaAttachment['status']} and is too old ({mediaDate}), reprocessing it"
-                            )
-                        else:
-                            ret.task = makeEmptyAsyncTask()
-                            return ret
-                    except Exception as e:
-                        logger.error("{mediaType}#{ret.id} Error during checking age:")
-                        logger.exception(e)
-
-                case _:
-                    mimeType = str(mediaAttachment["mime_type"])
-                    if mimeType.lower().startswith("image/"):
-                        logger.debug(
-                            f"{mediaType}#{ret.id} in wrong status: {mediaAttachment['status']}. Reprocessing it"
-                        )
-                    else:
-                        logger.debug(f"{mediaType}#{ret.id} is {mimeType}, skipping it")
-                        ret.task = makeEmptyAsyncTask()
-                        return ret
-
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
-        mediaData: Optional[bytes] = None
-
-        if chatSettings[ChatSettingsKey.SAVE_IMAGES].toBool():
-            # TODO do
-            pass
-
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
-            mediaStatus = MediaStatus.PENDING
-        else:
-            mediaStatus = MediaStatus.DONE
-
-        if hasMediaAttachment:
-            self.db.updateMediaAttachment(
-                fileUniqueId=ret.id,
-                status=mediaStatus,
-                metadata=utils.jsonDumps(metadata),
-                mimeType=mimeType,
-                localUrl=localUrl,
-                prompt=prompt,
-            )
-        else:
-            self.db.addMediaAttachment(
-                fileUniqueId=ret.id,
-                fileId=media.file_id,
-                fileSize=media.file_size,
-                mediaType=mediaType,
-                mimeType=mimeType,
-                metadata=utils.jsonDumps(metadata),
-                status=mediaStatus,
-                localUrl=localUrl,
-                prompt=prompt,
-                description=None,
-            )
-
-        # Need to parse image content with LLM
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
-            # Do not redownload file if it was downloaded already
-            if mediaData is None or mediaForLLM != media:
-                if self._tgBot is None:
-                    raise RuntimeError("Bot is not initialized")
-                file = await self._tgBot.get_file(mediaForLLM.file_id)
-                logger.debug(f"{mediaType}#{ret.id} File info: {file}")
-                mediaData = bytes(await file.download_as_bytearray())
-
-            mimeType = magic.from_buffer(mediaData, mime=True)
-            logger.debug(f"{mediaType}#{ret.id} Mimetype: {mimeType}")
-
-            self.db.updateMediaAttachment(
-                fileUniqueId=ret.id,
-                mimeType=mimeType,
-            )
-
-            if mimeType.lower().startswith("image/"):
-                logger.debug(f"{mediaType}#{ret.id} is an image")
-            else:
-                logger.warning(f"{mediaType}#{ret.id} is not an image, skipping parsing")
-                ret.task = makeEmptyAsyncTask()
-                self.db.updateMediaAttachment(
-                    fileUniqueId=ret.id,
-                    status=MediaStatus.NEW,
-                )
-                return ret
-
-            imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
-            messages = [
-                ModelMessage(
-                    role="system",
-                    content=imagePrompt,
-                ),
-                ModelImageMessage(
-                    role="user",
-                    content=ensuredMessage.messageText,
-                    image=bytearray(mediaData),
-                ),
-            ]
-
-            logger.debug(f"{mediaType}#{ret.id}: Asynchronously parsing image")
-            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
-            # logger.debug(f"{mediaType}#{ret.id} After Start")
-            ret.task = parseTask
-            await self.queueService.addBackgroundTask(parseTask)
-            # logger.debug(f"{mediaType}#{ret.id} After Queued")
-
-        if ret.task is None:
-            ret.task = makeEmptyAsyncTask()
-
-        return ret
-
-    async def processSticker(self, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
+    async def processTelegramSticker(self, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
         """
         Process a sticker attachment from message, dood!
 
@@ -1816,18 +1643,29 @@ class BaseBotHandler(CommandHandlerMixin):
         # thumbnail=PhotoSize(...), type=<StickerType.REGULAR>, width=512)
 
         metadata = {
+            "type": sticker.type,
+            "emoji": sticker.emoji,
             "width": sticker.width,
             "height": sticker.height,
-            "emoji": sticker.emoji,
             "set_name": sticker.set_name,
             "is_animated": sticker.is_animated,
             "is_video": sticker.is_video,
             "is_premium": sticker.premium_animation is not None,
+            "file_size": sticker.file_size,
         }
 
-        return await self._processMedia(ensuredMessage, media=sticker, metadata=metadata)
+        return await self._processMediaV2(
+            ensuredMessage=ensuredMessage,
+            mediaType=MessageType.IMAGE,
+            mediaId=sticker.file_unique_id,
+            fileId=sticker.file_id,
+            dataGetter=self._telegramFileDownloader,
+            metadata=metadata,
+        )
 
-    async def processImage(self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None) -> MediaProcessingInfo:
+    async def processTelegramImage(
+        self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
+    ) -> MediaProcessingInfo:
         """
         Process a photo attachment from message, dood!
 
@@ -1849,30 +1687,266 @@ class BaseBotHandler(CommandHandlerMixin):
             raise RuntimeError(f"Base message is not Message, but {type(baseMessage)}")
 
         bestPhotoSize = baseMessage.photo[-1]
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
-
-        llmPhotoSize = bestPhotoSize
-        optimalImageSize = chatSettings[ChatSettingsKey.OPTIMAL_IMAGE_SIZE].toInt()
-        if optimalImageSize > 0:
-            # Iterate over all photo sizes and find the best one (i.e. smallest, but, larger than optimalImageSize)
-            for pSize in baseMessage.photo:
-                if pSize.width > optimalImageSize or pSize.height > optimalImageSize:
-                    llmPhotoSize = pSize
-                    break
 
         metadata = {
             # Store metadata for best size
             "width": bestPhotoSize.width,
             "height": bestPhotoSize.height,
+            "file_size": bestPhotoSize.file_size,
         }
 
-        return await self._processMedia(
-            ensuredMessage,
-            media=bestPhotoSize,
-            mediaForLLM=llmPhotoSize,
+        return await self._processMediaV2(
+            ensuredMessage=ensuredMessage,
+            mediaType=MessageType.IMAGE,
+            mediaId=bestPhotoSize.file_unique_id,
+            fileId=bestPhotoSize.file_id,
+            dataGetter=self._telegramFileDownloader,
             metadata=metadata,
             prompt=prompt,
         )
+
+    async def processMaxMedia(
+        self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
+    ) -> List[MediaProcessingInfo]:
+        baseMessage = ensuredMessage.getBaseMessage()
+        ret: List[MediaProcessingInfo] = []
+        if not isinstance(baseMessage, maxModels.Message):
+            logger.error(f"Invalid message type: {type(baseMessage)}")
+            return ret
+
+        if not baseMessage.body.attachments:
+            # No attachments, skip
+            return ret
+
+        for attachment in baseMessage.body.attachments:
+            if attachment.type == maxModels.AttachmentType.IMAGE and isinstance(attachment, maxModels.PhotoAttachment):
+                url = attachment.payload.url
+                mediaId = f"{attachment.type}:{attachment.payload.photo_id}"
+                ret.append(
+                    await self._processMediaV2(
+                        ensuredMessage=ensuredMessage,
+                        mediaType=MessageType.IMAGE,
+                        mediaId=mediaId,
+                        fileId=url,
+                        dataGetter=self._maxFileDownloader,
+                        prompt=prompt,
+                        metadata={
+                            "token": attachment.payload.token,
+                        },
+                    )
+                )
+
+            elif attachment.type == maxModels.AttachmentType.STICKER and isinstance(
+                attachment, maxModels.StickerAttachment
+            ):
+                url = attachment.payload.url
+                mediaId = f"{attachment.type}:{attachment.payload.code}"
+                ret.append(
+                    await self._processMediaV2(
+                        ensuredMessage=ensuredMessage,
+                        mediaType=MessageType.STICKER,
+                        mediaId=mediaId,
+                        fileId=url,
+                        dataGetter=self._maxFileDownloader,
+                        prompt=prompt,
+                        metadata={
+                            "wifth": attachment.width,
+                            "height": attachment.height,
+                        },
+                    )
+                )
+            else:
+                logger.warning(f"Unsupported attachment type: {attachment.type}:{type(attachment).__name__}")
+
+        return ret
+
+    async def _maxFileDownloader(self, mediaId: str, fileId: str) -> Optional[bytes]:
+        """TODO
+        fileId is URL"""
+
+        if self.botProvider != BotProvider.MAX or self._maxBot is None:
+            logger.error(f"_maxFileDownloader({mediaId}, {fileId}) called while platform is {self.botProvider}")
+            return None
+
+        return await self._maxBot.downloadAttachmentPayload(fileId)
+
+    async def _telegramFileDownloader(self, mediaId: str, fileId: str) -> Optional[bytes]:
+        """TODO
+        fileId is file_id"""
+
+        if self.botProvider != BotProvider.TELEGRAM or self._tgBot is None:
+            logger.error(f"_telegramFileDownloader({mediaId}, {fileId}) called while platform is {self.botProvider}")
+            return None
+
+        fileInfo = await self._tgBot.get_file(fileId)
+        logger.debug(f"{mediaId}#{fileId} File info: {fileInfo}")
+        return bytes(await fileInfo.download_as_bytearray())
+
+    async def _processMediaV2(
+        self,
+        ensuredMessage: EnsuredMessage,
+        mediaType: MessageType,
+        mediaId: str,
+        fileId: str,
+        dataGetter: Callable[[str, str], Awaitable[Optional[bytes]]],  # async fn(mediaId, fileId) -> bytes
+        metadata: Optional[Dict[str, Any]] = None,
+        prompt: Optional[str] = None,
+    ) -> MediaProcessingInfo:
+        """TODO"""
+        ret = MediaProcessingInfo(
+            id=mediaId,
+            task=None,
+            type=mediaType,
+        )
+        localUrl: Optional[str] = None  # To be filled with downloaded media URL
+        mimeType: Optional[str] = None  # To be filled with downloaded media MIME type
+
+        logger.debug(f"Processing media {ret.type}#{ret.id} with fileId:{fileId}...")
+        # First check if we have the photo in the database already
+        mediaAttachment = self.db.getMediaAttachment(ret.id)
+        hasMediaAttachment = mediaAttachment is not None
+        if mediaAttachment is not None:
+            logger.debug(f"Media#{ret.id} already in database")
+            if mediaAttachment["media_type"] != mediaType:
+                raise RuntimeError(
+                    f"Media#{ret.id} already present in database and it is not an "
+                    f"{mediaType} but {mediaAttachment['media_type']}"
+                )
+
+            # Only skip processing if Media in DB is in right status
+            match MediaStatus(mediaAttachment["status"]):
+                case MediaStatus.DONE:
+                    ret.task = makeEmptyAsyncTask()
+                    return ret
+
+                case MediaStatus.PENDING:
+                    try:
+                        mediaDate = mediaAttachment["updated_at"]
+                        if not isinstance(mediaDate, datetime.datetime):
+                            logger.error(
+                                f"{ret.type}#{ret.id} `updated_at` is not a datetime: "
+                                f"{type(mediaDate).__name__}({mediaDate})"
+                            )
+                            mediaDate = datetime.datetime.fromisoformat(mediaDate)
+
+                        if utils.getAgeInSecs(mediaDate) > constants.PROCESSING_TIMEOUT:
+                            logger.warning(
+                                f"{ret.type}#{ret.id} already in database but in status "
+                                f"{mediaAttachment['status']} and is too old ({mediaDate}), reprocessing it"
+                            )
+                        else:
+                            ret.task = makeEmptyAsyncTask()
+                            return ret
+                    except Exception as e:
+                        logger.error("{ret.type}#{ret.id} Error during checking age:")
+                        logger.exception(e)
+
+                case _:
+                    mimeType = str(mediaAttachment["mime_type"])
+                    # NOTE: Currently we can process only images
+                    if mimeType.lower().startswith("image/"):
+                        logger.debug(
+                            f"{ret.type}#{ret.id} in wrong status: {mediaAttachment['status']}. Reprocessing it"
+                        )
+                    else:
+                        logger.debug(f"{ret.type}#{ret.id} is {mimeType}, skipping it")
+                        ret.task = makeEmptyAsyncTask()
+                        return ret
+
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        mediaData: Optional[bytes] = None
+
+        if chatSettings[ChatSettingsKey.SAVE_IMAGES].toBool():
+            # TODO do someday. Or not
+            pass
+
+        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+            mediaStatus = MediaStatus.PENDING
+        else:
+            mediaStatus = MediaStatus.DONE
+
+        if hasMediaAttachment:
+            self.db.updateMediaAttachment(
+                mediaId=ret.id,
+                status=mediaStatus,
+                metadata=utils.jsonDumps(metadata),
+                mimeType=mimeType,
+                localUrl=localUrl,
+                prompt=prompt,
+            )
+        else:
+            self.db.addMediaAttachment(
+                fileUniqueId=ret.id,
+                fileId=fileId,
+                mediaType=mediaType,
+                mimeType=mimeType,
+                metadata=utils.jsonDumps(metadata),
+                status=mediaStatus,
+                localUrl=localUrl,
+                prompt=prompt,
+                fileSize=None,
+                description=None,
+            )
+
+        # Need to parse image content with LLM
+        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+            # Do not redownload file if it was downloaded already
+            if mediaData is None:
+                mediaData = await dataGetter(mediaId, fileId)
+
+            if mediaData is None:
+                logger.error(f"{ret.type}#{ret.id} is None, cannot parse it")
+                self.db.updateMediaAttachment(
+                    mediaId=ret.id,
+                    status=MediaStatus.FAILED,
+                )
+                ret.task = makeEmptyAsyncTask()
+                return ret
+
+            mimeType = magic.from_buffer(mediaData, mime=True)
+            logger.debug(f"{ret.type}#{ret.id} Mimetype: {mimeType}")
+
+            self.db.updateMediaAttachment(
+                mediaId=ret.id,
+                mimeType=mimeType,
+                fileSize=len(mediaData),
+            )
+
+            if mimeType.lower().startswith("image/"):
+                logger.debug(f"{ret.type}#{ret.id} is an image")
+            else:
+                logger.warning(f"{ret.type}#{ret.id} is not an image, skipping parsing")
+                ret.task = makeEmptyAsyncTask()
+                self.db.updateMediaAttachment(
+                    mediaId=ret.id,
+                    status=MediaStatus.NEW,
+                )
+                return ret
+
+            imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
+            messages = [
+                ModelMessage(
+                    role="system",
+                    content=imagePrompt,
+                ),
+                ModelImageMessage(
+                    role="user",
+                    content=ensuredMessage.messageText,
+                    image=bytearray(mediaData),
+                ),
+            ]
+
+            logger.debug(f"{mediaType}#{ret.id}: Asynchronously parsing image")
+            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
+            # logger.debug(f"{mediaType}#{ret.id} After Start")
+            ret.task = parseTask
+            await self.queueService.addBackgroundTask(parseTask)
+            # logger.debug(f"{mediaType}#{ret.id} After Queued")
+
+        if ret.task is None:
+            ret.task = makeEmptyAsyncTask()
+
+        return ret
 
     ###
     # Base methods for processing Telegram events

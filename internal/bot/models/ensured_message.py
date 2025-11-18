@@ -362,11 +362,35 @@ class EnsuredMessage:
             parsedMessageText = message.link.message.text
             # It's forward, get text from forward
 
-        else:
-            raise ValueError("No text found. Media messages are not supported yet")
+        if message.body.attachments:
+            match message.body.attachments[0].type:
+                case maxModels.AttachmentType.IMAGE:
+                    messageType = MessageType.IMAGE
+                case maxModels.AttachmentType.VIDEO:
+                    messageType = MessageType.VIDEO
+                case maxModels.AttachmentType.AUDIO:
+                    messageType = MessageType.AUDIO
+                case maxModels.AttachmentType.FILE:
+                    messageType = MessageType.DOCUMENT
+                case maxModels.AttachmentType.STICKER:
+                    messageType = MessageType.STICKER
+                # case maxModels.AttachmentType.CONTACT:
+                #     messageType = MessageType.UNKNOWN
+                # case maxModels.AttachmentType.INLINE_KEYBOARD:
+                #     messageType = MessageType.UNKNOWN
+                # case maxModels.AttachmentType.SHARE:
+                #     messageType = MessageType.UNKNOWN
+                # case maxModels.AttachmentType.LOCATION:
+                #     messageType = MessageType.UNKNOWN
+                # case maxModels.AttachmentType.REPLY_KEYBOARD:
+                #     messageType = MessageType.UNKNOWN
+                case maxModels.AttachmentType.DATA:
+                    messageType = MessageType.DOCUMENT
+                # case _:
+                #     messageType = MessageType.UNKNOWN
 
         if messageType == MessageType.TEXT:
-            if not message.body.text:
+            if not messageText:
                 # Probably not a text message, just log it for now
                 logger.error(f"Message text undefined: {message}")
                 messageType = MessageType.UNKNOWN
@@ -658,7 +682,7 @@ class EnsuredMessage:
         """
         self.mediaId = mediaId
 
-    def setMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
+    def addMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
         """
         Set media processing information and extract media ID, dood!
 

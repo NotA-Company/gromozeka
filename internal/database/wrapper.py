@@ -1465,6 +1465,7 @@ class DatabaseWrapper:
 
     def addMediaAttachment(
         self,
+        *,
         fileUniqueId: str,
         fileId: str,
         fileSize: Optional[int] = None,
@@ -1513,7 +1514,9 @@ class DatabaseWrapper:
 
     def updateMediaAttachment(
         self,
-        fileUniqueId: str,
+        mediaId: str,
+        *,
+        fileSize: Optional[int] = None,
         status: Optional[MediaStatus] = None,
         metadata: Optional[str] = None,
         mimeType: Optional[str] = None,
@@ -1524,7 +1527,7 @@ class DatabaseWrapper:
         """Update a media attachment in the database."""
         try:
             query = ""
-            values = {"fileUniqueId": fileUniqueId}
+            values: Dict[str, str | int] = {"fileUniqueId": mediaId}
 
             if status is not None:
                 query += "status = :status, "
@@ -1544,6 +1547,9 @@ class DatabaseWrapper:
             if prompt is not None:
                 query += "prompt = :prompt, "
                 values["prompt"] = prompt
+            if fileSize is not None:
+                query += "file_size = :fileSize, "
+                values["fileSize"] = fileSize
 
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -1562,7 +1568,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to update media attachment: {e}")
             return False
 
-    def getMediaAttachment(self, fileUniqueId: str) -> Optional[MediaAttachmentDict]:
+    def getMediaAttachment(self, mediaId: str) -> Optional[MediaAttachmentDict]:
         """Get a media attachment from the database."""
         try:
             with self.getCursor() as cursor:
@@ -1571,7 +1577,7 @@ class DatabaseWrapper:
                     SELECT * FROM media_attachments
                     WHERE file_unique_id = ?
                 """,
-                    (fileUniqueId,),
+                    (mediaId,),
                 )
 
                 row = cursor.fetchone()

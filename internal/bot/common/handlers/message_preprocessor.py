@@ -10,7 +10,7 @@ saves messages to the database, dood!
 import logging
 
 from internal.bot.common.models import UpdateObjectType
-from internal.bot.models import EnsuredMessage, MessageType
+from internal.bot.models import BotProvider, EnsuredMessage, MessageType
 from internal.database.models import MessageCategory
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -37,24 +37,38 @@ class MessagePreprocessorHandler(BaseBotHandler):
         TODO
         """
 
-        match ensuredMessage.messageType:
-            case MessageType.TEXT:
-                # No special handling for text messages needed
-                pass
-            case MessageType.IMAGE:
-                media = await self.processImage(ensuredMessage)
-                ensuredMessage.setMediaProcessingInfo(media)
-            case MessageType.STICKER:
-                media = await self.processSticker(ensuredMessage)
-                ensuredMessage.setMediaProcessingInfo(media)
-
+        # Telegram has different messages for each media\document
+        # While Each Max Message can contain multiple attachments of different types
+        match self.botProvider:
+            case BotProvider.TELEGRAM:
+                await self._processTelegramMedia(ensuredMessage)
+            case BotProvider.MAX:
+                mediaList = await self.processMaxMedia(ensuredMessage)
+                if mediaList:
+                    # TODO: Allow use all media
+                    ensuredMessage.addMediaProcessingInfo(mediaList[0])
             case _:
-                # For unsupported message types, just log a warning and process caption like text message
-                logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
-                # return
+                logger.error(f"Unsupported bot provider: {self.botProvider}")
 
         if not self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
             logger.error("Failed to save chat message")
             return HandlerResultStatus.ERROR
 
         return HandlerResultStatus.NEXT
+
+    async def _processTelegramMedia(self, ensuredMessage: EnsuredMessage) -> None:
+        match ensuredMessage.messageType:
+            case MessageType.TEXT:
+                # No special handling for text messages needed
+                pass
+            case MessageType.IMAGE:
+                media = await self.processTelegramImage(ensuredMessage)
+                ensuredMessage.addMediaProcessingInfo(media)
+            case MessageType.STICKER:
+                media = await self.processTelegramSticker(ensuredMessage)
+                ensuredMessage.addMediaProcessingInfo(media)
+
+            case _:
+                # For unsupported message types, just log a warning and process caption like text message
+                logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
+                # return
