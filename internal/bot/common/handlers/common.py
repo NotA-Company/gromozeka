@@ -20,13 +20,8 @@ from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
-from internal.config.manager import ConfigManager
-from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
-from internal.services.llm import LLMService
-from lib.ai import LLMManager
-
-from ..models import (
+from internal.bot.models import (
+    BotProvider,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
@@ -34,6 +29,12 @@ from ..models import (
     DelayedTaskFunction,
     EnsuredMessage,
 )
+from internal.config.manager import ConfigManager
+from internal.database.models import MessageCategory
+from internal.database.wrapper import DatabaseWrapper
+from internal.services.llm import LLMService
+from lib.ai import LLMManager
+
 from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,9 @@ class CommonHandler(BaseBotHandler):
         llmService: LLM service instance for tool registration and management
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+    ):
         """
         Initialize the CommonHandler with required services, dood!
 
@@ -68,7 +71,7 @@ class CommonHandler(BaseBotHandler):
             llmManager: LLM manager instance for AI model interactions
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager)
+        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 
@@ -121,8 +124,8 @@ class CommonHandler(BaseBotHandler):
             text=kwargs["messageText"],
             message_thread_id=kwargs["threadId"],
         )
-        message.set_bot(self._bot)
-        ensuredMessage = EnsuredMessage.fromMessage(message)
+        message.set_bot(self._tgBot)
+        ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
         await self.sendMessage(
             replyToMessage=ensuredMessage,
             messageText=kwargs["messageText"],
@@ -148,8 +151,8 @@ class CommonHandler(BaseBotHandler):
             If the bot is not initialized, logs an error instead of attempting deletion.
         """
         kwargs = delayedTask.kwargs
-        if self._bot is not None:
-            await self._bot.delete_message(chat_id=kwargs["chatId"], message_id=kwargs["messageId"])
+        if self._tgBot is not None:
+            await self._tgBot.delete_message(chat_id=kwargs["chatId"], message_id=kwargs["messageId"])
         else:
             logger.error(
                 "Bot is not initialized, can't delete message " f"{kwargs['messageId']} in chat {kwargs['chatId']}"
@@ -213,9 +216,9 @@ class CommonHandler(BaseBotHandler):
             "messageCategory": messageCategory,
             "messageId": ensuredMessage.messageId,
             "threadId": ensuredMessage.threadId,
-            "chatId": ensuredMessage.chat.id,
-            "userId": ensuredMessage.user.id,
-            "chatType": ensuredMessage.chat.type,
+            "chatId": ensuredMessage.recipient.id,
+            "userId": ensuredMessage.sender.id,
+            "chatType": ensuredMessage.recipient.chatType,
         }
 
         return await self.queueService.addDelayedTask(delayedUntil=delayedUntil, function=functionName, kwargs=kwargs)
@@ -402,9 +405,9 @@ class CommonHandler(BaseBotHandler):
         listAll = context.args and context.args[0].strip().lower() == "all"
 
         if listAll:
-            listAll = await self.isAdmin(ensuredMessage.user, None, True)
+            listAll = await self.isAdmin(ensuredMessage.sender, None, True)
 
-        knownChats = self.db.getAllGroupChats() if listAll else self.db.getUserChats(ensuredMessage.user.id)
+        knownChats = self.db.getAllGroupChats() if listAll else self.db.getUserChats(ensuredMessage.sender.id)
 
         resp = "Список доступных чатов:\n\n"
 

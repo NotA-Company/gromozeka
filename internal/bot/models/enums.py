@@ -5,6 +5,13 @@ Enums: Different enum types for bot models
 from enum import StrEnum
 
 
+class BotProvider(StrEnum):
+    """TODO"""
+
+    TELEGRAM = "telegram"
+    MAX = "max"
+
+
 class LLMMessageFormat(StrEnum):
     JSON = "json"
     TEXT = "text"

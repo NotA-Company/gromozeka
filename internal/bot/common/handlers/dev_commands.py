@@ -20,23 +20,25 @@ import logging
 import time
 from typing import Optional
 
+import telegram
 from telegram import Chat, Update
-from telegram.constants import ChatType, MessageEntityType
+from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
-from internal.database.models import MessageCategory
-from internal.services.cache import CacheNamespace
-
-from .. import constants
-from ..models import (
+from internal.bot import constants
+from internal.bot.models import (
     ChatSettingsKey,
     ChatSettingsValue,
+    ChatType,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
 )
+from internal.database.models import MessageCategory
+from internal.services.cache import CacheNamespace
+
 from .base import BaseBotHandler, TypingManager, commandHandlerExtended
 
 logger = logging.getLogger(__name__)
@@ -254,7 +256,7 @@ class DevCommandsHandler(BaseBotHandler):
         args = context.args
         targetChatId = utils.extractInt(args)
         if targetChatId is None:
-            targetChatId = ensuredMessage.chat.id
+            targetChatId = ensuredMessage.recipient.id
         elif args:
             args = args[1:]
 
@@ -340,6 +342,8 @@ class DevCommandsHandler(BaseBotHandler):
             - Invalid keys result in an error message, dood!
         """
         message = ensuredMessage.getBaseMessage()
+        if not isinstance(message, telegram.Message):
+            raise ValueError("Invalid message type")
 
         commandStr = ""
         for entityStr in message.parse_entities([MessageEntityType.BOT_COMMAND]).values():
@@ -364,7 +368,7 @@ class DevCommandsHandler(BaseBotHandler):
 
         targetChatId = utils.extractInt(args)
         if targetChatId is None:
-            targetChatId = ensuredMessage.chat.id
+            targetChatId = ensuredMessage.recipient.id
         else:
             args = args[1:]
 
@@ -429,6 +433,8 @@ class DevCommandsHandler(BaseBotHandler):
     ) -> None:
         """Handle /test command to run various diagnostic test suites, dood!"""
         message = ensuredMessage.getBaseMessage()
+        if not isinstance(message, telegram.Message):
+            raise ValueError("Invalid message type")
 
         if not context.args or len(context.args) < 1:
             await self.sendMessage(

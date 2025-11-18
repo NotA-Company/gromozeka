@@ -99,6 +99,7 @@ class MaxBotClient:
         "_httpClient",
         "_pollingTask",
         "_isPolling",
+        "_myInfo",
     )
 
     def __init__(
@@ -132,6 +133,7 @@ class MaxBotClient:
         self._httpClient: Optional[httpx.AsyncClient] = None
         self._pollingTask: Optional[asyncio.Task] = None
         self._isPolling = False
+        self._myInfo: Optional[BotInfo] = None
 
         logger.debug(f"MaxBotClient initialized for {self.baseUrl}")
 
@@ -373,8 +375,9 @@ class MaxBotClient:
         return await self._makeRequest(HTTP_DELETE, endpoint)
 
     # Basic API methods (Phase 1)
-    async def getMyInfo(self) -> BotInfo:
+    async def getMyInfo(self, useCache: bool = True) -> BotInfo:
         """Get information about the current bot.
+        TODO: Rewrite
 
         Returns information about the current bot identified by the access token.
         The method returns the bot ID, name, and avatar (if available).
@@ -392,8 +395,14 @@ class MaxBotClient:
             ...     print(f"Bot ID: {bot_info.user_id}")
             ...     print(f"Bot name: {bot_info.first_name}")
         """
+
+        if useCache and self._myInfo is not None:
+            return self._myInfo
+
         response = await self.get("/me")
-        return BotInfo.from_dict(response)
+        self._myInfo = BotInfo.from_dict(response)
+
+        return self._myInfo
 
     async def healthCheck(self) -> bool:
         """Perform a simple health check against the API.

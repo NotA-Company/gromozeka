@@ -30,13 +30,42 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 import magic
-from telegram import Chat, Message, MessageEntity, Update, User
+import telegram
+import telegram.ext as telegramExt
+from telegram import Chat, Message, MessageEntity, Update
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
-from telegram.constants import ChatAction, ChatType
-from telegram.ext import ContextTypes, ExtBot
+from telegram.constants import ChatAction
+from telegram.ext import ContextTypes
 
+import lib.max_bot as maxBot
+import lib.max_bot.models as maxModels
 import lib.utils as utils
+from internal.bot import constants
+from internal.bot.common.models import UpdateObjectType
+from internal.bot.models import (
+    BotProvider,
+    CallbackDataDict,
+    ChatSettingsKey,
+    ChatSettingsValue,
+    ChatType,
+    CommandCategory,
+    CommandHandlerInfo,
+    CommandHandlerMixin,
+    CommandHandlerOrder,
+    CommandPermission,
+    EnsuredMessage,
+    MediaProcessingInfo,
+    MentionCheckResult,
+    MessageRecipient,
+    MessageSender,
+    MessageType,
+    UserMetadataDict,
+)
+from internal.bot.models.command_handlers import _HANDLER_METADATA_ATTR
+from internal.config.manager import ConfigManager
+from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
+from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache import CacheService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from lib.ai import (
@@ -46,28 +75,6 @@ from lib.ai import (
     ModelResultStatus,
 )
 from lib.markdown import markdownToMarkdownV2
-
-from ...config.manager import ConfigManager
-from ...database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
-from ...database.wrapper import DatabaseWrapper
-from .. import constants
-from ..models import (
-    CallbackDataDict,
-    ChatSettingsKey,
-    ChatSettingsValue,
-    CommandCategory,
-    CommandHandlerInfo,
-    CommandHandlerMixin,
-    CommandHandlerOrder,
-    CommandPermission,
-    EnsuredMessage,
-    MediaProcessingInfo,
-    MentionCheckResult,
-    MessageSender,
-    MessageType,
-    UserMetadataDict,
-)
-from ..models.command_handlers import _HANDLER_METADATA_ATTR
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +382,7 @@ def commandHandlerExtended(
 
             ensuredMessage: Optional[EnsuredMessage] = None
             try:
-                ensuredMessage = EnsuredMessage.fromMessage(message)
+                ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
             except Exception as e:
                 logger.error(f"Error while ensuring message: {e}")
                 return
@@ -384,20 +391,20 @@ def commandHandlerExtended(
 
             canProcess = CommandPermission.DEFAULT in availableFor
             isBotOwner = await self.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
-            chatSettings = self.getChatSettings(ensuredMessage.chat.id)
-            chatType = ensuredMessage.chat.type
+            chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+            chatType = ensuredMessage.recipient.chatType
 
             if not canProcess and CommandPermission.PRIVATE in availableFor:
-                canProcess = chatType == Chat.PRIVATE
+                canProcess = chatType == ChatType.PRIVATE
             if not canProcess and CommandPermission.GROUP in availableFor:
-                canProcess = chatType in [Chat.GROUP, Chat.SUPERGROUP]
+                canProcess = chatType == ChatType.GROUP
 
             if not canProcess and CommandPermission.BOT_OWNER in availableFor:
                 canProcess = isBotOwner
 
             if not canProcess and CommandPermission.ADMIN:
                 canProcess = (chatType in [Chat.GROUP, Chat.SUPERGROUP]) and await self.isAdmin(
-                    ensuredMessage.sender, ensuredMessage.chat
+                    ensuredMessage.sender, ensuredMessage.recipient
                 )
 
             if not canProcess:
@@ -408,7 +415,7 @@ def commandHandlerExtended(
 
                 logger.warning(
                     f"Command `{botCommand}` is not allowed in "
-                    f"chat {chatType}:{ensuredMessage.chat.id} for "
+                    f"chat {ensuredMessage.recipient} for "
                     f"user {ensuredMessage.sender}. Needed permissions: {availableFor}"
                 )
                 if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
@@ -418,7 +425,7 @@ def commandHandlerExtended(
                         logger.error(f"Error while deleting message: {e}")
                 return
 
-            isAdmin = await self.isAdmin(ensuredMessage.sender, ensuredMessage.chat)
+            isAdmin = await self.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
             match category:
                 case CommandCategory.UNSPECIFIED:
                     # No category specified, deny by default
@@ -448,7 +455,7 @@ def commandHandlerExtended(
 
                 logger.warning(
                     f"Command `{str(botCommand)}` is not allowed in "
-                    f"chat {chatType}:{ensuredMessage.chat.id} for "
+                    f"chat {ensuredMessage.recipient} for "
                     f"user {ensuredMessage.sender}. Command category: {category}."
                 )
                 if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
@@ -512,7 +519,13 @@ class BaseBotHandler(CommandHandlerMixin):
         queueService: Queue service for background tasks
     """
 
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(
+        self,
+        configManager: ConfigManager,
+        database: DatabaseWrapper,
+        llmManager: LLMManager,
+        botProvider: BotProvider,
+    ):
         """
         Initialize the base handler with required services, dood!
 
@@ -528,6 +541,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self.config = configManager.getBotConfig()
         self.db = database
         self.llmManager = llmManager
+        self.botProvider = botProvider
 
         # TODO: Put all botOwners and chatDefaults to some service to not duplicate it for each handler class
         # Init different defaults
@@ -569,7 +583,8 @@ class BaseBotHandler(CommandHandlerMixin):
 
         self.queueService = QueueService.getInstance()
 
-        self._bot: Optional[ExtBot] = None
+        self._tgBot: Optional[telegramExt.ExtBot] = None
+        self._maxBot: Optional[maxBot.MaxBotClient] = None
 
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
         """
@@ -581,7 +596,7 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         return super().getCommandHandlers()
 
-    def injectBot(self, bot: ExtBot) -> None:
+    def injectTGBot(self, bot: telegramExt.ExtBot) -> None:
         """
         Inject the bot instance for use in handlers, dood!
 
@@ -591,7 +606,23 @@ class BaseBotHandler(CommandHandlerMixin):
         Args:
             bot: Telegram bot instance from python-telegram-bot library
         """
-        self._bot = bot
+        if self.botProvider != BotProvider.TELEGRAM:
+            raise ValueError(f"Bot provider must be {BotProvider.TELEGRAM}")
+        self._tgBot = bot
+
+    def injectMaxBot(self, bot: maxBot.MaxBotClient) -> None:
+        """
+        Inject the bot instance for use in handlers, dood!
+
+        This method must be called before handlers can send messages or
+        perform bot-specific operations.
+
+        Args:
+            bot: Max bot instance from lib.max_bot library
+        """
+        if self.botProvider != BotProvider.MAX:
+            raise ValueError(f"Bot provider must be {BotProvider.MAX}")
+        self._maxBot = bot
 
     ###
     # Chat settings Managenent
@@ -685,10 +716,10 @@ class BaseBotHandler(CommandHandlerMixin):
             ensuredMessage: Message object to update with user data
         """
         ensuredMessage.setUserData(
-            self.cache.getChatUserData(chatId=ensuredMessage.chat.id, userId=ensuredMessage.user.id)
+            self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
         )
 
-    def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
+    async def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
         """
         Check if a message mentions the bot, dood!
 
@@ -700,11 +731,11 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             [`MentionCheckResult`](internal/bot/models/ensured_message.py) indicating if bot was mentioned
         """
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
-        username: Optional[str] = None
-        if self._bot:
-            username = "@" + self._bot.username
+        username: Optional[str] = await self.getBotUserName()
+        if username is not None:
+            username = "@" + username.lower().lstrip("@")
 
         return ensuredMessage.checkHasMention(
             username=username,
@@ -715,8 +746,24 @@ class BaseBotHandler(CommandHandlerMixin):
     # Different helpers
     ###
 
+    async def getBotId(self) -> int:
+        if self._tgBot:
+            return self._tgBot.id
+        elif self._maxBot:
+            return (await self._maxBot.getMyInfo()).user_id
+
+        raise RuntimeError("No Active bot found")
+
+    async def getBotUserName(self) -> Optional[str]:
+        if self._tgBot:
+            return self._tgBot.username
+        elif self._maxBot:
+            return (await self._maxBot.getMyInfo()).username
+
+        raise RuntimeError("No Active bot found")
+
     async def isAdmin(
-        self, user: User | MessageSender, chat: Optional[Chat] = None, allowBotOwners: bool = True
+        self, user: MessageSender, chat: Optional[MessageRecipient] = None, allowBotOwners: bool = True
     ) -> bool:
         """
         Check if a user is an admin or bot owner, dood!
@@ -738,30 +785,101 @@ class BaseBotHandler(CommandHandlerMixin):
         if username:
             username = username.lower().lstrip("@")
 
+        # TODO: Add support of bot owners by userId
         if allowBotOwners and username in self.botOwners:
             # User is bot owner and bot owners are allowed
             return True
 
+        if chat is None:
+            # No chat - can't be admin
+            return False
+
+        if chat.chatType == ChatType.PRIVATE:
+            return True
+
         # If userId is the same as chatID, then it's Private chat or Anonymous Admin
-        if chat is not None and user.id == chat.id:
+        if self.botProvider == BotProvider.TELEGRAM and user.id == chat.id:
             return True
 
         # If chat is passed, check if user is admin of given chat
-        if chat is not None:
-            chatAdmins = self.cache.getChatAdmins(chat.id)
-            if chatAdmins is not None:
+        match self.botProvider:
+            case BotProvider.TELEGRAM:
+                chatAdmins = self.cache.getChatAdmins(chat.id)
+                if chatAdmins is not None:
+                    return user.id in chatAdmins
+
+                if self._tgBot is None:
+                    logger.error("Telegram bot is Undefined, can't get admins")
+                    return False
+
+                chatAdmins = {}  # userID -> username
+                for admin in await self._tgBot.get_chat_administrators(chat_id=chat.id):
+                    chatAdmins[admin.user.id] = admin.user.name
+
+                self.cache.setChatAdmins(chat.id, chatAdmins)
                 return user.id in chatAdmins
-
-            chatAdmins = {}  # userID -> username
-            for admin in await chat.get_administrators():
-                chatAdmins[admin.user.id] = admin.user.name
-
-            self.cache.setChatAdmins(chat.id, chatAdmins)
-            return user.id in chatAdmins
+            case BotProvider.MAX:
+                # TODO: Add Max admins getting
+                logger.error("Max Admins getting is not implemented yet")
+            case _:
+                raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
 
         return False
 
     async def sendMessage(
+        self,
+        replyToMessage: EnsuredMessage,
+        messageText: Optional[str] = None,
+        *,
+        addMessagePrefix: str = "",
+        photoData: Optional[bytes] = None,
+        photoCaption: Optional[str] = None,
+        sendMessageKWargs: Optional[Dict[str, Any]] = None,
+        tryMarkdownV2: bool = True,
+        tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
+        sendErrorIfAny: bool = True,
+        skipLogs: bool = False,
+        mediaPrompt: Optional[str] = None,
+        messageCategory: MessageCategory = MessageCategory.BOT,
+        replyMarkup: Optional[ReplyMarkup] = None,
+        typingManager: Optional[TypingManager] = None,
+        splitIfTooLong: bool = True,
+    ) -> Optional[Message]:
+        match self.botProvider:
+            case BotProvider.TELEGRAM:
+                return await self._sendTelegramMessage(
+                    replyToMessage=replyToMessage,
+                    messageText=messageText,
+                    addMessagePrefix=addMessagePrefix,
+                    photoData=photoData,
+                    photoCaption=photoCaption,
+                    sendMessageKWargs=sendMessageKWargs,
+                    tryMarkdownV2=tryMarkdownV2,
+                    tryParseInputJSON=tryParseInputJSON,
+                    sendErrorIfAny=sendErrorIfAny,
+                    skipLogs=skipLogs,
+                    mediaPrompt=mediaPrompt,
+                    messageCategory=messageCategory,
+                    replyMarkup=replyMarkup,
+                    typingManager=typingManager,
+                    splitIfTooLong=splitIfTooLong,
+                )
+            case BotProvider.MAX:
+                if self._maxBot is None:
+                    raise RuntimeError("Max bot is Undefined")
+
+                ret = await self._maxBot.sendMessage(
+                    chatId=replyToMessage.recipient.id,
+                    text=messageText,
+                    replyTo=str(replyToMessage.messageId),
+                    format=maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
+                )
+                # TODO: Do better
+                return ret  # type: ignore
+            case _:
+                raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
+
+    async def _sendTelegramMessage(
         self,
         replyToMessage: EnsuredMessage,
         messageText: Optional[str] = None,
@@ -815,9 +933,12 @@ class BaseBotHandler(CommandHandlerMixin):
 
         replyMessageList: List[Message] = []
         message = replyToMessage.getBaseMessage()
-        chatType = replyToMessage.chat.type
-        isPrivate = chatType == Chat.PRIVATE
-        isGroupChat = chatType in [Chat.GROUP, Chat.SUPERGROUP]
+        if not isinstance(message, telegram.Message):
+            logger.error("Invalid message type")
+            raise ValueError("Invalid message type")
+        chatType = replyToMessage.recipient.chatType
+        isPrivate = chatType == ChatType.PRIVATE
+        isGroupChat = chatType == ChatType.GROUP
 
         if typingManager is not None:
             await typingManager.stopTask()
@@ -932,7 +1053,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
                 # Save message
                 for replyMessage in replyMessageList:
-                    ensuredReplyMessage = EnsuredMessage.fromMessage(replyMessage)
+                    ensuredReplyMessage = EnsuredMessage.fromTelegramMessage(replyMessage)
                     if addMessagePrefix:
                         replyText = ensuredReplyMessage.messageText
                         if replyText.startswith(addMessagePrefix):
@@ -960,7 +1081,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 try:
                     await message.reply_text(
                         f"Error while sending message: {type(e).__name__}#{e}",
-                        reply_to_message_id=replyToMessage.messageId,
+                        reply_to_message_id=int(replyToMessage.messageId),
                     )
                 except Exception as error_e:
                     logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
@@ -1074,7 +1195,7 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             True if saved successfully, False if message type unsupported
         """
-        chat = message.chat
+        chat = message.recipient
         sender = message.sender
 
         if message.messageType == MessageType.UNKNOWN:
@@ -1093,24 +1214,33 @@ class BaseBotHandler(CommandHandlerMixin):
             if parentMsg:
                 rootMessageId = parentMsg["root_message_id"]
 
-        self.updateChatInfo(chat)
+        if self.botProvider == BotProvider.TELEGRAM:
+            try:
+                baseMessage = message.getBaseMessage()
+                if not isinstance(baseMessage, telegram.Message):
+                    raise ValueError("Base message is not a telegram.Message")
+                self.updateChatInfo(baseMessage.chat)
 
-        # TODO: Actually topic name and emoji could be changed after that
-        # but currently we have no way to know it (except of see
-        # https://docs.python-telegram-bot.org/en/stable/telegram.forumtopicedited.html )
-        # Think about it later
-        if message.isTopicMessage:
-            repliedMessage = message.getBaseMessage().reply_to_message
-            if repliedMessage and repliedMessage.forum_topic_created:
-                self.updateTopicInfo(
-                    chatId=message.chat.id,
-                    topicId=message.threadId,
-                    iconColor=repliedMessage.forum_topic_created.icon_color,
-                    customEmojiId=repliedMessage.forum_topic_created.icon_custom_emoji_id,
-                    name=repliedMessage.forum_topic_created.name,
-                )
+                # TODO: Actually topic name and emoji could be changed after that
+                # but currently we have no way to know it (except of see
+                # https://docs.python-telegram-bot.org/en/stable/telegram.forumtopicedited.html )
+                # Think about it later
+                if message.isTopicMessage:
+                    repliedMessage = baseMessage.reply_to_message
+                    if repliedMessage and repliedMessage.forum_topic_created:
+                        self.updateTopicInfo(
+                            chatId=message.recipient.id,
+                            topicId=message.threadId,
+                            iconColor=repliedMessage.forum_topic_created.icon_color,
+                            customEmojiId=repliedMessage.forum_topic_created.icon_custom_emoji_id,
+                            name=repliedMessage.forum_topic_created.name,
+                        )
+                else:
+                    self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
+            except Exception as e:
+                logger.error(f"Error updating chat info: {e}")
         else:
-            self.updateTopicInfo(chatId=message.chat.id, topicId=message.threadId)
+            logger.error(f"Updating chat info for {self.botProvider} is not implemented yet")
 
         self.db.updateChatUser(
             chatId=chat.id,
@@ -1206,10 +1336,22 @@ class BaseBotHandler(CommandHandlerMixin):
         # logger.debug(f"startContinousTyping(,{action},{maxTimeout},{repeatInterval}) started...")
 
         async def sendAction():
-            await ensuredMessage.chat.send_action(
-                action=typingManager.action,
-                message_thread_id=ensuredMessage.threadId,
-            )
+            match self.botProvider:
+                case BotProvider.TELEGRAM:
+                    if self._tgBot is None:
+                        raise RuntimeError("Telegram bot is undefined")
+                    await self._tgBot.send_chat_action(
+                        chat_id=ensuredMessage.recipient.id,
+                        action=typingManager.action,
+                        message_thread_id=ensuredMessage.threadId,
+                    )
+
+                case BotProvider.MAX:
+                    # TODO: Do
+                    logger.error("Max Typing action is not implemented yet")
+                    pass
+                case _:
+                    raise ValueError(f"Unexpected bot provider: {self.botProvider}")
 
         async def _sendTyping() -> None:
             typingManager.iteration = 0
@@ -1296,7 +1438,7 @@ class BaseBotHandler(CommandHandlerMixin):
             True if parsing succeeded, False if failed
         """
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
         try:
             llmModel = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
@@ -1426,7 +1568,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         ret.task = makeEmptyAsyncTask()
                         return ret
 
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
         mediaData: Optional[bytes] = None
 
         if chatSettings[ChatSettingsKey.SAVE_IMAGES].toBool():
@@ -1465,9 +1607,9 @@ class BaseBotHandler(CommandHandlerMixin):
         if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
             # Do not redownload file if it was downloaded already
             if mediaData is None or mediaForLLM != media:
-                if self._bot is None:
+                if self._tgBot is None:
                     raise RuntimeError("Bot is not initialized")
-                file = await self._bot.get_file(mediaForLLM.file_id)
+                file = await self._tgBot.get_file(mediaForLLM.file_id)
                 logger.debug(f"{mediaType}#{ret.id} File info: {file}")
                 mediaData = bytes(await file.download_as_bytearray())
 
@@ -1531,7 +1673,14 @@ class BaseBotHandler(CommandHandlerMixin):
         Raises:
             ValueError: If message doesn't contain a sticker
         """
-        sticker = ensuredMessage.getBaseMessage().sticker
+        # TODO: Support Max
+        if self.botProvider != BotProvider.TELEGRAM:
+            raise RuntimeError("Stickers are supported in Telegram only")
+        baseMessage = ensuredMessage.getBaseMessage()
+        if not isinstance(baseMessage, telegram.Message):
+            raise RuntimeError(f"Base message is not Message, but {type(baseMessage)}")
+
+        sticker = baseMessage.sticker
         if sticker is None:
             raise ValueError("Sticker not found")
 
@@ -1565,15 +1714,21 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             [`MediaProcessingInfo`](internal/bot/models/media.py) with processing task and metadata
         """
+        # TODO: Support Max
+        if self.botProvider != BotProvider.TELEGRAM:
+            raise RuntimeError("Stickers are supported in Telegram only")
+        baseMessage = ensuredMessage.getBaseMessage()
+        if not isinstance(baseMessage, telegram.Message):
+            raise RuntimeError(f"Base message is not Message, but {type(baseMessage)}")
 
-        bestPhotoSize = ensuredMessage.getBaseMessage().photo[-1]
-        chatSettings = self.getChatSettings(ensuredMessage.chat.id)
+        bestPhotoSize = baseMessage.photo[-1]
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
         llmPhotoSize = bestPhotoSize
         optimalImageSize = chatSettings[ChatSettingsKey.OPTIMAL_IMAGE_SIZE].toInt()
         if optimalImageSize > 0:
             # Iterate over all photo sizes and find the best one (i.e. smallest, but, larger than optimalImageSize)
-            for pSize in ensuredMessage.getBaseMessage().photo:
+            for pSize in baseMessage.photo:
                 if pSize.width > optimalImageSize or pSize.height > optimalImageSize:
                     llmPhotoSize = pSize
                     break
@@ -1595,6 +1750,12 @@ class BaseBotHandler(CommandHandlerMixin):
     ###
     # Base methods for processing Telegram events
     ###
+
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
+    ) -> HandlerResultStatus:
+        # By default, skip processing
+        return HandlerResultStatus.SKIPPED
 
     async def messageHandler(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
