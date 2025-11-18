@@ -8,11 +8,8 @@ saves messages to the database, dood!
 """
 
 import logging
-from typing import Optional
 
-from telegram import Update
-from telegram.ext import ContextTypes
-
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import EnsuredMessage, MessageType
 from internal.database.models import MessageCategory
 
@@ -33,36 +30,12 @@ class MessagePreprocessorHandler(BaseBotHandler):
         Inherits all attributes from BaseBotHandler, dood!
     """
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
-        Process and validate incoming Telegram messages, dood!
-
-        This method performs the following operations, dood:
-        1. Validates that ensuredMessage is provided
-        2. Checks if private chat messages are allowed (for private chats)
-        3. Processes media content based on message type (IMAGE, STICKER)
-        4. Saves the processed message to the database
-
-        Args:
-            update: The Telegram update object containing the message, dood
-            context: The context object for the handler, dood
-            ensuredMessage: Optional validated message object with chat and user info, dood
-
-        Returns:
-            HandlerResultStatus: Status indicating the result of processing, dood:
-                - SKIPPED: If ensuredMessage is None or private chats are disabled
-                - ERROR: If message saving fails
-                - NEXT: If processing completed successfully
-
-        Note:
-            Unsupported message types are logged but still processed (caption as text), dood!
+        TODO
         """
-
-        if not ensuredMessage:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
 
         match ensuredMessage.messageType:
             case MessageType.TEXT:

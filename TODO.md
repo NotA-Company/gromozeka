@@ -1,3 +1,27 @@
+# Max Support TODO:
+Adopt Handlers:
+- [ ] base.py
+  - [ ] Media Download support
+  - [ ] Media Upload support
+  - [x] Proper message sending support
+  - [ ] Typing action support
+  - [ ] Chat Info handling support
+- [ ] common.py
+- [ ] configure.py
+- [ ] dev_commands.py
+- [ ] example.py
+- [ ] help_command.py
+- [x] llm_messages.py
+- [ ] manager.py
+- [ ] media.py
+- [x] message_preprocessor.py
+- [ ] react_on_user.py
+- [ ] spam.py
+- [ ] summarization.py
+- [ ] user_data.py
+- [ ] weather.py
+- [ ] yandex_search.py
+
 # Our TODO list
 - [ ] General framework above Telegram and Max
 - [ ] Add ENV\.env support in config secrets

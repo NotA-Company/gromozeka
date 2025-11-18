@@ -24,12 +24,11 @@ import re
 from typing import Any, Dict, List, Optional
 
 import telegram
-from telegram import Update
 from telegram.constants import ChatAction
-from telegram.ext import ContextTypes
 
 import lib.max_bot.models as maxModels
 from internal.bot import constants
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -93,7 +92,6 @@ class LLMMessageHandler(BaseBotHandler):
         messages: List[ModelMessage],
         fallbackModel: AbstractModel,
         ensuredMessage: EnsuredMessage,
-        context: ContextTypes.DEFAULT_TYPE,
         *,
         typingManager: TypingManager,
         useTools: bool = False,
@@ -150,7 +148,6 @@ class LLMMessageHandler(BaseBotHandler):
         self,
         ensuredMessage: EnsuredMessage,
         messagesHistory: List[ModelMessage],
-        context: ContextTypes.DEFAULT_TYPE,
         *,
         typingManager: TypingManager,
         stopTypingOnSend: bool = True,
@@ -196,7 +193,6 @@ class LLMMessageHandler(BaseBotHandler):
                 messages=messagesHistory,
                 fallbackModel=chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager),
                 ensuredMessage=ensuredMessage,
-                context=context,
                 useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
                 typingManager=typingManager,
             )
@@ -307,40 +303,12 @@ class LLMMessageHandler(BaseBotHandler):
     # Handling messages
     ###
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    async def newMessageHandler(
+        self,
+        ensuredMessage: EnsuredMessage,
+        updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
-        """
-        Main entry point for processing incoming messages, dood!
-
-        This handler routes messages to appropriate sub-handlers based on message type
-        and chat context. It handles different chat types (private, group, supergroup)
-        and delegates to specific handlers for replies, mentions, private messages,
-        and random responses, dood!
-
-        Processing order:
-        1. Validate message and chat type
-        2. Check for automatic forwards (skip)
-        3. Handle replies to bot messages
-        4. Handle bot mentions
-        5. Handle private chat messages
-        6. Handle random responses in groups
-
-        Args:
-            update (Update): Telegram update object containing the message
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
-            ensuredMessage (Optional[EnsuredMessage]): Validated and enriched message object,
-                None if message should be skipped
-
-        Returns:
-            HandlerResultStatus: Status indicating how the message was processed:
-                - SKIPPED: Message was not processed
-                - FINAL: Message was successfully processed
-                - ERROR: An error occurred during processing
-        """
-        if ensuredMessage is None:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
+        """TODO"""
 
         chat = ensuredMessage.recipient
         if chat.chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
@@ -361,26 +329,25 @@ class LLMMessageHandler(BaseBotHandler):
 
         # Check if message is a reply to our message
         # TODO: Move to separate handler?
-        if await self.handleReply(update, context, ensuredMessage):
+        if await self.handleReply(ensuredMessage, updateObj):
             return HandlerResultStatus.FINAL
 
         # Check if bot was mentioned
         # TODO: Move to separate handler?
-        if await self.handleMention(update, context, ensuredMessage):
+        if await self.handleMention(ensuredMessage, updateObj):
             return HandlerResultStatus.FINAL
 
         # Randomly answer message
         # TODO: Move to separate handler?
-        if await self.handleRandomMessage(update, context, ensuredMessage):
+        if await self.handleRandomMessage(ensuredMessage, updateObj):
             return HandlerResultStatus.FINAL
 
         return HandlerResultStatus.NEXT
 
     async def handleReply(
         self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
         ensuredMessage: EnsuredMessage,
+        updateObj: UpdateObjectType,
     ) -> bool:
         """
         Handle messages that are replies to bot's previous messages, dood!
@@ -470,7 +437,7 @@ class LLMMessageHandler(BaseBotHandler):
                 )
 
             else:
-                if storedMsg["user_id"] != context.bot.id:
+                if storedMsg["user_id"] != await self.getBotId():
                     logger.error(f"Parent message is not from us: {storedMsg}")
                     return False
 
@@ -507,16 +474,15 @@ class LLMMessageHandler(BaseBotHandler):
                 ),
             ] + storedMessages
 
-            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context, typingManager=typingManager):
+            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager):
                 logger.error("Failed to send LLM reply")
 
         return True
 
     async def handleMention(
         self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
         ensuredMessage: EnsuredMessage,
+        updateObj: UpdateObjectType,
     ) -> bool:
         """
         Handle messages where the bot is mentioned by name or username, dood!
@@ -572,7 +538,7 @@ class LLMMessageHandler(BaseBotHandler):
                 )
 
                 user = users[random.randint(0, len(users) - 1)]
-                while user["user_id"] == context.bot.id:
+                while user["user_id"] == await self.getBotId():
                     # Do not allow bot to choose itself
                     user = users[random.randint(0, len(users) - 1)]
 
@@ -644,7 +610,7 @@ class LLMMessageHandler(BaseBotHandler):
                 ),
             )
 
-            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context, typingManager=typingManager):
+            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager):
                 logger.error("Failed to send LLM reply")
                 return False
 
@@ -652,9 +618,8 @@ class LLMMessageHandler(BaseBotHandler):
 
     async def handleRandomMessage(
         self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
         ensuredMessage: EnsuredMessage,
+        updateObj: UpdateObjectType,
     ) -> bool:
         """
         Randomly respond to messages in group chats based on probability, dood!
@@ -773,7 +738,7 @@ class LLMMessageHandler(BaseBotHandler):
                 ),
             ] + storedMessages
 
-            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, context, typingManager=typingManager):
+            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager):
                 logger.error("Failed to send LLM reply")
                 return False
 

@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 import magic
 import telegram
 import telegram.ext as telegramExt
-from telegram import Chat, Message, MessageEntity, Update
+from telegram import Chat, MessageEntity, Update
 from telegram._files._basemedium import _BaseMedium
 from telegram._utils.types import ReplyMarkup
 from telegram.constants import ChatAction
@@ -844,9 +844,10 @@ class BaseBotHandler(CommandHandlerMixin):
         replyMarkup: Optional[ReplyMarkup] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
-    ) -> Optional[Message]:
+    ) -> Optional[telegram.Message]:
         match self.botProvider:
             case BotProvider.TELEGRAM:
+                # TODO: Refactoring needed
                 return await self._sendTelegramMessage(
                     replyToMessage=replyToMessage,
                     messageText=messageText,
@@ -865,19 +866,145 @@ class BaseBotHandler(CommandHandlerMixin):
                     splitIfTooLong=splitIfTooLong,
                 )
             case BotProvider.MAX:
-                if self._maxBot is None:
-                    raise RuntimeError("Max bot is Undefined")
-
-                ret = await self._maxBot.sendMessage(
-                    chatId=replyToMessage.recipient.id,
-                    text=messageText,
-                    replyTo=str(replyToMessage.messageId),
-                    format=maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
-                )
-                # TODO: Do better
-                return ret  # type: ignore
+                return await self._sendMaxMessage(
+                    replyToMessage=replyToMessage,
+                    messageText=messageText,
+                    addMessagePrefix=addMessagePrefix,
+                    photoData=photoData,
+                    photoCaption=photoCaption,
+                    sendMessageKWargs=sendMessageKWargs,
+                    tryMarkdownV2=tryMarkdownV2,
+                    tryParseInputJSON=tryParseInputJSON,
+                    sendErrorIfAny=sendErrorIfAny,
+                    skipLogs=skipLogs,
+                    mediaPrompt=mediaPrompt,
+                    messageCategory=messageCategory,
+                    replyMarkup=replyMarkup,
+                    typingManager=typingManager,
+                    splitIfTooLong=splitIfTooLong,
+                )  # type: ignore
             case _:
                 raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
+
+    async def _sendMaxMessage(
+        self,
+        replyToMessage: EnsuredMessage,
+        messageText: Optional[str] = None,
+        *,
+        addMessagePrefix: str = "",
+        photoData: Optional[bytes] = None,
+        photoCaption: Optional[str] = None,
+        sendMessageKWargs: Optional[Dict[str, Any]] = None,
+        tryMarkdownV2: bool = True,
+        tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
+        sendErrorIfAny: bool = True,
+        skipLogs: bool = False,
+        mediaPrompt: Optional[str] = None,
+        messageCategory: MessageCategory = MessageCategory.BOT,
+        replyMarkup: Optional[ReplyMarkup] = None,
+        typingManager: Optional[TypingManager] = None,
+        splitIfTooLong: bool = True,
+    ) -> List[maxModels.Message]:
+        if self._maxBot is None:
+            raise RuntimeError("Max bot is Undefined")
+
+        if photoData is None and messageText is None:
+            logger.error("No message text or photo data provided")
+            raise ValueError("No message text or photo data provided")
+
+        replyMessageList: List[maxModels.Message] = []
+        # message = replyToMessage.getBaseMessage()
+        # if not isinstance(message, maxModels.Message):
+        #     logger.error("Invalid message type")
+        #     raise ValueError("Invalid message type")
+        chatType = replyToMessage.recipient.chatType
+
+        if typingManager is not None:
+            await typingManager.stopTask()
+
+        if chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
+            logger.error("Cannot send message to chat type {}".format(chatType))
+            raise ValueError("Cannot send message to chat type {}".format(chatType))
+
+        if sendMessageKWargs is None:
+            sendMessageKWargs = {}
+
+        replyKwargs = sendMessageKWargs.copy()
+        replyKwargs.update(
+            {
+                "chatId": replyToMessage.recipient.id,
+                "replyTo": str(replyToMessage.messageId),
+                "format": maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
+            }
+        )
+
+        try:
+            if photoData is not None:
+                # TODO: Support proto
+                pass
+            elif messageText is not None:
+                # Send text
+
+                if not skipLogs:
+                    logger.debug(f"Sending reply to {replyToMessage}")
+
+                messageTextList: List[str] = [messageText]
+                maxMessageLength = maxBot.MAX_MESSAGE_LENGTH - len(addMessagePrefix)
+                if splitIfTooLong and len(messageText) > maxMessageLength:
+                    messageTextList = [
+                        messageText[i : i + maxMessageLength] for i in range(0, len(messageText), maxMessageLength)
+                    ]
+                for _messageText in messageTextList:
+                    ret = await self._maxBot.sendMessage(
+                        text=_messageText,
+                        **replyKwargs,
+                    )
+                    replyMessageList.append(ret.message)
+
+            try:
+                if not replyMessageList:
+                    raise ValueError("No reply messages")
+
+                if not skipLogs:
+                    logger.debug(f"Sent messages: {[utils.jsonDumps(msg) for msg in replyMessageList]}")
+
+                # Save message
+                for replyMessage in replyMessageList:
+                    ensuredReplyMessage = EnsuredMessage.fromMaxMessage(replyMessage)
+                    if addMessagePrefix:
+                        replyText = ensuredReplyMessage.messageText
+                        if replyText.startswith(addMessagePrefix):
+                            replyText = replyText[len(addMessagePrefix) :]
+                            ensuredReplyMessage.messageText = replyText
+                    # if replyMessage.photo:
+                    #     media = await self.processImage(ensuredReplyMessage, mediaPrompt)
+                    #     ensuredReplyMessage.setMediaProcessingInfo(media)
+
+                    self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
+
+            except Exception as e:
+                logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
+                logger.exception(e)
+                # Message was sent, so return it
+                return replyMessageList
+
+            ###########
+
+        except Exception as e:
+            logger.error(f"Error while sending message: {type(e).__name__}#{e}")
+            logger.exception(e)
+            if sendErrorIfAny:
+                try:
+                    await self._maxBot.sendMessage(
+                        text=f"Error while sending message: {type(e).__name__}#{e}",
+                        chatId=replyToMessage.recipient.id,
+                        replyTo=str(replyToMessage.messageId),
+                    )
+                except Exception as error_e:
+                    logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
+            return replyMessageList
+
+        return replyMessageList
 
     async def _sendTelegramMessage(
         self,
@@ -897,7 +1024,7 @@ class BaseBotHandler(CommandHandlerMixin):
         replyMarkup: Optional[ReplyMarkup] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
-    ) -> Optional[Message]:
+    ) -> Optional[telegram.Message]:
         """
         Send a text or photo message as a reply, dood!
 
@@ -931,7 +1058,7 @@ class BaseBotHandler(CommandHandlerMixin):
             logger.error("No message text or photo data provided")
             raise ValueError("No message text or photo data provided")
 
-        replyMessageList: List[Message] = []
+        replyMessageList: List[telegram.Message] = []
         message = replyToMessage.getBaseMessage()
         if not isinstance(message, telegram.Message):
             logger.error("Invalid message type")
@@ -968,7 +1095,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     }
                 )
 
-                replyMessage: Optional[Message] = None
+                replyMessage: Optional[telegram.Message] = None
                 if tryMarkdownV2 and photoCaption is not None:
                     try:
                         messageTextParsed = markdownToMarkdownV2(addMessagePrefix + photoCaption)
@@ -1023,7 +1150,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         messageText[i : i + maxMessageLength] for i in range(0, len(messageText), maxMessageLength)
                     ]
                 for _messageText in messageTextList:
-                    replyMessage: Optional[Message] = None
+                    replyMessage: Optional[telegram.Message] = None
                     # Try to send Message as MarkdownV2 first
                     if tryMarkdownV2:
                         try:
@@ -1049,7 +1176,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     raise ValueError("No reply messages")
 
                 if not skipLogs:
-                    logger.debug(f"Sent messages: {[utils.dumpMessage(msg) for msg in replyMessageList]}")
+                    logger.debug(f"Sent messages: {[utils.dumpTelegramMessage(msg) for msg in replyMessageList]}")
 
                 # Save message
                 for replyMessage in replyMessageList:

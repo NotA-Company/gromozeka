@@ -142,7 +142,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             logger.warning(f"Message undefined in {update}")
         else:
             # logger.debug(f"Message: {message}")
-            logger.debug(f"Message: {utils.dumpMessage(message)}")
+            logger.debug(f"Message: {utils.dumpTelegramMessage(message)}")
             try:
                 ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
                 ensuredMessage.setUserData(
@@ -155,6 +155,9 @@ class HandlersManager(CommandHandlerGetterInterface):
         resultSet: Set[HandlerResultStatus] = set()
         for handler in self.handlers:
             ret = await handler.messageHandler(update, context, ensuredMessage)
+            if ret == HandlerResultStatus.SKIPPED and ensuredMessage is not None:
+                logger.debug(f"Handler {type(handler).__name__} returned SKIPPED, trying newMessageHandler")
+                ret = await handler.newMessageHandler(ensuredMessage, update)
             resultSet.add(ret)
             match ret:
                 case HandlerResultStatus.FINAL:
