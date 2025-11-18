@@ -566,8 +566,8 @@ async def testFilteringAndSorting(populatedDb):
     assert all(msg["message_category"] == MessageCategory.USER for msg in userMessages)
 
     # Verify sorting (DESC by date)
-    assert userMessages[0]["message_id"] == 3
-    assert userMessages[1]["message_id"] == 1
+    assert int(userMessages[0]["message_id"]) == 3
+    assert int(userMessages[1]["message_id"]) == 1
 
 
 @pytest.mark.asyncio
@@ -1069,8 +1069,8 @@ async def testConversationThreadWorkflow(populatedDb):
     # 4. Get conversation thread
     thread = db.getChatMessagesByRootId(123, 1, threadId=0)
     assert len(thread) == 2
-    assert thread[0]["message_id"] == 2
-    assert thread[1]["message_id"] == 3
+    assert int(thread[0]["message_id"]) == 2
+    assert int(thread[1]["message_id"]) == 3
 
 
 @pytest.mark.asyncio
