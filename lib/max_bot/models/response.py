@@ -9,7 +9,37 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from .common import PaginationInfo
+
+@dataclass(slots=True)
+class PaginationInfo:
+    """
+    Pagination information for list responses
+    """
+
+    total: int
+    """Total number of items"""
+    limit: int
+    """Number of items per page"""
+    offset: int
+    """Number of items to skip"""
+    has_next: bool = False
+    """Whether there are more items"""
+    has_prev: bool = False
+    """Whether there are previous items"""
+    api_kwargs: Dict[str, Any] = field(default_factory=dict)
+    """Raw API response data"""
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PaginationInfo":
+        """Create PaginationInfo instance from API response dictionary."""
+        return cls(
+            total=data.get("total", 0),
+            limit=data.get("limit", 0),
+            offset=data.get("offset", 0),
+            has_next=data.get("has_next", False),
+            has_prev=data.get("has_prev", False),
+            api_kwargs={k: v for k, v in data.items() if k not in {"total", "limit", "offset", "has_next", "has_prev"}},
+        )
 
 
 class ResponseStatus(str, Enum):
