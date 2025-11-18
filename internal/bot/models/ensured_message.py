@@ -272,7 +272,8 @@ class EnsuredMessage:
         "user",
         "chat",
         "sender",
-        "recipient" "messageId",
+        "recipient",
+        "messageId",
         "date",
         "messageText",
         "messageType",
@@ -374,7 +375,7 @@ class EnsuredMessage:
             sender=MessageSender.fromMaxUser(message.sender),
             recipient=MessageRecipient.fromMaxRecipient(message.recipient),
             messageId=message.body.mid,
-            date=datetime.datetime.fromtimestamp(message.timestamp, datetime.timezone.utc),
+            date=datetime.datetime.fromtimestamp(message.timestamp / 1000, datetime.timezone.utc),
             messageText=messageText,
             messageType=messageType,
         )
@@ -776,24 +777,23 @@ class EnsuredMessage:
             userName = userName.lstrip("@")
         match format:
             case LLMMessageFormat.JSON:
+                # Drop empty-values to save context
                 ret = {
-                    "login": userName,
-                    "name": self.sender.name,
-                    "date": self.date.isoformat(),
-                    "messageId": self.messageId,
-                    "type": str(self.messageType),
-                    "text": messageText,
+                    k: v
+                    for k, v in {
+                        "login": userName,
+                        "name": self.sender.name,
+                        "date": self.date.isoformat(),
+                        "messageId": self.messageId,
+                        "type": str(self.messageType),
+                        "text": messageText,
+                        "replyId": self.replyId,
+                        "quote": self.quoteText if self.isQuote else None,
+                        "mediaDescription": self.mediaContent,
+                        "userData": self.userData,
+                    }.items()
+                    if v
                 }
-                if self.replyId:
-                    ret["replyId"] = self.replyId
-                if self.isQuote and self.quoteText:
-                    ret["quote"] = self.quoteText
-
-                if self.mediaContent:
-                    ret["mediaDescription"] = self.mediaContent
-
-                if self.userData:
-                    ret["userData"] = self.userData
 
                 # logger.debug(f"EM.formatForLLM():{self} -> {ret}")
                 return utils.jsonDumps(ret, compact=False)
@@ -838,10 +838,13 @@ class EnsuredMessage:
             ModelMessage object ready for AI model consumption, dood.
         """
         if format == LLMMessageFormat.SMART:
-            if role == "user":
-                format = LLMMessageFormat.JSON
-            else:
+            if role == "assistant":
+                # It's better to use TEXT format for assistant messages
+                # To not show LLM that it should respond in JSON format
                 format = LLMMessageFormat.TEXT
+            else:
+                format = LLMMessageFormat.JSON
+
         return ModelMessage(
             role=role,
             content=await self.formatForLLM(

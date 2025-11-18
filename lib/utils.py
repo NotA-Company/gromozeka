@@ -223,7 +223,7 @@ def unpackDict(
     return result
 
 
-def dumpMessage(message: "Message") -> str:
+def dumpTelegramMessage(message: "Message") -> str:
     """
     Dump a Telegram Message object to string using original __repr__, dood!
 
