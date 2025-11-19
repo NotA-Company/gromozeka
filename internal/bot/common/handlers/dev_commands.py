@@ -209,7 +209,7 @@ class DevCommandsHandler(BaseBotHandler):
     @commandHandlerV2(
         commands=("settings",),
         shortDescription="[<chatId>] [skip-default] - Dump all settings for this chat",
-        helpMessage="[`<chatId>`] [`skip-default`]: Вывести список настроек для указанного чата",
+        helpMessage=" [`<chatId>`] [`skip-default`]: Вывести список настроек для указанного чата",
         visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         category=CommandCategory.TECHNICAL,
@@ -300,7 +300,7 @@ class DevCommandsHandler(BaseBotHandler):
     @commandHandlerV2(
         commands=("set", "unset"),
         shortDescription="[<chatId>] <key> <value> - Set/Unset given setting for current chat",
-        helpMessage="[`<chatId>`] `<key>` `<value>`: установить/сбросить настройку чата",
+        helpMessage=" [`<chatId>`] `<key>` `<value>`: установить/сбросить настройку чата",
         visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         category=CommandCategory.TECHNICAL,

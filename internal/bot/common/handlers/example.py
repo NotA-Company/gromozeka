@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional
 from telegram import Message, Update
 from telegram.ext import ContextTypes
 
+from internal.bot.common.models import UpdateObjectType
+from internal.bot.models import commandHandlerV2
 import lib.utils as utils
 from internal.bot.models import (
     BotProvider,
@@ -117,24 +119,12 @@ class ExampleHandler(BaseBotHandler):
     # Handling messages
     ###
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
-        Handle incoming messages, dood!
-
-        Args:
-            update (Update): Telegram update object.
-            context (ContextTypes.DEFAULT_TYPE): Bot context.
-            ensuredMessage (Optional[EnsuredMessage]): Ensured message object.
-
-        Returns:
-            HandlerResultStatus: Status of message handling.
+        TODO
         """
-
-        if ensuredMessage is None:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
 
         # Do something with the message
         return HandlerResultStatus.SKIPPED
@@ -173,11 +163,11 @@ class ExampleHandler(BaseBotHandler):
     # Command Handlers
     ###
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("example",),
         shortDescription="- example command",
         helpMessage=" Пример команды.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.TEST,
         category=CommandCategory.TECHNICAL,
@@ -185,19 +175,13 @@ class ExampleHandler(BaseBotHandler):
     async def example_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
-        Handle the example command, dood!
-
-        This command demonstrates basic command functionality including
-        typing indicators, message saving, and admin checking.
-
-        Args:
-            update (Update): Telegram update object.
-            context (ContextTypes.DEFAULT_TYPE): Bot context.
+        TODO
         """
 
         # Send message to user (also save it to db, try to parse as Markdown2 and so on)
