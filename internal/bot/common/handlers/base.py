@@ -545,7 +545,10 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # TODO: Put all botOwners and chatDefaults to some service to not duplicate it for each handler class
         # Init different defaults
-        self.botOwners = [username.lower() for username in self.config.get("bot_owners", [])]
+        self.botOwnersUsername = [
+            username.lower() for username in self.config.get("bot_owners", []) if isinstance(username, str)
+        ]
+        self.botOwnersId = [userId for userId in self.config.get("bot_owners", []) if isinstance(userId, int)]
 
         self.defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
             k: ChatSettingsValue("") for k in ChatSettingsKey
@@ -796,7 +799,7 @@ class BaseBotHandler(CommandHandlerMixin):
             username = username.lower().lstrip("@")
 
         # TODO: Add support of bot owners by userId
-        if allowBotOwners and username in self.botOwners:
+        if allowBotOwners and (username in self.botOwnersUsername or user.id in self.botOwnersId):
             # User is bot owner and bot owners are allowed
             return True
 
@@ -812,29 +815,33 @@ class BaseBotHandler(CommandHandlerMixin):
             return True
 
         # If chat is passed, check if user is admin of given chat
-        match self.botProvider:
-            case BotProvider.TELEGRAM:
-                chatAdmins = self.cache.getChatAdmins(chat.id)
-                if chatAdmins is not None:
-                    return user.id in chatAdmins
+        chatAdmins = self.cache.getChatAdmins(chat.id)
+        if chatAdmins is not None:
+            return user.id in chatAdmins
 
-                if self._tgBot is None:
-                    logger.error("Telegram bot is Undefined, can't get admins")
-                    return False
+        chatAdmins = {}  # userID -> username
+        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
+            for admin in await self._tgBot.get_chat_administrators(chat_id=chat.id):
+                chatAdmins[admin.user.id] = admin.user.name
 
-                chatAdmins = {}  # userID -> username
-                for admin in await self._tgBot.get_chat_administrators(chat_id=chat.id):
-                    chatAdmins[admin.user.id] = admin.user.name
+        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+            maxChatAdmins = (await self._maxBot.getAdmins(chatId=chat.id)).members
+            for admin in maxChatAdmins:
+                adminName = admin.username
+                if adminName is None:
+                    adminName = admin.first_name
+                    if admin.last_name:
+                        adminName += " " + admin.last_name
+                else:
+                    adminName = f"@{adminName}"
 
-                self.cache.setChatAdmins(chat.id, chatAdmins)
-                return user.id in chatAdmins
-            case BotProvider.MAX:
-                # TODO: Add Max admins getting
-                logger.error("Max Admins getting is not implemented yet")
-            case _:
-                raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
+                chatAdmins[admin.user_id] = adminName
 
-        return False
+        else:
+            raise RuntimeError(f"Unexpected platform: {self.botProvider}")
+
+        self.cache.setChatAdmins(chat.id, chatAdmins)
+        return user.id in chatAdmins
 
     async def sendMessage(
         self,
