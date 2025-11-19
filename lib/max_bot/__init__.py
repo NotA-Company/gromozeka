@@ -24,7 +24,6 @@ from .constants import (
     MAX_RETRIES,
     AttachmentType,
     ButtonType,
-    SenderAction,
     TextFormat,
 )
 from .exceptions import (
@@ -50,7 +49,6 @@ __all__ = [
     "MAX_MESSAGE_LENGTH",
     "MAX_FILE_SIZE",
     # Enums
-    "SenderAction",
     "TextFormat",
     "ButtonType",
     "AttachmentType",

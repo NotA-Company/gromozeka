@@ -1,8 +1,8 @@
 # Max Support TODO:
 Adopt Handlers:
 - [ ] base.py
-  - [ ] Media Download support
-  - [ ] Media Upload support
+  - [x] Media Download support
+  - [x] Media Upload support
   - [x] Proper message sending support
   - [ ] Typing action support
   - [ ] Chat Info handling support

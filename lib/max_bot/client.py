@@ -28,7 +28,6 @@ from .constants import (
     MAX_RETRIES,
     RETRY_BACKOFF_FACTOR,
     VERSION,
-    SenderAction,
 )
 from .exceptions import (
     AuthenticationError,
@@ -55,6 +54,7 @@ from .models import (
     PhotoAttachmentPayload,
     PhotoUploadResult,
     ReplyKeyboardAttachment,
+    SenderAction,
     SendMessageResult,
     TextFormat,
     UpdateList,
@@ -563,7 +563,8 @@ class MaxBotClient:
             >>> async with MaxBotClient("token") as client:
             ...     await client.sendAction(12345, SenderAction.TYPING)
         """
-        await self.post(f"/chats/{chatId}/actions", json={"action": action.value})
+        ret = await self.post(f"/chats/{chatId}/actions", json={"action": action.value})
+        logger.debug(f"sendAction ret: {ret}")
         return True
 
     async def pinMessage(self, chatId: int, messageId: str) -> bool:

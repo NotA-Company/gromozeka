@@ -5,7 +5,7 @@ Media: Models for media processing
 import asyncio
 from typing import Any, Optional
 
-from ...models import MessageType
+from internal.models import MessageType
 
 
 class MediaProcessingInfo:

@@ -22,6 +22,7 @@ from telegram.ext import ContextTypes
 
 import lib.utils as utils
 from internal.bot import constants
+from internal.bot.common.models import TypingAction
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -164,7 +165,7 @@ class MediaHandler(BaseBotHandler):
 
         # Show that we are sending photo + increase timeout as it could take long...
         originalAction = typingManager.action
-        typingManager.action = ChatAction.UPLOAD_PHOTO
+        typingManager.action = TypingAction.UPLOAD_PHOTO
         typingManager.maxTimeout = typingManager.maxTimeout + 300
         await typingManager.sendTypingAction()
         chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
@@ -204,7 +205,7 @@ class MediaHandler(BaseBotHandler):
             addMessagePrefix=imgAddPrefix,
         )
 
-        # Return original typing action (Probably - ChatAction.TYPING)
+        # Return original typing action (Probably - TypingAction.TYPING)
         typingManager.action = originalAction
         await typingManager.sendTypingAction()
 

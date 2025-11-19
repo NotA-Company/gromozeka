@@ -41,7 +41,7 @@ import lib.max_bot as maxBot
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot import constants
-from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     CallbackDataDict,
@@ -50,6 +50,7 @@ from internal.bot.models import (
     ChatType,
     CommandCategory,
     CommandHandlerInfo,
+    CommandHandlerInfoV2,
     CommandHandlerMixin,
     CommandHandlerOrder,
     CommandPermission,
@@ -65,6 +66,7 @@ from internal.bot.models.command_handlers import _HANDLER_METADATA_ATTR
 from internal.config.manager import ConfigManager
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
 from internal.database.wrapper import DatabaseWrapper
+from internal.models import MessageIdType
 from internal.services.cache import CacheService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from lib.ai import (
@@ -143,7 +145,7 @@ class TypingManager:
 
     def __init__(
         self,
-        action: ChatAction,
+        action: TypingAction,
         maxTimeout: int,
         repeatInterval: int,
     ) -> None:
@@ -158,15 +160,15 @@ class TypingManager:
             maxTimeout: Maximum duration in seconds to keep typing active
             repeatInterval: Interval in seconds between typing actions
         """
-        self.running = True
-        self.action = action
-        self.maxTimeout = maxTimeout
-        self.repeatInterval = repeatInterval
+        self.running: bool = True
+        self.action: TypingAction = action
+        self.maxTimeout: int = maxTimeout
+        self.repeatInterval: int = repeatInterval
 
         self._task: Optional[asyncio.Task] = None
         self._sendActionFn: Optional[Callable[[], Awaitable]] = None
 
-        self.startTime = time.time()
+        self.startTime: float = time.time()
         self.iteration: int = 0
 
     async def startTask(
@@ -469,11 +471,11 @@ def commandHandlerExtended(
 
             # Actually handle command
             try:
-                if typingAction is not None:
-                    async with await self.startTyping(ensuredMessage, action=typingAction) as typingManager:
-                        return await func(self, ensuredMessage, typingManager, update, context)
-                else:
-                    return await func(self, ensuredMessage, None, update, context)
+                # if typingAction is not None:
+                #     async with await self.startTyping(ensuredMessage, action=typingAction) as typingManager:
+                #         return await func(self, ensuredMessage, typingManager, update, context)
+                # else:
+                return await func(self, ensuredMessage, None, update, context)
             except Exception as e:
                 logger.error(f"Error while handling command {ensuredMessage.messageText.split(" ", 1)[0]}: {e}")
                 logger.exception(e)
@@ -482,7 +484,6 @@ def commandHandlerExtended(
                         ensuredMessage,
                         messageText=f"Error while handling command:\n```\n{e}\n```",
                         messageCategory=MessageCategory.BOT_ERROR,
-                        typingManager=typingManager,
                     )
 
         # setattr(func, _HANDLER_METADATA_ATTR, metadata)
@@ -584,6 +585,16 @@ class BaseBotHandler(CommandHandlerMixin):
 
         self._tgBot: Optional[telegramExt.ExtBot] = None
         self._maxBot: Optional[maxBot.MaxBotClient] = None
+
+    def getCommandHandlersV2(self) -> Sequence[CommandHandlerInfoV2]:
+        """
+        Get all command handlers auto-discovered via decorators, dood!
+
+        Returns:
+            Sequence of [`CommandHandlerInfo`](internal/bot/models/command_handlers.py) objects containing
+            handler metadata (command names, descriptions, handler functions)
+        """
+        return super().getCommandHandlersV2()
 
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
         """
@@ -1233,6 +1244,24 @@ class BaseBotHandler(CommandHandlerMixin):
 
         return replyMessage
 
+    async def deleteMessage(self, ensuredMessage: EnsuredMessage) -> bool:
+        """TODO"""
+        return await self.deleteMessagesById(ensuredMessage.recipient.id, [ensuredMessage.messageId])
+
+    async def deleteMessagesById(self, chatId: int, messageIds: List[MessageIdType]) -> bool:
+        """TODO"""
+
+        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
+            return await self._tgBot.delete_messages(
+                chat_id=chatId,
+                message_ids=[int(v) for v in messageIds],
+            )
+        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+            return await self._maxBot.deleteMessages([str(messageId) for messageId in messageIds])
+
+        logger.error(f"Can not delete {messageIds} in platform {self.botProvider}")
+        return False
+
     def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """
         Get chat information from cache or database, dood!
@@ -1449,7 +1478,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self,
         ensuredMessage: EnsuredMessage,
         *,
-        action: ChatAction = ChatAction.TYPING,
+        action: TypingAction = TypingAction.TYPING,
         # 5 minutes looks like reasonable default
         maxTimeout: int = 300,
         # If we'll not send typing action for abount 5 seconds, it will wanish, so need to refresh it
@@ -1479,23 +1508,23 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # logger.debug(f"startContinousTyping(,{action},{maxTimeout},{repeatInterval}) started...")
 
-        async def sendAction():
-            match self.botProvider:
-                case BotProvider.TELEGRAM:
-                    if self._tgBot is None:
-                        raise RuntimeError("Telegram bot is undefined")
-                    await self._tgBot.send_chat_action(
-                        chat_id=ensuredMessage.recipient.id,
-                        action=typingManager.action,
-                        message_thread_id=ensuredMessage.threadId,
-                    )
+        async def sendTelegramAction():
+            if self.botProvider != BotProvider.TELEGRAM or self._tgBot is None:
+                raise RuntimeError("Telegram bot is undefined")
+            await self._tgBot.send_chat_action(
+                chat_id=ensuredMessage.recipient.id,
+                action=typingManager.action.toTelegram(),
+                message_thread_id=ensuredMessage.threadId,
+            )
 
-                case BotProvider.MAX:
-                    # TODO: Do
-                    logger.error("Max Typing action is not implemented yet")
-                    pass
-                case _:
-                    raise ValueError(f"Unexpected bot provider: {self.botProvider}")
+        async def sendMaxAction():
+            if self.botProvider != BotProvider.MAX or self._maxBot is None:
+                raise RuntimeError("Max bot is undefined")
+
+            await self._maxBot.sendAction(
+                chatId=ensuredMessage.recipient.id,
+                action=typingManager.action.toMax(),
+            )
 
         async def _sendTyping() -> None:
             typingManager.iteration = 0
@@ -1509,6 +1538,16 @@ class BaseBotHandler(CommandHandlerMixin):
                 logger.warning(
                     f"startTyping({ensuredMessage}) reached timeout ({typingManager.maxTimeout}), exiting..."
                 )
+
+        sendAction: Optional[Callable[[], Awaitable]] = None
+        match self.botProvider:
+            case BotProvider.TELEGRAM:
+                sendAction = sendTelegramAction
+            case BotProvider.MAX:
+                sendAction = sendMaxAction
+            case _:
+                logger.error(f"Unexpected Platform: {self.botProvider}")
+                raise RuntimeError(f"Unexpected Platform: {self.botProvider}")
 
         await typingManager.startTask(asyncio.create_task(_sendTyping()), sendAction, True)
         return typingManager
