@@ -62,12 +62,8 @@ class CommandHandlerOrder(IntEnum):
     LAST = 100
 
 
-CommandHandlerFuncUnbound = Callable[
-    [Any, EnsuredMessage, str, Optional[str], UpdateObjectType, Optional[Any]], Awaitable[None]
-]
-CommandHandlerFuncBound = Callable[
-    [EnsuredMessage, str, Optional[str], UpdateObjectType, Optional[Any]], Awaitable[None]
-]
+CommandHandlerFuncUnbound = Callable[[Any, EnsuredMessage, str, str, UpdateObjectType, Optional[Any]], Awaitable[None]]
+CommandHandlerFuncBound = Callable[[EnsuredMessage, str, str, UpdateObjectType, Optional[Any]], Awaitable[None]]
 # CommandHandlerFunc = CommandHandlerFuncBound | CommandHandlerFuncUnbound
 
 
