@@ -63,15 +63,12 @@ from .callback import Callback, CallbackAnswer
 from .chat import (
     Chat,
     ChatAdmin,
-    ChatAdminPermission,
     ChatList,
     ChatMember,
     ChatMembersList,
     ChatPatch,
-    ChatStatus,
-    ChatType,
-    SenderAction,
 )
+from .enums import ChatAdminPermission, ChatStatus, ChatType, MessageLinkType, SenderAction, TextFormat
 
 # Markup models
 from .markup import (
@@ -99,14 +96,12 @@ from .message import (
     LinkedMessage,
     Message,
     MessageBody,
-    MessageLinkType,
     MessageList,
     MessageStat,
     NewMessageBody,
     NewMessageLink,
     Recipient,
     SendMessageResult,
-    TextFormat,
 )
 
 # Response models

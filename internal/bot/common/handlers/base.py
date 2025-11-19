@@ -467,7 +467,7 @@ def commandHandlerExtended(
                 return
 
             # Store command message in database
-            self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+            await self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
             # Actually handle command
             try:
@@ -1016,7 +1016,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         mediaList = await self.processMaxMedia(ensuredReplyMessage, mediaPrompt)
                         ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
 
-                    self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
+                    await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
 
             except Exception as e:
                 logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
@@ -1225,7 +1225,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         ensuredReplyMessage.addMediaProcessingInfo(media)
 
                     if isGroupChat or isPrivate:
-                        self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
+                        await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
                     else:
                         raise ValueError("Unknown chat type")
 
@@ -1280,40 +1280,93 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         return self.cache.getChatInfo(chatId)
 
-    def updateChatInfo(self, chat: Chat) -> None:
+    async def updateChatInfo(self, message: EnsuredMessage) -> None:
         """
-        Update chat information in cache and database, dood!
-
-        Only updates if chat info has changed (title, username, forum status, or type).
-        Uses cache to avoid unnecessary database writes.
-
-        Args:
-            chat: Telegram Chat object with current information
+        TODO
         """
-        chatId = chat.id
-        storedChatInfo = self.getChatInfo(chatId=chatId)
 
-        isForum = chat.is_forum or False
+        if self.botProvider == BotProvider.TELEGRAM:
+            try:
+                baseMessage = message.getBaseMessage()
+                if not isinstance(baseMessage, telegram.Message):
+                    raise ValueError("Base message is not a telegram.Message")
+                chat = message.chat
+                chatId = chat.id
+                storedChatInfo = self.getChatInfo(chatId=chatId)
 
-        if (
-            storedChatInfo is None
-            or chat.title != storedChatInfo["title"]
-            or chat.username != storedChatInfo["username"]
-            or isForum != storedChatInfo["is_forum"]
-            or chat.type != storedChatInfo["type"]
-        ):
+                isForum = chat.is_forum or False
+
+                if (
+                    storedChatInfo is None
+                    or chat.title != storedChatInfo["title"]
+                    or chat.username != storedChatInfo["username"]
+                    or isForum != storedChatInfo["is_forum"]
+                    or chat.type != storedChatInfo["type"]
+                ):
+                    self.cache.setChatInfo(
+                        chat.id,
+                        {
+                            "chat_id": chat.id,
+                            "title": chat.title,
+                            "username": chat.username,
+                            "is_forum": isForum,
+                            "type": message.recipient.chatType,
+                            "created_at": datetime.datetime.now(),
+                            "updated_at": datetime.datetime.now(),
+                        },
+                    )
+
+                # TODO: Actually topic name and emoji could be changed after that
+                # but currently we have no way to know it (except of see
+                # https://docs.python-telegram-bot.org/en/stable/telegram.forumtopicedited.html )
+                # Think about it later
+                if message.isTopicMessage:
+                    repliedMessage = baseMessage.reply_to_message
+                    if repliedMessage and repliedMessage.forum_topic_created:
+                        self.updateTopicInfo(
+                            chatId=message.recipient.id,
+                            topicId=message.threadId,
+                            iconColor=repliedMessage.forum_topic_created.icon_color,
+                            customEmojiId=repliedMessage.forum_topic_created.icon_custom_emoji_id,
+                            name=repliedMessage.forum_topic_created.name,
+                        )
+                else:
+                    self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
+            except Exception as e:
+                logger.error(f"Error updating chat info: {e}")
+        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+            # Chat info isn't presend in message, so we need to request it explicitelly,
+            # But we do not want to do it often. Looks like we need to check updated_at
+            chatId = message.recipient.id
+            storedChatInfo = self.getChatInfo(chatId=chatId)
+            now = datetime.datetime.now()
+            needChange = True
+            if storedChatInfo is not None:
+
+                timeDiff = now - storedChatInfo["updated_at"]
+                needChange = timeDiff.total_seconds() > 60 * 60 * 12
+
+            if not needChange:
+                return
+
+            maxChatInfo = await self._maxBot.getChat(chatId)
             self.cache.setChatInfo(
-                chat.id,
+                chatId,
                 {
-                    "chat_id": chat.id,
-                    "title": chat.title,
-                    "username": chat.username,
-                    "is_forum": isForum,
-                    "type": chat.type,
-                    "created_at": datetime.datetime.now(),
-                    "updated_at": datetime.datetime.now(),
+                    "chat_id": chatId,
+                    "title": maxChatInfo.title,
+                    "username": maxChatInfo.link,
+                    "is_forum": False,
+                    "type": message.recipient.chatType,
+                    "created_at": now,
+                    "updated_at": now,
                 },
             )
+
+            self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
+
+        else:
+            logger.error(f"Updating chat info for {self.botProvider} is not implemented yet")
 
     def updateTopicInfo(
         self,
@@ -1359,7 +1412,7 @@ class BaseBotHandler(CommandHandlerMixin):
             },
         )
 
-    def saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
+    async def saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
         """
         Save a chat message to the database with full context, dood!
 
@@ -1393,33 +1446,7 @@ class BaseBotHandler(CommandHandlerMixin):
             if parentMsg:
                 rootMessageId = parentMsg["root_message_id"]
 
-        if self.botProvider == BotProvider.TELEGRAM:
-            try:
-                baseMessage = message.getBaseMessage()
-                if not isinstance(baseMessage, telegram.Message):
-                    raise ValueError("Base message is not a telegram.Message")
-                self.updateChatInfo(baseMessage.chat)
-
-                # TODO: Actually topic name and emoji could be changed after that
-                # but currently we have no way to know it (except of see
-                # https://docs.python-telegram-bot.org/en/stable/telegram.forumtopicedited.html )
-                # Think about it later
-                if message.isTopicMessage:
-                    repliedMessage = baseMessage.reply_to_message
-                    if repliedMessage and repliedMessage.forum_topic_created:
-                        self.updateTopicInfo(
-                            chatId=message.recipient.id,
-                            topicId=message.threadId,
-                            iconColor=repliedMessage.forum_topic_created.icon_color,
-                            customEmojiId=repliedMessage.forum_topic_created.icon_custom_emoji_id,
-                            name=repliedMessage.forum_topic_created.name,
-                        )
-                else:
-                    self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
-            except Exception as e:
-                logger.error(f"Error updating chat info: {e}")
-        else:
-            logger.error(f"Updating chat info for {self.botProvider} is not implemented yet")
+        await self.updateChatInfo(message)
 
         self.db.updateChatUser(
             chatId=chat.id,

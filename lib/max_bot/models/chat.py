@@ -5,85 +5,12 @@ This module contains chat-related dataclasses including Chat, ChatMember,
 ChatAdmin, ChatAdminPermission, ChatList, and ChatPatch models.
 """
 
-from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
 from .base import BaseMaxBotModel
+from .enums import ChatAdminPermission, ChatStatus, ChatType
+from .message import Message
 from .user import UserWithPhoto
-
-
-class ChatType(StrEnum):
-    """
-    Тип чата: диалог, чат
-    """
-
-    CHAT = "chat"
-    DIALOG = "dialog"  # NOTE: `dialog` isn't present in swagger, however returned by Max API
-    CHANNEL = "channel"
-
-
-class ChatStatus(StrEnum):
-    """
-    Статус чата для текущего бота
-    """
-
-    ACTIVE = "active"
-    """Бот является активным участником чата."""
-    REMOVED = "removed"
-    """Бот был удалён из чата."""
-    LEFT = "left"
-    """Бот покинул чат."""
-    CLOSED = "closed"
-    """Чат был закрыт."""
-
-
-class SenderAction(StrEnum):
-    """
-    Действие, отправляемое участникам чата.
-    """
-
-    TYPING = "typing_on"
-    """Бот набирает сообщение."""
-    UPLOAD_PHOTO = "sending_photo"
-    """Бот отправляет фото."""
-    UPLOAD_VIDEO = "sending_video"
-    """Бот отправляет видео."""
-    UPLOAD_AUDIO = "sending_audio"
-    """Бот отправляет аудиофайл."""
-    UPLOAD_FILE = "sending_file"
-    """Бот отправляет файл."""
-    MARK_SEEN = "mark_seen"
-    """Бот помечает сообщения как прочитанные."""
-
-
-class ChatAdminPermission(StrEnum):
-    """
-    Права администратора чата
-    """
-
-    READ_ALL_MESSAGES = "read_all_messages"
-    """Читать все сообщения."""
-    ADD_REMOVE_MEMBERS = "add_remove_members"
-    """Добавлять/удалять участников."""
-    ADD_ADMINS = "add_admins"
-    """Добавлять администраторов."""
-    CHANGE_CHAT_INFO = "change_chat_info"
-    """Изменять информацию о чате."""
-    PIN_MESSAGE = "pin_message"
-    """Закреплять сообщения."""
-    WRITE = "write"
-    """Писать сообщения."""
-    EDIT_LINK = "edit_link"
-    """Изменять ссылку на чат."""
-    CAN_CALL = "can_call"
-    """Audio Call?"""
-    EDIT = 'edit'
-    """Edit messages?"""
-    VIEW_STATS = 'view_stats'
-    """View message stats?"""
-    DELETE='delete'
-    """Delete messages?"""
-
 
 
 class Chat(BaseMaxBotModel):
@@ -126,7 +53,7 @@ class Chat(BaseMaxBotModel):
         description: Optional[str] = None,
         dialog_with_user: Optional[UserWithPhoto] = None,
         chat_message_id: Optional[str] = None,
-        pinned_message: Optional[Dict[str, Any]] = None,
+        pinned_message: Optional[Message] = None,
         api_kwargs: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(api_kwargs=api_kwargs)
@@ -139,7 +66,7 @@ class Chat(BaseMaxBotModel):
         self.title: Optional[str] = title
         """Отображаемое название чата. Может быть `null` для диалогов"""
         self.icon: Optional[Dict[str, Any]] = icon
-        """Иконка чата"""
+        """Иконка чата {url: ...}"""
         self.last_event_time: int = last_event_time
         """Время последнего события в чате"""
         self.participants_count: int = participants_count
@@ -147,7 +74,11 @@ class Chat(BaseMaxBotModel):
         self.owner_id: Optional[int] = owner_id
         """ID владельца чата"""
         self.participants: Optional[Dict[str, int]] = participants
-        """Участники чата с временем последней активности. Может быть `null`, если запрашивается список чатов"""
+        """
+        Участники чата с временем последней активности. Может быть `null`, если запрашивается список чатов
+
+        userId -> lastActive
+        """
         self.is_public: bool = is_public
         """Доступен ли чат публично (для диалогов всегда `false`)"""
         self.link: Optional[str] = link
@@ -158,7 +89,7 @@ class Chat(BaseMaxBotModel):
         """Данные о пользователе в диалоге (только для чатов типа `"dialog"`)"""
         self.chat_message_id: Optional[str] = chat_message_id
         """ID сообщения, содержащего кнопку, через которую был инициирован чат"""
-        self.pinned_message: Optional[Dict[str, Any]] = pinned_message
+        self.pinned_message: Optional[Message] = pinned_message
         """Закреплённое сообщение в чате (возвращается только при запросе конкретного чата)"""
 
     @classmethod
@@ -168,6 +99,11 @@ class Chat(BaseMaxBotModel):
         dialog_with_user = None
         if dialog_with_user_data:
             dialog_with_user = UserWithPhoto.from_dict(dialog_with_user_data)
+
+        message_data = data.get("pinned_message", None)
+        pinned_message = None
+        if message_data:
+            pinned_message = Message.from_dict(message_data)
 
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -184,7 +120,7 @@ class Chat(BaseMaxBotModel):
             description=data.get("description", None),
             dialog_with_user=dialog_with_user,
             chat_message_id=data.get("chat_message_id", None),
-            pinned_message=data.get("pinned_message", None),
+            pinned_message=pinned_message,
             api_kwargs=cls._getExtraKwargs(data),
         )
 
@@ -230,7 +166,7 @@ class ChatMember(UserWithPhoto):
         )
         self.last_access_time: int = last_access_time
         """
-        Время последней активности пользователя в чате. 
+        Время последней активности пользователя в чате.
         Может быть устаревшим для суперчатов (равно времени вступления)
         """
         self.is_owner: bool = is_owner

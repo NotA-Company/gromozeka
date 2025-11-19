@@ -264,7 +264,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             return False
 
         # Store command message in database
-        handlerObj.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        await handlerObj.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         # Actually handle command
         try:
