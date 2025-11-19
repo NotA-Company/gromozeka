@@ -15,7 +15,7 @@ Adopt Handlers:
 - [x] help_command.py
 - [x] llm_messages.py
 - [ ] manager.py
-- [ ] media.py
+- [x] media.py
 - [x] message_preprocessor.py
 - [ ] react_on_user.py
 - [ ] spam.py
@@ -24,6 +24,7 @@ Adopt Handlers:
 - [ ] weather.py
 - [ ] yandex_search.py
 
+- [ ] Keyboard+Callback support
 - [ ] Fix docstrings
 - [ ] Drop dataclasses
 - [ ] review models

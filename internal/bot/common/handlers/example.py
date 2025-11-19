@@ -12,9 +12,8 @@ from typing import Any, Dict, Optional
 from telegram import Message, Update
 from telegram.ext import ContextTypes
 
-from internal.bot.common.models import UpdateObjectType
-from internal.bot.models import commandHandlerV2
 import lib.utils as utils
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     CallbackDataDict,
@@ -23,6 +22,7 @@ from internal.bot.models import (
     CommandPermission,
     DelayedTaskFunction,
     EnsuredMessage,
+    commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
@@ -32,7 +32,7 @@ from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask
 from lib.ai import LLMFunctionParameter, LLMManager, LLMParameterType
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager
 
 logger = logging.getLogger(__name__)
 

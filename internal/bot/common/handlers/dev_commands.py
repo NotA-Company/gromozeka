@@ -21,8 +21,8 @@ import time
 from typing import Optional
 
 import telegram
-from telegram.constants import MessageEntityType
 
+import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
@@ -340,16 +340,8 @@ class DevCommandsHandler(BaseBotHandler):
             - Changes are persisted to the database immediately
             - Invalid keys result in an error message, dood!
         """
-        message = ensuredMessage.getBaseMessage()
-        if not isinstance(message, telegram.Message):
-            raise ValueError("Invalid message type")
 
-        commandStr = ""
-        for entityStr in message.parse_entities([MessageEntityType.BOT_COMMAND]).values():
-            commandStr = entityStr
-            break
-        logger.debug(f"Command string: {commandStr}")
-        isSet = commandStr.lower().startswith("/set")
+        isSet = command.lower().startswith("set")
 
         notEnoughArgsText = (
             "Для установки настроек используйте `/set [<chatId] <key> <value>`, для сброса `/unset [<chatId>] <key>`"
@@ -432,9 +424,6 @@ class DevCommandsHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """Handle /test command to run various diagnostic test suites, dood!"""
-        message = ensuredMessage.getBaseMessage()
-        if not isinstance(message, telegram.Message):
-            raise ValueError("Invalid message type")
 
         if not args:
             await self.sendMessage(
@@ -512,41 +501,50 @@ class DevCommandsHandler(BaseBotHandler):
                     await asyncio.sleep(0.5)
 
             case "dumpEntities":
-                if message.reply_to_message is None:
+                if ensuredMessage.replyId is None:
                     await self.sendMessage(
                         ensuredMessage,
-                        messageText="`dumpEntities` should be retly to message with entities",
+                        messageText="`dumpEntities` should be reply to message with entities",
                         messageCategory=MessageCategory.BOT_ERROR,
                     )
                     return
-                repliedMessage = message.reply_to_message
-                if not repliedMessage.entities:
+                message = ensuredMessage.getBaseMessage()
+                if isinstance(message, telegram.Message) and message.reply_to_message:
+                    repliedMessage = message.reply_to_message
+                    if not repliedMessage.entities:
+                        await self.sendMessage(
+                            ensuredMessage,
+                            messageText="No entities found",
+                            messageCategory=MessageCategory.BOT_ERROR,
+                        )
+                        return
+                    entities = repliedMessage.entities
+                    messageText = repliedMessage.text or ""
+                    ret = ""
+                    for entity in entities:
+                        ret += (
+                            f"{entity.type}: {entity.offset} {entity.length}:\n```\n"
+                            f"{messageText[entity.offset:entity.offset + entity.length]}\n```\n"
+                            f"```\n{entity}\n```\n"
+                        )
                     await self.sendMessage(
                         ensuredMessage,
-                        messageText="No entities found",
-                        messageCategory=MessageCategory.BOT_ERROR,
+                        messageText=ret,
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     )
-                    return
-                entities = repliedMessage.entities
-                messageText = repliedMessage.text or ""
-                ret = ""
-                for entity in entities:
-                    ret += (
-                        f"{entity.type}: {entity.offset} {entity.length}:\n```\n"
-                        f"{messageText[entity.offset:entity.offset + entity.length]}\n```\n"
-                        f"```\n{entity}\n```\n"
-                    )
-                await self.sendMessage(
-                    ensuredMessage,
-                    messageText=ret,
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                )
 
-                await self.sendMessage(
-                    ensuredMessage,
-                    messageText=f"```\n{repliedMessage.parse_entities()}\n```",
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                )
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=f"```\n{repliedMessage.parse_entities()}\n```",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    )
+                elif isinstance(message, maxModels.Message) and message.link:
+                    entities = message.link.message.markup
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=f"""```json\n{utils.jsonDumps(entities, indent=2)}\n```""",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    )
 
             case _:
                 await self.sendMessage(

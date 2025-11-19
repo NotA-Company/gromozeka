@@ -4,20 +4,18 @@ Gromozeka Help command Handler.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Sequence
-
+from typing import Dict, List, Optional
 
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
-    CommandHandlerInfo,
+    CommandHandlerInfoV2,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    commandHandlerV2,
 )
-from internal.bot.models import commandHandlerV2
-from internal.bot.models import CommandHandlerInfoV2
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -78,7 +76,9 @@ class HelpHandler(BaseBotHandler):
         botOwnerCommands: List[str] = []
 
         # Sort command handlers by order, then by command name
-        sortedHandlers = sorted(self.commandsGetter.getCommandHandlersDict().values(), key=lambda h: (h.helpOrder, h.commands[0]))
+        sortedHandlers = sorted(
+            self.commandsGetter.getCommandHandlersDict().values(), key=lambda h: (h.helpOrder, h.commands[0])
+        )
 
         for commandInfo in sortedHandlers:
             helpText = "* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage
