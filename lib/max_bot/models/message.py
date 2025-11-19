@@ -6,33 +6,12 @@ Recipient, MessageStat, MessageList, NewMessageBody, NewMessageLink,
 LinkedMessage, and SendMessageResult models.
 """
 
-from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
 from .attachment import Attachment, attachmentFromDict
 from .base import BaseMaxBotModel
-from .chat import ChatType
+from .enums import ChatType, MessageLinkType, TextFormat
 from .user import UserWithPhoto
-
-
-class TextFormat(StrEnum):
-    """
-    Формат текста сообщения
-    """
-
-    MARKDOWN = "markdown"
-    HTML = "html"
-
-
-class MessageLinkType(StrEnum):
-    """
-    Тип связанного сообщения
-    """
-
-    UNSPECIFIED = "UNSPECIFIED"
-
-    FORWARD = "forward"
-    REPLY = "reply"
 
 
 class Recipient(BaseMaxBotModel):

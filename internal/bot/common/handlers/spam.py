@@ -1309,7 +1309,7 @@ class SpamHandler(BaseBotHandler):
             )
             return
 
-        self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        # await self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             logger.error(f"Unsupported chat type for /get_spam_score command: {ensuredMessage.recipient.chatType}")

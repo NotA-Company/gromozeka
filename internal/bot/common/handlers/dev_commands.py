@@ -23,7 +23,6 @@ from typing import Optional
 import telegram
 from telegram.constants import MessageEntityType
 
-from internal.bot.models.ensured_message import MessageRecipient
 import lib.utils as utils
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
@@ -36,6 +35,7 @@ from internal.bot.models import (
     EnsuredMessage,
     commandHandlerV2,
 )
+from internal.bot.models.ensured_message import MessageRecipient
 from internal.database.models import MessageCategory
 from internal.services.cache import CacheNamespace
 
@@ -587,8 +587,7 @@ class DevCommandsHandler(BaseBotHandler):
     @commandHandlerV2(
         commands=("get_admins",),
         shortDescription="[<chatId>]- Get admin list of given chat",
-        helpMessage=" [`<chatId>`]: Получить список администраторов указанного чата"
-        ,
+        helpMessage=" [`<chatId>`]: Получить список администраторов указанного чата",
         visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         helpOrder=CommandHandlerOrder.TECHNICAL,
@@ -603,7 +602,7 @@ class DevCommandsHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """Clear cache"""
-        targetChatId:Optional[int] = None
+        targetChatId: Optional[int] = None
         if args:
             argList = args.split()
             targetChatId = utils.extractInt(argList)
@@ -617,7 +616,7 @@ class DevCommandsHandler(BaseBotHandler):
             MessageRecipient(id=targetChatId, chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP),
             allowBotOwners=False,
         )
-        admins =  self.cache.getChatAdmins(targetChatId)
+        admins = self.cache.getChatAdmins(targetChatId)
 
         await self.sendMessage(
             ensuredMessage,
