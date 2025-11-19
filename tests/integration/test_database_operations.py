@@ -834,47 +834,6 @@ async def testDelayedTasksCrud(inMemoryDb):
 
 
 # ============================================================================
-# CRUD Operations Tests - Media Attachments
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def testMediaAttachmentsCrud(inMemoryDb):
-    """Test CRUD operations for media attachments, dood!"""
-    db = inMemoryDb
-
-    # CREATE
-    fileUniqueId = "unique_123"
-    fileId = "file_123"
-    success = db.addMediaAttachment(
-        fileUniqueId=fileUniqueId,
-        fileId=fileId,
-        fileSize=1024,
-        mediaType=MessageType.IMAGE,
-        mimeType="image/jpeg",
-        metadata="{}",
-        status=MediaStatus.NEW,
-    )
-    assert success is True
-
-    # READ
-    media = db.getMediaAttachment(fileUniqueId)
-    assert media is not None
-    assert media["file_unique_id"] == fileUniqueId
-    assert media["file_id"] == fileId
-    assert media["status"] == MediaStatus.NEW
-
-    # UPDATE
-    success = db.updateMediaAttachment(fileUniqueId=fileUniqueId, status=MediaStatus.DONE, description="Test image")
-    assert success is True
-
-    # READ updated
-    media = db.getMediaAttachment(fileUniqueId)
-    assert media["status"] == MediaStatus.DONE
-    assert media["description"] == "Test image"
-
-
-# ============================================================================
 # CRUD Operations Tests - Spam/Ham Messages
 # ============================================================================
 

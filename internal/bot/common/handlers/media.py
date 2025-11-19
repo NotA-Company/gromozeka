@@ -12,17 +12,16 @@ generation and analysis capabilities with fallback support.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import magic
 import telegram
-from telegram import Update
-from telegram.constants import ChatAction, MessageEntityType, MessageLimit
-from telegram.ext import ContextTypes
+from telegram.constants import MessageLimit
 
+import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot import constants
-from internal.bot.common.models import TypingAction
+from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -33,6 +32,7 @@ from internal.bot.models import (
     EnsuredMessage,
     LLMMessageFormat,
     MessageType,
+    commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
@@ -47,7 +47,7 @@ from lib.ai import (
     ModelResultStatus,
 )
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -215,8 +215,8 @@ class MediaHandler(BaseBotHandler):
     # Handling messages
     ###
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
         Handle "what's there?" (что там) messages to retrieve media content, dood!
@@ -240,9 +240,6 @@ class MediaHandler(BaseBotHandler):
                 - NEXT: Text message, should be processed by next handler
                 - FINAL: Successfully retrieved and sent media content
         """
-        if ensuredMessage is None:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
 
         chatType = ensuredMessage.recipient.chatType
 
@@ -330,12 +327,12 @@ class MediaHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("analyze",),
         shortDescription="<prompt> - Analyse answered media with given prompt",
         helpMessage=" `<prompt>`: Проанализировать медиа используя указанный промпт "
         "(на данный момент доступен только анализ картинок и статических стикеров).",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
@@ -343,9 +340,10 @@ class MediaHandler(BaseBotHandler):
     async def analyze_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /analyze <prompt> command to analyze media with AI, dood!
@@ -374,19 +372,10 @@ class MediaHandler(BaseBotHandler):
             Requires ALLOW_ANALYZE setting enabled or admin privileges.
         """
         # Analyse media with given prompt. Should be reply to message with media.
-        message = ensuredMessage.getBaseMessage()
-        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Команда не поддержана на данной платформе",
-                messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=typingManager,
-            )
-            return
 
         chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
-        if not ensuredMessage.isReply or not message.reply_to_message:
+        if not ensuredMessage.isReply:
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда должна быть ответом на сообщение с медиа.",
@@ -395,18 +384,36 @@ class MediaHandler(BaseBotHandler):
             )
             return
 
-        parentMessage = message.reply_to_message
-        parentEnsuredMessage = ensuredMessage.fromTelegramMessage(parentMessage)
+        message = ensuredMessage.getBaseMessage()
+        parentEnsuredMessage: Optional[EnsuredMessage] = None
+        parentMessage: Optional[Union[telegram.Message, maxModels.Message]] = None
+        if (
+            self.botProvider == BotProvider.TELEGRAM
+            and isinstance(message, telegram.Message)
+            and message.reply_to_message
+        ):
+            parentMessage = message.reply_to_message
+            parentEnsuredMessage = ensuredMessage.fromTelegramMessage(parentMessage)
+        elif self.botProvider == BotProvider.MAX and isinstance(message, maxModels.Message) and message.link:
+            parentMessage = maxModels.Message(
+                sender=message.link.sender or message.sender,
+                recipient=message.recipient,
+                timestamp=message.timestamp,
+                body=message.link.message,
+            )
+            parentEnsuredMessage = ensuredMessage.fromMaxMessage(parentMessage)
 
-        commandStr = ""
-        prompt = ensuredMessage.messageText
-        for entity in message.entities:
-            if entity.type == MessageEntityType.BOT_COMMAND:
-                commandStr = ensuredMessage.messageText[entity.offset : entity.offset + entity.length]
-                prompt = ensuredMessage.messageText[entity.offset + entity.length :].strip()
-                break
+        if parentEnsuredMessage is None or parentMessage is None:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Не удалось определить родительское сообщение.",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
 
-        logger.debug(f"Command string: '{commandStr}', prompt: '{prompt}'")
+        prompt = args.strip()
+        logger.debug(f"Command string: '{command}', prompt: '{prompt}'")
 
         if not prompt:
             await self.sendMessage(
@@ -419,34 +426,60 @@ class MediaHandler(BaseBotHandler):
 
         parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
 
-        mediaData: Optional[bytearray] = None
-        fileId: Optional[str] = None
+        mediaDataList: List[bytes] = []
 
-        match parentEnsuredMessage.messageType:
-            case MessageType.IMAGE:
-                if parentMessage.photo is None:
-                    raise ValueError("Photo is None")
-                # TODO: Should I try to get optimal image size like in processImage()?
-                fileId = parentMessage.photo[-1].file_id
-            case MessageType.STICKER:
-                if parentMessage.sticker is None:
-                    raise ValueError("Sticker is None")
-                fileId = parentMessage.sticker.file_id
-                # Removed unused variable fileUniqueId
-            case _:
-                await self.sendMessage(
-                    ensuredMessage,
-                    messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
-                    messageCategory=MessageCategory.BOT_ERROR,
-                    typingManager=typingManager,
-                )
-                return
+        if (
+            self.botProvider == BotProvider.TELEGRAM
+            and isinstance(parentMessage, telegram.Message)
+            and self._tgBot is not None
+        ):
+            fileId: Optional[str] = None
+            match parentEnsuredMessage.messageType:
+                case MessageType.IMAGE:
+                    if parentMessage.photo is None:
+                        raise ValueError("Photo is None")
+                    # TODO: Should I try to get optimal image size like in processImage()?
+                    fileId = parentMessage.photo[-1].file_id
+                case MessageType.STICKER:
+                    if parentMessage.sticker is None:
+                        raise ValueError("Sticker is None")
+                    fileId = parentMessage.sticker.file_id
+                    # Removed unused variable fileUniqueId
+                case _:
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=f"Неподдерживаемый тип медиа: {parentEnsuredMessage.messageType}",
+                        messageCategory=MessageCategory.BOT_ERROR,
+                        typingManager=typingManager,
+                    )
+                    return
 
-        mediaInfo = await context.bot.get_file(fileId)
-        logger.debug(f"Media info: {mediaInfo}")
-        mediaData = await mediaInfo.download_as_bytearray()
+            mediaInfo = await self._tgBot.get_file(fileId)
+            logger.debug(f"Media info: {mediaInfo}")
+            mediaData = await self._telegramFileDownloader(mediaId="", fileId=fileId)
+            if mediaData is not None:
+                mediaDataList.append(bytes(mediaData))
+        elif (
+            self.botProvider == BotProvider.MAX
+            and isinstance(parentMessage, maxModels.Message)
+            and self._maxBot is not None
+            and parentMessage.body.attachments
+        ):
+            for attachment in parentMessage.body.attachments:
+                mediaData = None
+                if isinstance(attachment, maxModels.PhotoAttachment):
+                    mediaData = await self._maxFileDownloader(
+                        mediaId=attachment.payload.token, fileId=attachment.payload.url
+                    )
+                elif isinstance(attachment, maxModels.StickerAttachment):
+                    mediaData = await self._maxFileDownloader(
+                        mediaId=attachment.payload.code, fileId=attachment.payload.url
+                    )
 
-        if not mediaData:
+                if mediaData is not None:
+                    mediaDataList.append(bytes(mediaData))
+
+        if not mediaDataList:
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Не удалось получить данные медиа.",
@@ -455,64 +488,66 @@ class MediaHandler(BaseBotHandler):
             )
             return
 
-        mimeType = magic.from_buffer(bytes(mediaData), mime=True)
-        logger.debug(f"Mime type: {mimeType}")
-        if not mimeType.startswith("image/"):
+        for mediaData in mediaDataList:
+            mimeType = magic.from_buffer(bytes(mediaData), mime=True)
+            logger.debug(f"Mime type: {mimeType}")
+            if not mimeType.startswith("image/"):
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
+                    messageCategory=MessageCategory.BOT_ERROR,
+                    typingManager=typingManager,
+                )
+                return
+
+            reqMessages = [
+                ModelMessage(
+                    role="system",
+                    content=prompt,
+                ),
+                ModelImageMessage(
+                    role="user",
+                    # content="",
+                    image=bytearray(mediaData),
+                ),
+            ]
+
+            llmRet = await parserLLM.generateText(reqMessages)
+            logger.debug(f"LLM result: {llmRet}")
+            if llmRet.status != ModelResultStatus.FINAL:
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
+                    messageCategory=MessageCategory.BOT_ERROR,
+                    typingManager=typingManager,
+                )
+                return
+
             await self.sendMessage(
                 ensuredMessage,
-                messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
-                messageCategory=MessageCategory.BOT_ERROR,
+                messageText=llmRet.resultText,
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 typingManager=typingManager,
             )
-            return
 
-        reqMessages = [
-            ModelMessage(
-                role="system",
-                content=prompt,
-            ),
-            ModelImageMessage(
-                role="user",
-                # content="",
-                image=mediaData,
-            ),
-        ]
-
-        llmRet = await parserLLM.generateText(reqMessages)
-        logger.debug(f"LLM result: {llmRet}")
-        if llmRet.status != ModelResultStatus.FINAL:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
-                messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=typingManager,
-            )
-            return
-
-        await self.sendMessage(
-            ensuredMessage,
-            messageText=llmRet.resultText,
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-            typingManager=typingManager,
-        )
-
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("draw",),
         shortDescription="[<prompt>] - Draw image with given prompt " "(use qoute or replied message as prompt if any)",
         helpMessage=" `[<prompt>]`: Сгенерировать изображение, используя указанный промпт. "
         "Так же может быть ответом на сообщение или цитированием.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
-        typingAction=ChatAction.UPLOAD_PHOTO,
+        typingAction=TypingAction.UPLOAD_PHOTO,
     )
     async def draw_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /draw [<prompt>] command to generate images with AI, dood!
@@ -547,8 +582,6 @@ class MediaHandler(BaseBotHandler):
             Requires ALLOW_DRAW setting enabled or admin privileges.
         """
         # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
-        message = ensuredMessage.getBaseMessage()
-
         chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
         prompt = ensuredMessage.messageText
@@ -559,10 +592,10 @@ class MediaHandler(BaseBotHandler):
         elif ensuredMessage.isReply and ensuredMessage.replyText:
             prompt = ensuredMessage.replyText
 
-        elif context.args:
-            prompt = " ".join(context.args)
+        elif args:
+            prompt = args
         else:
-            logger.warning(f"No prompt found in message: {message}")
+            logger.warning(f"No prompt found in message: {ensuredMessage}")
             # Get last messages from this user in chat and generate image, based on them
 
             # prompt = (

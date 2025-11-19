@@ -275,6 +275,7 @@ class CommonHandler(BaseBotHandler):
         helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через указанное время "
         "(можно использовать цитирование или ответ на сообщение).",
         visibility={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
     )

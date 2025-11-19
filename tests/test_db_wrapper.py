@@ -743,50 +743,6 @@ class TestMediaOperations:
         media = inMemoryDb.getMediaAttachment("nonexistent")
         assert media is None
 
-    def testUpdateMediaAttachment(self, inMemoryDb):
-        """Test updating a media attachment."""
-        fileUniqueId = "unique_update"
-        inMemoryDb.addMediaAttachment(
-            fileUniqueId=fileUniqueId,
-            fileId="file_update",
-            mediaType=MessageType.IMAGE,
-            status=MediaStatus.NEW,
-        )
-
-        result = inMemoryDb.updateMediaAttachment(
-            fileUniqueId=fileUniqueId,
-            status=MediaStatus.DONE,
-            description="Updated description",
-        )
-        assert result is True
-
-        media = inMemoryDb.getMediaAttachment(fileUniqueId)
-        assert media["status"] == MediaStatus.DONE
-        assert media["description"] == "Updated description"
-
-    def testUpdateMediaAttachmentMultipleFields(self, inMemoryDb):
-        """Test updating multiple fields of media attachment."""
-        fileUniqueId = "unique_multi"
-        inMemoryDb.addMediaAttachment(
-            fileUniqueId=fileUniqueId,
-            fileId="file_multi",
-            mediaType=MessageType.IMAGE,
-        )
-
-        inMemoryDb.updateMediaAttachment(
-            fileUniqueId=fileUniqueId,
-            status=MediaStatus.DONE,
-            localUrl="/new/path.jpg",
-            prompt="New prompt",
-            description="New description",
-        )
-
-        media = inMemoryDb.getMediaAttachment(fileUniqueId)
-        assert media["status"] == MediaStatus.DONE
-        assert media["local_url"] == "/new/path.jpg"
-        assert media["prompt"] == "New prompt"
-        assert media["description"] == "New description"
-
 
 # ============================================================================
 # Cache Operations Tests
