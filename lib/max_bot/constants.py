@@ -53,20 +53,6 @@ ENDPOINT_UPDATES: Final[str] = "/updates"
 ENDPOINT_ANSWERS: Final[str] = "/answers"
 
 
-class SenderAction(StrEnum):
-    """Sender action enum from OpenAPI specification"""
-
-    TYPING = "typing_on"
-    UPLOAD_PHOTO = "upload_photo"
-    UPLOAD_VIDEO = "upload_video"
-    UPLOAD_AUDIO = "upload_audio"
-    UPLOAD_FILE = "upload_file"
-    RECORD_VIDEO = "record_video"
-    RECORD_AUDIO = "record_audio"
-    FIND_LOCATION = "find_location"
-    TYPING_OFF = "typing_off"
-
-
 class TextFormat(StrEnum):
     """Text format enum from OpenAPI specification"""
 

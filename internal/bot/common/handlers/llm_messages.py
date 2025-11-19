@@ -24,11 +24,10 @@ import re
 from typing import Any, Dict, List, Optional
 
 import telegram
-from telegram.constants import ChatAction
 
 import lib.max_bot.models as maxModels
 from internal.bot import constants
-from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -259,7 +258,7 @@ class LLMMessageHandler(BaseBotHandler):
         if imagePrompt is not None:
             imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
             fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
-            typingManager.action = ChatAction.UPLOAD_PHOTO
+            typingManager.action = TypingAction.UPLOAD_PHOTO
             await typingManager.sendTypingAction()
             imgMLRet = await imageGenerationModel.generateImageWithFallBack(
                 [ModelMessage(content=imagePrompt)], fallbackImageLLM

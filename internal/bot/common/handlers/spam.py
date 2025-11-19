@@ -524,23 +524,25 @@ class SpamHandler(BaseBotHandler):
                 score=score if score is not None else 0,
             )
 
+        await self.deleteMessagesById(chatId=chatId, messageIds=[ensuredMessage.messageId])
+        logger.debug("Deleted spam message")
         if (
             self.botProvider == BotProvider.TELEGRAM
             and self._tgBot is not None
             and isinstance(message, telegram.Message)
         ):
             bot = self._tgBot
-            await bot.delete_message(chat_id=chatId, message_id=int(ensuredMessage.messageId))
-            logger.debug("Deleted spam message")
             if message.sender_chat is not None:
                 await bot.ban_chat_sender_chat(chat_id=chatId, sender_chat_id=message.sender_chat.id)
             if message.from_user is not None:
                 await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
             else:
                 logger.error(f"message.from_user is None (sender is {ensuredMessage.sender})")
+        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+            bot = self._maxBot
+            await bot.removeMember(chatId=chatId, userId=ensuredMessage.sender.id, block=True)
         else:
-            # TODO: Support Max
-            logger.error(f"Deleteing spam messages is not supported in {self.botProvider}")
+            logger.error(f"Unexpected platform: {self.botProvider}")
 
         self.db.markUserIsSpammer(chatId=chatId, userId=userId, isSpammer=True)
         logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.recipient}")
@@ -588,13 +590,7 @@ class SpamHandler(BaseBotHandler):
 
             try:
                 if messageIds:
-                    if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
-                        await self._tgBot.delete_messages(chat_id=chatId, message_ids=[int(mid) for mid in messageIds])
-                    elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
-                        await self._maxBot.deleteMessages([str(mid) for mid in messageIds])
-                    else:
-                        # TODO: Support Max
-                        logger.error(f"Deleteing spam messages is not supported in {self.botProvider}")
+                    await self.deleteMessagesById(chatId=chatId, messageIds=messageIds)
 
             except Exception as e:
                 logger.error("Failed during deleteing spam message:")
@@ -1053,14 +1049,7 @@ class SpamHandler(BaseBotHandler):
             )
 
         # Delete command message to reduce flood
-        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
-            await self._tgBot.delete_message(
-                chat_id=ensuredMessage.recipient.id, message_id=int(ensuredMessage.messageId)
-            )
-        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
-            await self._maxBot.deleteMessages([str(ensuredMessage.messageId)])
-        else:
-            logger.error(f"Can't delete message in {self.botProvider} platform")
+        await self.deleteMessage(ensuredMessage)
 
     @commandHandlerExtended(
         commands=("pretrain_bayes",),

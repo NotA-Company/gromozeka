@@ -13,10 +13,11 @@ from .command_handlers import (
     CallbackDataDict,
     CommandCategory,
     CommandHandlerInfo,
+    CommandHandlerInfoV2,
     CommandHandlerMixin,
     CommandHandlerOrder,
     CommandPermission,
-    commandHandler,
+    commandHandlerV2,
 )
 
 # Delayed Tasks
@@ -61,7 +62,8 @@ __all__ = [
     "CommandCategory",
     "CommandHandlerInfo",
     "CommandHandlerMixin",
-    "commandHandler",
+    "commandHandlerV2",
+    "CommandHandlerInfoV2",
     "CommandPermission",
     "CommandHandlerOrder",
     "CallbackDataDict",

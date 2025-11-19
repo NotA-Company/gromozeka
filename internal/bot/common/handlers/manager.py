@@ -3,7 +3,7 @@ Bot handlers manager
 """
 
 import logging
-from typing import List, Optional, Sequence, Set
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import telegram
 from telegram.ext import ContextTypes, ExtBot
@@ -12,8 +12,18 @@ import lib.max_bot as maxBot
 
 # import lib.max_bot.models as maxModels
 from internal.bot.common.models import UpdateObjectType
-from internal.bot.models import BotProvider, CommandHandlerInfo, EnsuredMessage
+from internal.bot.models import (
+    BotProvider,
+    ChatSettingsKey,
+    ChatType,
+    CommandCategory,
+    CommandHandlerInfo,
+    CommandHandlerInfoV2,
+    CommandPermission,
+    EnsuredMessage,
+)
 from internal.config.manager import ConfigManager
+from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache import CacheService
 from internal.services.queue_service import QueueService
@@ -50,6 +60,9 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.db = database
         self.llmManager = llmManager
         self.botProvider: BotProvider = botProvider
+
+        # Map of command name -> CommandHandlerInfo
+        self._commands: Dict[str, CommandHandlerInfoV2] = {}
 
         self.cache = CacheService.getInstance()
         self.cache.injectDatabase(self.db)
@@ -97,10 +110,179 @@ class HandlersManager(CommandHandlerGetterInterface):
             handler.injectMaxBot(bot)
 
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
+        """Deprecated. Use getCommandHandlersDict instead."""
         ret: List[CommandHandlerInfo] = []
         for handler in self.handlers:
             ret.extend(handler.getCommandHandlers())
         return ret
+
+    def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
+        """TODO"""
+        if useCache and self._commands:
+            return self._commands
+
+        ret: Dict[str, CommandHandlerInfoV2] = {}
+        for handler in self.handlers:
+            for cmdHandlerInfo in handler.getCommandHandlersV2():
+                ret.update({cmd.lower(): cmdHandlerInfo for cmd in cmdHandlerInfo.commands})
+
+        self._commands = ret
+
+        return self._commands
+
+    async def parseCommand(self, ensuredMessage: EnsuredMessage) -> Optional[Tuple[str, str]]:
+        """Check if it is command and return command name and arguments if any"""
+        if not self.handlers:
+            # No handlers, no command
+            logger.error("No handlers initialized, cannot parse command")
+            return None
+
+        messageText = ensuredMessage.messageText
+        if not messageText:
+            return None
+        messageText = messageText.strip()
+        if messageText.startswith("/"):
+            splittedText = messageText.split(" ", 1)
+            command = splittedText[0]
+            args = splittedText[1] if len(splittedText) > 1 else ""
+
+            # Check if bot username privided in command and check if it is our username
+            splittedCommand = command.split("@")
+            command = splittedCommand[0]
+            if len(splittedCommand) > 1:
+                myUsername = await self.handlers[0].getBotUserName()
+                if not myUsername or myUsername.lower() != splittedCommand[1].lower():
+                    # TODO: Should we somehow indicate, that it is command but for someone else?
+                    logger.debug(
+                        f"Recieved command for someone else: {command}, bot: {splittedCommand[1]}, args: {args}"
+                    )
+                    return None
+
+            logger.debug(f"Recieved command: {command}, args: {args}")
+            return command, args
+
+        return None
+
+    async def handleCommand(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> Optional[bool]:
+        """
+        TODO
+
+        Result:
+        None: Not a command
+        True: Command handled
+        False: Command, not handled, not need to handle
+        """
+
+        commandTouple = await self.parseCommand(ensuredMessage)
+        if commandTouple is None:
+            return None
+
+        command, args = commandTouple
+        commands = self.getCommandHandlersDict()
+        commandLower = command.lower()
+        if commandLower not in commands:
+            logger.debug(f"Unknown command: {command}")
+            # TODO: Check if we need to delete unknown commands
+            return None
+
+        handlerInfo = commands[commandLower]
+        handler = handlerInfo.handler.__self__
+        if not isinstance(handler, BaseBotHandler):
+            raise RuntimeError(f"Command handler type is {type(handler)} instead of BaseBotHandler")
+
+        ########
+        logger.debug(f"Got {command}:{args} command: {updateObj}")
+
+        # Check permissions if needed
+
+        isBotOwner = await handler.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
+        chatSettings = handler.getChatSettings(ensuredMessage.recipient.id)
+        chatType = ensuredMessage.recipient.chatType
+
+        canProcess = (
+            CommandPermission.DEFAULT in handlerInfo.availableFor
+            or (CommandPermission.PRIVATE in handlerInfo.availableFor and chatType == ChatType.PRIVATE)
+            or (CommandPermission.GROUP in handlerInfo.availableFor and chatType == ChatType.GROUP)
+            or (CommandPermission.BOT_OWNER in handlerInfo.availableFor and isBotOwner)
+            or (
+                CommandPermission.ADMIN in handlerInfo.availableFor
+                and chatType == ChatType.GROUP
+                and await handler.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
+            )
+        )
+
+        if not canProcess:
+            logger.warning(
+                f"Command `{command}` is not allowed in "
+                f"chat {ensuredMessage.recipient} for "
+                f"user {ensuredMessage.sender}. Needed permissions: {handlerInfo.availableFor}"
+            )
+            if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
+                try:
+                    await handler.deleteMessage(ensuredMessage)
+                except Exception as e:
+                    logger.error(f"Error while deleting message: {e}")
+            return False
+
+        isAdmin = await handler.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
+        match handlerInfo.category:
+            case CommandCategory.UNSPECIFIED:
+                # No category specified, deny by default
+                canProcess = False
+            case CommandCategory.PRIVATE:
+                canProcess = chatType == ChatType.PRIVATE
+            case CommandCategory.ADMIN | CommandCategory.SPAM_ADMIN:
+                canProcess = isAdmin
+            case CommandCategory.TOOLS:
+                # BotOwners could bypass TollsAllowed check
+                canProcess = chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool() or isBotOwner
+            case CommandCategory.SPAM:
+                canProcess = isAdmin or chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
+            case CommandCategory.TECHNICAL:
+                # Actually technical command shouldn't present in group chats except of debug purposes, but whatever
+                canProcess = isAdmin
+            case _:
+                logger.error(f"Unhandled command category: {handlerInfo.category}, deny")
+                canProcess = False
+                pass
+
+        if not canProcess:
+            logger.warning(
+                f"Command `{str(command)}` is not allowed in "
+                f"chat {ensuredMessage.recipient} for "
+                f"user {ensuredMessage.sender}. Command category: {handlerInfo.category}."
+            )
+            if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
+                try:
+                    await handler.deleteMessage(ensuredMessage)
+                except Exception as e:
+                    logger.error(f"Error while deleting message: {e}")
+            return False
+
+        # Store command message in database
+        handler.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+
+        # Actually handle command
+        try:
+            if handlerInfo.boundHandler is None:
+                raise ValueError(f"boundHandler is undefined for {handlerInfo}")
+            if handlerInfo.typingAction is not None:
+                async with await handler.startTyping(ensuredMessage, action=handlerInfo.typingAction) as typingManager:
+                    await handlerInfo.boundHandler(ensuredMessage, command, args, updateObj, typingManager)
+            else:
+                await handlerInfo.boundHandler(ensuredMessage, command, args, updateObj, None)
+
+            return True
+        except Exception as e:
+            logger.error(f"Error while handling command {command}: {e}")
+            logger.exception(e)
+            if handlerInfo.replyErrorOnException:
+                await handler.sendMessage(
+                    ensuredMessage,
+                    messageText=f"Error while handling command:\n```\n{e}\n```",
+                    messageCategory=MessageCategory.BOT_ERROR,
+                )
+            return False
 
     async def handleNewMessage(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> None:
         resultSet: Set[HandlerResultStatus] = set()
