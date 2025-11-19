@@ -6,9 +6,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Sequence
 
-from telegram import Update
-from telegram.ext import ContextTypes
 
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
@@ -17,12 +16,14 @@ from internal.bot.models import (
     CommandPermission,
     EnsuredMessage,
 )
+from internal.bot.models import commandHandlerV2
+from internal.bot.models import CommandHandlerInfoV2
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from lib.ai import LLMManager
 
-from .base import BaseBotHandler, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class CommandHandlerGetterInterface(ABC):
     """Class for getting command handlers."""
 
     @abstractmethod
-    def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
+    def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
         raise NotImplementedError
 
 
@@ -51,11 +52,11 @@ class HelpHandler(BaseBotHandler):
         super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
         self.commandsGetter = commandsGetter
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("help",),
         shortDescription="Print help",
         helpMessage=": Показать список доступных команд.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.SECOND,
         category=CommandCategory.PRIVATE,
@@ -63,9 +64,10 @@ class HelpHandler(BaseBotHandler):
     async def help_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle the /help command."""
         isBotOwner = await self.isAdmin(ensuredMessage.sender, allowBotOwners=True)
@@ -76,7 +78,7 @@ class HelpHandler(BaseBotHandler):
         botOwnerCommands: List[str] = []
 
         # Sort command handlers by order, then by command name
-        sortedHandlers = sorted(self.commandsGetter.getCommandHandlers(), key=lambda h: (h.order, h.commands[0]))
+        sortedHandlers = sorted(self.commandsGetter.getCommandHandlersDict().values(), key=lambda h: (h.helpOrder, h.commands[0]))
 
         for commandInfo in sortedHandlers:
             helpText = "* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage
@@ -87,11 +89,11 @@ class HelpHandler(BaseBotHandler):
                 CommandPermission.GROUP,
                 CommandPermission.ADMIN,
             ]:
-                if commandCategory in commandInfo.categories:
+                if commandCategory in commandInfo.availableFor:
                     if commandCategory == CommandPermission.BOT_OWNER:
                         botOwnerCommands.append(helpText)
                     else:
-                        commands[commandInfo.order].append(helpText)
+                        commands[commandInfo.helpOrder].append(helpText)
                     # Do not add command several times
                     break
 

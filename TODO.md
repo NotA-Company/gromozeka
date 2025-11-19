@@ -12,7 +12,7 @@ Adopt Handlers:
 - [ ] configure.py
 - [x] dev_commands.py
 - [ ] example.py
-- [ ] help_command.py
+- [x] help_command.py
 - [x] llm_messages.py
 - [ ] manager.py
 - [ ] media.py
