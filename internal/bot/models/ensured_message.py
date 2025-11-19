@@ -1041,3 +1041,19 @@ class EnsuredMessage:
 
         logger.error(f"getEnsuredRepliedToMessage(): message has unexpected type: {type(message)}")
         return None
+
+    def toTelegramMessage(self) -> telegram.Message:
+        """TODO"""
+        return telegram.Message(
+            message_id=int(self.messageId),
+            date=self.date,
+            chat=telegram.Chat(
+                id=self.recipient.id,
+                type=telegram.Chat.PRIVATE if self.recipient.chatType == ChatType.PRIVATE else telegram.Chat.SUPERGROUP,
+            ),
+            from_user=telegram.User(
+                id=self.sender.id, first_name=self.sender.name, username=self.sender.username, is_bot=False
+            ),
+            text=self.messageText,
+            message_thread_id=self.threadId,
+        )
