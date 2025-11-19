@@ -118,6 +118,7 @@ class HandlersManager(CommandHandlerGetterInterface):
 
     def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
         """TODO"""
+        # logger.debug(f"gCHD(),p1, commands: {self._commands}")
         if useCache and self._commands:
             return self._commands
 
@@ -128,6 +129,7 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self._commands = ret
 
+        logger.debug(f"Found commands: {self._commands.keys()}")
         return self._commands
 
     async def parseCommand(self, ensuredMessage: EnsuredMessage) -> Optional[Tuple[str, str]]:
@@ -142,7 +144,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             return None
         messageText = messageText.strip()
         if messageText.startswith("/"):
-            splittedText = messageText.split(" ", 1)
+            splittedText = messageText[1:].split(" ", 1)
             command = splittedText[0]
             args = splittedText[1] if len(splittedText) > 1 else ""
 
@@ -186,17 +188,19 @@ class HandlersManager(CommandHandlerGetterInterface):
             return None
 
         handlerInfo = commands[commandLower]
-        handler = handlerInfo.handler.__self__
-        if not isinstance(handler, BaseBotHandler):
-            raise RuntimeError(f"Command handler type is {type(handler)} instead of BaseBotHandler")
+        if handlerInfo.boundHandler is None:
+            raise ValueError(f"boundHandler is undefined for {handlerInfo}")
 
-        ########
+        handlerObj = handlerInfo.boundHandler.__self__
+        if not isinstance(handlerObj, BaseBotHandler):
+            raise RuntimeError(f"Command handler type is {type(handlerObj)} instead of BaseBotHandler")
+
         logger.debug(f"Got {command}:{args} command: {updateObj}")
 
         # Check permissions if needed
 
-        isBotOwner = await handler.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
-        chatSettings = handler.getChatSettings(ensuredMessage.recipient.id)
+        isBotOwner = await handlerObj.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
+        chatSettings = handlerObj.getChatSettings(ensuredMessage.recipient.id)
         chatType = ensuredMessage.recipient.chatType
 
         canProcess = (
@@ -207,7 +211,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             or (
                 CommandPermission.ADMIN in handlerInfo.availableFor
                 and chatType == ChatType.GROUP
-                and await handler.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
+                and await handlerObj.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
             )
         )
 
@@ -219,12 +223,12 @@ class HandlersManager(CommandHandlerGetterInterface):
             )
             if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
                 try:
-                    await handler.deleteMessage(ensuredMessage)
+                    await handlerObj.deleteMessage(ensuredMessage)
                 except Exception as e:
                     logger.error(f"Error while deleting message: {e}")
             return False
 
-        isAdmin = await handler.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
+        isAdmin = await handlerObj.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
         match handlerInfo.category:
             case CommandCategory.UNSPECIFIED:
                 # No category specified, deny by default
@@ -254,20 +258,20 @@ class HandlersManager(CommandHandlerGetterInterface):
             )
             if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
                 try:
-                    await handler.deleteMessage(ensuredMessage)
+                    await handlerObj.deleteMessage(ensuredMessage)
                 except Exception as e:
                     logger.error(f"Error while deleting message: {e}")
             return False
 
         # Store command message in database
-        handler.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
+        handlerObj.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
 
         # Actually handle command
         try:
-            if handlerInfo.boundHandler is None:
-                raise ValueError(f"boundHandler is undefined for {handlerInfo}")
             if handlerInfo.typingAction is not None:
-                async with await handler.startTyping(ensuredMessage, action=handlerInfo.typingAction) as typingManager:
+                async with await handlerObj.startTyping(
+                    ensuredMessage, action=handlerInfo.typingAction
+                ) as typingManager:
                     await handlerInfo.boundHandler(ensuredMessage, command, args, updateObj, typingManager)
             else:
                 await handlerInfo.boundHandler(ensuredMessage, command, args, updateObj, None)
@@ -277,7 +281,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             logger.error(f"Error while handling command {command}: {e}")
             logger.exception(e)
             if handlerInfo.replyErrorOnException:
-                await handler.sendMessage(
+                await handlerObj.sendMessage(
                     ensuredMessage,
                     messageText=f"Error while handling command:\n```\n{e}\n```",
                     messageCategory=MessageCategory.BOT_ERROR,
@@ -285,6 +289,11 @@ class HandlersManager(CommandHandlerGetterInterface):
             return False
 
     async def handleNewMessage(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> None:
+        commandRet = await self.handleCommand(ensuredMessage, updateObj)
+        if commandRet is not None:
+            logger.debug(f"Handled as command with result: {commandRet}")
+            return
+
         resultSet: Set[HandlerResultStatus] = set()
         for handler in self.handlers:
             ret = await handler.newMessageHandler(ensuredMessage, updateObj)

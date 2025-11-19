@@ -1087,10 +1087,8 @@ class BaseBotHandler(CommandHandlerMixin):
             raise ValueError("No message text or photo data provided")
 
         replyMessageList: List[telegram.Message] = []
-        message = replyToMessage.getBaseMessage()
-        if not isinstance(message, telegram.Message):
-            logger.error("Invalid message type")
-            raise ValueError("Invalid message type")
+        message = replyToMessage.toTelegramMessage()
+        message.set_bot(self._tgBot)
         chatType = replyToMessage.recipient.chatType
         isPrivate = chatType == ChatType.PRIVATE
         isGroupChat = chatType == ChatType.GROUP
@@ -1128,6 +1126,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     try:
                         messageTextParsed = markdownToMarkdownV2(addMessagePrefix + messageText)
                         # logger.debug(f"Sending MarkdownV2: {replyText}")
+                        # TODO: One day start using self._tgBot
                         replyMessage = await message.reply_photo(
                             caption=messageTextParsed,
                             parse_mode="MarkdownV2",

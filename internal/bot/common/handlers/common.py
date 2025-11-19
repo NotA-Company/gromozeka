@@ -16,10 +16,8 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-from telegram import Chat, Message, Update, User
-from telegram.ext import ContextTypes
-
 import lib.utils as utils
+from internal.bot.common.models.wrappers import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
@@ -28,14 +26,16 @@ from internal.bot.models import (
     DelayedTask,
     DelayedTaskFunction,
     EnsuredMessage,
+    commandHandlerV2,
 )
+from internal.bot.models.ensured_message import ChatType, MessageRecipient, MessageSender
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import LLMManager
 
-from .base import BaseBotHandler, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -116,16 +116,16 @@ class CommonHandler(BaseBotHandler):
             None
         """
         kwargs = delayedTask.kwargs
-        message = Message(
-            message_id=kwargs["messageId"],
+
+        ensuredMessage = EnsuredMessage(
+            sender=MessageSender(id=kwargs["userId"], name="", username=""),
+            recipient=MessageRecipient(id=kwargs["chatId"], chatType=ChatType(kwargs["chatType"])),
+            messageId=kwargs["messageId"],
             date=datetime.datetime.now(),
-            chat=Chat(id=kwargs["chatId"], type=kwargs["chatType"]),
-            from_user=User(id=kwargs["userId"], first_name="", is_bot=False),
-            text=kwargs["messageText"],
-            message_thread_id=kwargs["threadId"],
+            messageText=kwargs["messageText"],
         )
-        message.set_bot(self._tgBot)
-        ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
+        ensuredMessage.threadId = kwargs["threadId"]
+
         await self.sendMessage(
             replyToMessage=ensuredMessage,
             messageText=kwargs["messageText"],
@@ -151,12 +151,7 @@ class CommonHandler(BaseBotHandler):
             If the bot is not initialized, logs an error instead of attempting deletion.
         """
         kwargs = delayedTask.kwargs
-        if self._tgBot is not None:
-            await self._tgBot.delete_message(chat_id=kwargs["chatId"], message_id=kwargs["messageId"])
-        else:
-            logger.error(
-                "Bot is not initialized, can't delete message " f"{kwargs['messageId']} in chat {kwargs['chatId']}"
-            )
+        await self.deleteMessagesById(chatId=kwargs["chatId"], messageIds=[kwargs["messageId"]])
 
     ###
     # LLM Tool-Calling handlers
@@ -227,11 +222,11 @@ class CommonHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("start",),
         shortDescription="Start bot interaction",
         helpMessage=": Начать работу с ботом.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.FIRST,
         category=CommandCategory.PRIVATE,
@@ -239,9 +234,10 @@ class CommonHandler(BaseBotHandler):
     async def start_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle the /start command to welcome new users, dood!
@@ -271,21 +267,22 @@ class CommonHandler(BaseBotHandler):
         )
         logger.info(f"User {sender} started the bot")
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("remind",),
         shortDescription="<delay> [<message>] - Remind me after given delay with message or replied message/quote",
         helpMessage=" `<DDdHHhMMmSSs|HH:MM[:SS]>`: напомнить указанный текст через указанное время "
         "(можно использовать цитирование или ответ на сообщение).",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
     )
     async def remind_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle the /remind command to schedule reminder messages, dood!
@@ -316,10 +313,11 @@ class CommonHandler(BaseBotHandler):
         """
 
         delaySecs: int = 0
+        argList = args.split(maxsplit=1)
         try:
-            if not context.args:
+            if not args:
                 raise ValueError("No time specified")
-            delayStr = context.args[0]
+            delayStr = argList[0]
             delaySecs = utils.parseDelay(delayStr)
         except Exception as e:
             await self.sendMessage(
@@ -338,8 +336,8 @@ class CommonHandler(BaseBotHandler):
             return
 
         reminderText: Optional[str] = None
-        if len(context.args) > 1:
-            reminderText = " ".join(context.args[1:])
+        if len(argList) > 1:
+            reminderText = argList[1]
 
         if reminderText is None and ensuredMessage.quoteText:
             reminderText = ensuredMessage.quoteText
@@ -366,11 +364,11 @@ class CommonHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("list_chats",),
         shortDescription="[all] - List chats, where bot seen you",
         helpMessage=": Вывести список чатов, где бот вас видел.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.TECHNICAL,
         category=CommandCategory.PRIVATE,
@@ -378,9 +376,10 @@ class CommonHandler(BaseBotHandler):
     async def list_chats_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle the /list_chats command to display known chats, dood!
@@ -402,7 +401,7 @@ class CommonHandler(BaseBotHandler):
             The 'all' parameter requires admin privileges.
             Chat information includes ID, title/username, and type.
         """
-        listAll = context.args and context.args[0].strip().lower() == "all"
+        listAll = args.strip().lower().startswith("all")
 
         if listAll:
             listAll = await self.isAdmin(ensuredMessage.sender, None, True)
