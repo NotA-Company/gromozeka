@@ -37,6 +37,25 @@ class ChatStatus(StrEnum):
     """Чат был закрыт."""
 
 
+class SenderAction(StrEnum):
+    """ "
+    Действие, отправляемое участникам чата.
+    """
+
+    TYPING = "typing_on"
+    """Бот набирает сообщение."""
+    UPLOAD_PHOTO = "sending_photo"
+    """Бот отправляет фото."""
+    UPLOAD_VIDEO = "sending_video"
+    """Бот отправляет видео."""
+    UPLOAD_AUDIO = "sending_audio"
+    """Бот отправляет аудиофайл."""
+    UPLOAD_FILE = "sending_file"
+    """Бот отправляет файл."""
+    MARK_SEEN = "mark_seen"
+    """Бот помечает сообщения как прочитанные."""
+
+
 class ChatAdminPermission(StrEnum):
     """
     Права администратора чата

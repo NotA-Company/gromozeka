@@ -34,10 +34,9 @@ import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.database.wrapper import DatabaseWrapper
-from internal.models import MessageIdType
+from internal.models import MessageIdType, MessageType
 from lib.ai.models import ModelMessage
 
-from ...models import MessageType
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
 

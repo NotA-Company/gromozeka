@@ -70,6 +70,7 @@ from .chat import (
     ChatPatch,
     ChatStatus,
     ChatType,
+    SenderAction,
 )
 
 # Markup models
@@ -192,6 +193,7 @@ __all__ = [
     "ChatList",
     "ChatMembersList",
     "ChatPatch",
+    "SenderAction",
     # Message models (11)
     "Message",
     "MessageBody",

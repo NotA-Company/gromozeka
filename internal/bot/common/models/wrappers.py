@@ -7,5 +7,3 @@ import telegram
 import lib.max_bot.models as maxModels
 
 UpdateObjectType = Union[telegram.Update | maxModels.Update]
-
-MessageIdType = Union[int, str]
