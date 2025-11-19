@@ -5,10 +5,10 @@ This module contains chat-related dataclasses including Chat, ChatMember,
 ChatAdmin, ChatAdminPermission, ChatList, and ChatPatch models.
 """
 
-from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
+from .base import BaseMaxBotModel
 from .user import UserWithPhoto
 
 
@@ -18,7 +18,7 @@ class ChatType(StrEnum):
     """
 
     CHAT = "chat"
-    DIALOG = "dialog"  # NOTE: `dialog`` isn't present in swagger, however returned by Max API
+    DIALOG = "dialog"  # NOTE: `dialog` isn't present in swagger, however returned by Max API
     CHANNEL = "channel"
 
 
@@ -38,7 +38,7 @@ class ChatStatus(StrEnum):
 
 
 class SenderAction(StrEnum):
-    """ "
+    """
     Действие, отправляемое участникам чата.
     """
 
@@ -75,98 +75,117 @@ class ChatAdminPermission(StrEnum):
     """Писать сообщения."""
     EDIT_LINK = "edit_link"
     """Изменять ссылку на чат."""
+    CAN_CALL = "can_call"
+    """Audio Call?"""
+    EDIT = 'edit'
+    """Edit messages?"""
+    VIEW_STATS = 'view_stats'
+    """View message stats?"""
+    DELETE='delete'
+    """Delete messages?"""
 
 
-@dataclass(slots=True)
-class Chat:
+
+class Chat(BaseMaxBotModel):
     """
     Chat model representing a Max Messenger chat
     """
 
-    chat_id: int
-    """ID чата"""
-    type: ChatType
-    """Тип чата:
-     - `"chat"` — Групповой чат."""
-    status: ChatStatus
-    """Статус чата:
-    - `"active"` — Бот является активным участником чата.
-    - `"removed"` — Бот был удалён из чата.
-    - `"left"` — Бот покинул чат.
-    - `"closed"` — Чат был закрыт."""
-    title: Optional[str] = None
-    """Отображаемое название чата. Может быть `null` для диалогов"""
-    icon: Optional[Dict[str, Any]] = None
-    """Иконка чата"""
-    last_event_time: int = 0
-    """Время последнего события в чате"""
-    participants_count: int = 0
-    """Количество участников чата. Для диалогов всегда `2`"""
-    owner_id: Optional[int] = None
-    """ID владельца чата"""
-    participants: Optional[Dict[str, int]] = None
-    """Участники чата с временем последней активности. Может быть `null`, если запрашивается список чатов"""
-    is_public: bool = False
-    """Доступен ли чат публично (для диалогов всегда `false`)"""
-    link: Optional[str] = None
-    """Ссылка на чат"""
-    description: Optional[str] = None
-    """Описание чата"""
-    dialog_with_user: Optional[UserWithPhoto] = None
-    """Данные о пользователе в диалоге (только для чатов типа `"dialog"`)"""
-    chat_message_id: Optional[str] = None
-    """ID сообщения, содержащего кнопку, через которую был инициирован чат"""
-    pinned_message: Optional[Dict[str, Any]] = None
-    """Закреплённое сообщение в чате (возвращается только при запросе конкретного чата)"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = (
+        "chat_id",
+        "type",
+        "status",
+        "title",
+        "icon",
+        "last_event_time",
+        "participants_count",
+        "owner_id",
+        "participants",
+        "is_public",
+        "link",
+        "description",
+        "dialog_with_user",
+        "chat_message_id",
+        "pinned_message",
+    )
+
+    def __init__(
+        self,
+        *,
+        chat_id: int,
+        type: ChatType,
+        status: ChatStatus,
+        title: Optional[str] = None,
+        icon: Optional[Dict[str, Any]] = None,
+        last_event_time: int = 0,
+        participants_count: int = 0,
+        owner_id: Optional[int] = None,
+        participants: Optional[Dict[str, int]] = None,
+        is_public: bool = False,
+        link: Optional[str] = None,
+        description: Optional[str] = None,
+        dialog_with_user: Optional[UserWithPhoto] = None,
+        chat_message_id: Optional[str] = None,
+        pinned_message: Optional[Dict[str, Any]] = None,
+        api_kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.chat_id: int = chat_id
+        """ID чата"""
+        self.type: ChatType = type
+        """Тип чата"""
+        self.status: ChatStatus = status
+        """Статус чата"""
+        self.title: Optional[str] = title
+        """Отображаемое название чата. Может быть `null` для диалогов"""
+        self.icon: Optional[Dict[str, Any]] = icon
+        """Иконка чата"""
+        self.last_event_time: int = last_event_time
+        """Время последнего события в чате"""
+        self.participants_count: int = participants_count
+        """Количество участников чата. Для диалогов всегда `2`"""
+        self.owner_id: Optional[int] = owner_id
+        """ID владельца чата"""
+        self.participants: Optional[Dict[str, int]] = participants
+        """Участники чата с временем последней активности. Может быть `null`, если запрашивается список чатов"""
+        self.is_public: bool = is_public
+        """Доступен ли чат публично (для диалогов всегда `false`)"""
+        self.link: Optional[str] = link
+        """Ссылка на чат"""
+        self.description: Optional[str] = description
+        """Описание чата"""
+        self.dialog_with_user: Optional[UserWithPhoto] = dialog_with_user
+        """Данные о пользователе в диалоге (только для чатов типа `"dialog"`)"""
+        self.chat_message_id: Optional[str] = chat_message_id
+        """ID сообщения, содержащего кнопку, через которую был инициирован чат"""
+        self.pinned_message: Optional[Dict[str, Any]] = pinned_message
+        """Закреплённое сообщение в чате (возвращается только при запросе конкретного чата)"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Chat":
         """Create Chat instance from API response dictionary."""
-        dialog_with_user_data = data.get("dialog_with_user")
+        dialog_with_user_data = data.get("dialog_with_user", None)
         dialog_with_user = None
         if dialog_with_user_data:
             dialog_with_user = UserWithPhoto.from_dict(dialog_with_user_data)
 
         return cls(
             chat_id=data.get("chat_id", 0),
-            type=ChatType(data.get("type", "chat")),
-            status=ChatStatus(data.get("status", "active")),
-            title=data.get("title"),
-            icon=data.get("icon"),
+            type=ChatType(data.get("type", ChatType.CHAT)),
+            status=ChatStatus(data.get("status", ChatStatus.ACTIVE)),
+            title=data.get("title", None),
+            icon=data.get("icon", None),
             last_event_time=data.get("last_event_time", 0),
             participants_count=data.get("participants_count", 0),
-            owner_id=data.get("owner_id"),
-            participants=data.get("participants"),
+            owner_id=data.get("owner_id", None),
+            participants=data.get("participants", None),
             is_public=data.get("is_public", False),
-            link=data.get("link"),
-            description=data.get("description"),
+            link=data.get("link", None),
+            description=data.get("description", None),
             dialog_with_user=dialog_with_user,
-            chat_message_id=data.get("chat_message_id"),
-            pinned_message=data.get("pinned_message"),
-            api_kwargs={
-                k: v
-                for k, v in data.items()
-                if k
-                not in {
-                    "chat_id",
-                    "type",
-                    "status",
-                    "title",
-                    "icon",
-                    "last_event_time",
-                    "participants_count",
-                    "owner_id",
-                    "participants",
-                    "is_public",
-                    "link",
-                    "description",
-                    "dialog_with_user",
-                    "chat_message_id",
-                    "pinned_message",
-                }
-            },
+            chat_message_id=data.get("chat_message_id", None),
+            pinned_message=data.get("pinned_message", None),
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
@@ -176,31 +195,6 @@ class ChatMember(UserWithPhoto):
     """
 
     __slots__ = ("last_access_time", "is_owner", "is_admin", "join_time", "permissions", "alias")
-
-    # last_access_time: int = 0
-    # """Время последней активности пользователя в чате. Может быть устаревшим для суперчатов (равно времени вступления)"""  # noqa: E501
-    # is_owner: bool = False
-    # """Является ли пользователь владельцем чата"""
-    # is_admin: bool = False
-    # """Является ли пользователь администратором чата"""
-    # join_time: int = 0
-    # """Дата присоединения к чату в формате Unix time"""
-    # permissions: Optional[List[ChatAdminPermission]] = None
-    # """Перечень прав пользователя. Возможные значения:
-    # - `"read_all_messages"` — Читать все сообщения.
-    # - `"add_remove_members"` — Добавлять/удалять участников.
-    # - `"add_admins"` — Добавлять администраторов.
-    # - `"change_chat_info"` — Изменять информацию о чате.
-    # - `"pin_message"` — Закреплять сообщения.
-    # - `"write"` — Писать сообщения.
-    # - `"edit_link"` — Изменять ссылку на чат.
-    # """
-    # alias: Optional[str] = None
-    # """Заголовок, который будет показан на клиенте
-
-    # Если пользователь администратор или владелец и ему не установлено это название,
-    # то поле не передается, клиенты на своей стороне подменят на "владелец" или "админ".
-    # """
 
     def __init__(
         self,
@@ -235,11 +229,24 @@ class ChatMember(UserWithPhoto):
             api_kwargs=api_kwargs,
         )
         self.last_access_time: int = last_access_time
+        """
+        Время последней активности пользователя в чате. 
+        Может быть устаревшим для суперчатов (равно времени вступления)
+        """
         self.is_owner: bool = is_owner
+        """Является ли пользователь владельцем чата"""
         self.is_admin: bool = is_admin
+        """Является ли пользователь администратором чата"""
         self.join_time: int = join_time
+        """Дата присоединения к чату в формате Unix time"""
         self.permissions: Optional[List[ChatAdminPermission]] = permissions
+        """Перечень прав пользователя."""
         self.alias: Optional[str] = alias
+        """
+        Заголовок, который будет показан на клиенте
+        Если пользователь администратор или владелец и ему не установлено это название,
+        то поле не передается, клиенты на своей стороне подменят на "владелец" или "админ".
+        """
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatMember":
@@ -269,29 +276,37 @@ class ChatMember(UserWithPhoto):
         )
 
 
-@dataclass(slots=True)
-class ChatAdmin:
+class ChatAdmin(BaseMaxBotModel):
     """
     Chat admin model with permissions
     """
 
-    user_id: int
-    """Идентификатор администратора с правами доступа"""
-    permissions: List[ChatAdminPermission]
-    """Перечень прав пользователя. Возможные значения:
-    - `"read_all_messages"` — Читать все сообщения.
-    - `"add_remove_members"` — Добавлять/удалять участников.
-    - `"add_admins"` — Добавлять администраторов.
-    - `"change_chat_info"` — Изменять информацию о чате.
-    - `"pin_message"` — Закреплять сообщения.
-    - `"write"` — Писать сообщения.
-    """
-    alias: Optional[str] = None
-    """Заголовок, который будет показан на клиенте
+    __slots__ = ("user_id", "permissions", "alias")
 
-    Если пользователь администратор или владелец и ему не установлено это название, то поле не передается, клиенты на своей стороне подменят на "владелец" или "админ"."""  # noqa: E501
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    def __init__(
+        self,
+        *,
+        user_id: int,
+        permissions: List[ChatAdminPermission],
+        alias: Optional[str] = None,
+        api_kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.user_id: int = user_id
+        """Идентификатор администратора с правами доступа"""
+        self.permissions: List[ChatAdminPermission] = permissions
+        """Перечень прав пользователя. Возможные значения:
+        - `"read_all_messages"` — Читать все сообщения.
+        - `"add_remove_members"` — Добавлять/удалять участников.
+        - `"add_admins"` — Добавлять администраторов.
+        - `"change_chat_info"` — Изменять информацию о чате.
+        - `"pin_message"` — Закреплять сообщения.
+        - `"write"` — Писать сообщения.
+        """
+        self.alias: Optional[str] = alias
+        """Заголовок, который будет показан на клиенте
+
+        Если пользователь администратор или владелец и ему не установлено это название, то поле не передается, клиенты на своей стороне подменят на "владелец" или "админ"."""  # noqa: E501
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatAdmin":
@@ -303,22 +318,29 @@ class ChatAdmin:
             user_id=data.get("user_id", 0),
             permissions=permissions,
             alias=data.get("alias"),
-            api_kwargs={k: v for k, v in data.items() if k not in {"user_id", "permissions", "alias"}},
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class ChatList:
+class ChatList(BaseMaxBotModel):
     """
     Paginated list of chats
     """
 
-    chats: List[Chat]
-    """Список запрашиваемых чатов"""
-    marker: Optional[int] = None
-    """Указатель на следующую страницу запрашиваемых чатов"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("chats", "marker")
+
+    def __init__(
+        self,
+        *,
+        chats: List[Chat],
+        marker: Optional[int] = None,
+        api_kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.chats: List[Chat] = chats
+        """Список запрашиваемых чатов"""
+        self.marker: Optional[int] = marker
+        """Указатель на следующую страницу запрашиваемых чатов"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatList":
@@ -329,26 +351,35 @@ class ChatList:
         return cls(
             chats=chats,
             marker=data.get("marker"),
-            api_kwargs={k: v for k, v in data.items() if k not in {"chats", "marker"}},
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class ChatPatch:
+class ChatPatch(BaseMaxBotModel):
     """
     Chat patch model for updating chat information
     """
 
-    icon: Optional[Dict[str, Any]] = None
-    """Иконка чата"""
-    title: Optional[str] = None
-    """Название чата"""
-    pin: Optional[str] = None
-    """ID сообщения для закрепления в чате. Чтобы удалить закреплённое сообщение, используйте метод [unpin](/docs-api/methods/DELETE/chats/%7BchatId%7D/pin)"""  # noqa: E501
-    notify: Optional[bool] = None
-    """Если `true`, участники получат системное уведомление об изменении"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("icon", "title", "pin", "notify")
+
+    def __init__(
+        self,
+        *,
+        icon: Optional[Dict[str, Any]] = None,
+        title: Optional[str] = None,
+        pin: Optional[str] = None,
+        notify: Optional[bool] = None,
+        api_kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.icon: Optional[Dict[str, Any]] = icon
+        """Иконка чата"""
+        self.title: Optional[str] = title
+        """Название чата"""
+        self.pin: Optional[str] = pin
+        """ID сообщения для закрепления в чате. Чтобы удалить закреплённое сообщение, используйте метод [unpin](/docs-api/methods/DELETE/chats/%7BchatId%7D/pin)"""  # noqa: E501
+        self.notify: Optional[bool] = notify
+        """Если `true`, участники получат системное уведомление об изменении"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatPatch":
@@ -358,48 +389,52 @@ class ChatPatch:
             title=data.get("title"),
             pin=data.get("pin"),
             notify=data.get("notify"),
-            api_kwargs={k: v for k, v in data.items() if k not in {"icon", "title", "pin", "notify"}},
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class ChatMembersList:
+class ChatMembersList(BaseMaxBotModel):
     """
     List of chat members
     """
 
-    members: List[ChatMember]
-    """Список участников чата с информацией о времени последней активности"""
-    marker: Optional[int] = None
-    """Указатель на следующую страницу данных"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("members", "marker")
+
+    def __init__(
+        self, *, members: List[ChatMember], marker: Optional[int] = None, api_kwargs: Dict[str, Any] | None = None
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.members: List[ChatMember] = members
+        """Список участников чата с информацией о времени последней активности"""
+        self.marker: Optional[int] = marker
+        """Указатель на следующую страницу данных"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatMembersList":
         """Create ChatMembersList instance from API response dictionary."""
-        members_data = data.get("members", [])
-        members = [ChatMember.from_dict(member) for member in members_data]
 
         return cls(
-            members=members,
-            marker=data.get("marker"),
-            api_kwargs={k: v for k, v in data.items() if k not in {"members", "marker"}},
+            members=[ChatMember.from_dict(member) for member in data.get("members", [])],
+            marker=data.get("marker", None),
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class ChatAdminsList:
+class ChatAdminsList(BaseMaxBotModel):
     """
     List of chat admins
     """
 
-    admins: List[ChatAdmin]
-    """Массив администраторов чата"""
-    marker: Optional[int] = None
-    """Указатель на следующую страницу данных"""
-    api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    """Raw API response data"""
+    __slots__ = ("admins", "marker")
+
+    def __init__(
+        self, *, admins: List[ChatAdmin], marker: Optional[int] = None, api_kwargs: Dict[str, Any] | None = None
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+        self.admins: List[ChatAdmin] = admins
+        """Массив администраторов чата"""
+        self.marker: Optional[int] = marker
+        """Указатель на следующую страницу данных"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatAdminsList":
@@ -409,6 +444,6 @@ class ChatAdminsList:
 
         return cls(
             admins=admins,
-            marker=data.get("marker"),
-            api_kwargs={k: v for k, v in data.items() if k not in {"admins", "marker"}},
+            marker=data.get("marker", None),
+            api_kwargs=cls._getExtraKwargs(data),
         )

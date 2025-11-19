@@ -723,8 +723,27 @@ class MaxBotClient:
             ...     for admin in admins.members:
             ...         print(f"Admin: {admin.first_name}")
         """
-        response = await self.get(f"/chats/{chatId}/members/admins")
-        return ChatMembersList.from_dict(response)
+        marker: Optional[int] = None
+        ret: Optional[ChatMembersList] = None
+        maxIterations = 10  # For being sure we'll not go to infinity loop
+
+        while (marker is not None or ret is None) and maxIterations > 0:
+            maxIterations -= 1
+            response = await self.get(f"/chats/{chatId}/members/admins")
+            logger.debug(f"getAdmins({chatId}) response: {response}")
+            newRet = ChatMembersList.from_dict(response)
+            marker = newRet.marker
+
+            if ret is None:
+                ret = newRet
+            else:
+                ret.members.extend(newRet.members)
+                ret.marker = marker
+
+        if maxIterations <= 0:
+            logger.debug(f"getAdmins: maxIterations is zero, ret is: {ret}")
+
+        return ret if ret is not None else ChatMembersList(members=[])
 
     # Admin Permission Methods
     async def editAdminPermissions(self, chatId: int, admins: List[ChatAdmin]) -> bool:

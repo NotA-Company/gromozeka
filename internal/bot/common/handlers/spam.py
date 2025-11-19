@@ -105,7 +105,7 @@ class SpamHandler(BaseBotHandler):
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
-        self.spamButtonSalt = self.config.get("spam-button-salt", str(self.botOwners))
+        self.spamButtonSalt = self.config.get("spam-button-salt", str(time.time()))
         # self.config = configManager.getBotConfig()
 
         # Initialize Bayes spam filter
