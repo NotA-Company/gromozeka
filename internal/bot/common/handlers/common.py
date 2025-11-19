@@ -17,18 +17,20 @@ import time
 from typing import Any, Dict, Optional
 
 import lib.utils as utils
-from internal.bot.common.models.wrappers import UpdateObjectType
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
+    ChatType,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     DelayedTask,
     DelayedTaskFunction,
     EnsuredMessage,
+    MessageRecipient,
+    MessageSender,
     commandHandlerV2,
 )
-from internal.bot.models.ensured_message import ChatType, MessageRecipient, MessageSender
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper

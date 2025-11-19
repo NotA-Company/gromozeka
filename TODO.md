@@ -4,11 +4,13 @@ Adopt Handlers:
   - [x] Media Download support
   - [x] Media Upload support
   - [x] Proper message sending support
-  - [ ] Typing action support
+  - [x] Typing action support
   - [ ] Chat Info handling support
-- [ ] common.py
+  - [x] Admins support
+  - [x] BotOwner By ID support
+- [x] common.py
 - [ ] configure.py
-- [ ] dev_commands.py
+- [x] dev_commands.py
 - [ ] example.py
 - [ ] help_command.py
 - [x] llm_messages.py

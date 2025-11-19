@@ -21,12 +21,11 @@ import time
 from typing import Optional
 
 import telegram
-from telegram import Chat, Update
 from telegram.constants import MessageEntityType
-from telegram.ext import ContextTypes
 
+from internal.bot.models.ensured_message import MessageRecipient
 import lib.utils as utils
-from internal.bot import constants
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     ChatSettingsKey,
     ChatSettingsValue,
@@ -35,11 +34,12 @@ from internal.bot.models import (
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    commandHandlerV2,
 )
 from internal.database.models import MessageCategory
 from internal.services.cache import CacheNamespace
 
-from .base import BaseBotHandler, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +65,11 @@ class DevCommandsHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("echo",),
         shortDescription="<Message> - Echo message back",
         helpMessage=" `<message>`: Просто ответить переданным сообщением (для тестирования живости бота).",
-        suggestCategories={CommandPermission.PRIVATE, CommandPermission.HIDDEN},
+        visibility={CommandPermission.PRIVATE, CommandPermission.HIDDEN},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.SECOND,
         category=CommandCategory.TECHNICAL,
@@ -77,9 +77,10 @@ class DevCommandsHandler(BaseBotHandler):
     async def echo_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle the /echo command for testing bot responsiveness, dood!
 
@@ -103,11 +104,10 @@ class DevCommandsHandler(BaseBotHandler):
             - Sends error if no message text is provided, dood!
         """
 
-        if context.args:
-            echo_text = " ".join(context.args)
+        if args:
             await self.sendMessage(
                 ensuredMessage,
-                messageText=f"🔄 Echo: {echo_text}",
+                messageText=f"🔄 Echo: {args}",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
         else:
@@ -117,20 +117,21 @@ class DevCommandsHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_ERROR,
             )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("models",),
         shortDescription="Get list of known LLM models",
         helpMessage=": Вывести список всех известных моделей и их параметров.",
-        suggestCategories={CommandPermission.BOT_OWNER},
+        visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         category=CommandCategory.PRIVATE,
     )
     async def models_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /models command to list all available LLM models, dood!
 
@@ -205,20 +206,21 @@ class DevCommandsHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("settings",),
         shortDescription="[<chatId>] [skip-default] - Dump all settings for this chat",
         helpMessage="[`<chatId>`] [`skip-default`]: Вывести список настроек для указанного чата",
-        suggestCategories={CommandPermission.BOT_OWNER},
+        visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         category=CommandCategory.TECHNICAL,
     )
     async def chat_settings_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle the /settings command to display chat configuration, dood!
 
@@ -253,15 +255,15 @@ class DevCommandsHandler(BaseBotHandler):
             - Sends error message if chat is not found, dood!
         """
 
-        args = context.args
-        targetChatId = utils.extractInt(args)
+        argList = args.split()
+        targetChatId = utils.extractInt(argList)
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
-        elif args:
-            args = args[1:]
+        elif argList:
+            argList = argList[1:]
 
         skipDefault = False
-        if args and args[0].lower() == "skip-default":
+        if argList and argList[0].lower() == "skip-default":
             skipDefault = True
 
         chatInfo = self.getChatInfo(targetChatId)
@@ -273,13 +275,9 @@ class DevCommandsHandler(BaseBotHandler):
             )
             return
 
-        chatName = chatInfo["title"] or chatInfo["username"]
-        if chatInfo["type"] == Chat.PRIVATE:
-            chatName = f"{constants.PRIVATE_ICON} **{chatName}**"
-        else:
-            chatName = f"{constants.CHAT_ICON} **{chatName}**"
+        chatName = self.getChatTitle(chatInfo)
 
-        resp = f"Настройки чата {chatName} #`{targetChatId}`:\n\n"
+        resp = f"Настройки чата {chatName}:\n\n"
         chatSettings = self.getChatSettings(targetChatId)
         chatSettingsNoDef = self.getChatSettings(targetChatId, returnDefault=False)
         defaultSettings = self.getChatSettings(None, chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP)
@@ -299,20 +297,21 @@ class DevCommandsHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("set", "unset"),
         shortDescription="[<chatId>] <key> <value> - Set/Unset given setting for current chat",
         helpMessage="[`<chatId>`] `<key>` `<value>`: установить/сбросить настройку чата",
-        suggestCategories={CommandPermission.BOT_OWNER},
+        visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         category=CommandCategory.TECHNICAL,
     )
     async def set_or_unset_chat_setting_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /set and /unset commands for managing chat settings, dood!
 
@@ -356,7 +355,7 @@ class DevCommandsHandler(BaseBotHandler):
             "Для установки настроек используйте `/set [<chatId] <key> <value>`, для сброса `/unset [<chatId>] <key>`"
         )
 
-        if not context.args:
+        if not args:
             await self.sendMessage(
                 ensuredMessage,
                 notEnoughArgsText,
@@ -364,19 +363,19 @@ class DevCommandsHandler(BaseBotHandler):
             )
             return
 
-        args = context.args
+        argList = args.split()
 
-        targetChatId = utils.extractInt(args)
+        targetChatId = utils.extractInt(argList)
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
         else:
-            args = args[1:]
+            argList = argList[1:]
 
         if any(
             [
-                not args,
-                isSet and len(args) < 2,
-                not isSet and len(args) != 1,
+                not argList,
+                isSet and len(argList) < 2,
+                not isSet and len(argList) != 1,
             ]
         ):
             await self.sendMessage(
@@ -386,7 +385,7 @@ class DevCommandsHandler(BaseBotHandler):
             )
             return
 
-        keyStr = args[0]
+        keyStr = argList[0]
         key = ChatSettingsKey.UNKNOWN
         try:
             key = ChatSettingsKey(keyStr)
@@ -399,7 +398,7 @@ class DevCommandsHandler(BaseBotHandler):
             return
 
         if isSet:
-            value = " ".join(args[1:]).strip()
+            value = " ".join(argList[1:]).strip()
 
             self.setChatSetting(targetChatId, key, ChatSettingsValue(value))
             await self.sendMessage(
@@ -415,11 +414,11 @@ class DevCommandsHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("test",),
         shortDescription="<Test suite> [<args>] - Run some tests",
         helpMessage=" `<test_name>` `[<test_args>]`: Запустить тест (используется для тестирования).",
-        suggestCategories={CommandPermission.BOT_OWNER},
+        visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         helpOrder=CommandHandlerOrder.TEST,
         category=CommandCategory.PRIVATE,
@@ -427,16 +426,17 @@ class DevCommandsHandler(BaseBotHandler):
     async def test_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /test command to run various diagnostic test suites, dood!"""
         message = ensuredMessage.getBaseMessage()
         if not isinstance(message, telegram.Message):
             raise ValueError("Invalid message type")
 
-        if not context.args or len(context.args) < 1:
+        if not args:
             await self.sendMessage(
                 ensuredMessage,
                 messageText="You need to specify test suite.",
@@ -444,15 +444,16 @@ class DevCommandsHandler(BaseBotHandler):
             )
             return
 
-        suite = context.args[0]
+        argList = args.split()
+        suite = argList[0]
 
         match suite:
             case "long":
                 iterationsCount = 2
                 delay = 1
-                if len(context.args) > 1:
+                if len(argList) > 1:
                     try:
-                        iterationsCount = int(context.args[1])
+                        iterationsCount = int(argList[1])
                     except ValueError as e:
                         await self.sendMessage(
                             ensuredMessage,
@@ -460,9 +461,9 @@ class DevCommandsHandler(BaseBotHandler):
                             messageCategory=MessageCategory.BOT_ERROR,
                         )
                         pass
-                if len(context.args) > 2:
+                if len(argList) > 2:
                     try:
-                        delay = int(context.args[2])
+                        delay = int(argList[2])
                     except ValueError as e:
                         await self.sendMessage(
                             ensuredMessage,
@@ -472,7 +473,7 @@ class DevCommandsHandler(BaseBotHandler):
                         pass
 
                 for i in range(iterationsCount):
-                    logger.debug(f"Iteration {i} of {iterationsCount} (delay is {delay}) {context.args[3:]}")
+                    logger.debug(f"Iteration {i} of {iterationsCount} (delay is {delay}) {argList[3:]}")
                     await self.sendMessage(
                         ensuredMessage,
                         messageText=f"Iteration {i}",
@@ -554,12 +555,12 @@ class DevCommandsHandler(BaseBotHandler):
                     messageCategory=MessageCategory.BOT_ERROR,
                 )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("clear_cache",),
         shortDescription="- Clear cache (all except of user state)",
         helpMessage=": Очистить кеш (кроме состояния пользователя) "
         "для перечитывания всех значений из базы (полезно при ручном вмешательстве в базу данных)",
-        suggestCategories={CommandPermission.BOT_OWNER},
+        visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         helpOrder=CommandHandlerOrder.TECHNICAL,
         category=CommandCategory.PRIVATE,
@@ -567,9 +568,10 @@ class DevCommandsHandler(BaseBotHandler):
     async def clear_cache_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Clear cache"""
         # Dump only temporary caches, do not touch User and ChatPersistent ones
@@ -579,5 +581,46 @@ class DevCommandsHandler(BaseBotHandler):
         await self.sendMessage(
             ensuredMessage,
             messageText="Готово, кеши очищены (используйте `/test dumpCache` для проверки состояния кеша)",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+    @commandHandlerV2(
+        commands=("get_admins",),
+        shortDescription="[<chatId>]- Get admin list of given chat",
+        helpMessage=" [`<chatId>`]: Получить список администраторов указанного чата"
+        ,
+        visibility={CommandPermission.BOT_OWNER},
+        availableFor={CommandPermission.BOT_OWNER},
+        helpOrder=CommandHandlerOrder.TECHNICAL,
+        category=CommandCategory.PRIVATE,
+    )
+    async def get_admins_command(
+        self,
+        ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """Clear cache"""
+        targetChatId:Optional[int] = None
+        if args:
+            argList = args.split()
+            targetChatId = utils.extractInt(argList)
+
+        if targetChatId is None:
+            targetChatId = ensuredMessage.recipient.id
+
+        # Fill admin list cache
+        await self.isAdmin(
+            ensuredMessage.sender,
+            MessageRecipient(id=targetChatId, chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP),
+            allowBotOwners=False,
+        )
+        admins =  self.cache.getChatAdmins(targetChatId)
+
+        await self.sendMessage(
+            ensuredMessage,
+            messageText=f"```json\n{utils.jsonDumps(admins, indent=2)}\n```",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
