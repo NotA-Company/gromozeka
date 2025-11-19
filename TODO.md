@@ -5,7 +5,7 @@ Adopt Handlers:
   - [x] Media Upload support
   - [x] Proper message sending support
   - [x] Typing action support
-  - [ ] Chat Info handling support
+  - [x] Chat Info handling support
   - [x] Admins support
   - [x] BotOwner By ID support
 - [x] common.py

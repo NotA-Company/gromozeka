@@ -50,7 +50,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
             case _:
                 logger.error(f"Unsupported bot provider: {self.botProvider}")
 
-        if not self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
+        if not await self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
             logger.error("Failed to save chat message")
             return HandlerResultStatus.ERROR
 

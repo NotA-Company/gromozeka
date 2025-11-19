@@ -502,6 +502,7 @@ class MaxBotClient:
             ...     print(f"Chat title: {chat.title}")
         """
         response = await self.get(f"/chats/{chatId}")
+        logger.debug(f"getChat({chatId}) ret: {response}")
         return Chat.from_dict(response)
 
     async def editChatInfo(
