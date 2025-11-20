@@ -9,17 +9,16 @@ import datetime
 import logging
 from typing import Any, Dict, Optional
 
-from telegram import Update
-from telegram.ext import ContextTypes
-
 import lib.utils as utils
 from internal.bot import constants
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
 from internal.database.generic_cache import GenericDatabaseCache
@@ -38,7 +37,7 @@ from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
 from lib.geocode_maps import GeocodeMapsClient, SearchResult
 from lib.openweathermap import OpenWeatherMapClient, WeatherData
 
-from .base import BaseBotHandler, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -414,11 +413,11 @@ class WeatherHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("weather",),
         shortDescription="<address> - Get weather for given address",
         helpMessage=" `<address>`: Показать погоду по указанному адресу.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
@@ -426,9 +425,10 @@ class WeatherHandler(BaseBotHandler):
     async def weather_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /weather command for retrieving weather information.
 
@@ -444,11 +444,9 @@ class WeatherHandler(BaseBotHandler):
             None. Sends weather info or error message to chat.
         """
         # Get Weather for given city (and country)
-        address = ""
+        address = args.strip()
 
-        if context.args:
-            address = " ".join(context.args)
-        else:
+        if not address:
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Необходимо указать адрес для получения погоды.",
@@ -520,14 +518,14 @@ class WeatherHandler(BaseBotHandler):
             )
             return
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("geocode",),
         shortDescription="[short] <address> - Return geocoding result for given address",
         helpMessage=(
             " [`short`] `<address>`: Показать результат геокодинга для указанного адреса. "
             "Если передан параметр `short`, то выводит только основную информацию."
         ),
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
@@ -535,9 +533,10 @@ class WeatherHandler(BaseBotHandler):
     async def geocode_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /geocode command for retrieving geocoding information.
 
@@ -554,12 +553,13 @@ class WeatherHandler(BaseBotHandler):
         """
         address = ""
         isShort = False
-        args = context.args
-        if args:
-            if args[0].strip().lower() == "short":
+        argList = args.split(maxsplit=1)
+        if argList:
+            if argList[0].strip().lower() == "short":
                 isShort = True
-                args = args[1:]
-            address = " ".join(args)
+                argList = argList[1:]
+        if argList:
+            address = " ".join(argList)
         else:
             await self.sendMessage(
                 ensuredMessage,
