@@ -27,14 +27,12 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence
 
 import magic
 import telegram
 import telegram.constants
 import telegram.ext as telegramExt
-from telegram import Chat, MessageEntity, Update
-from telegram.ext import ContextTypes
 
 import lib.max_bot as maxBot
 import lib.max_bot.models as maxModels
@@ -46,12 +44,8 @@ from internal.bot.models import (
     ChatSettingsKey,
     ChatSettingsValue,
     ChatType,
-    CommandCategory,
-    CommandHandlerInfo,
     CommandHandlerInfoV2,
     CommandHandlerMixin,
-    CommandHandlerOrder,
-    CommandPermission,
     EnsuredMessage,
     MediaProcessingInfo,
     MentionCheckResult,
@@ -60,7 +54,6 @@ from internal.bot.models import (
     MessageType,
     UserMetadataDict,
 )
-from internal.bot.models.command_handlers import _HANDLER_METADATA_ATTR
 from internal.config.manager import ConfigManager
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -298,200 +291,6 @@ class TypingManager:
         await self.stopTask()
 
 
-def commandHandlerExtended(
-    commands: Sequence[str],  # Sequence of commands to handle
-    shortDescription: str,  # Short description, for suggestions
-    helpMessage: str,  # Long help message
-    *,
-    # Where command need to be suggested. Default: nowhere
-    suggestCategories: Optional[Set[CommandPermission]] = None,
-    # Where command is allowed to be used. Default: everywhere
-    # TODO: Think if it really needed or we can use category for it?
-    availableFor: Optional[Set[CommandPermission]] = None,
-    # Order hor help message
-    helpOrder: CommandHandlerOrder = CommandHandlerOrder.NORMAL,
-    # Category for command (for more fine-grained permissions handling)
-    category: CommandCategory = CommandCategory.UNSPECIFIED,
-    # Which ChatAction we should send? None - to send nothing
-    typingAction: Optional[TypingAction] = TypingAction.TYPING,
-    # Should we reply to user with exception message on exception? Default: True
-    replyErrorOnException: bool = True,
-) -> Callable[
-    [Callable[[Any, EnsuredMessage, Optional[TypingManager], Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]],
-    Callable[["BaseBotHandler", Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]],
-]:
-    """
-    Decorator for creating extended command handlers with metadata, permissions, and logging, dood!
-
-    Creates a decorator that wraps command handler functions with additional functionality:
-    - Stores command metadata (commands, descriptions, categories)
-    - Checks user permissions based on chat type and user roles
-    - Logs command usage in the database
-    - Ensures message format before passing to handler
-    - Manages typing actions during command execution
-    - Handles exceptions and error reporting
-
-    The decorator performs comprehensive permission checking based on:
-    - Command category (PRIVATE, ADMIN, TOOLS, SPAM, etc.)
-    - Chat type (PRIVATE, GROUP, SUPERGROUP)
-    - User roles (bot owner, chat admin, regular user)
-    - Chat-specific settings
-
-    Args:
-        commands: Sequence of command strings this handler responds to
-        shortDescription: Brief description for command suggestions
-        helpMessage: Detailed help text for the command
-        suggestCategories: Where to suggest this command (default: HIDDEN/Nowhere)
-        availableFor: Where command is allowed (default: DEFAULT/everyone)
-        helpOrder: Order for help message display (default: NORMAL)
-        category: Category for command, used for fine-grained permissions handling (default: UNSPECIFIED)
-        typingAction: ChatAction to send during command execution (default: TYPING)
-        replyErrorOnException: Whether to send error messages to users on exceptions (default: True)
-
-    Returns:
-        A decorator function that wraps the command handler with all the above functionality
-    """
-    if suggestCategories is None:
-        suggestCategories = {CommandPermission.HIDDEN}
-    if availableFor is None:
-        availableFor = {CommandPermission.DEFAULT}
-
-    def decorator(
-        func: Callable[
-            ["BaseBotHandler", EnsuredMessage, Optional[TypingManager], Update, ContextTypes.DEFAULT_TYPE],
-            Awaitable[None],
-        ],
-    ) -> Callable[["BaseBotHandler", Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]:
-        # Store metadata as an attribute on the function
-        metadata = CommandHandlerInfo(
-            commands=commands,
-            shortDescription=shortDescription,
-            helpMessage=helpMessage,
-            categories=suggestCategories,
-            order=helpOrder,
-            handler=func,
-        )
-
-        async def wrapper(self: "BaseBotHandler", update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            logger.debug(f"Got {func.__name__} command: {update}")
-
-            message = update.message
-            if not message:
-                logger.error("Message undefined")
-                return
-
-            ensuredMessage: Optional[EnsuredMessage] = None
-            try:
-                ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
-            except Exception as e:
-                logger.error(f"Error while ensuring message: {e}")
-                return
-
-            # Check permissions if needed
-
-            canProcess = CommandPermission.DEFAULT in availableFor
-            isBotOwner = await self.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
-            chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
-            chatType = ensuredMessage.recipient.chatType
-
-            if not canProcess and CommandPermission.PRIVATE in availableFor:
-                canProcess = chatType == ChatType.PRIVATE
-            if not canProcess and CommandPermission.GROUP in availableFor:
-                canProcess = chatType == ChatType.GROUP
-
-            if not canProcess and CommandPermission.BOT_OWNER in availableFor:
-                canProcess = isBotOwner
-
-            if not canProcess and CommandPermission.ADMIN:
-                canProcess = (chatType in [Chat.GROUP, Chat.SUPERGROUP]) and await self.isAdmin(
-                    ensuredMessage.sender, ensuredMessage.recipient
-                )
-
-            if not canProcess:
-                botCommand = ensuredMessage.messageText.split(" ", 1)[0]
-                for entityStr in message.parse_entities([MessageEntity.BOT_COMMAND]).values():
-                    botCommand = entityStr
-                    break
-
-                logger.warning(
-                    f"Command `{botCommand}` is not allowed in "
-                    f"chat {ensuredMessage.recipient} for "
-                    f"user {ensuredMessage.sender}. Needed permissions: {availableFor}"
-                )
-                if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
-                    try:
-                        await message.delete()
-                    except Exception as e:
-                        logger.error(f"Error while deleting message: {e}")
-                return
-
-            isAdmin = await self.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
-            match category:
-                case CommandCategory.UNSPECIFIED:
-                    # No category specified, deny by default
-                    canProcess = False
-                case CommandCategory.PRIVATE:
-                    canProcess = chatType == Chat.PRIVATE
-                case CommandCategory.ADMIN | CommandCategory.SPAM_ADMIN:
-                    canProcess = isAdmin
-                case CommandCategory.TOOLS:
-                    # BotOwners could bypass TollsAllowed check
-                    canProcess = chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool() or isBotOwner
-                case CommandCategory.SPAM:
-                    canProcess = isAdmin or chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
-                case CommandCategory.TECHNICAL:
-                    # Actually technical command shouldn't present in group chats except of debug purposes, but whatever
-                    canProcess = isAdmin
-                case _:
-                    logger.error(f"Unhandled command category: {category}, deny")
-                    canProcess = False
-                    pass
-
-            if not canProcess:
-                botCommand = ensuredMessage.messageText.split(" ", 1)[0]
-                for entityStr in message.parse_entities([MessageEntity.BOT_COMMAND]).values():
-                    botCommand = entityStr
-                    break
-
-                logger.warning(
-                    f"Command `{str(botCommand)}` is not allowed in "
-                    f"chat {ensuredMessage.recipient} for "
-                    f"user {ensuredMessage.sender}. Command category: {category}."
-                )
-                if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
-                    try:
-                        await message.delete()
-                    except Exception as e:
-                        logger.error(f"Error while deleting message: {e}")
-                return
-
-            # Store command message in database
-            await self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER_COMMAND)
-
-            # Actually handle command
-            try:
-                # if typingAction is not None:
-                #     async with await self.startTyping(ensuredMessage, action=typingAction) as typingManager:
-                #         return await func(self, ensuredMessage, typingManager, update, context)
-                # else:
-                return await func(self, ensuredMessage, None, update, context)
-            except Exception as e:
-                logger.error(f"Error while handling command {ensuredMessage.messageText.split(" ", 1)[0]}: {e}")
-                logger.exception(e)
-                if replyErrorOnException:
-                    await self.sendMessage(
-                        ensuredMessage,
-                        messageText=f"Error while handling command:\n```\n{e}\n```",
-                        messageCategory=MessageCategory.BOT_ERROR,
-                    )
-
-        # setattr(func, _HANDLER_METADATA_ATTR, metadata)
-        setattr(wrapper, _HANDLER_METADATA_ATTR, metadata)
-        return wrapper
-
-    return decorator
-
-
 class BaseBotHandler(CommandHandlerMixin):
     """
     Base handler class providing core functionality for all bot handlers, dood!
@@ -597,16 +396,6 @@ class BaseBotHandler(CommandHandlerMixin):
             handler metadata (command names, descriptions, handler functions)
         """
         return super().getCommandHandlersV2()
-
-    def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
-        """
-        Get all command handlers auto-discovered via decorators, dood!
-
-        Returns:
-            Sequence of [`CommandHandlerInfo`](internal/bot/models/command_handlers.py) objects containing
-            handler metadata (command names, descriptions, handler functions)
-        """
-        return super().getCommandHandlers()
 
     def injectTGBot(self, bot: telegramExt.ExtBot) -> None:
         """
@@ -1672,7 +1461,7 @@ class BaseBotHandler(CommandHandlerMixin):
         if useMarkdown:
             chatTitle = f"**{chatTitle}**"
 
-        if chatInfo["type"] == Chat.PRIVATE:
+        if chatInfo["type"] == ChatType.PRIVATE:
             chatTitle = f"{constants.PRIVATE_ICON} {chatTitle}"
         else:
             chatTitle = f"{constants.CHAT_ICON} {chatTitle}"
