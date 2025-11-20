@@ -1,7 +1,9 @@
 from enum import StrEnum
 from typing import Any, Dict, Optional
 
-from .attachment import Attachment, AttachmentType
+from lib.max_bot.models.keyboard import Keyboard
+
+from .attachment import Attachment, AttachmentType, InlineKeyboardAttachment
 from .base import BaseMaxBotModel
 
 
@@ -23,6 +25,23 @@ class AttachmentRequest(Attachment):
     def from_dict(cls, data: Dict[str, Any]) -> "AttachmentRequest":
         return cls(
             type=AttachmentType(data.get("type", AttachmentType.UNSPECIFIED)),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
+
+
+class InlineKeyboardAttachmentRequest(InlineKeyboardAttachment, AttachmentRequest):
+    __slots__ = ()
+
+    def __init__(self, *, payload: Keyboard, api_kwargs: Dict[str, Any] | None = None):
+        InlineKeyboardAttachment.__init__(self, payload=payload, api_kwargs=api_kwargs)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "InlineKeyboardAttachmentRequest":
+        """Create InlineKeyboardAttachment instance from API response dictionary."""
+        from .keyboard import Keyboard
+
+        return cls(
+            payload=Keyboard.from_dict(data.get("payload", {})),
             api_kwargs=cls._getExtraKwargs(data),
         )
 

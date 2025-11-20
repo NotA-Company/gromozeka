@@ -8,9 +8,11 @@ import lib.max_bot as maxBot
 import lib.max_bot.models as maxModels
 from internal.bot.common.handlers.manager import HandlersManager
 from internal.bot.models import BotProvider, EnsuredMessage
+from internal.bot.models.ensured_message import MessageSender
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.queue_service.service import QueueService
+from lib import utils
 from lib.ai import LLMManager
 
 # from lib import utils
@@ -89,10 +91,34 @@ class MaxBotApplication:
 
         if isinstance(update, maxModels.MessageCreatedUpdate):
             logger.debug("It's new message, processing...")
-            message = update.message
-            ensuredMessage = EnsuredMessage.fromMaxMessage(message)
+            ensuredMessage = EnsuredMessage.fromMaxMessage(update.message)
 
             await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
+            return
+        elif isinstance(update, maxModels.MessageCallbackUpdate):
+            logger.debug("It's callback, processing...")
+            if update.message is None:
+                logger.debug(f"Message is None in {update}, ignoring...")
+                return
+            if update.callback.payload is None:
+                logger.debug("Callback payload is None in {update}, ignoring...")
+                return
+
+            ensuredMessage = EnsuredMessage.fromMaxMessage(update.message)
+            payload = utils.unpackDict(update.callback.payload)
+            userName = update.callback.user.first_name
+            if update.callback.user.last_name:
+                userName += " " + update.callback.user.last_name
+            user = MessageSender(
+                update.callback.user.user_id,
+                name=userName,
+                username=update.callback.user.username or "",
+            )
+
+            await self.handlerManager.handleCallback(
+                ensuredMessage=ensuredMessage, data=payload, user=user, updateObj=update
+            )
+            return
 
             # self.database.saveChatMessage()
         else:

@@ -20,12 +20,13 @@ import zlib
 from typing import Any, Dict, List, Optional, Set
 
 import telegram
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from telegram import Message, Update
 from telegram._utils.entities import parse_message_entity
 from telegram.constants import MessageEntityType
 from telegram.ext import ContextTypes
 
 import lib.utils as utils
+from internal.bot.common.models import CallbackButton
 from internal.bot.models import (
     BotProvider,
     ButtonDataKey,
@@ -408,30 +409,24 @@ class SpamHandler(BaseBotHandler):
                     f"Возможно спам (Вероятность: {spamScore:.3f}, "
                     f"порог: {warnTreshold}, id: {ensuredMessage.messageId})\n"
                 ),
-                replyMarkup=InlineKeyboardMarkup(
+                inlineKeyboard=[
                     [
-                        [
-                            InlineKeyboardButton(
-                                "Да, это Спам",
-                                callback_data=utils.packDict(
-                                    {
-                                        ButtonDataKey.SpamAction: True,
-                                        ButtonDataKey.ActionHash: self._makeSpamButtonSignature(ensuredMessage, True),
-                                    }
-                                ),
-                            ),
-                            InlineKeyboardButton(
-                                "Нет, это НЕ Спам",
-                                callback_data=utils.packDict(
-                                    {
-                                        ButtonDataKey.SpamAction: False,
-                                        ButtonDataKey.ActionHash: self._makeSpamButtonSignature(ensuredMessage, False),
-                                    }
-                                ),
-                            ),
-                        ],
-                    ]
-                ),
+                        CallbackButton(
+                            "Да, это Спам",
+                            {
+                                ButtonDataKey.SpamAction: True,
+                                ButtonDataKey.ActionHash: self._makeSpamButtonSignature(ensuredMessage, True),
+                            },
+                        ),
+                        CallbackButton(
+                            "Нет, это НЕ Спам",
+                            {
+                                ButtonDataKey.SpamAction: False,
+                                ButtonDataKey.ActionHash: self._makeSpamButtonSignature(ensuredMessage, False),
+                            },
+                        ),
+                    ],
+                ],
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
             if sentMessage is not None:
@@ -934,11 +929,13 @@ class SpamHandler(BaseBotHandler):
 
         # We need to fallback somewhere, let's fallback to called user
         reportedUser = MessageSender.fromTelegramUser(repliedMessage.from_user) if repliedMessage.from_user else user
-        await message.edit_text(
-            f"[{user.name}](tg://user?id={user.id}) подтвердил, что "
+        await self.editMessage(
+            messageId=message.message_id,
+            chatId=message.chat_id,
+            text=f"[{user.name}](tg://user?id={user.id}) подтвердил, что "
             f"[{reportedUser.name}](tg://user?id={reportedUser.id}) {hamPrefix}Спаммер \n"
             "\\(Данное сообщение будет удалено в течение минуты\\)",
-            parse_mode="MarkdownV2",
+            # inlineKeyboard=[],
         )
 
         await self.queueService.addDelayedTask(

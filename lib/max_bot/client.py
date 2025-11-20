@@ -8,13 +8,13 @@ the Max Messenger Bot API using httpx with proper authentication and error handl
 import asyncio
 import logging
 from collections.abc import Awaitable
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 from urllib.parse import urljoin
 
 import httpx
 
 from lib import utils
-from lib.max_bot.models.keyboard import Button, Keyboard
+from lib.max_bot.models import AttachmentRequest, Button, Keyboard
 
 from .constants import (
     API_BASE_URL,
@@ -37,7 +37,6 @@ from .exceptions import (
     parseApiError,
 )
 from .models import (
-    Attachment,
     AttachmentPayload,
     BotInfo,
     Chat,
@@ -45,13 +44,12 @@ from .models import (
     ChatList,
     ChatMembersList,
     InlineKeyboardAttachment,
+    InlineKeyboardAttachmentRequest,
     Message,
     MessageLinkType,
     MessageList,
     NewMessageBody,
     NewMessageLink,
-    PhotoAttachment,
-    PhotoAttachmentPayload,
     PhotoUploadResult,
     ReplyKeyboardAttachment,
     SenderAction,
@@ -296,6 +294,12 @@ class MaxBotClient:
             except httpx.RequestError as e:
                 last_exception = NetworkError(f"Network error: {type(e).__name__}#{e}")
                 logger.warning(f"Network error on attempt {attempt + 1}: {type(e).__name__}#{e}")
+
+            except TypeError as e:
+                last_exception = MaxBotError(f"Unexpected error: {type(e).__name__}#{e}")
+                logger.error(f"TypeError: {type(e).__name__}#{e}")
+                logger.exception(e)
+                raise e
 
             except Exception as e:
                 last_exception = MaxBotError(f"Unexpected error: {type(e).__name__}#{e}")
@@ -791,13 +795,12 @@ class MaxBotClient:
         chatId: Optional[int] = None,
         userId: Optional[int] = None,
         text: Optional[str] = None,
-        attachments: Optional[List[Attachment]] = None,
+        attachments: Optional[Sequence[AttachmentRequest]] = None,
         replyTo: Optional[str] = None,
         forwardFrom: Optional[str] = None,
         notify: bool = True,
         format: Optional[TextFormat] = None,
-        inlineKeyboard: Optional[InlineKeyboardAttachment] = None,
-        replyKeyboard: Optional[ReplyKeyboardAttachment] = None,
+        inlineKeyboard: Optional[InlineKeyboardAttachmentRequest] = None,
         disableLinkPreview: Optional[bool] = None,
     ) -> SendMessageResult:
         """Send a message to a chat or user.
@@ -871,13 +874,10 @@ class MaxBotClient:
             }
 
         # Add keyboards to attachments
-        final_attachments = attachments.copy() if attachments else []
+        final_attachments = list(attachments).copy() if attachments else []
 
         if inlineKeyboard:
             final_attachments.append(inlineKeyboard)
-
-        if replyKeyboard:
-            final_attachments.append(replyKeyboard)
 
         if final_attachments or attachments is not None:
             body_data["attachments"] = [v.to_dict(recursive=True) for v in final_attachments]
@@ -902,8 +902,8 @@ class MaxBotClient:
         self,
         messageId: str,
         text: Optional[str] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None,
-        inlineKeyboard: Optional[Dict[str, Any]] = None,
+        attachments: Optional[Sequence[AttachmentRequest]] = None,
+        inlineKeyboard: Optional[InlineKeyboardAttachmentRequest] = None,
         format: Optional[TextFormat] = None,
     ) -> bool:
         """Edit a message in a chat.
@@ -947,7 +947,7 @@ class MaxBotClient:
 
         # Add inline keyboard to attachments if provided
         if inlineKeyboard is not None:
-            final_attachments = attachments.copy() if attachments else []
+            final_attachments = list(attachments).copy() if attachments else []
             final_attachments.append(inlineKeyboard)
             body_data["attachments"] = final_attachments
 
@@ -1397,76 +1397,6 @@ class MaxBotClient:
         response = await self.get("/subscriptions")
         return response
 
-    async def sendPhoto(
-        self,
-        photoToken: str,
-        chatId: Optional[int] = None,
-        userId: Optional[int] = None,
-        text: Optional[str] = None,
-        replyTo: Optional[str] = None,
-        forwardFrom: Optional[str] = None,
-        notify: bool = True,
-        inlineKeyboard: Optional[InlineKeyboardAttachment] = None,
-        replyKeyboard: Optional[ReplyKeyboardAttachment] = None,
-        format: Optional[TextFormat] = None,
-        disableLinkPreview: bool = False,
-    ) -> SendMessageResult:
-        """Send a photo message to a chat or user.
-
-        Sends a photo message to a chat or user with optional text and keyboards.
-
-        Args:
-            chatId: ID of the chat to send message to
-            userId: ID of the user to send message to
-            photoToken: Token for the photo attachment
-            text: Message text (optional)
-            replyTo: Message ID to reply to (optional)
-            forwardFrom: Message ID to forward from (optional)
-            notify: Whether to notify users (default: True)
-            inlineKeyboard: Inline keyboard attachment (optional)
-            keyboard: Reply keyboard attachment (optional)
-            format: Text formatting (markdown/html) (optional)
-            disableLinkPreview: Whether to disable link preview (default: False)
-
-        Returns:
-            Sent message information
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     result = await client.sendPhoto(
-            ...         chatId=12345,
-            ...         photoToken="photo_token_123",
-            ...         text="Check out this photo!"
-            ...     )
-        """
-        photo_attachment = PhotoAttachment(
-            payload=PhotoAttachmentPayload(
-                photo_id=0,
-                token=photoToken,
-                url="",
-            )
-        )
-
-        return await self.sendMessage(
-            attachments=[photo_attachment],
-            chatId=chatId,
-            userId=userId,
-            text=text,
-            replyTo=replyTo,
-            forwardFrom=forwardFrom,
-            notify=notify,
-            inlineKeyboard=inlineKeyboard,
-            replyKeyboard=replyKeyboard,
-            format=format,
-            disableLinkPreview=disableLinkPreview,
-        )
-
-    # Phase 6: File Operations
-
     # Upload Methods
     async def getUploadUrl(self, uploadType: UploadType) -> UploadEndpoint:
         """
@@ -1678,8 +1608,6 @@ class MaxBotClient:
     def createReplyKeyboard(
         self,
         buttons: List[List[Button]],
-        oneTime: bool = False,
-        resize: bool = False,
     ) -> ReplyKeyboardAttachment:
         """Create a reply keyboard attachment.
 
@@ -1708,8 +1636,6 @@ class MaxBotClient:
         return ReplyKeyboardAttachment(
             payload=Keyboard(
                 buttons=buttons,
-                one_time_keyboard=oneTime,
-                resize_keyboard=resize,
             )
         )
 
@@ -1726,4 +1652,4 @@ class MaxBotClient:
             >>> remove_kb = client.removeKeyboard()
             >>> await client.sendMessage(chatId=12345, text="Keyboard removed", keyboard=remove_kb)
         """
-        return ReplyKeyboardAttachment(payload=Keyboard(buttons=[], remove_keyboard=True))
+        return ReplyKeyboardAttachment(payload=Keyboard(buttons=[]))

@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+PayloadDict = Dict[str | int, str | int | float | bool | None]
+
 
 def getAgeInSecs(dt: datetime.datetime) -> float:
     """
@@ -120,7 +122,7 @@ def jsonDumps(data: Any, compact: Optional[bool] = None, **kwargs) -> str:
 
 
 def packDict(
-    data: Dict[str | int, str | int | float | bool | None],
+    data: PayloadDict,
     kvSeparator: str = ":",
     valuesSeparator: str = ",",
     sortKeys: bool = True,
@@ -164,7 +166,7 @@ def unpackDict(
     data: str,
     kvSeparator: str = ":",
     valuesSeparator: str = ",",
-) -> Dict[str | int, str | int | float | bool | None]:
+) -> PayloadDict:
     """
     Unpack string representation back to dictionary.
 

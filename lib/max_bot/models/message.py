@@ -6,7 +6,7 @@ Recipient, MessageStat, MessageList, NewMessageBody, NewMessageLink,
 LinkedMessage, and SendMessageResult models.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from .attachment import Attachment, attachmentFromDict
 from .base import BaseMaxBotModel
@@ -332,7 +332,7 @@ class NewMessageBody(BaseMaxBotModel):
         self,
         *,
         text: Optional[str] = None,
-        attachments: Optional[List[Attachment]] = None,
+        attachments: Optional[Sequence[Attachment]] = None,
         link: Optional[NewMessageLink] = None,
         notify: bool = True,
         format: Optional[TextFormat] = None,
@@ -340,7 +340,9 @@ class NewMessageBody(BaseMaxBotModel):
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.text: Optional[str] = text
-        self.attachments: Optional[List[Attachment]] = attachments
+        self.attachments: Optional[List[Attachment]] = None
+        if attachments:
+            self.attachments = list(attachments)
         self.link: Optional[NewMessageLink] = link
         self.notify: bool = notify
         self.format: Optional[TextFormat] = format

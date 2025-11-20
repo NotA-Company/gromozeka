@@ -22,13 +22,14 @@ Adopt Handlers:
 - [ ] summarization.py
 - [ ] user_data.py
 - [x] weather.py
-- [ ] yandex_search.py
+- [x] yandex_search.py
 
-- [ ] Keyboard+Callback support
+- [x] Keyboard+Callback support
 - [ ] Fix docstrings
 - [ ] Drop dataclasses
 - [ ] review models
 - [ ] ensuredMessage: support miltiple media
+- [ ] Telegram: new callback schema support
 
 # Our TODO list
 - [ ] General framework above Telegram and Max
