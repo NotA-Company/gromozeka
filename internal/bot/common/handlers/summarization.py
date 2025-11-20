@@ -10,20 +10,14 @@ import datetime
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
-
-import telegram
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
-from telegram.constants import MessageEntityType
-from telegram.ext import ContextTypes
+from typing import Dict, List, Optional
 
 import lib.utils as utils
 from internal.bot import constants
+from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.models import (
-    BotProvider,
     ButtonDataKey,
     ButtonSummarizationAction,
-    CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
     ChatType,
@@ -33,20 +27,21 @@ from internal.bot.models import (
     EnsuredMessage,
     LLMMessageFormat,
     MessageSender,
+    commandHandlerV2,
 )
-from internal.bot.utils import telegramMessageFromDBMessage
 from internal.database.models import (
     ChatInfoDict,
+    ChatMessageDict,
     MessageCategory,
 )
+from internal.models import MessageIdType
 from internal.services.cache import UserActiveActionEnum, UserActiveConfigurationDict
 from lib.ai import (
     ModelMessage,
     ModelRunResult,
 )
-from lib.markdown import markdownToMarkdownV2
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +58,8 @@ class SummarizationHandler(BaseBotHandler):
     - Caching of summarization results
     """
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
         Handle incoming messages for active summarization sessions, dood!
@@ -83,18 +78,13 @@ class SummarizationHandler(BaseBotHandler):
             - SKIPPED: Not a private chat or no active summarization session
             - ERROR: Missing required data
         """
-        if ensuredMessage is None:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
-
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
         user = ensuredMessage.sender
-        userId = user.id
         messageText = ensuredMessage.getRawMessageText()
 
-        activeSummarization = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Summarization)
+        activeSummarization = self.cache.getUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
         if activeSummarization is None:
             return HandlerResultStatus.SKIPPED
 
@@ -115,9 +105,8 @@ class SummarizationHandler(BaseBotHandler):
         await self._handle_summarization(
             data=data,  # pyright: ignore[reportArgumentType]
             messageId=activeSummarization["messageId"],
-            chatId=ensuredMessage.recipient.id,
+            messageChatId=activeSummarization["messageChatId"],
             user=user,
-            bot=context.bot,
         )
         return HandlerResultStatus.FINAL
 
@@ -330,7 +319,12 @@ class SummarizationHandler(BaseBotHandler):
             time.sleep(0.5)
 
     async def _handle_summarization(
-        self, data: Dict[str | int, Any], messageId: int, user: MessageSender, bot: telegram.Bot
+        self,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
+        user: MessageSender,
     ):
         """
         Handle the summarization process for messages, dood!
@@ -346,29 +340,29 @@ class SummarizationHandler(BaseBotHandler):
         """
 
         userId = user.id
-        chatSettings = self.getChatSettings(userId)
-        self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Summarization)
+        chatSettings = self.getChatSettings(user.id)
+        self.cache.clearUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
 
-        exitButton = InlineKeyboardButton(
+        exitButton = CallbackButton(
             "Отмена",
-            callback_data=utils.packDict({ButtonDataKey.SummarizationAction: ButtonSummarizationAction.Cancel}),
+            {ButtonDataKey.SummarizationAction: ButtonSummarizationAction.Cancel},
         )
-        action: Optional[str] = data.get(ButtonDataKey.SummarizationAction, None)
+        action: Optional[str] = str(data.get(ButtonDataKey.SummarizationAction, None))
         if action is None or action not in ButtonSummarizationAction.all():
             raise ValueError(f"Wrong action in {data}")
 
         if action == ButtonSummarizationAction.Cancel:
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text="Суммаризация отменена",
-                chat_id=user.id,
-                message_id=messageId,
             )
             return
 
         isToticSummary = action.startswith("t")
 
         maxMessages = data.get(ButtonDataKey.MaxMessages, None)
-        if maxMessages is None:
+        if not isinstance(maxMessages, int):
             maxMessages = 0
 
         userChats = self.db.getUserChats(user.id)
@@ -376,39 +370,37 @@ class SummarizationHandler(BaseBotHandler):
         chatId = data.get(ButtonDataKey.ChatId, None)
         # Choose chatID
         if not isinstance(chatId, int):
-            keyboard: List[List[InlineKeyboardButton]] = []
+            keyboard: List[List[CallbackButton]] = []
             # chatSettings = self.getChatSettings(ensuredMessage.chat.id)
             for chat in userChats:
                 chatTitle = self.getChatTitle(chat, useMarkdown=False, addChatId=False)
                 keyboard.append(
                     [
-                        InlineKeyboardButton(
+                        CallbackButton(
                             chatTitle,
-                            callback_data=utils.packDict(
-                                {
-                                    ButtonDataKey.ChatId: chat["chat_id"],
-                                    ButtonDataKey.SummarizationAction: action,
-                                    ButtonDataKey.MaxMessages: maxMessages,
-                                }
-                            ),
+                            {
+                                ButtonDataKey.ChatId: chat["chat_id"],
+                                ButtonDataKey.SummarizationAction: action,
+                                ButtonDataKey.MaxMessages: maxMessages,
+                            },
                         )
                     ]
                 )
 
             if not keyboard:
-                await bot.edit_message_text(
-                    "Вы не найдены ни в одном чате.",
-                    chat_id=user.id,
-                    message_id=messageId,
+                await self.editMessage(
+                    messageId=messageId,
+                    chatId=messageChatId,
+                    text="Вы не найдены ни в одном чате.",
                 )
                 return
 
             keyboard.append([exitButton])
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text="Выберите чат для суммаризации:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                chat_id=user.id,
-                message_id=messageId,
+                inlineKeyboard=keyboard,
             )
             return
 
@@ -422,10 +414,10 @@ class SummarizationHandler(BaseBotHandler):
                 break
 
         if not chatFound or chatInfo is None:
-            await bot.edit_message_text(
-                "Указан неверный чат",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Указан неверный чат",
             )
             return
 
@@ -433,6 +425,8 @@ class SummarizationHandler(BaseBotHandler):
         chatTitle = self.getChatTitle(chatInfo)
 
         topicId = data.get(ButtonDataKey.TopicId, None)
+        if not isinstance(topicId, int):
+            topicId = None
         # Choose TopicID if needed
         if isToticSummary and topicId is None:
             topics = list(self.cache.getChatTopicsInfo(chatId=chatId).values())
@@ -449,46 +443,42 @@ class SummarizationHandler(BaseBotHandler):
                     }
                 )
 
-            keyboard: List[List[InlineKeyboardButton]] = []
+            keyboard: List[List[CallbackButton]] = []
 
             for topic in topics:
                 keyboard.append(
                     [
-                        InlineKeyboardButton(
+                        CallbackButton(
                             str(topic["name"]),
-                            callback_data=utils.packDict(
-                                {
-                                    ButtonDataKey.ChatId: chatId,
-                                    ButtonDataKey.SummarizationAction: action,
-                                    ButtonDataKey.MaxMessages: maxMessages,
-                                    ButtonDataKey.TopicId: topic["topic_id"],
-                                }
-                            ),
+                            {
+                                ButtonDataKey.ChatId: chatId,
+                                ButtonDataKey.SummarizationAction: action,
+                                ButtonDataKey.MaxMessages: maxMessages,
+                                ButtonDataKey.TopicId: topic["topic_id"],
+                            },
                         )
                     ]
                 )
 
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "<< Назад к списку чатов",
-                        callback_data=utils.packDict(
-                            {
-                                ButtonDataKey.SummarizationAction: action,
-                                ButtonDataKey.MaxMessages: maxMessages,
-                            }
-                        ),
+                        {
+                            ButtonDataKey.SummarizationAction: action,
+                            ButtonDataKey.MaxMessages: maxMessages,
+                        },
                     )
                 ]
             )
 
             keyboard.append([exitButton])
 
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text=f"Выбран чат {chatTitle}, выберите нужный топик:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                chat_id=user.id,
-                message_id=messageId,
+                inlineKeyboard=keyboard,
             )
             return
 
@@ -497,11 +487,11 @@ class SummarizationHandler(BaseBotHandler):
         if topicId is not None and isToticSummary:
             topics = self.cache.getChatTopicsInfo(chatId=chatId)
             if topicId in topics:
-                topicTitle = f", топик **{topics[topicId]["name"]}**"
+                topicTitle = f", топик **{topics[int(topicId)]["name"]}**"
             else:
                 logger.error(f"Topic with id #{topicId} is not found for chat #{chatId}. Found: ({topics.keys()})")
 
-        dataTemplate: Dict[ButtonDataKey, str | int | None] = {
+        dataTemplate: Dict[ButtonDataKey, str | int | float | None] = {
             ButtonDataKey.SummarizationAction: action,
             ButtonDataKey.ChatId: chatId,
             ButtonDataKey.MaxMessages: maxMessages,
@@ -518,24 +508,25 @@ class SummarizationHandler(BaseBotHandler):
                     ButtonDataKey.UserAction: userActionK,
                 },
                 "messageId": messageId,
+                "messageChatId": messageChatId,
             }
             self.cache.setUserState(
-                userId=userId,
+                userId=user.id,
                 stateKey=UserActiveActionEnum.Summarization,
                 value=userState,
             )
 
-            keyboard: List[List[InlineKeyboardButton]] = [
+            keyboard: List[List[CallbackButton]] = [
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "Начать суммаризацию с текущими настройками",
-                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.SummarizationAction: action + "+"}),
+                        {**dataTemplate, ButtonDataKey.SummarizationAction: action + "+"},
                     )
                 ],
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "<< Назад",
-                        callback_data=utils.packDict(dataTemplate),  # pyright: ignore[reportArgumentType]
+                        {**dataTemplate},
                     )
                 ],
                 [exitButton],
@@ -544,15 +535,12 @@ class SummarizationHandler(BaseBotHandler):
             match userActionK:
                 case 1:
                     # Set messages count
-                    await bot.edit_message_text(
-                        text=markdownToMarkdownV2(
-                            f"Выбран чат {chatTitle}{topicTitle}\n"
-                            f"Укажите количество сообщений для суммаризации или нажмите нужную кнопку:"
-                        ),
-                        parse_mode="MarkdownV2",
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        chat_id=user.id,
-                        message_id=messageId,
+                    await self.editMessage(
+                        messageId=messageId,
+                        chatId=messageChatId,
+                        text=f"Выбран чат {chatTitle}{topicTitle}\n"
+                        f"Укажите количество сообщений для суммаризации или нажмите нужную кнопку:",
+                        inlineKeyboard=keyboard,
                     )
                 case 2:
                     # Set summarization prompt
@@ -564,24 +552,21 @@ class SummarizationHandler(BaseBotHandler):
                         value=userState,
                     )
 
-                    await bot.edit_message_text(
-                        text=markdownToMarkdownV2(
-                            f"Выбран чат {chatTitle}{topicTitle}\n"
-                            f"Текущий промпт для суммаризации:\n```\n{currentPrompt}\n```\n"
-                            f"Укажите новый промпт или нажмите нужную кнопку:"
-                        ),
-                        parse_mode="MarkdownV2",
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        chat_id=user.id,
-                        message_id=messageId,
+                    await self.editMessage(
+                        messageId=messageId,
+                        chatId=messageChatId,
+                        text=f"Выбран чат {chatTitle}{topicTitle}\n"
+                        f"Текущий промпт для суммаризации:\n```\n{currentPrompt}\n```\n"
+                        f"Укажите новый промпт или нажмите нужную кнопку:",
+                        inlineKeyboard=keyboard,
                     )
                 case _:
                     logger.error(f"Wrong summarisation user action {userActionK} in data {data}")
                     self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Summarization)
-                    await bot.edit_message_text(
-                        "Что-то пошло не так",
-                        chat_id=user.id,
-                        message_id=messageId,
+                    await self.editMessage(
+                        messageId=messageId,
+                        chatId=messageChatId,
+                        text="Что-то пошло не так",
                     )
             return
 
@@ -596,57 +581,54 @@ class SummarizationHandler(BaseBotHandler):
                 case _:
                     durationDescription = f"Последние {maxMessages} сообщений"
 
-            keyboard: List[List[InlineKeyboardButton]] = [
+            keyboard: List[List[CallbackButton]] = [
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "Начать суммаризацию",
-                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.SummarizationAction: action + "+"}),
+                        {**dataTemplate, ButtonDataKey.SummarizationAction: action + "+"},
                     )
                 ],
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "Суммаризация за сегодня",
-                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.MaxMessages: 0}),
+                        {**dataTemplate, ButtonDataKey.MaxMessages: 0},
                     )
                 ],
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "Суммаризация за вчера",
-                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.MaxMessages: -1}),
+                        {**dataTemplate, ButtonDataKey.MaxMessages: -1},
                     )
                 ],
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "Установить количество сообщений для суммаризации",
-                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.UserAction: 1}),
+                        {**dataTemplate, ButtonDataKey.UserAction: 1},
                     )
                 ],
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "Установить промпт",
-                        callback_data=utils.packDict({**dataTemplate, ButtonDataKey.UserAction: 2}),
+                        {**dataTemplate, ButtonDataKey.UserAction: 2},
                     )
                 ],
                 [exitButton],
             ]
 
-            await bot.edit_message_text(
-                text=markdownToMarkdownV2(
-                    f"Выбран чат {chatTitle}{topicTitle}\n"
-                    f"Границы суммаризации: {durationDescription}\n"
-                    "Вы можете поменять границы суммаризации или поменять промпт:"
-                ),
-                parse_mode="MarkdownV2",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text=f"Выбран чат {chatTitle}{topicTitle}\n"
+                f"Границы суммаризации: {durationDescription}\n"
+                "Вы можете поменять границы суммаризации или поменять промпт:",
+                inlineKeyboard=keyboard,
             )
             return
 
-        await bot.edit_message_text(
-            "Суммаризирую сообщения...",
-            chat_id=user.id,
-            message_id=messageId,
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
+            text="Суммаризирую сообщения...",
         )
 
         today = datetime.datetime.now(datetime.timezone.utc)
@@ -666,45 +648,22 @@ class SummarizationHandler(BaseBotHandler):
         dbMessage = self.db.getChatMessageByMessageId(chatId=user.id, messageId=messageId)
         if dbMessage is None:
             logger.error(f"summarization: Message #{user.id}:{messageId} not found in Database")
-            await bot.edit_message_text(
-                f"Товарищ {user.name}, произошла чудовищная ошибка!",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text=f"Товарищ {user.name}, произошла чудовищная ошибка!",
             )
             return
 
-        repliedMessage: Optional[Message] = None
+        dbRepliedMessage: Optional[ChatMessageDict] = None
+        ensuredMessage: Optional[EnsuredMessage] = None
         if dbMessage["reply_id"]:
             dbRepliedMessage = self.db.getChatMessageByMessageId(chatId=user.id, messageId=dbMessage["reply_id"])
             if dbRepliedMessage is not None:
-                repliedMessage = telegramMessageFromDBMessage(dbRepliedMessage, bot)
-
-        message = telegramMessageFromDBMessage(dbMessage, bot, repliedMessage)
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-
-        try:
-            if repliedMessage is not None:
-                ensuredMessage = EnsuredMessage.fromTelegramMessage(repliedMessage)
-            else:
-                ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
-        except Exception as e:
-            logger.error(f"summarization: Error ensuring message: {type(e).__name__}{e}")
-            logger.exception(e)
-            await bot.edit_message_text(
-                str(e),
-                chat_id=user.id,
-                message_id=messageId,
-            )
-            return
+                ensuredMessage = EnsuredMessage.fromDBChatMessage(dbRepliedMessage)
 
         if ensuredMessage is None:
-            await bot.edit_message_text(
-                "ensuredMessage is None",
-                chat_id=user.id,
-                message_id=messageId,
-            )
-            return
+            ensuredMessage = EnsuredMessage.fromDBChatMessage(dbMessage)
 
         await self._doSummarization(
             ensuredMessage=ensuredMessage,
@@ -713,28 +672,25 @@ class SummarizationHandler(BaseBotHandler):
             chatSettings=chatSettings,
             sinceDT=sinceDT,
             tillDT=tillDT,
-            summarizationPrompt=data.get(ButtonDataKey.Prompt, None),
+            summarizationPrompt=str(data.get(ButtonDataKey.Prompt, "")) if ButtonDataKey.Prompt in data else None,
             maxMessages=maxMessages,
         )
 
-        if repliedMessage is not None:
-            await bot.delete_message(
-                chat_id=user.id,
-                message_id=messageId,
-            )
+        if dbRepliedMessage is not None:
+            await self.deleteMessagesById(chatId=messageChatId, messageIds=[messageId])
         else:
-            await bot.edit_message_text(
-                "Суммаризация готова:",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Суммаризация готова:",
             )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("summary", "topic_summary"),
-        shortDescription="[<maxMessages>] - Start summarization wizard" "(call without arguments to start wizard)",
+        shortDescription="[<maxMessages>] - Start summarization wizard",
         helpMessage=" `[<maxMessages>]`: В Личке - открыть мастер суммаризации, "
         "в групповом чате - провести суммаризацию за сегодня (или на основе переданного количества сообщений).",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
@@ -742,9 +698,10 @@ class SummarizationHandler(BaseBotHandler):
     async def summary_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Handle /summary and /topic_summary commands, dood!
@@ -776,24 +733,19 @@ class SummarizationHandler(BaseBotHandler):
         Note:
             Bot owner can bypass this restriction in private chats.
         """
-        message = ensuredMessage.getBaseMessage()
-        if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Команда не поддержана на данной платформе",
-                messageCategory=MessageCategory.BOT_ERROR,
-                typingManager=typingManager,
-            )
-            return
+        # message = ensuredMessage.getBaseMessage()
+        # if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+        #     await self.sendMessage(
+        #         ensuredMessage,
+        #         messageText="Команда не поддержана на данной платформе",
+        #         messageCategory=MessageCategory.BOT_ERROR,
+        #         typingManager=typingManager,
+        #     )
+        #     return
 
-        commandStr = ""
-        for entityStr in message.parse_entities([MessageEntityType.BOT_COMMAND]).values():
-            commandStr = entityStr
-            break
+        isTopicSummary = command.lower().startswith("topic_summary")
 
-        isTopicSummary = commandStr.lower().startswith("/topic_summary")
-
-        maxMessages: Optional[int] = utils.extractInt(context.args)
+        maxMessages: Optional[int] = utils.extractInt(args.split(maxsplit=1))
 
         match ensuredMessage.recipient.chatType:
             case ChatType.PRIVATE:
@@ -806,7 +758,7 @@ class SummarizationHandler(BaseBotHandler):
                     messageText="Загружаю список чатов....",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
-                if msg is not None:
+                if msg:
                     await self._handle_summarization(
                         {
                             ButtonDataKey.SummarizationAction: (
@@ -817,9 +769,9 @@ class SummarizationHandler(BaseBotHandler):
                             ButtonDataKey.MaxMessages: maxMessages,
                         },
                         # {"s": jsonAction, "c": chatId, "m": maxMessages},
-                        messageId=msg.id,
+                        messageId=msg[0].messageId,
+                        messageChatId=msg[0].recipient.id,
                         user=ensuredMessage.sender,
-                        bot=context.bot,
                     )
                 else:
                     logger.error("Message undefined")
@@ -850,13 +802,15 @@ class SummarizationHandler(BaseBotHandler):
             case _:
                 logger.error(f"Unsupported chat type for Summarization: {ensuredMessage.recipient.chatType}")
 
-    async def buttonHandler(
+    async def callbackHandler(
         self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-        data: CallbackDataDict,
+        ensuredMessage: EnsuredMessage,
+        data: utils.PayloadDict,
+        user: MessageSender,
+        updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
+        TODO
         Handle button callbacks for summarization wizard, dood!
 
         Processes inline keyboard button presses during the summarization
@@ -878,21 +832,6 @@ class SummarizationHandler(BaseBotHandler):
             if this button is part of the summarization workflow.
         """
 
-        query = update.callback_query
-        if query is None:
-            logger.error("handle_button: query is None")
-            return HandlerResultStatus.FATAL
-
-        user = MessageSender.fromTelegramUser(query.from_user)
-
-        if query.message is None:
-            logger.error(f"handle_button: message is None in {query}")
-            return HandlerResultStatus.FATAL
-
-        if not isinstance(query.message, Message):
-            logger.error(f"handle_button: message is not a Message in {query}")
-            return HandlerResultStatus.FATAL
-
         summaryAction = data.get(ButtonDataKey.SummarizationAction, None)
         # Used keys:
         # s: Action
@@ -902,9 +841,9 @@ class SummarizationHandler(BaseBotHandler):
         if summaryAction is not None:
             await self._handle_summarization(
                 data,
-                query.message.id,
-                user,
-                bot=context.bot,
+                messageId=ensuredMessage.messageId,
+                messageChatId=ensuredMessage.recipient.id,
+                user=user,
             )
             return HandlerResultStatus.FINAL
 
