@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 class HCSpamWarningMessageInfo(TypedDict):
     """Spam warning message metadata, dood."""
 
-    # messageId: int
-    parentMessageId: NotRequired[Optional[int | str]]
+    # messageId: MessageIdType
+    parentMessageId: NotRequired[Optional[MessageIdType]]
     userId: int
     username: str
     ts: float
@@ -25,7 +25,7 @@ class HCSpamWarningMessageInfo(TypedDict):
 class HCChatPersistentCacheDict(TypedDict):
     """Persistent chat cache data, dood."""
 
-    spamWarningMessages: NotRequired[Dict[int | str, HCSpamWarningMessageInfo]]
+    spamWarningMessages: NotRequired[Dict[MessageIdType, HCSpamWarningMessageInfo]]
 
 
 class HCChatAdminsDict(TypedDict):

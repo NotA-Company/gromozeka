@@ -18,7 +18,7 @@ Adopt Handlers:
 - [x] media.py
 - [x] message_preprocessor.py
 - [x] react_on_user.py
-- [ ] spam.py
+- [x] spam.py
 - [ ] summarization.py
 - [ ] user_data.py
 - [x] weather.py

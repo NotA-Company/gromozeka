@@ -10,6 +10,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
+from internal.models import MessageIdType
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib import utils
@@ -510,13 +511,13 @@ class CacheService:
 
     # ## ChatPersistent spamWarningMessages
 
-    def getSpamWarningMessageInfo(self, chatId: int, messageId: int | str) -> Optional[HCSpamWarningMessageInfo]:
+    def getSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> Optional[HCSpamWarningMessageInfo]:
         """..."""
         chatPCache = self.chatPersistent.get(chatId, {})
         messages = chatPCache.get("spamWarningMessages", {})
         return messages.get(messageId, None)
 
-    def addSpamWarningMessage(self, chatId: int, messageId: int | str, data: HCSpamWarningMessageInfo) -> None:
+    def addSpamWarningMessage(self, chatId: int, messageId: MessageIdType, data: HCSpamWarningMessageInfo) -> None:
         """..."""
         chatPCache = self.chatPersistent.get(chatId, {})
         if "spamWarningMessages" not in chatPCache:
@@ -528,7 +529,7 @@ class CacheService:
         self.dirtyKeys[CacheNamespace.CHAT_PERSISTENT].add(chatId)
         logger.debug(f"Updated spamWarningMessage {messageId} for {chatId}, dood!")
 
-    def removeSpamWarningMessageInfo(self, chatId: int, messageId: int) -> None:
+    def removeSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> None:
         """..."""
         chatPCache = self.chatPersistent.get(chatId, {})
         if "spamWarningMessages" not in chatPCache:
