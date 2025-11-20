@@ -59,6 +59,10 @@ class BaseMaxBotModel:
 
         for key in self._getAttrsNames(includePrivate=includePrivate):
             value = getattr(self, key, None)
+
+            # Do not put empty api_kwargs into resulting dict
+            if key == "api_kwargs" and not value:
+                continue
             if value is not None:
                 if recursive and hasattr(value, "to_dict"):
                     data[key] = value.to_dict(recursive=True)

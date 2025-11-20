@@ -1661,6 +1661,23 @@ class BaseBotHandler(CommandHandlerMixin):
             ):
                 url = attachment.payload.url
                 mediaId = f"{attachment.type}:{attachment.payload.code}"
+
+                if url.startswith("https://st.mycdn.me/static/messages/res/images/stub/") and url.endswith(".png"):
+                    # https://st.mycdn.me/static/messages/res/images/stub/sticker_31856a27@2x.png
+                    # It is not real sticker image, just stub for all(?) animated stickers.
+                    # We should'nt process it as it will put wrong data into context
+                    logger.info(f"Sticker {attachment} looks like animated sticker")
+                    if self.db.getMediaAttachment(mediaId=mediaId) is None:
+                        logger.debug("Putting fake db entry for it...")
+                        self.db.addMediaAttachment(
+                            fileUniqueId=mediaId,
+                            fileId=url,
+                            mediaType=MessageType.STICKER,
+                            metadata=utils.jsonDumps(attachment.to_dict(recursive=True)),
+                            status=MediaStatus.DONE,
+                            description="Animated sticker",
+                        )
+
                 ret.append(
                     await self._processMediaV2(
                         ensuredMessage=ensuredMessage,
