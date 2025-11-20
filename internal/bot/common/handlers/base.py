@@ -31,17 +31,16 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 
 import magic
 import telegram
+import telegram.constants
 import telegram.ext as telegramExt
 from telegram import Chat, MessageEntity, Update
-from telegram._utils.types import ReplyMarkup
-from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 import lib.max_bot as maxBot
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot import constants
-from internal.bot.common.models import TypingAction, UpdateObjectType
+from internal.bot.common.models import CallbackButton, TypingAction, UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     CallbackDataDict,
@@ -104,6 +103,7 @@ class HandlerResultStatus(Enum):
 
 class TypingManager:
     """
+    TODO
     Helper class to manage continuous typing actions during long-running operations, dood!
 
     This class provides a way to continuously send typing actions (like TYPING, UPLOAD_PHOTO, etc.)
@@ -314,7 +314,7 @@ def commandHandlerExtended(
     # Category for command (for more fine-grained permissions handling)
     category: CommandCategory = CommandCategory.UNSPECIFIED,
     # Which ChatAction we should send? None - to send nothing
-    typingAction: Optional[ChatAction] = ChatAction.TYPING,
+    typingAction: Optional[TypingAction] = TypingAction.TYPING,
     # Should we reply to user with exception message on exception? Default: True
     replyErrorOnException: bool = True,
 ) -> Callable[
@@ -843,6 +843,55 @@ class BaseBotHandler(CommandHandlerMixin):
         self.cache.setChatAdmins(chat.id, chatAdmins)
         return user.id in chatAdmins
 
+    def _keyboardToTelegram(self, keyboard: Sequence[Sequence[CallbackButton]]) -> telegram.InlineKeyboardMarkup:
+        return telegram.InlineKeyboardMarkup([[btn.toTelegram() for btn in row] for row in keyboard])
+
+    def _keyboardToMax(self, keyboard: Sequence[Sequence[CallbackButton]]) -> maxModels.InlineKeyboardAttachmentRequest:
+        return maxModels.InlineKeyboardAttachmentRequest(
+            payload=maxModels.Keyboard(buttons=[[btn.toMax() for btn in row] for row in keyboard])
+        )
+
+    async def editMessage(
+        self,
+        messageId: MessageIdType,
+        chatId: int,
+        *,
+        text: Optional[str] = None,
+        inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
+        useMarkdown: bool = True,
+    ) -> bool:
+
+        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
+            ret = None
+            if text is None:
+                ret = await self._tgBot.edit_message_reply_markup(
+                    chat_id=chatId,
+                    message_id=int(messageId),
+                    reply_markup=self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None,
+                )
+            else:
+                kwargs = {}
+                if useMarkdown:
+                    kwargs["parse_mode"] = telegram.constants.ParseMode.MARKDOWN_V2
+                ret = await self._tgBot.edit_message_text(
+                    text=text,
+                    chat_id=chatId,
+                    message_id=int(messageId),
+                    reply_markup=self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None,
+                    **kwargs,
+                )
+            return bool(ret)
+        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+            await self._maxBot.editMessage(
+                messageId=str(messageId),
+                text=text,
+                inlineKeyboard=self._keyboardToMax(inlineKeyboard) if inlineKeyboard is not None else None,
+                format=maxModels.TextFormat.MARKDOWN if useMarkdown else None,
+            )
+        else:
+            logger.error(f"Can not edit message in platform {self.botProvider}")
+        return False
+
     async def sendMessage(
         self,
         replyToMessage: EnsuredMessage,
@@ -857,13 +906,15 @@ class BaseBotHandler(CommandHandlerMixin):
         skipLogs: bool = False,
         mediaPrompt: Optional[str] = None,
         messageCategory: MessageCategory = MessageCategory.BOT,
-        replyMarkup: Optional[ReplyMarkup] = None,
+        inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
     ) -> Optional[telegram.Message]:
         match self.botProvider:
             case BotProvider.TELEGRAM:
                 # TODO: Refactoring needed
+                inlineKeyboardTg = self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None
+
                 return await self._sendTelegramMessage(
                     replyToMessage=replyToMessage,
                     messageText=messageText,
@@ -876,11 +927,14 @@ class BaseBotHandler(CommandHandlerMixin):
                     skipLogs=skipLogs,
                     mediaPrompt=mediaPrompt,
                     messageCategory=messageCategory,
-                    replyMarkup=replyMarkup,
+                    inlineKeyboard=inlineKeyboardTg,
                     typingManager=typingManager,
                     splitIfTooLong=splitIfTooLong,
                 )
+
             case BotProvider.MAX:
+                inlineKeyboardMax = self._keyboardToMax(inlineKeyboard) if inlineKeyboard is not None else None
+
                 return await self._sendMaxMessage(
                     replyToMessage=replyToMessage,
                     messageText=messageText,
@@ -893,7 +947,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     skipLogs=skipLogs,
                     mediaPrompt=mediaPrompt,
                     messageCategory=messageCategory,
-                    replyMarkup=replyMarkup,
+                    inlineKeyboard=inlineKeyboardMax,
                     typingManager=typingManager,
                     splitIfTooLong=splitIfTooLong,
                 )  # type: ignore
@@ -914,7 +968,7 @@ class BaseBotHandler(CommandHandlerMixin):
         skipLogs: bool = False,
         mediaPrompt: Optional[str] = None,
         messageCategory: MessageCategory = MessageCategory.BOT,
-        replyMarkup: Optional[ReplyMarkup] = None,
+        inlineKeyboard: Optional[maxModels.InlineKeyboardAttachmentRequest] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
     ) -> List[maxModels.Message]:
@@ -950,7 +1004,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 "format": maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
             }
         )
-        attachments: Optional[List[maxModels.Attachment]] = []
+        attachments: Optional[List[maxModels.AttachmentRequest]] = []
 
         try:
             if photoData is not None:
@@ -991,9 +1045,11 @@ class BaseBotHandler(CommandHandlerMixin):
                     ret = await self._maxBot.sendMessage(
                         text=addMessagePrefix + _messageText,
                         attachments=attachments,
+                        inlineKeyboard=inlineKeyboard,
                         **replyKwargs,
                     )
                     attachments = None  # Send attachments with first message only
+                    inlineKeyboard = None
                     replyMessageList.append(ret.message)
 
             try:
@@ -1056,7 +1112,7 @@ class BaseBotHandler(CommandHandlerMixin):
         skipLogs: bool = False,
         mediaPrompt: Optional[str] = None,
         messageCategory: MessageCategory = MessageCategory.BOT,
-        replyMarkup: Optional[ReplyMarkup] = None,
+        inlineKeyboard: Optional[telegram.InlineKeyboardMarkup] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
     ) -> Optional[telegram.Message]:
@@ -1115,7 +1171,7 @@ class BaseBotHandler(CommandHandlerMixin):
             {
                 "reply_to_message_id": replyToMessage.messageId,
                 "message_thread_id": replyToMessage.threadId,
-                "reply_markup": replyMarkup,
+                "reply_markup": inlineKeyboard,
             }
         )
 
@@ -1136,7 +1192,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         # TODO: One day start using self._tgBot
                         replyMessage = await message.reply_photo(
                             caption=messageTextParsed,
-                            parse_mode="MarkdownV2",
+                            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
                             **replyKwargs,
                         )
                     except Exception as e:
@@ -1192,7 +1248,7 @@ class BaseBotHandler(CommandHandlerMixin):
                             # logger.debug(f"Sending MarkdownV2: {replyText}")
                             replyMessage = await message.reply_text(
                                 text=messageTextParsed,
-                                parse_mode="MarkdownV2",
+                                parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
                                 **replyKwargs,
                             )
                         except Exception as e:
@@ -2025,7 +2081,19 @@ class BaseBotHandler(CommandHandlerMixin):
     ###
 
     async def newMessageHandler(
-        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
+        self,
+        ensuredMessage: EnsuredMessage,
+        updateObj: UpdateObjectType,
+    ) -> HandlerResultStatus:
+        # By default, skip processing
+        return HandlerResultStatus.SKIPPED
+
+    async def callbackHandler(
+        self,
+        ensuredMessage: EnsuredMessage,
+        data: utils.PayloadDict,
+        user: MessageSender,
+        updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         # By default, skip processing
         return HandlerResultStatus.SKIPPED

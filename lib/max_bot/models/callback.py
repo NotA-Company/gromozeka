@@ -19,15 +19,6 @@ class Callback(BaseMaxBotModel):
 
     __slots__ = ("timestamp", "callback_id", "payload", "user")
 
-    # timestamp: int
-    # """Unix-время, когда пользователь нажал кнопку"""
-    # callback_id: str
-    # """Текущий ID клавиатуры"""
-    # payload: Optional[str]
-    # """Токен кнопки"""
-    # user: UserWithPhoto
-    # """Пользователь, нажавший на кнопку"""
-
     def __init__(
         self,
         *,
@@ -39,9 +30,13 @@ class Callback(BaseMaxBotModel):
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.timestamp: int = timestamp
+        """Unix-время, когда пользователь нажал кнопку"""
         self.callback_id: str = callback_id
+        """Текущий ID клавиатуры"""
         self.payload: Optional[str] = payload
+        """Токен кнопки"""
         self.user: UserWithPhoto = user
+        """Пользователь, нажавший на кнопку"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Callback":

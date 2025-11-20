@@ -570,16 +570,18 @@ class KeyboardAttachment(Attachment):
 class InlineKeyboardAttachment(KeyboardAttachment):
     """Inline keyboard attachment that appears below a message."""
 
-    __slots__ = ("payload",)
+    __slots__ = ("payload", "callback_id")
 
     def __init__(
         self,
         *,
-        payload: "Keyboard",
+        payload: Keyboard,
+        callback_id: Optional[str] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(type=AttachmentType.INLINE_KEYBOARD, api_kwargs=api_kwargs)
-        self.payload: "Keyboard" = payload
+        self.payload: Keyboard = payload
+        self.callback_id: Optional[str] = callback_id
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "InlineKeyboardAttachment":
@@ -600,16 +602,15 @@ class ReplyKeyboardAttachment(KeyboardAttachment):
     def __init__(
         self,
         *,
-        payload: "Keyboard",
+        payload: Keyboard,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(type=AttachmentType.REPLY_KEYBOARD, api_kwargs=api_kwargs)
-        self.payload: "Keyboard" = payload
+        self.payload: Keyboard = payload
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ReplyKeyboardAttachment":
         """Create ReplyKeyboardAttachment instance from API response dictionary."""
-        from .keyboard import Keyboard
 
         return cls(
             payload=Keyboard.from_dict(data.get("payload", {})),

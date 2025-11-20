@@ -1,6 +1,11 @@
 """TODO"""
 
 from .chat_action import TypingAction
+from .keyboard_button import CallbackButton
 from .wrappers import UpdateObjectType
 
-__all__ = ["UpdateObjectType", "TypingAction"]
+__all__ = [
+    "UpdateObjectType",
+    "TypingAction",
+    "CallbackButton",
+]
