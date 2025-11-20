@@ -340,7 +340,7 @@ class SummarizationHandler(BaseBotHandler):
         """
 
         userId = user.id
-        chatSettings = self.getChatSettings(user.id)
+        chatSettings = self.getChatSettings(messageChatId)
         self.cache.clearUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
 
         exitButton = CallbackButton(
@@ -547,7 +547,7 @@ class SummarizationHandler(BaseBotHandler):
                     currentPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
                     userState["data"][ButtonDataKey.SummarizationAction] = action + "+"
                     self.cache.setUserState(
-                        userId=userId,
+                        userId=user.id,
                         stateKey=UserActiveActionEnum.Summarization,
                         value=userState,
                     )
@@ -562,7 +562,7 @@ class SummarizationHandler(BaseBotHandler):
                     )
                 case _:
                     logger.error(f"Wrong summarisation user action {userActionK} in data {data}")
-                    self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Summarization)
+                    self.cache.clearUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
                     await self.editMessage(
                         messageId=messageId,
                         chatId=messageChatId,
@@ -645,9 +645,9 @@ class SummarizationHandler(BaseBotHandler):
 
         # We need to Make Message object manually here
         #  as only messageId could be properly preserver across bot restarts
-        dbMessage = self.db.getChatMessageByMessageId(chatId=user.id, messageId=messageId)
+        dbMessage = self.db.getChatMessageByMessageId(chatId=messageChatId, messageId=messageId)
         if dbMessage is None:
-            logger.error(f"summarization: Message #{user.id}:{messageId} not found in Database")
+            logger.error(f"summarization: Message #{messageChatId}:{messageId} not found in Database")
             await self.editMessage(
                 messageId=messageId,
                 chatId=messageChatId,
@@ -658,7 +658,7 @@ class SummarizationHandler(BaseBotHandler):
         dbRepliedMessage: Optional[ChatMessageDict] = None
         ensuredMessage: Optional[EnsuredMessage] = None
         if dbMessage["reply_id"]:
-            dbRepliedMessage = self.db.getChatMessageByMessageId(chatId=user.id, messageId=dbMessage["reply_id"])
+            dbRepliedMessage = self.db.getChatMessageByMessageId(chatId=messageChatId, messageId=dbMessage["reply_id"])
             if dbRepliedMessage is not None:
                 ensuredMessage = EnsuredMessage.fromDBChatMessage(dbRepliedMessage)
 
