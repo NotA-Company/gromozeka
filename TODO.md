@@ -26,7 +26,7 @@ Adopt Handlers:
 
 - [x] Keyboard+Callback support
 - [ ] Fix docstrings
-- [x]] Drop dataclasses
+- [x] Drop dataclasses
 - [x] review models
 - [ ] ensuredMessage: support miltiple media
 - [ ] Telegram: new callback schema support
