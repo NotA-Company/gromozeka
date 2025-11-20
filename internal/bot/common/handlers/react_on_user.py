@@ -10,9 +10,8 @@ import logging
 from typing import Dict, Optional
 
 import telegram
-from telegram import Update
-from telegram.ext import ContextTypes
 
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -24,11 +23,12 @@ from internal.bot.models import (
     EnsuredMessage,
     MessageRecipient,
     MessageSender,
+    commandHandlerV2,
 )
 from internal.database.models import MessageCategory
 from lib import utils
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -93,18 +93,14 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         # TODO: Add type validation
         return authorToEmojiMap
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """ """
-
-        if ensuredMessage is None:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
-
         message = ensuredMessage.getBaseMessage()
 
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            logger.error("ReactOnUserMessageHandler support Telegram only for now")
             return HandlerResultStatus.SKIPPED
 
         authorToEmojiMap = self._getAuthorToEmojiMap(ensuredMessage.recipient.id)
@@ -125,12 +121,12 @@ class ReactOnUserMessageHandler(BaseBotHandler):
 
         return HandlerResultStatus.SKIPPED
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("set_reaction",),
         shortDescription="[<chatId>] <emoji> - Start reacting to author of replied message with given emoji",
         helpMessage=" [<chatId>] <emoji> - Ставить указанные реакции под сообщениями автора сообщения,"
         " на которое команда является ответом.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.ADMIN,
@@ -138,13 +134,15 @@ class ReactOnUserMessageHandler(BaseBotHandler):
     async def set_reaction_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """Bun bip bop"""
+        """TODO"""
         message = ensuredMessage.getBaseMessage()
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            logger.error("ReactOnUserMessageHandler support Telegram only for now")
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда не поддержана на данной платформе",
@@ -163,16 +161,16 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        args = context.args or []
-        targetChatId = utils.extractInt(args)
+        argList = args.split()
+        targetChatId = utils.extractInt(argList)
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
         else:
-            args = args[1:]
+            argList = argList[1:]
 
         emoji = None
-        if args:
-            emoji = args[0]
+        if argList:
+            emoji = argList[0]
 
         if not emoji:
             await self.sendMessage(
@@ -220,12 +218,12 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("unset_reaction",),
         shortDescription="[<chatId>] - Stop reacting to author of replied message",
         helpMessage=" [<chatId>] - Перестать реакции под сообщениями автора сообщения,"
         " на которое команда является ответом.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.ADMIN,
@@ -233,9 +231,10 @@ class ReactOnUserMessageHandler(BaseBotHandler):
     async def unset_reaction_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Remove a reaction from a message, dood!
@@ -245,6 +244,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         """
         message = ensuredMessage.getBaseMessage()
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
+            logger.error("ReactOnUserMessageHandler support Telegram only for now")
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда не поддержана на данной платформе",
@@ -263,7 +263,8 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        targetChatId = utils.extractInt(context.args)
+        argList = args.split()
+        targetChatId = utils.extractInt(argList)
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
 
@@ -309,11 +310,11 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("dump_reactions",),
         shortDescription="[<chatId>] - Dump reactions settings",
         helpMessage=" [<chatId>] - Вывести настройки реакций в указанном чате (сфрой JSON-дамп)",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.ADMIN,
@@ -321,9 +322,10 @@ class ReactOnUserMessageHandler(BaseBotHandler):
     async def dump_reactions_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Dump reaction statistics for a chat, dood!
@@ -331,9 +333,10 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         This command displays statistics about reactions in the specified chat,
         including the number of reactions and which users have reacted to messages.
         """
+        argList = args.split()
 
-        logger.debug(f"Args: {context.args}")
-        targetChatId = utils.extractInt(context.args)
+        logger.debug(f"Args: {argList}")
+        targetChatId = utils.extractInt(argList)
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
 
