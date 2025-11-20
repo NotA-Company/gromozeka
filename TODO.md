@@ -18,18 +18,19 @@ Adopt Handlers:
 - [x] media.py
 - [x] message_preprocessor.py
 - [x] react_on_user.py
-- [x] spam.py
-- [ ] summarization.py
+- [ ] spam.py (Entities parsing)
+- [x] summarization.py
 - [ ] user_data.py
 - [x] weather.py
 - [x] yandex_search.py
 
 - [x] Keyboard+Callback support
 - [ ] Fix docstrings
-- [ ] Drop dataclasses
-- [ ] review models
+- [x]] Drop dataclasses
+- [x] review models
 - [ ] ensuredMessage: support miltiple media
 - [ ] Telegram: new callback schema support
+- [ ] Review and rewrite or delete models.markup.py
 
 # Our TODO list
 - [ ] General framework above Telegram and Max
