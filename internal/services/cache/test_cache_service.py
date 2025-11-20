@@ -168,7 +168,7 @@ class TestCacheServiceBasics(unittest.TestCase):
     def testGetStats(self):
         """Test statistics generation"""
         self.cache.chats.set(123, {"settings": {}})
-        self.cache.users.set(456, {"activeConfigure": {"data": {}, "messageId": 1}})
+        self.cache.users.set(456, {"activeConfigure": {"data": {}, "messageId": 1, "messageChatId": 1}})
 
         stats = self.cache.getStats()
 

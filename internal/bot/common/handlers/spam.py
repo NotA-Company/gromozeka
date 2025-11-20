@@ -145,28 +145,18 @@ class SpamHandler(BaseBotHandler):
         hashed = zlib.adler32(signatureStr.encode("utf-8", "ignore"))
         return hex(hashed)[2:]
 
-    def _rememberSpamWarningMessage(self, message: Message) -> None:
+    def _rememberSpamWarningMessage(self, message: EnsuredMessage) -> None:
         """
         Remember SpamWarning Message for future manipulations
         """
-        userId = 0
-        username = ""
-        if message.sender_chat:
-            userId = message.sender_chat.id
-            if message.sender_chat.username is not None:
-                username = message.sender_chat.username
-        elif message.from_user:
-            userId = message.from_user.id
-            if message.from_user.username is not None:
-                username = message.from_user.username
-        else:
-            logger.error(f"No sender found in {message.reply_to_message}")
+        userId = message.sender.id
+        username = message.sender.username
 
         self.cache.addSpamWarningMessage(
             chatId=message.chat.id,
-            messageId=message.message_id,
+            messageId=message.messageId,
             data={
-                "parentMessageId": message.reply_to_message.message_id if message.reply_to_message else None,
+                "parentMessageId": message.replyId,
                 "userId": userId,
                 "username": username,
                 "ts": message.date.timestamp(),
@@ -390,12 +380,12 @@ class SpamHandler(BaseBotHandler):
                 "(Данное сообщение будет удалено в течение минуты)",
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
-            if banMessage is not None:
+            if banMessage:
                 await self.queueService.addDelayedTask(
                     time.time() + 60,
                     DelayedTaskFunction.DELETE_MESSAGE,
-                    kwargs={"messageId": banMessage.message_id, "chatId": banMessage.chat_id},
-                    taskId=f"del-{banMessage.chat_id}-{banMessage.message_id}",
+                    kwargs={"messageId": banMessage[0].messageId, "chatId": banMessage[0].recipient.id},
+                    taskId=f"del-{banMessage[0].recipient.id}-{banMessage[0].messageId}",
                 )
             else:
                 logger.error("Wasn't been able to send SPAM notification")
@@ -429,8 +419,8 @@ class SpamHandler(BaseBotHandler):
                 ],
                 messageCategory=MessageCategory.BOT_SPAM_NOTIFICATION,
             )
-            if sentMessage is not None:
-                self._rememberSpamWarningMessage(sentMessage)
+            if sentMessage:
+                self._rememberSpamWarningMessage(sentMessage[0])
         else:
             logger.debug(f"Not SPAM: spamScore: {spamScore} < {warnTreshold} {ensuredMessage}")
 
