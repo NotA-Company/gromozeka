@@ -68,7 +68,27 @@ from .chat import (
     ChatMembersList,
     ChatPatch,
 )
-from .enums import ChatAdminPermission, ChatStatus, ChatType, MessageLinkType, SenderAction, TextFormat
+from .enums import (
+    ButtonType,
+    ChatAdminPermission,
+    ChatStatus,
+    ChatType,
+    MessageLinkType,
+    SenderAction,
+    TextFormat,
+)
+from .keyboard import (
+    Button,
+    CallbackButton,
+    ChatButton,
+    Keyboard,
+    LinkButton,
+    MessageButton,
+    OpenAppButton,
+    ReplyButton,
+    RequestContactButton,
+    RequestGeoLocationButton,
+)
 
 # Markup models
 from .markup import (
@@ -146,6 +166,7 @@ from .update import (
 )
 from .upload import (
     AttachmentRequest,
+    InlineKeyboardAttachmentRequest,
     PhotoAttachmentRequest,
     PhotoAttachmentRequestPayload,
     PhotoToken,
@@ -282,6 +303,7 @@ __all__ = [
     "MarkupList",
     # Upload Models
     "AttachmentRequest",
+    "InlineKeyboardAttachmentRequest",
     "PhotoAttachmentRequest",
     "PhotoAttachmentRequestPayload",
     "PhotoToken",
@@ -291,4 +313,17 @@ __all__ = [
     "UploadedPhoto",
     "UploadType",
     "UploadEndpoint",
+    # Enums
+    "ButtonType",
+    # Buttons
+    "Button",
+    "ChatButton",
+    "CallbackButton",
+    "LinkButton",
+    "ReplyButton",
+    "MessageButton",
+    "OpenAppButton",
+    "RequestContactButton",
+    "RequestGeoLocationButton",
+    "Keyboard",
 ]

@@ -271,3 +271,4 @@ class CommandHandlerMixin:
 
 
 CallbackDataDict: TypeAlias = Dict[str | int, str | int | float | bool | None]
+"""DEPRECATED, use utils.PayloadDict"""

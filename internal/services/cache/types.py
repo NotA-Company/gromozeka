@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypeAlias, TypedDict
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
+from internal.models import MessageIdType
 
 if TYPE_CHECKING:
     from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
@@ -66,7 +67,7 @@ class UserActiveActionEnum(StrEnum):
 class UserActiveConfigurationDict(TypedDict):
 
     data: Dict[str | int, Any]
-    messageId: int
+    messageId: MessageIdType
 
 
 class HCUserCacheDict(TypedDict):

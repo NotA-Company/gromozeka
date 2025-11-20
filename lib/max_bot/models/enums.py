@@ -1,8 +1,25 @@
 from enum import StrEnum
 
+
+# Button Enums
+class ButtonType(StrEnum):
+    """
+    Button type enum
+    """
+
+    UNSPECIFIED = "UNSPECIFIED"
+
+    CALLBACK = "callback"
+    LINK = "link"
+    REQUEST_GEO_LOCATION = "request_geo_location"
+    REQUEST_CONTACT = "request_contact"
+    OPEN_APP = "open_app"
+    MESSAGE = "message"
+    CHAT = "chat"
+    REPLY = "reply"
+
+
 # Message Enums
-
-
 class TextFormat(StrEnum):
     """
     Формат текста сообщения

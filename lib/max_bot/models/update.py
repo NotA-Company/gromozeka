@@ -124,14 +124,6 @@ class MessageCallbackUpdate(Update):
 
     __slots__ = ("callback", "message", "user_locale")
 
-    # callback: Callback
-    # message: Optional[Message]
-    # """
-    # Изначальное сообщение, содержащее встроенную клавиатуру.
-    # Может быть `null`, если оно было удалено к моменту, когда бот получил это обновление
-    # """
-    # user_locale: Optional[str]
-    # """Текущий язык пользователя в формате IETF BCP 47"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.MESSAGE_CALLBACK
 
     def __init__(
@@ -146,7 +138,12 @@ class MessageCallbackUpdate(Update):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.callback: Callback = callback
         self.message: Optional[Message] = message
+        """
+        Изначальное сообщение, содержащее встроенную клавиатуру.
+        Может быть `null`, если оно было удалено к моменту, когда бот получил это обновление
+        """
         self.user_locale: Optional[str] = user_locale
+        """Текущий язык пользователя в формате IETF BCP 47"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageCallbackUpdate":
