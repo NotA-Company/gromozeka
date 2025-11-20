@@ -15,13 +15,8 @@ The configuration system supports:
 import logging
 from typing import Any, Dict, List, Optional
 
-import telegram
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes
-
-import lib.max_bot.models as maxModels
 import lib.utils as utils
-from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     ButtonConfigureAction,
@@ -105,8 +100,8 @@ class ConfigureCommandHandler(BaseBotHandler):
         self.selectableModels = selectableModels
         logger.debug(f"Selectable models are: {selectableModels}")
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
         Handle text messages during active configuration sessions, dood!
@@ -131,10 +126,6 @@ class ConfigureCommandHandler(BaseBotHandler):
             UserActiveActionEnum.Configuration and contains chatId, key, and message.
         """
 
-        if ensuredMessage is None:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
-
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
@@ -151,6 +142,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                 ButtonDataKey.Value: messageText,
             },
             messageId=activeConfigure["messageId"],
+            messageChatId=activeConfigure["messageChatId"],
             user=user,
         )
         return HandlerResultStatus.FINAL
@@ -159,11 +151,11 @@ class ConfigureCommandHandler(BaseBotHandler):
         self,
         data: Dict[str | int, Any],
         messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
-        bot: telegram.Bot,
     ) -> None:
-        """
+        """TODO
         Display the initial list of chats that the user can configure, dood!
 
         Shows all chats where the user has admin privileges and is allowed to change
@@ -191,12 +183,12 @@ class ConfigureCommandHandler(BaseBotHandler):
         if chatId is not None:
             raise RuntimeError("Init: chatId should be None in Init action")
 
-        exitButton = InlineKeyboardButton(
+        exitButton = CallbackButton(
             "Закончить настройку",
-            callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+            {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel},
         )
         userChats = self.db.getUserChats(user.id)
-        keyboard: List[List[InlineKeyboardButton]] = []
+        keyboard: List[List[CallbackButton]] = []
         isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
 
         for chat in userChats:
@@ -214,41 +206,39 @@ class ConfigureCommandHandler(BaseBotHandler):
 
                 keyboard.append(
                     [
-                        InlineKeyboardButton(
+                        CallbackButton(
                             buttonTitle,
-                            callback_data=utils.packDict(
-                                {
-                                    ButtonDataKey.ChatId: chat["chat_id"],
-                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-                                }
-                            ),
+                            {
+                                ButtonDataKey.ChatId: chat["chat_id"],
+                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                            },
                         )
                     ]
                 )
 
         if not keyboard:
-            await bot.edit_message_text(
-                "Вы не являетесь администратором ни в одном чате.",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Вы не являетесь администратором ни в одном чате.",
             )
             return
 
         keyboard.append([exitButton])
-        await bot.edit_message_text(
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
             text="Выберите чат для настройки:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            chat_id=user.id,
-            message_id=int(messageId),
+            inlineKeyboard=keyboard,
         )
 
     async def chatConfiguration_ConfigureChat(
         self,
         data: Dict[str | int, Any],
         messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
-        bot: telegram.Bot,
     ) -> None:
         """
         Display configuration settings page for a specific chat, dood!
@@ -275,19 +265,10 @@ class ConfigureCommandHandler(BaseBotHandler):
         """
         if chatId is None:
             logger.error(f"ConfigureChat: chatId is None in {data}")
-            await bot.edit_message_text(
-                "Ошибка: Чат не выбран",
-                chat_id=user.id,
-                message_id=int(messageId),
-            )
-            return
-
-        if not isinstance(chatId, int):
-            logger.error(f"ConfigureChat: wrong chatId: {type(chatId).__name__}#{chatId}")
-            await bot.edit_message_text(
-                "Ошибка: некорректный идентификатор чата",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Чат не выбран",
             )
             return
 
@@ -296,10 +277,10 @@ class ConfigureCommandHandler(BaseBotHandler):
         chatInfo = self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ConfigureChat: chatInfo is None in {chatId}")
-            await bot.edit_message_text(
-                "Ошибка: Выбран неизвестный чат",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Выбран неизвестный чат",
             )
             return
 
@@ -309,7 +290,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         defaultChatSettings = self.getChatSettings(None, chatType=ChatType(chatInfo["type"]))
 
         chatOptions = {k: v for k, v in getChatSettingsInfo().items() if v["page"] == page}
-        keyboard: List[List[InlineKeyboardButton]] = []
+        keyboard: List[List[CallbackButton]] = []
 
         for key, option in chatOptions.items():
             wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
@@ -326,15 +307,13 @@ class ConfigureCommandHandler(BaseBotHandler):
                 keyTitle += " (*)"
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         keyTitle,
-                        callback_data=utils.packDict(
-                            {
-                                ButtonDataKey.ChatId: chatId,
-                                ButtonDataKey.Key: key.getId(),
-                                ButtonDataKey.ConfigureAction: "sk",
-                            }
-                        ),
+                        {
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Key: key.getId(),
+                            ButtonDataKey.ConfigureAction: "sk",
+                        },
                     )
                 ]
             )
@@ -344,32 +323,30 @@ class ConfigureCommandHandler(BaseBotHandler):
                 continue
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         f"📂 {pageElem.getName()}",
-                        callback_data=utils.packDict(
-                            {
-                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-                                ButtonDataKey.ChatId: chatId,
-                                ButtonDataKey.Page: pageElem.value,
-                            }
-                        ),
+                        {
+                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Page: pageElem.value,
+                        },
                     )
                 ]
             )
 
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "<< Назад",
-                    callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init}),
+                    {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init},
                 )
             ]
         )
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "Закончить настройку",
-                    callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+                    {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel},
                 )
             ]
         )
@@ -378,19 +355,18 @@ class ConfigureCommandHandler(BaseBotHandler):
         # logger.debug(resp)
         # logger.debug(respMD)
         try:
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text=respMD,
-                parse_mode="MarkdownV2",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                chat_id=user.id,
-                message_id=int(messageId),
+                inlineKeyboard=keyboard,
             )
         except Exception as e:
             logger.exception(e)
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text=f"Error while editing message: {e}",
-                chat_id=user.id,
-                message_id=int(messageId),
             )
             return
 
@@ -398,9 +374,9 @@ class ConfigureCommandHandler(BaseBotHandler):
         self,
         data: Dict[str | int, Any],
         messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
-        bot: telegram.Bot,
     ) -> None:
         """
         Display configuration options for a specific setting key, dood!
@@ -429,20 +405,20 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         if chatId is None or keyId is None:
             logger.error(f"ConfigureKey: chatId or key is None in {data}")
-            await bot.edit_message_text(
-                "Ошибка: Чат или настройка не выбрана.",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Чат или настройка не выбрана.",
             )
             return
 
         chatInfo = self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ConfigureKey: chatInfo is None in {chatId}")
-            await bot.edit_message_text(
-                "Ошибка: Выбран неизвестный чат.",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Выбран неизвестный чат.",
             )
             return
 
@@ -455,19 +431,19 @@ class ConfigureCommandHandler(BaseBotHandler):
             key = ChatSettingsKey.fromId(keyId)
         except ValueError:
             logger.error(f"ConfigureKey: wrong key: {keyId}")
-            await bot.edit_message_text(
-                "Ошибка: Неизвестная настройка.",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Неизвестная настройка.",
             )
             return
 
         if key not in chatOptions:
             logger.error(f"ConfigureKey: wrong key: {key}")
-            await bot.edit_message_text(
-                "Ошибка: Неверная настройка.",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Неверная настройка.",
             )
             return
 
@@ -481,10 +457,11 @@ class ConfigureCommandHandler(BaseBotHandler):
                     ButtonDataKey.Key: keyId,
                 },
                 "messageId": messageId,
+                "messageChatId": messageChatId,
             },
         )
 
-        keyboard: List[List[InlineKeyboardButton]] = []
+        keyboard: List[List[CallbackButton]] = []
         wasChanged = chatSettings[key].toStr() != defaultChatSettings[key].toStr()
 
         resp = (
@@ -504,29 +481,25 @@ class ConfigureCommandHandler(BaseBotHandler):
         if chatOptions[key]["type"] == ChatSettingsType.BOOL:
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "Включить (True)",
-                        callback_data=utils.packDict(
-                            {
-                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetTrue,
-                                ButtonDataKey.ChatId: chatId,
-                                ButtonDataKey.Key: keyId,
-                            }
-                        ),
+                        {
+                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetTrue,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Key: keyId,
+                        },
                     )
                 ]
             )
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         "Выключить (False)",
-                        callback_data=utils.packDict(
-                            {
-                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetFalse,
-                                ButtonDataKey.ChatId: chatId,
-                                ButtonDataKey.Key: keyId,
-                            }
-                        ),
+                        {
+                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetFalse,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Key: keyId,
+                        },
                     )
                 ]
             )
@@ -537,53 +510,47 @@ class ConfigureCommandHandler(BaseBotHandler):
                     buttonText += " (*)"
                 keyboard.append(
                     [
-                        InlineKeyboardButton(
+                        CallbackButton(
                             buttonText,
-                            callback_data=utils.packDict(
-                                {
-                                    ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
-                                    ButtonDataKey.ChatId: chatId,
-                                    ButtonDataKey.Key: keyId,
-                                    ButtonDataKey.Value: modelIdx,
-                                }
-                            ),
+                            {
+                                ButtonDataKey.ConfigureAction: ButtonConfigureAction.SetValue,
+                                ButtonDataKey.ChatId: chatId,
+                                ButtonDataKey.Key: keyId,
+                                ButtonDataKey.Value: modelIdx,
+                            },
                         )
                     ]
                 )
 
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "Сбросить в значение по умолчанию",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ResetValue,
-                            ButtonDataKey.ChatId: chatId,
-                            ButtonDataKey.Key: keyId,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.ResetValue,
+                        ButtonDataKey.ChatId: chatId,
+                        ButtonDataKey.Key: keyId,
+                    },
                 )
             ]
         )
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "<< Назад",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-                            ButtonDataKey.ChatId: chatId,
-                            ButtonDataKey.Page: chatOptions[key]["page"],
-                        }
-                    ),
+                    {
+                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                        ButtonDataKey.ChatId: chatId,
+                        ButtonDataKey.Page: chatOptions[key]["page"],
+                    },
                 )
             ]
         )
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "Закончить настройку",
-                    callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+                    {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel},
                 )
             ]
         )
@@ -592,28 +559,27 @@ class ConfigureCommandHandler(BaseBotHandler):
         # logger.debug(resp)
         # logger.debug(respMD)
         try:
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text=respMD,
-                parse_mode="MarkdownV2",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                chat_id=user.id,
-                message_id=int(messageId),
+                inlineKeyboard=keyboard,
             )
         except Exception as e:
             logger.exception(e)
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text=f"Error while editing message: {e}",
-                chat_id=user.id,
-                message_id=int(messageId),
             )
 
     async def chatConfiguration_SetValue(
         self,
         data: Dict[str | int, Any],
         messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
-        bot: telegram.Bot,
     ) -> None:
         """
         Update a chat setting with a new value, dood!
@@ -646,20 +612,20 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         if chatId is None or keyId is None:
             logger.error(f"[Re]SetValue: chatId or key is None in {data}")
-            await bot.edit_message_text(
-                "Ошибка: Не выбран чат или настройка",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Не выбран чат или настройка",
             )
             return
 
         chatInfo = self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"[Re]SetValue: chatInfo is None for {chatId}")
-            await bot.edit_message_text(
-                "Ошибка: Выбран неизвестный чат",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Выбран неизвестный чат",
             )
             return
 
@@ -669,23 +635,23 @@ class ConfigureCommandHandler(BaseBotHandler):
             key = ChatSettingsKey.fromId(keyId)
         except ValueError:
             logger.error(f"[Re]SetValue: wrong key: {keyId}")
-            await bot.edit_message_text(
-                "Ошибка: Выбрана несуществующая настройка",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Выбрана несуществующая настройка",
             )
             return
 
         if key not in chatOptions:
             logger.error(f"[Re]SetValue: wrong key: {key}")
-            await bot.edit_message_text(
-                "Ошибка: Ввбрана некорректная настройка",
-                chat_id=user.id,
-                message_id=int(messageId),
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Ввбрана некорректная настройка",
             )
             return
 
-        keyboard: List[List[InlineKeyboardButton]] = []
+        keyboard: List[List[CallbackButton]] = []
 
         resp = ""
 
@@ -727,23 +693,21 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "<< К настройкам чата",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
-                            ButtonDataKey.ChatId: chatId,
-                            ButtonDataKey.Page: chatOptions[key]["page"],
-                        }
-                    ),
+                    {
+                        ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
+                        ButtonDataKey.ChatId: chatId,
+                        ButtonDataKey.Page: chatOptions[key]["page"],
+                    },
                 )
             ]
         )
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "Закончить настройку",
-                    callback_data=utils.packDict({ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel}),
+                    {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel},
                 )
             ]
         )
@@ -752,24 +716,28 @@ class ConfigureCommandHandler(BaseBotHandler):
         # logger.debug(resp)
         # logger.debug(respMD)
         try:
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text=respMD,
-                parse_mode="MarkdownV2",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                chat_id=user.id,
-                message_id=int(messageId),
+                inlineKeyboard=keyboard,
             )
         except Exception as e:
             logger.exception(e)
-            await bot.edit_message_text(
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
                 text=f"Error while editing message: {e}",
-                chat_id=user.id,
-                message_id=int(messageId),
             )
             return
 
     async def _handle_chat_configuration(
-        self, data: Dict[str | int, Any], messageId: MessageIdType, user: MessageSender
+        self,
+        data: Dict[str | int, Any],
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
+        user: MessageSender,
     ) -> None:
         """
         Route configuration actions to appropriate handlers with permission checks, dood!
@@ -794,9 +762,6 @@ class ConfigureCommandHandler(BaseBotHandler):
             - Delegates to specific action handler based on action type
             - Shows error message if user lacks permissions or action is unknown
         """
-        bot = self._tgBot
-        if bot is None:
-            raise RuntimeError("Bot is undefined")
 
         userId = user.id
         self.cache.clearUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
@@ -805,6 +770,9 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
         chatId = data.get(ButtonDataKey.ChatId, None)
+        if not isinstance(chatId, int):
+            chatId = None
+
         if chatId is not None:
             # User configuring some chat, check permissions
             # TODO: get proper chatType
@@ -820,25 +788,39 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
             if not canChangeSettings:
                 logger.error(f"handle_chat_configuration: user#{user.id} is not allowed to configure {chatId}")
-                await bot.edit_message_text(
+                await self.editMessage(
+                    messageId=messageId,
+                    chatId=messageChatId,
                     text="Вы не можете настраивать выбранный чат",
-                    chat_id=user.id,
-                    message_id=int(messageId),
                 )
                 return
 
         match action:
             case ButtonConfigureAction.Init:
-                await self.chatConfiguration_Init(data=data, messageId=messageId, user=user, chatId=chatId, bot=bot)
+                await self.chatConfiguration_Init(
+                    data=data,
+                    messageId=messageId,
+                    messageChatId=messageChatId,
+                    user=user,
+                    chatId=chatId,
+                )
 
             case ButtonConfigureAction.ConfigureChat:
                 await self.chatConfiguration_ConfigureChat(
-                    data=data, messageId=messageId, user=user, chatId=chatId, bot=bot
+                    data=data,
+                    messageId=messageId,
+                    messageChatId=messageChatId,
+                    user=user,
+                    chatId=chatId,
                 )
 
             case ButtonConfigureAction.ConfigureKey:
                 await self.chatConfiguration_ConfigureKey(
-                    data=data, messageId=messageId, user=user, chatId=chatId, bot=bot
+                    data=data,
+                    messageId=messageId,
+                    messageChatId=messageChatId,
+                    user=user,
+                    chatId=chatId,
                 )
 
             case (
@@ -847,20 +829,26 @@ class ConfigureCommandHandler(BaseBotHandler):
                 | ButtonConfigureAction.ResetValue
                 | ButtonConfigureAction.SetValue
             ):
-                await self.chatConfiguration_SetValue(data=data, messageId=messageId, user=user, chatId=chatId, bot=bot)
+                await self.chatConfiguration_SetValue(
+                    data=data,
+                    messageId=messageId,
+                    messageChatId=messageChatId,
+                    user=user,
+                    chatId=chatId,
+                )
 
             case ButtonConfigureAction.Cancel:
-                await bot.edit_message_text(
+                await self.editMessage(
+                    messageId=messageId,
+                    chatId=messageChatId,
                     text="Настройка закончена, буду ждать вас снова",
-                    chat_id=user.id,
-                    message_id=int(messageId),
                 )
             case _:
                 logger.error(f"handle_chat_configuration: unknown action: {data}")
-                await bot.edit_message_text(
+                await self.editMessage(
+                    messageId=messageId,
+                    chatId=messageChatId,
                     text=f"Unknown action: {action}",
-                    chat_id=user.id,
-                    message_id=int(messageId),
                 )
                 return
 
@@ -914,7 +902,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         )
 
         argList = args.split()
-        if msg is not None:
+        if msg:
             targetChatId = utils.extractInt(argList)
             if targetChatId is not None:
                 await self._handle_chat_configuration(
@@ -922,13 +910,15 @@ class ConfigureCommandHandler(BaseBotHandler):
                         ButtonDataKey.ConfigureAction: ButtonConfigureAction.ConfigureChat,
                         ButtonDataKey.ChatId: targetChatId,
                     },
-                    messageId=msg.id,
+                    messageId=msg[0].messageId,
+                    messageChatId=ensuredMessage.recipient.id,
                     user=ensuredMessage.sender,
                 )
             else:
                 await self._handle_chat_configuration(
                     {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Init},
-                    messageId=msg.id,
+                    messageId=msg[0].messageId,
+                    messageChatId=ensuredMessage.recipient.id,
                     user=ensuredMessage.sender,
                 )
         else:
@@ -949,39 +939,12 @@ class ConfigureCommandHandler(BaseBotHandler):
         configureAction = data.get(ButtonDataKey.ConfigureAction, None)
 
         if configureAction is not None:
-            await self._handle_chat_configuration(data, ensuredMessage.messageId, user)
+            await self._handle_chat_configuration(
+                data,
+                messageId=ensuredMessage.messageId,
+                messageChatId=ensuredMessage.recipient.id,
+                user=user,
+            )
             return HandlerResultStatus.FINAL
 
         return HandlerResultStatus.SKIPPED
-
-    @commandHandlerV2(
-        commands=("test_kb",),
-        shortDescription="[<chatId>] - Start chat configuration wizard",
-        helpMessage="[`<chatId>`]: Настроить поведение бота в одном из чатов, где вы админ",
-        visibility={CommandPermission.PRIVATE},
-        availableFor={CommandPermission.PRIVATE},
-        helpOrder=CommandHandlerOrder.WIZARDS,
-        category=CommandCategory.PRIVATE,
-    )
-    async def test_kb_command(
-        self,
-        ensuredMessage: EnsuredMessage,
-        command: str,
-        args: str,
-        UpdateObj: UpdateObjectType,
-        typingManager: Optional[TypingManager],
-    ) -> None:
-        """Test keyboard for Max"""
-        if self._maxBot is None:
-            return
-
-        await self._maxBot.sendMessage(
-            chatId=ensuredMessage.recipient.id,
-            text="Test",
-            replyTo=str(ensuredMessage.messageId),
-            inlineKeyboard=maxModels.InlineKeyboardAttachmentRequest(
-                payload=maxModels.Keyboard(
-                    buttons=[[maxModels.CallbackButton(payload="hello:1,b:2", text="Hello, it is button, desu")]]
-                )
-            ),
-        )

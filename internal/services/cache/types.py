@@ -16,7 +16,7 @@ class HCSpamWarningMessageInfo(TypedDict):
     """Spam warning message metadata, dood."""
 
     # messageId: int
-    parentMessageId: NotRequired[Optional[int]]
+    parentMessageId: NotRequired[Optional[int | str]]
     userId: int
     username: str
     ts: float
@@ -25,7 +25,7 @@ class HCSpamWarningMessageInfo(TypedDict):
 class HCChatPersistentCacheDict(TypedDict):
     """Persistent chat cache data, dood."""
 
-    spamWarningMessages: NotRequired[Dict[int, HCSpamWarningMessageInfo]]
+    spamWarningMessages: NotRequired[Dict[int | str, HCSpamWarningMessageInfo]]
 
 
 class HCChatAdminsDict(TypedDict):
@@ -68,6 +68,7 @@ class UserActiveConfigurationDict(TypedDict):
 
     data: Dict[str | int, Any]
     messageId: MessageIdType
+    messageChatId: int
 
 
 class HCUserCacheDict(TypedDict):

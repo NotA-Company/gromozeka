@@ -946,10 +946,13 @@ class MaxBotClient:
             body_data["format"] = format.value
 
         # Add inline keyboard to attachments if provided
+        final_attachments = attachments
         if inlineKeyboard is not None:
             final_attachments = list(attachments).copy() if attachments else []
             final_attachments.append(inlineKeyboard)
-            body_data["attachments"] = final_attachments
+
+        if final_attachments is not None:
+            body_data["attachments"] = [v.to_dict(recursive=True) for v in final_attachments]
 
         await self.put(f"/messages?message_id={messageId}", json=body_data)
         return True

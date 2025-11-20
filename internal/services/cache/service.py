@@ -510,13 +510,13 @@ class CacheService:
 
     # ## ChatPersistent spamWarningMessages
 
-    def getSpamWarningMessageInfo(self, chatId: int, messageId: int) -> Optional[HCSpamWarningMessageInfo]:
+    def getSpamWarningMessageInfo(self, chatId: int, messageId: int | str) -> Optional[HCSpamWarningMessageInfo]:
         """..."""
         chatPCache = self.chatPersistent.get(chatId, {})
         messages = chatPCache.get("spamWarningMessages", {})
         return messages.get(messageId, None)
 
-    def addSpamWarningMessage(self, chatId: int, messageId: int, data: HCSpamWarningMessageInfo) -> None:
+    def addSpamWarningMessage(self, chatId: int, messageId: int | str, data: HCSpamWarningMessageInfo) -> None:
         """..."""
         chatPCache = self.chatPersistent.get(chatId, {})
         if "spamWarningMessages" not in chatPCache:

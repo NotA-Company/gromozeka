@@ -9,9 +9,9 @@ Adopt Handlers:
   - [x] Admins support
   - [x] BotOwner By ID support
 - [x] common.py
-- [ ] configure.py
+- [x] configure.py
 - [x] dev_commands.py
-- [ ] example.py
+- [x] example.py
 - [x] help_command.py
 - [x] llm_messages.py
 - [ ] manager.py
