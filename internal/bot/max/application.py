@@ -85,7 +85,7 @@ class MaxBotApplication:
         asyncio.run(self._runPolling())
 
     async def maxHandler(self, update: maxModels.Update) -> None:
-        logger.debug(update)
+        logger.debug(f"Handling Update#{update.update_type}@{update.timestamp}")
         if self.client is None:
             raise RuntimeError("Client is not initialized")
 
@@ -93,8 +93,9 @@ class MaxBotApplication:
             logger.debug("It's new message, processing...")
             ensuredMessage = EnsuredMessage.fromMaxMessage(update.message)
 
-            await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
-            return
+            # TODO: Add some parallelism support via asyncio.task(...)
+            return await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
+
         elif isinstance(update, maxModels.MessageCallbackUpdate):
             logger.debug("It's callback, processing...")
             if update.message is None:
@@ -115,16 +116,16 @@ class MaxBotApplication:
                 username=update.callback.user.username or "",
             )
 
-            await self.handlerManager.handleCallback(
+            # TODO: self.client.answerCallbackQuery()
+            return await self.handlerManager.handleCallback(
                 ensuredMessage=ensuredMessage, data=payload, user=user, updateObj=update
             )
-            return
 
-            # self.database.saveChatMessage()
         else:
-            logger.debug(f"UpdateType is {update.update_type}, ignoring for now...")
+            logger.debug(f"Unsupported Update: {update}, ignoring for now...")
 
     async def maxExceptionHandler(self, exception: Exception) -> None:
+        logger.error(f"Unhandler MAX exception {type(exception).__name__}")
         logger.exception(exception)
 
     async def _runPolling(self):
