@@ -20,7 +20,7 @@ Adopt Handlers:
 - [x] react_on_user.py
 - [ ] spam.py (Entities parsing)
 - [x] summarization.py
-- [ ] user_data.py
+- [x] user_data.py
 - [x] weather.py
 - [x] yandex_search.py
 

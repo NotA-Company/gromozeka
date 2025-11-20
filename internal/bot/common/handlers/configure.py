@@ -131,7 +131,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         user = ensuredMessage.sender
         userId = user.id
-        messageText = ensuredMessage.getRawMessageText()
+        messageText = ensuredMessage.getParsedMessageText()
         activeConfigure = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
         if activeConfigure is None:
             return HandlerResultStatus.SKIPPED
