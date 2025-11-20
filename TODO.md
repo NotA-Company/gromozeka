@@ -17,11 +17,11 @@ Adopt Handlers:
 - [ ] manager.py
 - [x] media.py
 - [x] message_preprocessor.py
-- [ ] react_on_user.py
+- [x] react_on_user.py
 - [ ] spam.py
 - [ ] summarization.py
 - [ ] user_data.py
-- [ ] weather.py
+- [x] weather.py
 - [ ] yandex_search.py
 
 - [ ] Keyboard+Callback support
