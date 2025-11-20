@@ -78,8 +78,6 @@ class HandlersManager(CommandHandlerGetterInterface):
             # Should be before other handlers to ensure message saving + media processing
             MessagePreprocessorHandler(configManager, database, llmManager, botProvider),
             #
-            ReactOnUserMessageHandler(configManager, database, llmManager, botProvider),
-            #
             UserDataHandler(configManager, database, llmManager, botProvider),
             DevCommandsHandler(configManager, database, llmManager, botProvider),
             MediaHandler(configManager, database, llmManager, botProvider),
@@ -87,6 +85,9 @@ class HandlersManager(CommandHandlerGetterInterface):
             # Special case - help command require all command handlers information
             HelpHandler(configManager, database, llmManager, botProvider, self),
         ]
+
+        if self.botProvider == BotProvider.TELEGRAM:
+            self.handlers.append(ReactOnUserMessageHandler(configManager, database, llmManager, botProvider))
 
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
         openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
