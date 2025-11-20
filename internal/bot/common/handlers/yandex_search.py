@@ -25,18 +25,18 @@ from typing import Any, Dict, Optional, Sequence
 
 import html_to_markdown
 import requests
-from telegram import Update
-from telegram.ext import ContextTypes
 
 import lib.utils as utils
 import lib.yandex_search as ys
 import lib.yandex_search.xml_parser as ys_xml
+from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
 from internal.database.generic_cache import GenericDatabaseCache
@@ -54,7 +54,7 @@ from lib.ai import (
 from lib.cache import JsonValueConverter
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
-from .base import BaseBotHandler, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -392,11 +392,11 @@ class YandexSearchHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("web_search",),
         shortDescription="<query> - Search Web for given query using Yandex",
         helpMessage=" `<query>`: Поискать в интернете используя Yandex Search API",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
@@ -404,9 +404,10 @@ class YandexSearchHandler(BaseBotHandler):
     async def web_search(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Handle /web_search command for direct user web searches.
 
@@ -422,7 +423,7 @@ class YandexSearchHandler(BaseBotHandler):
         Returns:
             None: This method sends messages directly via Telegram API
         """
-        if not context.args:
+        if not args:
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Необходимо указать запрос для поиска.",
@@ -430,7 +431,7 @@ class YandexSearchHandler(BaseBotHandler):
             )
             return
 
-        searchQuery = " ".join(context.args)
+        searchQuery = args
 
         try:
             searchRet = await self.yandexSearchClient.search(searchQuery, **self.yandexSearchDefaults)
