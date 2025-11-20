@@ -3,7 +3,7 @@ Bot handlers manager
 """
 
 import logging
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from telegram.ext import ExtBot
 
@@ -16,7 +16,6 @@ from internal.bot.models import (
     ChatSettingsKey,
     ChatType,
     CommandCategory,
-    CommandHandlerInfo,
     CommandHandlerInfoV2,
     CommandPermission,
     EnsuredMessage,

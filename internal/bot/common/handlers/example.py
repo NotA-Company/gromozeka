@@ -16,7 +16,6 @@ from internal.bot.models import (
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
-    DelayedTaskFunction,
     EnsuredMessage,
     MessageSender,
     commandHandlerV2,
@@ -24,9 +23,8 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
-from internal.services.llm.service import LLMService
-from internal.services.queue_service.service import QueueService
-from internal.services.queue_service.types import DelayedTask
+from internal.services.llm import LLMService
+from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from lib.ai import LLMFunctionParameter, LLMManager, LLMParameterType
 
 from .base import BaseBotHandler, HandlerResultStatus, TypingManager

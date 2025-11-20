@@ -5,9 +5,8 @@ Command Handlers: Decorator and mixin for command handler registration
 import inspect
 import logging
 from collections.abc import Awaitable
-from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
-from typing import Any, Callable, Dict, Optional, Sequence, Set, TypeAlias
+from typing import Any, Callable, Optional, Sequence, Set
 
 from internal.bot.common.models import TypingAction, UpdateObjectType
 
@@ -16,7 +15,6 @@ from .ensured_message import EnsuredMessage
 logger = logging.getLogger(__name__)
 
 # Attribute name for storing handler metadata, dood!
-_HANDLER_METADATA_ATTR = "_command_handler_info"
 _HANDLER_METADATA_ATTR_v2 = "_commandHandlerInfoV2"
 
 
@@ -177,27 +175,6 @@ def commandHandlerV2(
     return decorator
 
 
-@dataclass
-class CommandHandlerInfo:
-    commands: Sequence[str]
-    shortDescription: str
-    helpMessage: str
-    categories: Set[CommandPermission]
-    order: CommandHandlerOrder
-    # handler: tgTypes.HandlerCallback[tgUpdate.Update, tgTypes.CCT, tgTypes.RT],
-    handler: Callable
-
-    def copy(self) -> "CommandHandlerInfo":
-        return CommandHandlerInfo(
-            commands=self.commands,
-            shortDescription=self.shortDescription,
-            helpMessage=self.helpMessage,
-            categories=self.categories,
-            order=self.order,
-            handler=self.handler,
-        )
-
-
 class CommandHandlerMixin:
     """
     Mixin class that provides automatic command handler discovery, dood!
@@ -208,41 +185,8 @@ class CommandHandlerMixin:
 
     def __init__(self):
         """Initialize and discover command handlers."""
-        self._commandHandlers: list[CommandHandlerInfo] = []
-        self._discoverCommandHandlers()
         self._commandHandlersV2: list[CommandHandlerInfoV2] = []
         self._discoverCommandHandlersV2()
-
-    def _discoverCommandHandlers(self) -> None:
-        """
-        Discover all decorated command handler methods in this instance, dood!
-
-        This method inspects all methods of the class and collects those
-        that have been decorated with @commandHandler.
-        """
-
-        # Get all methods of this instance
-        for _, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            # Check if the method has handler metadata
-            if hasattr(method, _HANDLER_METADATA_ATTR):
-                metadata = getattr(method, _HANDLER_METADATA_ATTR)
-                if not isinstance(metadata, CommandHandlerInfo):
-                    raise ValueError(f"Invalid handler metadata for {method.__name__}: {metadata}")
-
-                # Create CommandHandlerInfo with the bound method
-                handlerInfo = metadata.copy()
-                handlerInfo.handler = method  # Already bound to self
-
-                self._commandHandlers.append(handlerInfo)
-
-    def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
-        """
-        Get all command handlers for this instance, dood!
-
-        Returns:
-            Sequence of CommandHandlerInfo objects
-        """
-        return self._commandHandlers.copy()
 
     def _discoverCommandHandlersV2(self) -> None:
         """
@@ -268,7 +212,3 @@ class CommandHandlerMixin:
         TODO
         """
         return self._commandHandlersV2.copy()
-
-
-CallbackDataDict: TypeAlias = Dict[str | int, str | int | float | bool | None]
-"""DEPRECATED, use utils.PayloadDict"""
