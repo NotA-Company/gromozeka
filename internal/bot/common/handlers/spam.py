@@ -33,7 +33,6 @@ from internal.bot.models import (
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
-    DelayedTaskFunction,
     EnsuredMessage,
     MessageRecipient,
     MessageSender,
@@ -49,6 +48,7 @@ from internal.database.models import (
 from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType
 from internal.services.cache import HCSpamWarningMessageInfo
+from internal.services.queue_service import DelayedTaskFunction
 from lib.ai import LLMManager
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
 
