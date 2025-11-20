@@ -268,8 +268,6 @@ class EnsuredMessage:
 
     __slots__ = (
         "_message",
-        "user",
-        "chat",
         "sender",
         "recipient",
         "messageId",

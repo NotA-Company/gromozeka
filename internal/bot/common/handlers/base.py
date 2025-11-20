@@ -1349,7 +1349,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 baseMessage = message.getBaseMessage()
                 if not isinstance(baseMessage, telegram.Message):
                     raise ValueError("Base message is not a telegram.Message")
-                chat = message.chat
+                chat = baseMessage.chat
                 chatId = chat.id
                 storedChatInfo = self.getChatInfo(chatId=chatId)
 
@@ -1360,7 +1360,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     or chat.title != storedChatInfo["title"]
                     or chat.username != storedChatInfo["username"]
                     or isForum != storedChatInfo["is_forum"]
-                    or chat.type != storedChatInfo["type"]
+                    or message.recipient.chatType != storedChatInfo["type"]
                 ):
                     self.cache.setChatInfo(
                         chat.id,
