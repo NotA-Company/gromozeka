@@ -9,26 +9,24 @@ specific chat and user combinations, dood!
 import logging
 from typing import Any, Dict, List, Optional
 
-import telegram
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
-from telegram.ext import ContextTypes
-
 import lib.utils as utils
+from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     ButtonDataKey,
     ButtonUserDataConfigAction,
-    CallbackDataDict,
     ChatType,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
     MessageSender,
+    commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
+from internal.models import MessageIdType
 from internal.services.cache import UserActiveActionEnum
 from internal.services.llm import LLMService
 from lib.ai import (
@@ -36,9 +34,8 @@ from lib.ai import (
     LLMManager,
     LLMParameterType,
 )
-from lib.markdown.parser import markdownToMarkdownV2
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager, commandHandlerExtended
+from .base import BaseBotHandler, HandlerResultStatus, TypingManager
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +137,8 @@ class UserDataHandler(BaseBotHandler):
     # Handling user-data configuration wizard
     ###
 
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
         Handle messages for user data configuration wizard in private chats, dood!
@@ -155,15 +152,11 @@ class UserDataHandler(BaseBotHandler):
             HandlerResultStatus: FINAL if handled, SKIPPED otherwise.
         """
 
-        if ensuredMessage is None:
-            # Not new message, Skip
-            return HandlerResultStatus.SKIPPED
-
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             return HandlerResultStatus.SKIPPED
 
         user = ensuredMessage.sender
-        messageText = ensuredMessage.getRawMessageText()
+        messageText = ensuredMessage.getParsedMessageText()
         userDataConfig = self.cache.getUserState(userId=user.id, stateKey=UserActiveActionEnum.UserDataConfig)
         if userDataConfig is None:
             return HandlerResultStatus.SKIPPED
@@ -174,17 +167,18 @@ class UserDataHandler(BaseBotHandler):
                 ButtonDataKey.Value: messageText,
             },
             messageId=userDataConfig["messageId"],
+            messageChatId=userDataConfig["messageChatId"],
             user=user,
-            bot=context.bot,
         )
         return HandlerResultStatus.FINAL
 
     async def _handleConfigAction_Init(
         self,
-        data: CallbackDataDict,
-        messageId: int,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
-        bot: telegram.Bot,
     ) -> None:
         """
         Initialize wizard with chat selection interface, dood!
@@ -197,49 +191,48 @@ class UserDataHandler(BaseBotHandler):
         """
         # Print list of known chats
 
-        exitButton = InlineKeyboardButton(
+        exitButton = CallbackButton(
             "Закончить настройку",
-            callback_data=utils.packDict({ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel}),
+            {ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel},
         )
-        keyboard: List[List[InlineKeyboardButton]] = []
+        keyboard: List[List[CallbackButton]] = []
 
         for chat in self.db.getUserChats(user.id):
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         self.getChatTitle(chat, useMarkdown=False, addChatId=False),
-                        callback_data=utils.packDict(
-                            {
-                                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
-                                ButtonDataKey.ChatId: chat["chat_id"],
-                            }
-                        ),
+                        {
+                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
+                            ButtonDataKey.ChatId: chat["chat_id"],
+                        },
                     )
                 ]
             )
 
         if not keyboard:
-            await bot.edit_message_text(
-                "Чаты не найдены.",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Чаты не найдены.",
             )
             return
 
         keyboard.append([exitButton])
-        await bot.edit_message_text(
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
             text="Выберите чат для настройки:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            chat_id=user.id,
-            message_id=messageId,
+            inlineKeyboard=keyboard,
         )
 
     async def _handleConfigAction_ChatSelected(
         self,
-        data: CallbackDataDict,
-        messageId: int,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
-        bot: telegram.Bot,
     ) -> None:
         """
         Display user data for selected chat with edit options, dood!
@@ -250,45 +243,43 @@ class UserDataHandler(BaseBotHandler):
             user (User): Telegram user.
             bot (telegram.Bot): Bot instance.
         """
-        exitButton = InlineKeyboardButton(
+        exitButton = CallbackButton(
             "Закончить настройку",
-            callback_data=utils.packDict({ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel}),
+            {ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel},
         )
 
         chatId = data.get(ButtonDataKey.ChatId, None)
 
         if not isinstance(chatId, int):
             logger.error(f"ChatSelected: wrong chatId: {type(chatId).__name__}#{chatId}")
-            await bot.edit_message_text(
-                "Ошибка: некорректный идентификатор чата",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: некорректный идентификатор чата",
             )
             return
 
         chatInfo = self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ChatSelected: chatInfo is None in {chatId}")
-            await bot.edit_message_text(
-                "Ошибка: Выбран неизвестный чат",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: Выбран неизвестный чат",
             )
             return
         # TODO: Check if user is present in given chat
 
         logger.debug(f"ChatSelected: chatInfo: {chatInfo}")
         resp = f"Выбран чат {self.getChatTitle(chatInfo)}:\n\n"
-        keyboard: List[List[InlineKeyboardButton]] = [
+        keyboard: List[List[CallbackButton]] = [
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "Добавить новый ключ",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.KeySelected,
-                            ButtonDataKey.ChatId: chatId,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.KeySelected,
+                        ButtonDataKey.ChatId: chatId,
+                    },
                 )
             ]
         ]
@@ -298,15 +289,13 @@ class UserDataHandler(BaseBotHandler):
             resp += f"**Ключ**: `{k}`:\n```{k}\n{v}\n```\n\n"
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    CallbackButton(
                         k,
-                        callback_data=utils.packDict(
-                            {
-                                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.KeySelected,
-                                ButtonDataKey.ChatId: chatId,
-                                ButtonDataKey.Key: k,
-                            }
-                        ),
+                        {
+                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.KeySelected,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Key: k,
+                        },
                     )
                 ]
             )
@@ -314,44 +303,40 @@ class UserDataHandler(BaseBotHandler):
         resp += "Выберите нужное действие:"
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "Очистить все данные",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ClearChatData,
-                            ButtonDataKey.ChatId: chatId,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ClearChatData,
+                        ButtonDataKey.ChatId: chatId,
+                    },
                 )
             ]
         )
         keyboard.append(
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "<< Назад",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Init,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Init,
+                    },
                 )
             ]
         )
         keyboard.append([exitButton])
-        await bot.edit_message_text(
-            markdownToMarkdownV2(resp),
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="MarkdownV2",
-            chat_id=user.id,
-            message_id=messageId,
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
+            text=resp,
+            inlineKeyboard=keyboard,
         )
 
     async def _handleConfigAction_ClearChatData(
         self,
-        data: CallbackDataDict,
-        messageId: int,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
-        bot: telegram.Bot,
     ) -> None:
         """
         Clear all user data for selected chat, dood!
@@ -362,50 +347,49 @@ class UserDataHandler(BaseBotHandler):
             user (User): Telegram user.
             bot (telegram.Bot): Bot instance.
         """
-        exitButton = InlineKeyboardButton(
+        exitButton = CallbackButton(
             "Закончить настройку",
-            callback_data=utils.packDict({ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel}),
+            {ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel},
         )
         chatId = data.get(ButtonDataKey.ChatId, None)
 
         if not isinstance(chatId, int):
             logger.error(f"ClearChatData: wrong chatId: {type(chatId).__name__}#{chatId}")
-            await bot.edit_message_text(
-                "Ошибка: некорректный идентификатор чата",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: некорректный идентификатор чата",
             )
             return
 
         # TODO: Check if user is present in given chat
         self.cache.clearChatUserData(chatId=chatId, userId=user.id)
-        keyboard: List[List[InlineKeyboardButton]] = [
+        keyboard: List[List[CallbackButton]] = [
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "<< Назад",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
-                            ButtonDataKey.ChatId: chatId,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
+                        ButtonDataKey.ChatId: chatId,
+                    },
                 )
             ],
             [exitButton],
         ]
-        await bot.edit_message_text(
-            "Все данные очищены",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            chat_id=user.id,
-            message_id=messageId,
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
+            text="Все данные очищены",
+            inlineKeyboard=keyboard,
         )
 
     async def _handleConfigAction_DeleteKey(
         self,
-        data: CallbackDataDict,
-        messageId: int,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
-        bot: telegram.Bot,
     ) -> None:
         """
         Delete specific user data key from selected chat, dood!
@@ -416,18 +400,18 @@ class UserDataHandler(BaseBotHandler):
             user (User): Telegram user.
             bot (telegram.Bot): Bot instance.
         """
-        exitButton = InlineKeyboardButton(
+        exitButton = CallbackButton(
             "Закончить настройку",
-            callback_data=utils.packDict({ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel}),
+            {ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel},
         )
         chatId = data.get(ButtonDataKey.ChatId, None)
 
         if not isinstance(chatId, int):
             logger.error(f"DeleteKey: wrong chatId: {type(chatId).__name__}#{chatId}")
-            await bot.edit_message_text(
-                "Ошибка: некорректный идентификатор чата",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: некорректный идентификатор чата",
             )
             return
         # TODO: Check if user is present in given chat
@@ -437,33 +421,32 @@ class UserDataHandler(BaseBotHandler):
         key = str(data.get(ButtonDataKey.Key, None))
 
         self.cache.unsetChatUserData(chatId=chatId, userId=user.id, key=key)
-        keyboard: List[List[InlineKeyboardButton]] = [
+        keyboard: List[List[CallbackButton]] = [
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "<< Назад",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
-                            ButtonDataKey.ChatId: chatId,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
+                        ButtonDataKey.ChatId: chatId,
+                    },
                 )
             ],
             [exitButton],
         ]
-        await bot.edit_message_text(
-            f"Данные по ключу {key} удалены",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            chat_id=user.id,
-            message_id=messageId,
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
+            text=f"Данные по ключу {key} удалены",
+            inlineKeyboard=keyboard,
         )
 
     async def _handleConfigAction_KeySelected(
         self,
-        data: CallbackDataDict,
-        messageId: int,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
-        bot: telegram.Bot,
     ) -> None:
         """
         Prompt user to enter value for key (new or existing), dood!
@@ -474,18 +457,18 @@ class UserDataHandler(BaseBotHandler):
             user (User): Telegram user.
             bot (telegram.Bot): Bot instance.
         """
-        exitButton = InlineKeyboardButton(
+        exitButton = CallbackButton(
             "Закончить настройку",
-            callback_data=utils.packDict({ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel}),
+            {ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel},
         )
         chatId = data.get(ButtonDataKey.ChatId, None)
 
         if not isinstance(chatId, int):
             logger.error(f"KeySelected: wrong chatId: {type(chatId).__name__}#{chatId}")
-            await bot.edit_message_text(
-                "Ошибка: некорректный идентификатор чата",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: некорректный идентификатор чата",
             )
             return
         # TODO: Check if user is present in given chat
@@ -502,6 +485,7 @@ class UserDataHandler(BaseBotHandler):
                     ButtonDataKey.Key: key,
                 },
                 "messageId": messageId,
+                "messageChatId": messageChatId,
             },
         )
 
@@ -520,46 +504,42 @@ class UserDataHandler(BaseBotHandler):
             f"Текущее значение:\n```{key}\n{userData.get(str(key), '')}\n```"
         )
 
-        keyboard: List[List[InlineKeyboardButton]] = [
+        keyboard: List[List[CallbackButton]] = [
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "Удалить выбраный ключ",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.DeleteKey,
-                            ButtonDataKey.ChatId: chatId,
-                            ButtonDataKey.Key: key,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.DeleteKey,
+                        ButtonDataKey.ChatId: chatId,
+                        ButtonDataKey.Key: key,
+                    },
                 )
             ],
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "<< Назад",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
-                            ButtonDataKey.ChatId: chatId,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
+                        ButtonDataKey.ChatId: chatId,
+                    },
                 )
             ],
             [exitButton],
         ]
-        await bot.edit_message_text(
-            markdownToMarkdownV2(resp),
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="MarkdownV2",
-            chat_id=user.id,
-            message_id=messageId,
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
+            text=resp,
+            inlineKeyboard=keyboard,
         )
 
     async def _handleConfigAction_SetValue(
         self,
-        data: CallbackDataDict,
-        messageId: int,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
-        bot: telegram.Bot,
     ) -> None:
         """
         Set or update user data value, extracting key from message if needed, dood!
@@ -570,18 +550,18 @@ class UserDataHandler(BaseBotHandler):
             user (User): Telegram user.
             bot (telegram.Bot): Bot instance.
         """
-        exitButton = InlineKeyboardButton(
+        exitButton = CallbackButton(
             "Закончить настройку",
-            callback_data=utils.packDict({ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel}),
+            {ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel},
         )
         chatId = data.get(ButtonDataKey.ChatId, None)
 
         if not isinstance(chatId, int):
             logger.error(f"SetValue: wrong chatId: {type(chatId).__name__}#{chatId}")
-            await bot.edit_message_text(
-                "Ошибка: некорректный идентификатор чата",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: некорректный идентификатор чата",
             )
             return
         # TODO: Check if user is present in given chat
@@ -591,10 +571,10 @@ class UserDataHandler(BaseBotHandler):
 
         if not value:
             logger.error(f"SetValue: Value is empty in {data}")
-            await bot.edit_message_text(
-                "Произошла ошибка",
-                chat_id=user.id,
-                message_id=messageId,
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Произошла ошибка",
             )
             return
 
@@ -603,35 +583,33 @@ class UserDataHandler(BaseBotHandler):
 
         self.cache.setChatUserData(chatId=chatId, userId=user.id, key=str(key), value=str(value))
 
-        keyboard: List[List[InlineKeyboardButton]] = [
+        keyboard: List[List[CallbackButton]] = [
             [
-                InlineKeyboardButton(
+                CallbackButton(
                     "<< Назад",
-                    callback_data=utils.packDict(
-                        {
-                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
-                            ButtonDataKey.ChatId: chatId,
-                        }
-                    ),
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
+                        ButtonDataKey.ChatId: chatId,
+                    },
                 )
             ],
             [exitButton],
         ]
 
-        await bot.edit_message_text(
-            markdownToMarkdownV2(f"Готово, теперь ключ {key} установлен в \n```{key}\n{value}\n```"),
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="MarkdownV2",
-            chat_id=user.id,
-            message_id=messageId,
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
+            text=f"Готово, теперь ключ {key} установлен в \n```{key}\n{value}\n```",
+            inlineKeyboard=keyboard,
         )
 
     async def _handleUserDataConfiguration(
         self,
-        data: CallbackDataDict,
-        messageId: int,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageIdType,
+        messageChatId: int,
         user: MessageSender,
-        bot: telegram.Bot,
     ) -> None:
         """
         Route configuration actions to appropriate handlers, dood!
@@ -653,35 +631,49 @@ class UserDataHandler(BaseBotHandler):
 
         match action:
             case ButtonUserDataConfigAction.Init:
-                await self._handleConfigAction_Init(data, messageId, user, bot)
+                await self._handleConfigAction_Init(data, messageId=messageId, messageChatId=messageChatId, user=user)
             case ButtonUserDataConfigAction.Cancel:
-                await bot.edit_message_text(
+                await self.editMessage(
+                    messageId=messageId,
+                    chatId=messageChatId,
                     text="Настройка закончена, буду ждать вас снова",
-                    chat_id=user.id,
-                    message_id=messageId,
                 )
             case ButtonUserDataConfigAction.ChatSelected:
-                await self._handleConfigAction_ChatSelected(data, messageId, user, bot)
+                await self._handleConfigAction_ChatSelected(
+                    data, messageId=messageId, messageChatId=messageChatId, user=user
+                )
             case ButtonUserDataConfigAction.ClearChatData:
-                await self._handleConfigAction_ClearChatData(data, messageId, user, bot)
+                await self._handleConfigAction_ClearChatData(
+                    data, messageId=messageId, messageChatId=messageChatId, user=user
+                )
             case ButtonUserDataConfigAction.DeleteKey:
-                await self._handleConfigAction_DeleteKey(data, messageId, user, bot)
+                await self._handleConfigAction_DeleteKey(
+                    data, messageId=messageId, messageChatId=messageChatId, user=user
+                )
             case ButtonUserDataConfigAction.KeySelected:
-                await self._handleConfigAction_KeySelected(data, messageId, user, bot)
+                await self._handleConfigAction_KeySelected(
+                    data, messageId=messageId, messageChatId=messageChatId, user=user
+                )
             case ButtonUserDataConfigAction.SetValue:
-                await self._handleConfigAction_SetValue(data, messageId, user, bot)
+                await self._handleConfigAction_SetValue(
+                    data, messageId=messageId, messageChatId=messageChatId, user=user
+                )
 
             case _:
                 logger.error(f"_handleUserDataConfiguration: Invalid action: {action}")
-                await bot.edit_message_text(
+                await self.editMessage(
+                    messageId=messageId,
+                    chatId=messageChatId,
                     text=f"Unknown action: {action}",
-                    chat_id=user.id,
-                    message_id=messageId,
                 )
                 return
 
-    async def buttonHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: CallbackDataDict
+    async def callbackHandler(
+        self,
+        ensuredMessage: EnsuredMessage,
+        data: utils.PayloadDict,
+        user: MessageSender,
+        updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
         Handle button callbacks for user data configuration, dood!
@@ -695,24 +687,14 @@ class UserDataHandler(BaseBotHandler):
             HandlerResultStatus: FINAL if handled, SKIPPED if not, FATAL if data missing.
         """
 
-        query = update.callback_query
-        if query is None:
-            logger.error("buttonHandler: query is None")
-            return HandlerResultStatus.FATAL
-
-        user = MessageSender.fromTelegramUser(query.from_user)
-
-        if query.message is None:
-            logger.error(f"buttonHandler: message is None in {query}")
-            return HandlerResultStatus.FATAL
-
-        if not isinstance(query.message, Message):
-            logger.error(f"buttonHandler: message is not a Message in {query}")
-            return HandlerResultStatus.FATAL
-
         userDataAction = data.get(ButtonDataKey.UserDataConfigAction, None)
         if userDataAction is not None:
-            await self._handleUserDataConfiguration(data, query.message.id, user, context.bot)
+            await self._handleUserDataConfiguration(
+                data,
+                messageId=ensuredMessage.messageId,
+                messageChatId=ensuredMessage.recipient.id,
+                user=user,
+            )
             return HandlerResultStatus.FINAL
 
         return HandlerResultStatus.SKIPPED
@@ -721,11 +703,11 @@ class UserDataHandler(BaseBotHandler):
     # COMMANDS Handlers
     ###
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("get_my_data",),
         shortDescription="<chatId> - Dump data, bot knows about you in this chat",
         helpMessage=" [`<chatId>`]: Показать запомненную информацию о Вас в указанном (или текущем) чате.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE, CommandPermission.GROUP},
         helpOrder=CommandHandlerOrder.TECHNICAL,
         category=CommandCategory.TOOLS,
@@ -733,9 +715,10 @@ class UserDataHandler(BaseBotHandler):
     async def get_my_data_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Display stored user data as JSON, dood!
@@ -746,7 +729,7 @@ class UserDataHandler(BaseBotHandler):
             context (ContextTypes.DEFAULT_TYPE): Callback context.
         """
 
-        targetChatId = utils.extractInt(context.args)
+        targetChatId = utils.extractInt(args.split(maxsplit=1))
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
 
@@ -758,11 +741,11 @@ class UserDataHandler(BaseBotHandler):
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 
-    @commandHandlerExtended(
+    @commandHandlerV2(
         commands=("knowledge_config",),
         shortDescription="Start wisard for user-data manaagement",
         helpMessage=": Запустить мастер управления знаниями бота о вас.",
-        suggestCategories={CommandPermission.PRIVATE},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.WIZARDS,
         category=CommandCategory.PRIVATE,
@@ -770,9 +753,10 @@ class UserDataHandler(BaseBotHandler):
     async def knowledge_config_command(
         self,
         ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """
         Start interactive user data configuration wizard (private chats only), dood!
@@ -788,14 +772,14 @@ class UserDataHandler(BaseBotHandler):
             messageText="Запускаю мастер управления знаниями бота о вас...",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
-        if msg is not None:
+        if msg:
             await self._handleUserDataConfiguration(
                 {
                     ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Init,
                 },
-                msg.message_id,
-                ensuredMessage.sender,
-                context.bot,
+                messageId=msg[0].messageId,
+                messageChatId=msg[0].recipient.id,
+                user=ensuredMessage.sender,
             )
         else:
             logger.error("Failed to send message")

@@ -873,6 +873,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 kwargs = {}
                 if useMarkdown:
                     kwargs["parse_mode"] = telegram.constants.ParseMode.MARKDOWN_V2
+                    text = markdownToMarkdownV2(text)
                 ret = await self._tgBot.edit_message_text(
                     text=text,
                     chat_id=chatId,

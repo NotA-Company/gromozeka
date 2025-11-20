@@ -661,7 +661,7 @@ class EnsuredMessage:
         """
         self._parsedMessageText = rawMessageText
 
-    def getRawMessageText(self) -> str:
+    def getParsedMessageText(self) -> str:
         """
         Get the raw message text without any formatting, dood!
 

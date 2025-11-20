@@ -82,7 +82,7 @@ class SummarizationHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         user = ensuredMessage.sender
-        messageText = ensuredMessage.getRawMessageText()
+        messageText = ensuredMessage.getParsedMessageText()
 
         activeSummarization = self.cache.getUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
         if activeSummarization is None:
@@ -339,7 +339,6 @@ class SummarizationHandler(BaseBotHandler):
             bot: Telegram bot instance for sending messages
         """
 
-        userId = user.id
         chatSettings = self.getChatSettings(messageChatId)
         self.cache.clearUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
 

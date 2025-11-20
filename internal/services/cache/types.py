@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypeAl
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
 from internal.models import MessageIdType
+from lib import utils
 
 if TYPE_CHECKING:
     from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
@@ -66,7 +67,7 @@ class UserActiveActionEnum(StrEnum):
 
 class UserActiveConfigurationDict(TypedDict):
 
-    data: Dict[str | int, Any]
+    data: utils.PayloadDict
     messageId: MessageIdType
     messageChatId: int
 
