@@ -9,19 +9,16 @@ queue services and LLM tools.
 import logging
 from typing import Any, Dict, Optional
 
-from telegram import Message, Update
-from telegram.ext import ContextTypes
-
 import lib.utils as utils
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
-    CallbackDataDict,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     DelayedTaskFunction,
     EnsuredMessage,
+    MessageSender,
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
@@ -132,8 +129,12 @@ class ExampleHandler(BaseBotHandler):
     ###
     # Handling Click on buttons
     ###
-    async def buttonHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: CallbackDataDict
+    async def callbackHandler(
+        self,
+        ensuredMessage: EnsuredMessage,
+        data: utils.PayloadDict,
+        user: MessageSender,
+        updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
         Handle inline keyboard button callbacks, dood!
@@ -146,16 +147,6 @@ class ExampleHandler(BaseBotHandler):
         Returns:
             HandlerResultStatus: Status of button handling.
         """
-
-        query = update.callback_query
-        if query is None:
-            logger.error("handle_button: query is None")
-            return HandlerResultStatus.FATAL
-
-        message = query.message
-        if not isinstance(message, Message):
-            logger.error(f"handle_button: message {message} not Message in {query}")
-            return HandlerResultStatus.FATAL
 
         return HandlerResultStatus.SKIPPED
 

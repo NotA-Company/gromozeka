@@ -885,6 +885,7 @@ class BaseBotHandler(CommandHandlerMixin):
             await self._maxBot.editMessage(
                 messageId=str(messageId),
                 text=text,
+                attachments=None if inlineKeyboard is not None else [],
                 inlineKeyboard=self._keyboardToMax(inlineKeyboard) if inlineKeyboard is not None else None,
                 format=maxModels.TextFormat.MARKDOWN if useMarkdown else None,
             )
@@ -909,7 +910,7 @@ class BaseBotHandler(CommandHandlerMixin):
         inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
-    ) -> Optional[telegram.Message]:
+    ) -> List[EnsuredMessage]:
         match self.botProvider:
             case BotProvider.TELEGRAM:
                 # TODO: Refactoring needed
@@ -950,7 +951,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     inlineKeyboard=inlineKeyboardMax,
                     typingManager=typingManager,
                     splitIfTooLong=splitIfTooLong,
-                )  # type: ignore
+                )
             case _:
                 raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
 
@@ -971,7 +972,7 @@ class BaseBotHandler(CommandHandlerMixin):
         inlineKeyboard: Optional[maxModels.InlineKeyboardAttachmentRequest] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
-    ) -> List[maxModels.Message]:
+    ) -> List[EnsuredMessage]:
         if self._maxBot is None:
             raise RuntimeError("Max bot is Undefined")
 
@@ -980,6 +981,7 @@ class BaseBotHandler(CommandHandlerMixin):
             raise ValueError("No message text or photo data provided")
 
         replyMessageList: List[maxModels.Message] = []
+        ensuredReplyList: List[EnsuredMessage] = []
         # message = replyToMessage.getBaseMessage()
         # if not isinstance(message, maxModels.Message):
         #     logger.error("Invalid message type")
@@ -1062,6 +1064,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 # Save message
                 for replyMessage in replyMessageList:
                     ensuredReplyMessage = EnsuredMessage.fromMaxMessage(replyMessage)
+                    ensuredReplyList.append(ensuredReplyMessage)
                     if addMessagePrefix:
                         replyText = ensuredReplyMessage.messageText
                         if replyText.startswith(addMessagePrefix):
@@ -1078,9 +1081,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
                 logger.exception(e)
                 # Message was sent, so return it
-                return replyMessageList
-
-            ###########
+                return ensuredReplyList
 
         except Exception as e:
             logger.error(f"Error while sending message: {type(e).__name__}#{e}")
@@ -1094,9 +1095,9 @@ class BaseBotHandler(CommandHandlerMixin):
                     )
                 except Exception as error_e:
                     logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
-            return replyMessageList
+            return ensuredReplyList
 
-        return replyMessageList
+        return ensuredReplyList
 
     async def _sendTelegramMessage(
         self,
@@ -1115,7 +1116,7 @@ class BaseBotHandler(CommandHandlerMixin):
         inlineKeyboard: Optional[telegram.InlineKeyboardMarkup] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
-    ) -> Optional[telegram.Message]:
+    ) -> List[EnsuredMessage]:
         """
         Send a text or photo message as a reply, dood!
 
@@ -1150,6 +1151,7 @@ class BaseBotHandler(CommandHandlerMixin):
             raise ValueError("No message text or photo data provided")
 
         replyMessageList: List[telegram.Message] = []
+        ensuredReplyList: List[EnsuredMessage] = []
         message = replyToMessage.toTelegramMessage()
         message.set_bot(self._tgBot)
         chatType = replyToMessage.recipient.chatType
@@ -1271,6 +1273,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 # Save message
                 for replyMessage in replyMessageList:
                     ensuredReplyMessage = EnsuredMessage.fromTelegramMessage(replyMessage)
+                    ensuredReplyList.append(ensuredReplyMessage)
                     if addMessagePrefix:
                         replyText = ensuredReplyMessage.messageText
                         if replyText.startswith(addMessagePrefix):
@@ -1289,7 +1292,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
                 logger.exception(e)
                 # Message was sent, so return True anyway
-                return replyMessageList[-1] if replyMessageList else None
+                return ensuredReplyList
 
         except Exception as e:
             logger.error(f"Error while sending message: {type(e).__name__}#{e}")
@@ -1302,9 +1305,9 @@ class BaseBotHandler(CommandHandlerMixin):
                     )
                 except Exception as error_e:
                     logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
-            return None
+            return ensuredReplyList
 
-        return replyMessage
+        return ensuredReplyList
 
     async def deleteMessage(self, ensuredMessage: EnsuredMessage) -> bool:
         """TODO"""

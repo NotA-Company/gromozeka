@@ -115,6 +115,7 @@ class SummarizationHandler(BaseBotHandler):
         await self._handle_summarization(
             data=data,  # pyright: ignore[reportArgumentType]
             messageId=activeSummarization["messageId"],
+            chatId=ensuredMessage.recipient.id,
             user=user,
             bot=context.bot,
         )
