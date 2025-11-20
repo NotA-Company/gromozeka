@@ -9,24 +9,23 @@ import sys
 from typing import Awaitable, Dict, List, Optional
 
 import telegram
-from telegram import Update
 from telegram.ext import (
     Application,
     BaseUpdateProcessor,
     CallbackQueryHandler,
-    CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
 )
 
+from internal.bot.common.handlers import HandlersManager
+from internal.bot.models import BotProvider, CommandPermission, EnsuredMessage, MessageSender
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.queue_service.service import QueueService
+from lib import utils
 from lib.ai import LLMManager
 from lib.rate_limiter import RateLimiterManager
-
-from .common.handlers import HandlersManager
-from .models import BotProvider, CommandPermission
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +41,7 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
 
     async def do_process_update(self, update, coroutine: Awaitable) -> None:
         # This method is called for every update
-        if not isinstance(update, Update):
+        if not isinstance(update, telegram.Update):
             logger.error(f"Invalid update type: {type(update)}")
             await coroutine
             return
@@ -73,7 +72,7 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
                 logger.exception(e)
 
 
-class BotApplication:
+class TelegramBotApplication:
     """Manages Telegram bot application setup and execution."""
 
     def __init__(
@@ -93,6 +92,85 @@ class BotApplication:
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
 
+    async def messageHandler(self, update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle regular text messages."""
+        logger.debug(f"Handling Update#{update.update_id}")
+
+        if update.message is not None:
+            # It's new message
+            message = update.message
+            logger.debug(f"Message: {utils.dumpTelegramMessage(message)}")
+
+            ensuredMessage: Optional[EnsuredMessage] = None
+            try:
+                ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
+            except Exception as e:
+                logger.error(f"Error while ensuring message {message}")
+                logger.exception(e)
+                return
+
+            return await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
+        # elif ...
+        else:
+            logger.debug(f"Unsupported update: {update}, ignoring for now...")
+
+    async def callbackHandler(self, update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle button presses."""
+
+        logger.debug(f"callback update: {update}")
+
+        query = update.callback_query
+        if query is None:
+            logger.error(f"CallbackQuery is undefined in {update}")
+            return
+
+        # CallbackQueries need to be answered, even if no notification to the user is needed
+        # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+        # await query.answer(text=query.data)
+        # TODO: Answer something cool
+        await query.answer()
+
+        message = query.message
+        if message is None:
+            logger.error(f"Message is None in {query}")
+            return
+
+        if not isinstance(message, telegram.Message):
+            logger.error(f"Message is not a Message in {query}")
+            return
+
+        if query.data is None:
+            logger.error(f"CallbackQuery data undefined in {query}")
+            return
+        payload = utils.unpackDict(query.data)
+
+        ensuredMessage: Optional[EnsuredMessage] = None
+        try:
+            ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
+        except Exception as e:
+            logger.error(f"Unable to ensure Telegram message {message}")
+            logger.exception(e)
+            return
+
+        userUsername = ""
+        if query.from_user.username:
+            userUsername = f"@{query.from_user.username}"
+        user = MessageSender(
+            id=query.from_user.id,
+            name=query.from_user.full_name,
+            username=userUsername,
+        )
+
+        return await self.handlerManager.handleCallback(
+            ensuredMessage=ensuredMessage, data=payload, user=user, updateObj=update
+        )
+
+    async def errorHandler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle errors."""
+        logger.error(f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}")
+        logger.error(f"UpdateObj is: {update}")
+        logger.exception(context.error)
+
     def setupHandlers(self):
         """Set up bot command and message handlers."""
         if not self.application:
@@ -101,12 +179,13 @@ class BotApplication:
 
         # self.handlers.initDelayedScheduler(self.application.bot)
 
+        # Do not process commands separately, use MessageHandler
         # Command handlers
-        for commandInfo in self.handlerManager.getCommandHandlers():
-            self.application.add_handler(CommandHandler(commandInfo.commands, commandInfo.handler))
+        # for commandInfo in self.handlerManager.getCommandHandlers():
+        #     self.application.add_handler(CommandHandler(commandInfo.commands, commandInfo.handler))
 
         # Buttons
-        self.application.add_handler(CallbackQueryHandler(self.handlerManager.handle_button))
+        self.application.add_handler(CallbackQueryHandler(self.callbackHandler))
 
         # Message handler for regular text messages
         # See
@@ -115,23 +194,10 @@ class BotApplication:
         # Read
         # https://github.com/python-telegram-bot/python-telegram-bot/wiki/Working-with-Files-and-Media
         # For more about working with media
-        # Usefull filters
-        # PHOTO, VIDEO, AUDIO, DOCUMENT, Sticker.ALL, VOICE, ANIMATION
-        # ANIMATION  - https://docs.python-telegram-bot.org/en/stable/telegram.animation.html#telegram.Animation
-        # AUDIO      - https://docs.python-telegram-bot.org/en/stable/telegram.audio.html#telegram.Audio
-        # CHAT_PHOTO - https://docs.python-telegram-bot.org/en/stable/telegram.chatphoto.html#telegram.ChatPhoto
-        # DOCUMENT   - https://docs.python-telegram-bot.org/en/stable/telegram.document.html#telegram.Document
-        # PHOTO      - https://docs.python-telegram-bot.org/en/stable/telegram.photosize.html#telegram.PhotoSize
-        # STICKER    - https://docs.python-telegram-bot.org/en/stable/telegram.sticker.html#telegram.Sticker
-        # VIDEO      - https://docs.python-telegram-bot.org/en/stable/telegram.video.html#telegram.Video
-        # VideoNote  - https://docs.python-telegram-bot.org/en/stable/telegram.videonote.html#telegram.VideoNote
-        # VOICE      - https://docs.python-telegram-bot.org/en/stable/telegram.voice.html#telegram.Voice
-        self.application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, self.handlerManager.handle_message))
-
-        # self.application.add_handler(MessageHandler(filters.VIA_BOT, self.handlers.handle_bot))
+        self.application.add_handler(MessageHandler(filters.ALL, self.messageHandler))
 
         # Error handler
-        self.application.add_error_handler(self.handlerManager.error_handler)
+        self.application.add_error_handler(self.errorHandler)
 
         logger.info("Bot handlers configured successfully")
 
@@ -150,10 +216,12 @@ class BotApplication:
         PrivateCommands = []
 
         # Sort command handlers by order, then by command name
-        sortedHandlers = sorted(self.handlerManager.getCommandHandlers(), key=lambda h: (h.order, h.commands[0]))
+        sortedHandlers = sorted(
+            self.handlerManager.getCommandHandlersDict().values(), key=lambda h: (h.helpOrder, h.commands[0])
+        )
 
         for commandInfo in sortedHandlers:
-            if CommandPermission.HIDDEN in commandInfo.categories:
+            if CommandPermission.HIDDEN in commandInfo.visibility:
                 continue
 
             botCommandList: List[telegram.BotCommand] = []
@@ -161,16 +229,17 @@ class BotApplication:
             if len(description) > telegram.BotCommand.MAX_DESCRIPTION:
                 description = description[: telegram.BotCommand.MAX_DESCRIPTION - 3] + "..."
             for command in commandInfo.commands:
-                botCommandList.append(telegram.BotCommand(command, description))
+                if utils.checkIfProperCommandName(command):
+                    botCommandList.append(telegram.BotCommand(command, description))
 
-            if CommandPermission.DEFAULT in commandInfo.categories:
+            if CommandPermission.DEFAULT in commandInfo.visibility:
                 DefaultCommands.extend(botCommandList)
                 continue
-            if CommandPermission.PRIVATE in commandInfo.categories:
+            if CommandPermission.PRIVATE in commandInfo.visibility:
                 PrivateCommands.extend(botCommandList)
-            if CommandPermission.GROUP in commandInfo.categories:
+            if CommandPermission.GROUP in commandInfo.visibility:
                 ChatCommands.extend(botCommandList)
-            if CommandPermission.ADMIN in commandInfo.categories:
+            if CommandPermission.ADMIN in commandInfo.visibility:
                 ChatAdminCommands.extend(botCommandList)
 
         logger.debug(
@@ -185,13 +254,17 @@ class BotApplication:
         logger.debug(f"ChatCommands: {ChatCommands}")
         logger.debug(f"ChatAdminCommands: {ChatAdminCommands}")
 
-        await self.application.bot.set_my_commands(commands=DefaultCommands, scope=telegram.BotCommandScopeDefault())
-        await application.bot.set_my_commands(commands=DefaultCommands, scope=telegram.BotCommandScopeDefault())
         await self.application.bot.set_my_commands(
-            commands=DefaultCommands + PrivateCommands, scope=telegram.BotCommandScopeAllPrivateChats()
+            commands=DefaultCommands,
+            scope=telegram.BotCommandScopeDefault(),
         )
         await self.application.bot.set_my_commands(
-            commands=DefaultCommands + ChatCommands, scope=telegram.BotCommandScopeAllGroupChats()
+            commands=DefaultCommands + PrivateCommands,
+            scope=telegram.BotCommandScopeAllPrivateChats(),
+        )
+        await self.application.bot.set_my_commands(
+            commands=DefaultCommands + ChatCommands,
+            scope=telegram.BotCommandScopeAllGroupChats(),
         )
         await self.application.bot.set_my_commands(
             commands=DefaultCommands + ChatCommands + ChatAdminCommands,
@@ -241,7 +314,7 @@ class BotApplication:
         # Setup handlers
         self.setupHandlers()
 
-        logger.info("Starting Gromozeka bot, dood!")
+        logger.info("Starting Gromozeka Telegram bot, dood!")
 
         # Start the bot
-        self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+        self.application.run_polling(allowed_updates=telegram.Update.ALL_TYPES)

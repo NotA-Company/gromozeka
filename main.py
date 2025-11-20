@@ -13,8 +13,8 @@ import os
 import sys
 from typing import List, Optional
 
-from internal.bot.application import BotApplication
 from internal.bot.max.application import MaxBotApplication
+from internal.bot.telegram.application import TelegramBotApplication
 from internal.config.manager import ConfigManager
 from internal.database.manager import DatabaseManager
 from lib.ai.manager import LLMManager
@@ -55,7 +55,7 @@ class GromozekBot:
 
         match self.botMode:
             case "telegram":
-                self.botApp = BotApplication(
+                self.botApp = TelegramBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database_manager.getDatabase(),

@@ -6,6 +6,7 @@ import datetime
 import json
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
 
 if TYPE_CHECKING:
@@ -326,3 +327,9 @@ def extractInt(args: Optional[Sequence[str]]) -> Optional[int]:
             pass
 
     return None
+
+
+def checkIfProperCommandName(command: str) -> bool:
+    """Check if given string is proper command name for suggestion"""
+
+    return re.match(r"^[a-z][a-z_0-9]*$", command) is not None

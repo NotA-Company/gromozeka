@@ -43,7 +43,6 @@ from internal.bot import constants
 from internal.bot.common.models import CallbackButton, TypingAction, UpdateObjectType
 from internal.bot.models import (
     BotProvider,
-    CallbackDataDict,
     ChatSettingsKey,
     ChatSettingsValue,
     ChatType,
@@ -2099,48 +2098,5 @@ class BaseBotHandler(CommandHandlerMixin):
         user: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
-        # By default, skip processing
-        return HandlerResultStatus.SKIPPED
-
-    async def messageHandler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, ensuredMessage: Optional[EnsuredMessage]
-    ) -> HandlerResultStatus:
-        """
-        Handle regular text messages, dood!
-
-        Base implementation that skips processing. Override in subclasses
-        to implement specific message handling logic.
-
-        Args:
-            update: Telegram update object
-            context: Handler context from python-telegram-bot
-            ensuredMessage: Wrapped message object, or None if not applicable
-
-        Returns:
-            [`HandlerResultStatus`](internal/bot/handlers/base.py:56) indicating processing result
-        """
-        # By default, skip processing
-        return HandlerResultStatus.SKIPPED
-
-    async def buttonHandler(
-        self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-        data: CallbackDataDict,
-    ) -> HandlerResultStatus:
-        """
-        Handle inline button callbacks, dood!
-
-        Base implementation that skips processing. Override in subclasses
-        to implement specific button handling logic.
-
-        Args:
-            update: Telegram update object
-            context: Handler context from python-telegram-bot
-            data: Parsed callback data as [`CallbackDataDict`](internal/bot/models/command_handlers.py)
-
-        Returns:
-            [`HandlerResultStatus`](internal/bot/handlers/base.py:56) indicating processing result
-        """
         # By default, skip processing
         return HandlerResultStatus.SKIPPED

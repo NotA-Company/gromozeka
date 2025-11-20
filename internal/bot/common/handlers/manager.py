@@ -5,8 +5,7 @@ Bot handlers manager
 import logging
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-import telegram
-from telegram.ext import ContextTypes, ExtBot
+from telegram.ext import ExtBot
 
 import lib.max_bot as maxBot
 
@@ -110,13 +109,6 @@ class HandlersManager(CommandHandlerGetterInterface):
     def injectMaxBot(self, bot: maxBot.MaxBotClient):
         for handler in self.handlers:
             handler.injectMaxBot(bot)
-
-    def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
-        """Deprecated. Use getCommandHandlersDict instead."""
-        ret: List[CommandHandlerInfo] = []
-        for handler in self.handlers:
-            ret.extend(handler.getCommandHandlers())
-        return ret
 
     def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
         """TODO"""
@@ -291,6 +283,10 @@ class HandlersManager(CommandHandlerGetterInterface):
             return False
 
     async def handleNewMessage(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> None:
+        ensuredMessage.setUserData(
+            self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
+        )
+
         commandRet = await self.handleCommand(ensuredMessage, updateObj)
         if commandRet is not None:
             logger.debug(f"Handled as command with result: {commandRet}")
@@ -361,125 +357,3 @@ class HandlersManager(CommandHandlerGetterInterface):
                 f"No handler returned any of ({expectedFinalResults}), but only ({retSet}), something went wrong"
             )
             return
-
-    async def handle_message(self, update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle regular text messages."""
-        logger.debug(f"Handling message Update#{update.update_id}")
-
-        ensuredMessage: Optional[EnsuredMessage] = None
-        message = update.message
-        if not message:
-            # Not new message, ignore
-            logger.warning(f"Message undefined in {update}")
-        else:
-            # logger.debug(f"Message: {message}")
-            logger.debug(f"Message: {utils.dumpTelegramMessage(message)}")
-            try:
-                ensuredMessage = EnsuredMessage.fromTelegramMessage(message)
-                ensuredMessage.setUserData(
-                    self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-                )
-            except Exception as e:
-                logger.error(f"Error while ensuring message {message}")
-                logger.exception(e)
-
-        resultSet: Set[HandlerResultStatus] = set()
-        for handler in self.handlers:
-            ret = await handler.messageHandler(update, context, ensuredMessage)
-            if ret == HandlerResultStatus.SKIPPED and ensuredMessage is not None:
-                logger.debug(f"Handler {type(handler).__name__} returned SKIPPED, trying newMessageHandler")
-                ret = await handler.newMessageHandler(ensuredMessage, update)
-            resultSet.add(ret)
-            match ret:
-                case HandlerResultStatus.FINAL:
-                    logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
-                    break
-                case HandlerResultStatus.SKIPPED:
-                    # logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
-                    continue
-                case HandlerResultStatus.NEXT:
-                    logger.debug(f"Handler {type(handler).__name__} returned NEXT")
-                    continue
-                case HandlerResultStatus.ERROR:
-                    logger.error(f"Handler {type(handler).__name__} returned ERROR")
-                    continue
-                case HandlerResultStatus.FATAL:
-                    logger.error(f"Handler {type(handler).__name__} returned FATAL, stop processing")
-                    break
-                case _:
-                    logger.error(f"Unknown handler result: {ret}")
-
-        if ensuredMessage:
-            logger.debug(
-                f"Handled message from {ensuredMessage.sender}: {ensuredMessage.messageText[:50]}... "
-                f"(resultSet: {resultSet})"
-            )
-        else:
-            logger.debug(f"Handled not-a-message: #{update.update_id}, resultSet: {resultSet})")
-
-    async def handle_button(self, update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle button presses."""
-        logger.debug(f"handle_button: {update}")
-
-        query = update.callback_query
-        if query is None:
-            logger.error(f"CallbackQuery undefined in {update}")
-            return
-
-        # CallbackQueries need to be answered, even if no notification to the user is needed
-        # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
-        # await query.answer(text=query.data)
-        # TODO: Answer something cool
-        await query.answer()
-
-        if query.data is None:
-            logger.error(f"CallbackQuery data undefined in {query}")
-            return
-
-        data = utils.unpackDict(query.data)
-
-        if query.message is None:
-            logger.error(f"handle_button: message is None in {query}")
-            return
-
-        if not isinstance(query.message, telegram.Message):
-            logger.error(f"handle_button: message is not a Message in {query}")
-            return
-
-        retSet: Set[HandlerResultStatus] = set()
-        for handler in self.handlers:
-            ret = await handler.buttonHandler(update, context, data)
-            retSet.add(ret)
-            match ret:
-                case HandlerResultStatus.FINAL:
-                    logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
-                    break
-                case HandlerResultStatus.SKIPPED:
-                    # logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
-                    continue
-                case HandlerResultStatus.NEXT:
-                    logger.debug(f"Handler {type(handler).__name__} returned NEXT")
-                    continue
-                case HandlerResultStatus.ERROR:
-                    logger.error(f"Handler {type(handler).__name__} returned ERROR")
-                    continue
-                case HandlerResultStatus.FATAL:
-                    logger.error(f"Handler {type(handler).__name__} returned FATAL")
-                    break
-                case _:
-                    logger.error(f"Unknown handler result: {ret}")
-                    continue
-
-        expectedFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
-        logger.debug(f"Handled CallbackQuery, resultsSet: {retSet}")
-        if not expectedFinalResults.intersection(retSet):
-            logger.error(
-                f"No handler returned any of ({expectedFinalResults}), but only ({retSet}), something went wrong"
-            )
-            return
-
-    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle errors."""
-        logger.error(f"Unhandled exception while handling an update: {type(context.error).__name__}#{context.error}")
-        logger.error(f"UpdateObj is: {update}")
-        logger.exception(context.error)
