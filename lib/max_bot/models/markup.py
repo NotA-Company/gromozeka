@@ -6,7 +6,7 @@ markup types for formatting text in messages.
 """
 
 import logging
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
 from .base import BaseMaxBotModel
@@ -14,7 +14,7 @@ from .base import BaseMaxBotModel
 logger = logging.getLogger(__name__)
 
 
-class MarkupType(str, Enum):
+class MarkupType(StrEnum):
     """
     Markup type enum
     """
@@ -43,7 +43,7 @@ class MarkupType(str, Enum):
 
     @classmethod
     def fromStr(cls, value: str) -> "MarkupType":
-        if value in cls.__members__:
+        if value in cls.__members__.values():
             return cls(value)
         else:
             logger.warning(f"{cls.__name__} does not have '{value}' value, returning UNSPECIFIED")
@@ -55,9 +55,9 @@ class MarkupElement(BaseMaxBotModel):
     Base markup element for text formatting
     """
 
-    __slots__ = ("type", "offset", "length")
+    __slots__ = ("type", "fromField", "length")
 
-    def __init__(self, *, type: MarkupType, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+    def __init__(self, *, type: MarkupType, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
         super().__init__(api_kwargs=api_kwargs)
         self.type: MarkupType = type
         """
@@ -70,17 +70,23 @@ class MarkupElement(BaseMaxBotModel):
           `моноширинный`,
           ссылка или упоминание пользователя
         """
-        self.offset: int = offset
+        self.fromField: int = fromField  # NOTE: Actually `from` but it is reserver word
         """Индекс начала элемента разметки в тексте. Нумерация с нуля"""
         self.length: int = length
         """Длина элемента разметки"""
+
+    def to_dict(self, includePrivate: bool = False, recursive: bool = False) -> Dict[str, Any]:
+        ret = super().to_dict(includePrivate, recursive)
+        if "fromField" in ret:
+            ret["from"] = ret.pop("fromField")
+        return ret
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MarkupElement":
         """Create MarkupElement instance from API response dictionary."""
         return cls(
             type=MarkupType.fromStr(data.get("type", MarkupType.UNSPECIFIED)),
-            offset=data.get("offset", 0),
+            fromField=data.get("from", 0),
             length=data.get("length", 0),
             api_kwargs=cls._getExtraKwargs(data),
         )
@@ -91,12 +97,16 @@ class StrongMarkup(MarkupElement):
 
     __slots__ = ()
 
-    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(type=MarkupType.STRONG, offset=offset, length=length, api_kwargs=api_kwargs)
+    def __init__(self, *, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.STRONG, fromField=fromField, length=length, api_kwargs=api_kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StrongMarkup":
-        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
+        return cls(
+            fromField=data.get("from", 0),
+            length=data.get("length", 0),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
 class EmphasizedMarkup(MarkupElement):
@@ -104,12 +114,16 @@ class EmphasizedMarkup(MarkupElement):
 
     __slots__ = ()
 
-    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(type=MarkupType.EMPHASIZED, offset=offset, length=length, api_kwargs=api_kwargs)
+    def __init__(self, *, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.EMPHASIZED, fromField=fromField, length=length, api_kwargs=api_kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "EmphasizedMarkup":
-        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
+        return cls(
+            fromField=data.get("from", 0),
+            length=data.get("length", 0),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
 class MonospacedMarkup(MarkupElement):
@@ -117,12 +131,16 @@ class MonospacedMarkup(MarkupElement):
 
     __slots__ = ()
 
-    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(type=MarkupType.MONOSPACED, offset=offset, length=length, api_kwargs=api_kwargs)
+    def __init__(self, *, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.MONOSPACED, fromField=fromField, length=length, api_kwargs=api_kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MonospacedMarkup":
-        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
+        return cls(
+            fromField=data.get("from", 0),
+            length=data.get("length", 0),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
 class StrikethroughMarkup(MarkupElement):
@@ -130,12 +148,16 @@ class StrikethroughMarkup(MarkupElement):
 
     __slots__ = ()
 
-    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(type=MarkupType.STRIKETHROUGH, offset=offset, length=length, api_kwargs=api_kwargs)
+    def __init__(self, *, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.STRIKETHROUGH, fromField=fromField, length=length, api_kwargs=api_kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StrikethroughMarkup":
-        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
+        return cls(
+            fromField=data.get("from", 0),
+            length=data.get("length", 0),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
 class UnderlineMarkup(MarkupElement):
@@ -143,12 +165,16 @@ class UnderlineMarkup(MarkupElement):
 
     __slots__ = ()
 
-    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(type=MarkupType.UNDERLINE, offset=offset, length=length, api_kwargs=api_kwargs)
+    def __init__(self, *, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.UNDERLINE, fromField=fromField, length=length, api_kwargs=api_kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UnderlineMarkup":
-        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
+        return cls(
+            fromField=data.get("from", 0),
+            length=data.get("length", 0),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
 class HeadingMarkup(MarkupElement):
@@ -156,12 +182,16 @@ class HeadingMarkup(MarkupElement):
 
     __slots__ = ()
 
-    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(type=MarkupType.HEADING, offset=offset, length=length, api_kwargs=api_kwargs)
+    def __init__(self, *, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.HEADING, fromField=fromField, length=length, api_kwargs=api_kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HeadingMarkup":
-        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
+        return cls(
+            fromField=data.get("from", 0),
+            length=data.get("length", 0),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
 class HighlightedMarkup(MarkupElement):
@@ -169,12 +199,16 @@ class HighlightedMarkup(MarkupElement):
 
     __slots__ = ()
 
-    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(type=MarkupType.HIGHLIGHTED, offset=offset, length=length, api_kwargs=api_kwargs)
+    def __init__(self, *, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.HIGHLIGHTED, fromField=fromField, length=length, api_kwargs=api_kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HighlightedMarkup":
-        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
+        return cls(
+            fromField=data.get("from", 0),
+            length=data.get("length", 0),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
 
 
 class LinkMarkup(MarkupElement):
@@ -182,8 +216,8 @@ class LinkMarkup(MarkupElement):
 
     __slots__ = ("url",)
 
-    def __init__(self, *, url: str, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(type=MarkupType.LINK, offset=offset, length=length, api_kwargs=api_kwargs)
+    def __init__(self, *, url: str, fromField: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.LINK, fromField=fromField, length=length, api_kwargs=api_kwargs)
         self.url: str = url
         """URL ссылки"""
 
@@ -191,7 +225,7 @@ class LinkMarkup(MarkupElement):
     def from_dict(cls, data: Dict[str, Any]) -> "LinkMarkup":
         return cls(
             url=data.get("url", ""),
-            offset=data.get("offset", 0),
+            fromField=data.get("from", 0),
             length=data.get("length", 0),
             api_kwargs=cls._getExtraKwargs(data),
         )
@@ -211,11 +245,11 @@ class UserMentionMarkup(MarkupElement):
         *,
         user_link: Optional[str] = None,
         user_id: Optional[int] = None,
-        offset: int,
+        fromField: int,
         length: int,
         api_kwargs: Dict[str, Any] | None = None,
     ):
-        super().__init__(type=MarkupType.USER_MENTION, offset=offset, length=length, api_kwargs=api_kwargs)
+        super().__init__(type=MarkupType.USER_MENTION, fromField=fromField, length=length, api_kwargs=api_kwargs)
         self.user_link: Optional[str] = user_link
         """`@username` упомянутого пользователя"""
         self.user_id: Optional[int] = user_id
@@ -226,7 +260,7 @@ class UserMentionMarkup(MarkupElement):
         return cls(
             user_link=data.get("user_link", None),
             user_id=data.get("user_id", None),
-            offset=data.get("offset", 0),
+            fromField=data.get("from", 0),
             length=data.get("length", 0),
             api_kwargs=cls._getExtraKwargs(data),
         )

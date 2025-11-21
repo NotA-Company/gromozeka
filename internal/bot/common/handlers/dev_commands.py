@@ -547,10 +547,23 @@ class DevCommandsHandler(BaseBotHandler):
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     )
                 elif isinstance(message, maxModels.Message) and message.link:
-                    entities = message.link.message.markup
+                    repliedMessage = message.link.message
+                    entities = repliedMessage.markup
+                    if entities is None:
+                        entities = []
+
+                    messageText = repliedMessage.text or ""
+                    ret = "There are entities:\n\n"
+                    for entity in entities:
+                        ret += (
+                            f"**{entity.type}**: {entity.fromField} {entity.length}:\n```\n"
+                            f"{messageText[entity.fromField:entity.fromField + entity.length]}\n```\n"
+                            f"```\n{entity}\n```\n\n"
+                        )
+
                     await self.sendMessage(
                         ensuredMessage,
-                        messageText=f"""```json\n{utils.jsonDumps(entities, indent=2)}\n```""",
+                        messageText=ret,
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     )
 
