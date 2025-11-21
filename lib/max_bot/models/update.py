@@ -50,10 +50,6 @@ class Update(BaseMaxBotModel):
 
     __slots__ = ("update_type", "timestamp")
 
-    # update_type: UpdateType
-    # """Type of the update"""
-    # timestamp: int
-    # """Unix-время, когда произошло событие"""
     UPDATE_TYPE: UpdateType = UpdateType.UNKNOWN
 
     def __init__(
@@ -65,11 +61,20 @@ class Update(BaseMaxBotModel):
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.update_type: UpdateType = update_type if update_type is not None else self.UPDATE_TYPE
+        """Type of the update"""
         self.timestamp: int = timestamp
+        """Unix-время, когда произошло событие"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Update":
-        """Create Update instance from API response dictionary."""
+        """Create Update instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            Update: New Update instance
+        """
         ret = cls(
             update_type=UpdateType(data.get("update_type", "unknown")),
             timestamp=data.get("timestamp", 0),
@@ -108,7 +113,14 @@ class MessageCreatedUpdate(Update):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageCreatedUpdate":
-        """Create MessageNewUpdate instance from API response dictionary."""
+        """Create MessageCreatedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            MessageCreatedUpdate: New MessageCreatedUpdate instance
+        """
         return cls(
             message=Message.from_dict(data.get("message", {})),
             user_locale=data.get("user_locale", None),
@@ -147,7 +159,14 @@ class MessageCallbackUpdate(Update):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageCallbackUpdate":
-        """Create MessageCallbackUpdate instance from API response dictionary."""
+        """Create MessageCallbackUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            MessageCallbackUpdate: New MessageCallbackUpdate instance
+        """
         message: Optional[Message] = None
         if data.get("message", None) is not None:
             message = Message.from_dict(data.get("message", {}))
@@ -187,7 +206,14 @@ class MessageEditedUpdate(Update):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageEditedUpdate":
-        """Create MessageEditedUpdate instance from API response dictionary."""
+        """Create MessageEditedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            MessageEditedUpdate: New MessageEditedUpdate instance
+        """
 
         return cls(
             message=Message.from_dict(data.get("message", {})),
@@ -227,7 +253,14 @@ class MessageRemovedUpdate(Update):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageRemovedUpdate":
-        """Create MessageRemovedUpdate instance from API response dictionary."""
+        """Create MessageRemovedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            MessageRemovedUpdate: New MessageRemovedUpdate instance
+        """
         return cls(
             message_id=data.get("message_id", ""),
             chat_id=data.get("chat_id", 0),
@@ -267,7 +300,14 @@ class BotAddedUpdate(Update):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BotAddedUpdate":
-        """Create BotAddedUpdate instance from API response dictionary."""
+        """Create BotAddedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            BotAddedUpdate: New BotAddedUpdate instance
+        """
         return cls(
             chat_id=data.get("chat_id", 0),
             user=UserWithPhoto.from_dict(data.get("user", {})),
@@ -307,7 +347,14 @@ class BotRemovedFromChatUpdate(Update):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BotRemovedFromChatUpdate":
-        """Create BotRemovedFromChatUpdate instance from API response dictionary."""
+        """Create BotRemovedFromChatUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            BotRemovedFromChatUpdate: New BotRemovedFromChatUpdate instance
+        """
         return cls(
             chat_id=data.get("chat_id", 0),
             user=UserWithPhoto.from_dict(data.get("user", {})),
@@ -324,14 +371,6 @@ class DialogMutedUpdate(Update):
 
     __slots__ = ("chat_id", "user", "muted_until", "user_locale")
 
-    # chat_id: int
-    # """ID чата, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, который отключил уведомления"""
-    # muted_until: int
-    # """Время в формате Unix, до наступления которого диалог был отключен"""
-    # user_locale: Optional[str]
-    # """Текущий язык пользователя в формате IETF BCP 47"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.DIALOG_MUTED
 
     def __init__(
@@ -346,13 +385,24 @@ class DialogMutedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
+        """ID чата, где произошло событие"""
         self.user: UserWithPhoto = user
+        """Пользователь, который отключил уведомления"""
         self.muted_until: int = muted_until
+        """Время в формате Unix, до наступления которого диалог был отключен"""
         self.user_locale: Optional[str] = user_locale
+        """Текущий язык пользователя в формате IETF BCP 47"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DialogMutedUpdate":
-        """Create DialogMutedUpdate instance from API response dictionary."""
+        """Create DialogMutedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            DialogMutedUpdate: New DialogMutedUpdate instance
+        """
         return cls(
             chat_id=data.get("chat_id", 0),
             user=UserWithPhoto.from_dict(data.get("user", {})),
@@ -370,12 +420,6 @@ class DialogUnmutedUpdate(Update):
 
     __slots__ = ("chat_id", "user", "user_locale")
 
-    # chat_id: int
-    # """ID чата, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, который включил уведомления"""
-    # user_locale: Optional[str]
-    # """Текущий язык пользователя в формате IETF BCP 47"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.DIALOG_UNMUTED
 
     def __init__(
@@ -389,12 +433,22 @@ class DialogUnmutedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
+        """ID чата, где произошло событие"""
         self.user: UserWithPhoto = user
+        """Пользователь, который включил уведомления"""
         self.user_locale: Optional[str] = user_locale
+        """Текущий язык пользователя в формате IETF BCP 47"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DialogUnmutedUpdate":
-        """Create DialogUnmutedUpdate instance from API response dictionary."""
+        """Create DialogUnmutedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            DialogUnmutedUpdate: New DialogUnmutedUpdate instance
+        """
 
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -412,12 +466,6 @@ class DialogClearedUpdate(Update):
 
     __slots__ = ("chat_id", "user", "user_locale")
 
-    # chat_id: int
-    # """ID чата, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, который включил уведомления"""
-    # user_locale: Optional[str]
-    # """Текущий язык пользователя в формате IETF BCP 47"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.DIALOG_CLEARED
 
     def __init__(
@@ -431,12 +479,22 @@ class DialogClearedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
+        """ID чата, где произошло событие"""
         self.user: UserWithPhoto = user
+        """Пользователь, который включил уведомления"""
         self.user_locale: Optional[str] = user_locale
+        """Текущий язык пользователя в формате IETF BCP 47"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DialogClearedUpdate":
-        """Create DialogClearedUpdate instance from API response dictionary."""
+        """Create DialogClearedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            DialogClearedUpdate: New DialogClearedUpdate instance
+        """
         return cls(
             chat_id=data.get("chat_id", 0),
             user=UserWithPhoto.from_dict(data.get("user", {})),
@@ -453,12 +511,6 @@ class DialogRemovedUpdate(Update):
 
     __slots__ = ("chat_id", "user", "user_locale")
 
-    # chat_id: int
-    # """ID чата, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, который удалил чат"""
-    # user_locale: Optional[str]
-    # """Текущий язык пользователя в формате IETF BCP 47"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.DIALOG_REMOVED
 
     def __init__(
@@ -472,12 +524,22 @@ class DialogRemovedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
+        """ID чата, где произошло событие"""
         self.user: UserWithPhoto = user
+        """Пользователь, который удалил чат"""
         self.user_locale: Optional[str] = user_locale
+        """Текущий язык пользователя в формате IETF BCP 47"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DialogRemovedUpdate":
-        """Create DialogRemovedUpdate instance from API response dictionary."""
+        """Create DialogRemovedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            DialogRemovedUpdate: New DialogRemovedUpdate instance
+        """
 
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -494,17 +556,7 @@ class UserAddedToChatUpdate(Update):
     """
 
     __slots__ = ("chat_id", "user", "inviter_id", "is_channel")
-    # chat_id: int
-    # """ID чата, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, добавленный в чат"""
-    # inviter_id: Optional[int],
-    # """
-    # Пользователь, который добавил пользователя в чат.
-    # Может быть `null`, если пользователь присоединился к чату по ссылке
-    # """
-    # is_channel: bool
-    # """Указывает, был ли пользователь добавлен в канал или нет"""
+
     UPDATE_TYPE: Final[UpdateType] = UpdateType.USER_ADDED
 
     def __init__(
@@ -519,13 +571,27 @@ class UserAddedToChatUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id = chat_id
+        """ID чата, где произошло событие"""
         self.user = user
+        """Пользователь, добавленный в чат"""
         self.inviter_id = inviter_id
+        """
+        Пользователь, который добавил пользователя в чат.
+        Может быть `null`, если пользователь присоединился к чату по ссылке
+        """
         self.is_channel = is_channel
+        """Указывает, был ли пользователь добавлен в канал или нет"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserAddedToChatUpdate":
-        """Create UserAddedToChatUpdate instance from API response dictionary."""
+        """Create UserAddedToChatUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            UserAddedToChatUpdate: New UserAddedToChatUpdate instance
+        """
         return cls(
             chat_id=data.get("chat_id", 0),
             user=UserWithPhoto.from_dict(data.get("user", {})),
@@ -544,17 +610,6 @@ class UserRemovedFromChatUpdate(Update):
 
     __slots__ = ("chat_id", "user", "admin_id", "is_channel")
 
-    # chat_id: int
-    # """ID чата, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, удаленный из чата"""
-    # admin_id: Optional[int]
-    # """
-    # Администратор, который удалил пользователя из чата.
-    # Может быть `null`, если пользователь покинул чат сам
-    # """
-    # is_channel: bool
-    # """Указывает, был ли пользователь удален из канала или нет"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.USER_REMOVED
 
     def __init__(
@@ -569,13 +624,27 @@ class UserRemovedFromChatUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
+        """ID чата, где произошло событие"""
         self.user: UserWithPhoto = user
+        """Пользователь, удаленный из чата"""
         self.admin_id: Optional[int] = admin_id
+        """
+        Администратор, который удалил пользователя из чата.
+        Может быть `null`, если пользователь покинул чат сам
+        """
         self.is_channel: bool = is_channel
+        """Указывает, был ли пользователь удален из канала или нет"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserRemovedFromChatUpdate":
-        """Create UserRemovedFromChatUpdate instance from API response dictionary."""
+        """Create UserRemovedFromChatUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            UserRemovedFromChatUpdate: New UserRemovedFromChatUpdate instance
+        """
         return cls(
             chat_id=data.get("chat_id", 0),
             user=UserWithPhoto.from_dict(data.get("user", {})),
@@ -593,14 +662,6 @@ class BotStartedUpdate(Update):
 
     __slots__ = ("chat_id", "user", "payload", "user_locale")
 
-    # chat_id: int
-    # """ID диалога, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, который нажал кнопку 'Start'"""
-    # payload: Optional[str] # Max 512
-    # """Дополнительные данные из дип-линков, переданные при запуске бота"""
-    # user_locale: Optional[str]
-    # """Текущий язык пользователя в формате IETF BCP 47"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.BOT_STARTED
 
     def __init__(
@@ -615,13 +676,24 @@ class BotStartedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
+        """ID диалога, где произошло событие"""
         self.user: UserWithPhoto = user
+        """Пользователь, который нажал кнопку 'Start'"""
         self.payload: Optional[str] = payload
+        """Дополнительные данные из дип-линков, переданные при запуске бота"""
         self.user_locale: Optional[str] = user_locale
+        """Текущий язык пользователя в формате IETF BCP 47"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BotStartedUpdate":
-        """Create BotStartedUpdate instance from API response dictionary."""
+        """Create BotStartedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            BotStartedUpdate: New BotStartedUpdate instance
+        """
 
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -640,12 +712,6 @@ class BotStoppedUpdate(Update):
 
     __slots__ = ("chat_id", "user", "user_locale")
 
-    # chat_id: int
-    # """ID диалога, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, который остановил чат"""
-    # user_locale: Optional[str]
-    # """Текущий язык пользователя в формате IETF BCP 47"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.BOT_STOPPED
 
     def __init__(
@@ -659,12 +725,22 @@ class BotStoppedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
+        """ID диалога, где произошло событие"""
         self.user: UserWithPhoto = user
+        """Пользователь, который остановил чат"""
         self.user_locale: Optional[str] = user_locale
+        """Текущий язык пользователя в формате IETF BCP 47"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BotStoppedUpdate":
-        """Create BotStoppedUpdate instance from API response dictionary."""
+        """Create BotStoppedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            BotStoppedUpdate: New BotStoppedUpdate instance
+        """
 
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -682,12 +758,6 @@ class ChatTitleChangedUpdate(Update):
 
     __slots__ = ("chat_id", "user", "title")
 
-    # chat_id: int
-    # """ID чата, где произошло событие"""
-    # user: UserWithPhoto
-    # """Пользователь, который изменил название"""
-    # title: str
-    # """Новое название"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.CHAT_TITLE_CHANGED
 
     def __init__(
@@ -701,12 +771,22 @@ class ChatTitleChangedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
+        """ID чата, где произошло событие"""
         self.user: UserWithPhoto = user
+        """Пользователь, который изменил название"""
         self.title: str = title
+        """Новое название"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatTitleChangedUpdate":
-        """Create ChatTitleChangedUpdate instance from API response dictionary."""
+        """Create ChatTitleChangedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            ChatTitleChangedUpdate: New ChatTitleChangedUpdate instance
+        """
 
         return cls(
             chat_id=data.get("chat_id", 0),
@@ -724,12 +804,6 @@ class MessageChatCreatedUpdate(Update):
 
     __slots__ = ("chat", "message_id", "start_payload")
 
-    # chat: Chat
-    # """Созданный чат"""
-    # message_id: str
-    # """ID сообщения, где была нажата кнопка"""
-    # start_payload: Optional[str]
-    # """Полезная нагрузка от кнопки чата"""
     UPDATE_TYPE: Final[UpdateType] = UpdateType.MESSAGE_CHAT_CREATED
 
     def __init__(
@@ -743,12 +817,22 @@ class MessageChatCreatedUpdate(Update):
     ):
         super().__init__(timestamp=timestamp, api_kwargs=api_kwargs)
         self.chat: Chat = chat
+        """Созданный чат"""
         self.message_id: str = message_id
+        """ID сообщения, где была нажата кнопка"""
         self.start_payload: Optional[str] = start_payload
+        """Полезная нагрузка от кнопки чата"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MessageChatCreatedUpdate":
-        """Create MessageChatCreatedUpdate instance from API response dictionary."""
+        """Create MessageChatCreatedUpdate instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            MessageChatCreatedUpdate: New MessageChatCreatedUpdate instance
+        """
 
         return cls(
             chat=Chat.from_dict(data.get("chat", {})),
@@ -766,21 +850,25 @@ class UpdateList(BaseMaxBotModel):
 
     __slots__ = ("updates", "marker")
 
-    # updates: List[Update]
-    # """Array of updates"""
-    # marker: Optional[int] = None
-    # """Marker for next request"""
-
     def __init__(
         self, *, updates: List[Update], marker: Optional[int] = None, api_kwargs: Dict[str, Any] | None = None
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.updates: List[Update] = updates
+        """Array of updates"""
         self.marker: Optional[int] = marker
+        """Marker for next request"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UpdateList":
-        """Create UpdateList instance from API response dictionary."""
+        """Create UpdateList instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            UpdateList: New UpdateList instance
+        """
         updates_data = data.get("updates", [])
         updates = []
 

@@ -65,7 +65,14 @@ class User(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "User":
-        """Create User instance from API response dictionary."""
+        """Create User instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            User: New User instance
+        """
         return cls(
             user_id=data.get("user_id", 0),
             first_name=data.get("first_name", ""),
@@ -83,13 +90,6 @@ class UserWithPhoto(User):
     """
 
     __slots__ = ("description", "avatar_url", "full_avatar_url")
-
-    # description: Optional[str] = None
-    # """Описание пользователя. Может быть `null`, если пользователь его не заполнил"""
-    # avatar_url: Optional[str] = None
-    # """URL аватара"""
-    # full_avatar_url: Optional[str] = None
-    # """URL аватара большего размера"""
 
     def __init__(
         self,
@@ -115,12 +115,25 @@ class UserWithPhoto(User):
             api_kwargs=api_kwargs,
         )
         self.description: Optional[str] = description
+        """
+        Описание пользователя.
+        Может быть `null`, если пользователь его не заполнил
+        """
         self.avatar_url: Optional[str] = avatar_url
+        """URL аватара"""
         self.full_avatar_url: Optional[str] = full_avatar_url
+        """URL аватара большего размера"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserWithPhoto":
-        """Create UserWithPhoto instance from API response dictionary."""
+        """Create UserWithPhoto instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            UserWithPhoto: New UserWithPhoto instance
+        """
         return cls(
             description=data.get("description", None),
             avatar_url=data.get("avatar_url", None),
@@ -155,7 +168,14 @@ class BotCommand(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BotCommand":
-        """Create BotCommand instance from API response dictionary."""
+        """Create BotCommand instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            BotCommand: New BotCommand instance
+        """
         return cls(
             name=data.get("name", ""),
             description=data.get("description"),
@@ -169,9 +189,6 @@ class BotInfo(UserWithPhoto):
     """
 
     __slots__ = ("commands",)
-
-    # commands: Optional[List[BotCommand]] = None
-    # """Команды, поддерживаемые ботом"""
 
     def __init__(
         self,
@@ -201,10 +218,18 @@ class BotInfo(UserWithPhoto):
             api_kwargs=api_kwargs,
         )
         self.commands: Optional[List[BotCommand]] = commands
+        """Команды, поддерживаемые ботом"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BotInfo":
-        """Create BotInfo instance from API response dictionary."""
+        """Create BotInfo instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            BotInfo: New BotInfo instance
+        """
         commands: Optional[List[BotCommand]] = None
         commands = None
         if data.get("commands", None) is not None:
@@ -233,21 +258,6 @@ class BotPatch(BaseMaxBotModel):
 
     __slots__ = ("first_name", "last_name", "description", "commands", "photo")
 
-    # first_name: Optional[str] = None
-    # """Отображаемое имя бота"""
-    # last_name: Optional[str] = None
-    # """Отображаемое второе имя бота"""
-    # name: Optional[str] = None
-    # """_Поле устарело, скоро будет удалено. Используйте_ `first_name`"""
-    # description: Optional[str] = None
-    # """Описание бота"""
-    # commands: Optional[List[BotCommand]] = None
-    # """Команды, поддерживаемые ботом. Чтобы удалить все команды, передайте пустой список"""
-    # photo: Optional[Dict[str, Any]] = None
-    # """Запрос на установку фото бота"""
-    # api_kwargs: Dict[str, Any] = field(default_factory=dict)
-    # """Raw API response data"""
-
     def __init__(
         self,
         *,
@@ -260,14 +270,29 @@ class BotPatch(BaseMaxBotModel):
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.first_name: Optional[str] = first_name
+        """Отображаемое имя бота"""
         self.last_name: Optional[str] = last_name
+        """Отображаемое второе имя бота"""
         self.description: Optional[str] = description
+        """Описание бота"""
         self.commands: Optional[List[BotCommand]] = commands
+        """
+        Команды, поддерживаемые ботом.
+        Чтобы удалить все команды, передайте пустой список
+        """
         self.photo: Optional[Dict[str, Any]] = photo
+        """Запрос на установку фото бота"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BotPatch":
-        """Create BotPatch instance from API response dictionary."""
+        """Create BotPatch instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            BotPatch: New BotPatch instance
+        """
         commandsData = data.get("commands", None)
         commands = None
         if commandsData is not None:

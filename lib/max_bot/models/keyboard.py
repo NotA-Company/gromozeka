@@ -227,6 +227,15 @@ class Keyboard(BaseMaxBotModel):
         self.buttons: List[List[Button]] = buttons
 
     def to_dict(self, includePrivate: bool = False, recursive: bool = False) -> Dict[str, Any]:
+        """Convert keyboard to dictionary representation.
+
+        Args:
+            includePrivate: Whether to include private attributes in output
+            recursive: Whether to recursively convert nested models to dicts
+
+        Returns:
+            Dictionary representation of the keyboard with properly formatted buttons
+        """
         # We need to specify our own to_dict to properly handle list of lists
         return {"buttons": [[button.to_dict(includePrivate, recursive) for button in row] for row in self.buttons]}
         # return super().to_dict(includePrivate, recursive)

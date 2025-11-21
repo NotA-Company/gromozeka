@@ -398,10 +398,12 @@ class MaxBotClient:
     # Basic API methods (Phase 1)
     async def getMyInfo(self, useCache: bool = True) -> BotInfo:
         """Get information about the current bot.
-        TODO: Rewrite
 
         Returns information about the current bot identified by the access token.
         The method returns the bot ID, name, and avatar (if available).
+
+        Args:
+            useCache: Whether to use cached bot info (default: True)
 
         Returns:
             Bot information including ID, name, and avatar
@@ -1503,7 +1505,34 @@ class MaxBotClient:
         mimeType: str,
         uploadType: UploadType,
     ) -> UploadedAttachment:
-        """TODO"""
+        """Upload a file to Max Bot servers.
+
+        Uploads a file to the Max Bot servers using the upload endpoint.
+        The file is uploaded using multipart form data.
+
+        Args:
+            filename: Name of the file to upload
+            data: Binary data of the file
+            mimeType: MIME type of the file
+            uploadType: Type of file being uploaded
+
+        Returns:
+            Uploaded attachment with token for use in messages
+
+        Raises:
+            AuthenticationError: If access token is invalid
+            NetworkError: If network request fails
+            MaxBotError: If upload fails
+
+        Example:
+            >>> async with MaxBotClient("token") as client:
+            ...     with open("image.jpg", "rb") as f:
+            ...         data = f.read()
+            ...     uploaded = await client.uploadFile(
+            ...         "image.jpg", data, "image/jpeg", UploadType.IMAGE
+            ...     )
+            ...     print(f"Uploaded: {uploaded}")
+        """
 
         # Validate file for upload
 
@@ -1557,7 +1586,28 @@ class MaxBotClient:
             raise MaxBotError(f"Upload error: {e}")
 
     async def downloadAttachmentPayload(self, attachmentPayload: AttachmentPayload | str) -> Optional[bytes]:
-        # TODO: Properly process Video
+        """Download attachment payload data.
+
+        Downloads the binary data of an attachment from its URL.
+
+        Args:
+            attachmentPayload: Attachment payload object or URL string
+
+        Returns:
+            Binary data of the attachment or None if download fails
+
+        Raises:
+            NetworkError: If network request fails
+
+        Example:
+            >>> async with MaxBotClient("token") as client:
+            ...     # Assuming message has an attachment
+            ...     attachment = message.body.attachments[0]
+            ...     data = await client.downloadAttachmentPayload(attachment.payload)
+            ...     if data:
+            ...         with open("downloaded_file", "wb") as f:
+            ...             f.write(data)
+        """
         url = attachmentPayload if isinstance(attachmentPayload, str) else attachmentPayload.url
 
         try:

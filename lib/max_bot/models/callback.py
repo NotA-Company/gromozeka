@@ -1,5 +1,9 @@
 """
-TODO
+Callback query models for Max Bot interactive button handling.
+
+Provides Callback and CallbackAnswer classes for handling user button interactions
+in Max Messenger Bot API. Callback represents incoming button press events,
+while CallbackAnswer is used to respond with message updates or notifications.
 """
 
 import logging
@@ -40,6 +44,14 @@ class Callback(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Callback":
+        """Create Callback instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing callback data from API response.
+
+        Returns:
+            Callback: New instance created from the provided data.
+        """
         return cls(
             timestamp=data.get("timestamp", 0),
             callback_id=data.get("callback_id", ""),
@@ -56,11 +68,6 @@ class CallbackAnswer(BaseMaxBotModel):
 
     __slots__ = ("message", "notification")
 
-    # message: Optional[NewMessageBody] = None
-    # """Заполните, если хотите изменить текущее сообщение"""
-    # notification: Optional[str] = None
-    # """Заполните, если хотите просто отправить одноразовое уведомление пользователю"""
-
     def __init__(
         self,
         *,
@@ -70,10 +77,20 @@ class CallbackAnswer(BaseMaxBotModel):
     ):
         super().__init__(api_kwargs=api_kwargs)
         self.message: Optional[NewMessageBody] = message
+        """Заполните, если хотите изменить текущее сообщение"""
         self.notification: Optional[str] = notification
+        """Заполните, если хотите просто отправить одноразовое уведомление пользователю"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CallbackAnswer":
+        """Create CallbackAnswer instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing callback answer data from API response.
+
+        Returns:
+            CallbackAnswer: New instance created from the provided data.
+        """
         message: Optional[NewMessageBody] = None
         if data.get("message", None) is not None:
             message = NewMessageBody.from_dict(data.get("message", {}))
