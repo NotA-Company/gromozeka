@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from telegram.ext import ExtBot
 
-import lib.max_bot as maxBot
+import lib.max_bot as libMax
 
 # import lib.max_bot.models as maxModels
 from internal.bot.common.models import UpdateObjectType
@@ -121,7 +121,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         for handler in self.handlers:
             handler.injectTGBot(bot)
 
-    def injectMaxBot(self, bot: maxBot.MaxBotClient):
+    def injectMaxBot(self, bot: libMax.MaxBotClient):
         """Inject Max bot instance into all handlers.
 
         Args:

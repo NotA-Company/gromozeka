@@ -26,6 +26,7 @@ from telegram.constants import MessageEntityType
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     ButtonDataKey,
@@ -53,7 +54,7 @@ from internal.services.queue_service import DelayedTaskFunction
 from lib.ai import LLMManager
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 
@@ -481,7 +482,6 @@ class SpamHandler(BaseBotHandler):
             - Bayes filter learns from spam if auto-learning is enabled
             - Up to 10 recent user messages can be deleted if configured
         """
-        message = ensuredMessage.getBaseMessage()
         chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
         logger.debug(
@@ -541,23 +541,9 @@ class SpamHandler(BaseBotHandler):
 
         await self.deleteMessagesById(chatId=chatId, messageIds=[ensuredMessage.messageId])
         logger.debug("Deleted spam message")
-        if (
-            self.botProvider == BotProvider.TELEGRAM
-            and self._tgBot is not None
-            and isinstance(message, telegram.Message)
-        ):
-            bot = self._tgBot
-            if message.sender_chat is not None:
-                await bot.ban_chat_sender_chat(chat_id=chatId, sender_chat_id=message.sender_chat.id)
-            if message.from_user is not None:
-                await bot.ban_chat_member(chat_id=chatId, user_id=userId, revoke_messages=True)
-            else:
-                logger.error(f"message.from_user is None (sender is {ensuredMessage.sender})")
-        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
-            bot = self._maxBot
-            await bot.removeMember(chatId=chatId, userId=ensuredMessage.sender.id, block=True)
-        else:
-            logger.error(f"Unexpected platform: {self.botProvider}")
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        await self._bot.banUserInChat(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
 
         self.db.markUserIsSpammer(chatId=chatId, userId=userId, isSpammer=True)
         logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.recipient}")
@@ -1405,24 +1391,16 @@ class SpamHandler(BaseBotHandler):
             )
             return
 
-        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
-            # Unban user from chat
-            if user["user_id"] > 0:
-                await self._tgBot.unban_chat_member(
-                    chat_id=user["chat_id"], user_id=user["user_id"], only_if_banned=True
-                )
-            else:
-                await self._tgBot.unban_chat_sender_chat(chat_id=user["chat_id"], sender_chat_id=user["user_id"])
-        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        await self._bot.unbanUserInChat(chatId=user["chat_id"], userId=user["user_id"])
+        if self.botProvider == BotProvider.MAX:
             # NOTE: There is no unban action in Max
-            logger.warning("There is no unban action in Max messenger...")
             await self.sendMessage(
                 ensuredMessage,
                 "в MAX бот не может разбанить челоека в чате",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
-        else:
-            logger.error(f"Unexpected platform: {self.botProvider}")
 
         # Mark user as not spammer
         self.db.markUserIsSpammer(chatId=user["chat_id"], userId=user["user_id"], isSpammer=False)
