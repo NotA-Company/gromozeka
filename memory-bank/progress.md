@@ -189,3 +189,9 @@ This file tracks the project's progress using a task list format.
 - Added all imported models to __all__ list for proper module exports
 - Resolved TODO comment at line 154 in lib/max_bot/models/__init__.py
 - All code passes formatting, linting, and testing requirements
+[2025-11-21 18:48:00] - Added docstring for newMessageHandler function in internal/bot/common/handlers/llm_messages.py
+- Replaced TODO comment with comprehensive docstring describing the function's purpose
+- Documented all parameters (ensuredMessage, updateObj) and return type (HandlerResultStatus)
+- Explained the function's behavior for handling messages from private chats and groups
+- Included information about Telegram automatic forwards handling
+- All code passes formatting, linting, and type checking requirements
