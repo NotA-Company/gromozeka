@@ -1,6 +1,6 @@
 # Max Support TODO:
 Adopt Handlers:
-- [ ] base.py
+- [x] base.py
   - [x] Media Download support
   - [x] Media Upload support
   - [x] Proper message sending support
@@ -14,7 +14,7 @@ Adopt Handlers:
 - [x] example.py
 - [x] help_command.py
 - [x] llm_messages.py
-- [ ] manager.py
+- [x] manager.py
 - [x] media.py
 - [x] message_preprocessor.py
 - [x] react_on_user.py
@@ -25,11 +25,11 @@ Adopt Handlers:
 - [x] yandex_search.py
 
 - [x] Keyboard+Callback support
-- [ ] Fix docstrings
+- [x] Fix docstrings
 - [x] Drop dataclasses
 - [x] review models
 - [ ] ensuredMessage: support miltiple media
-- [ ] Telegram: new callback schema support
+- [x] Telegram: new callback schema support
 - [ ] Review and rewrite or delete models.markup.py
 
 # Our TODO list
