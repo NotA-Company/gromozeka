@@ -18,7 +18,7 @@ Adopt Handlers:
 - [x] media.py
 - [x] message_preprocessor.py
 - [x] react_on_user.py
-- [ ] spam.py (Entities parsing)
+- [x] spam.py (Entities parsing)
 - [x] summarization.py
 - [x] user_data.py
 - [x] weather.py
@@ -28,11 +28,12 @@ Adopt Handlers:
 - [x] Fix docstrings
 - [x] Drop dataclasses
 - [x] review models
-- [ ] ensuredMessage: support miltiple media
+
 - [x] Telegram: new callback schema support
 - [x] Review and rewrite or delete models.markup.py
 
 # Our TODO list
+- [ ] ensuredMessage: support miltiple media
 - [ ] instead of background tasks, use set like in `internal/bot/max/application.py`
 - [x] General framework above Telegram and Max
 - [ ] Add ENV\.env support in config secrets

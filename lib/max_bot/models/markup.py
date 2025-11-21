@@ -7,7 +7,7 @@ markup types for formatting text in messages.
 
 import logging
 from enum import StrEnum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Self
 
 from .base import BaseMaxBotModel
 
@@ -82,7 +82,13 @@ class MarkupElement(BaseMaxBotModel):
         return ret
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MarkupElement":
+    def _getExtraKwargs(cls, api_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        ret = super()._getExtraKwargs(api_kwargs)
+        ret.pop("from", None)
+        return ret
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
         """Create MarkupElement instance from API response dictionary."""
         return cls(
             type=MarkupType.fromStr(data.get("type", MarkupType.UNSPECIFIED)),
