@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from .attachment import Attachment, attachmentFromDict
 from .base import BaseMaxBotModel
 from .enums import ChatType, MessageLinkType, TextFormat
+from .markup import MarkupElement, markupListFromList
 from .user import UserWithPhoto
 
 
@@ -97,7 +98,7 @@ class MessageBody(BaseMaxBotModel):
         seq: int,
         text: Optional[str] = None,
         attachments: Optional[List[Attachment]] = None,
-        markup: Optional[List[Dict[str, Any]]] = None,
+        markup: Optional[List[MarkupElement]] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__(api_kwargs=api_kwargs)
@@ -112,7 +113,7 @@ class MessageBody(BaseMaxBotModel):
         Вложения сообщения. Могут быть одним из типов `Attachment`.
         Смотрите описание схемы
         """
-        self.markup: Optional[List[Dict[str, Any]]] = markup
+        self.markup: Optional[List[MarkupElement]] = markup
         """
         Разметка текста сообщения. Для подробной информации загляните в раздел
         #[Форматирование](/docs-api#Форматирование%20текста)
@@ -133,12 +134,17 @@ class MessageBody(BaseMaxBotModel):
         if isinstance(attachmentsData, list):
             attachments = [attachmentFromDict(v) for v in attachmentsData]
 
+        markup: Optional[List[MarkupElement]] = None
+        markupData = data.get("markup", None)
+        if isinstance(markupData, list):
+            markup = markupListFromList(markupData)
+
         return cls(
             mid=data.get("mid", ""),
             seq=data.get("seq", 0),
             text=data.get("text", None),
             attachments=attachments,
-            markup=data.get("markup", None),
+            markup=markup,
             api_kwargs=cls._getExtraKwargs(data),
         )
 
