@@ -152,9 +152,9 @@ class PhotoAttachmentRequestPayload(BaseMaxBotModel):
         if photos is None:
             noneCount += 1
         if noneCount == 3:
-            ValueError("One of: url, token or photos should be not None")
+            raise ValueError("One of: url, token or photos should be not None")
         elif noneCount != 2:
-            ValueError("url, token and photos are mutualy exclusive")
+            raise ValueError("url, token and photos are mutualy exclusive")
 
         self.url: Optional[str] = url
         self.token: Optional[str] = token

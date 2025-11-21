@@ -307,7 +307,21 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
-        """TODO"""
+        """
+        Handle new messages and route them to appropriate handlers, dood!
+
+        This method processes incoming messages from private chats and groups,
+        checking for replies, mentions, and randomly responding to messages.
+        For Telegram, it also handles automatic forwards from linked channels.
+
+        Args:
+            ensuredMessage: The validated message object containing all message data
+            updateObj: The raw update object from the bot platform
+
+        Returns:
+            HandlerResultStatus: FINAL if message was handled, SKIPPED for unsupported
+                                chat types, NEXT to continue processing chain
+        """
 
         chat = ensuredMessage.recipient
         if chat.chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
