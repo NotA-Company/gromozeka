@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from telegram.ext import ExtBot
 
 import lib.max_bot as libMax
+from internal.bot.common.bot import TheBot
 
 # import lib.max_bot.models as maxModels
 from internal.bot.common.models import UpdateObjectType
@@ -112,23 +113,29 @@ class HandlersManager(CommandHandlerGetterInterface):
             LLMMessageHandler(configManager, database, llmManager, botProvider)
         )
 
-    def injectTGBot(self, bot: ExtBot) -> None:
-        """Inject Telegram bot instance into all handlers.
+    def injectBot(self, bot: ExtBot | libMax.MaxBotClient) -> None:
+        """Inject bot instance into all registered handlers.
 
         Args:
-            bot: Telegram bot instance from python-telegram-bot library
-        """
-        for handler in self.handlers:
-            handler.injectTGBot(bot)
+            bot: Bot client instance (ExtBot for Telegram or MaxBotClient for Max Messenger)
 
-    def injectMaxBot(self, bot: libMax.MaxBotClient):
-        """Inject Max bot instance into all handlers.
+        Returns:
+            None
 
-        Args:
-            bot: Max bot instance from lib.max_bot library
+        Raises:
+            ValueError: If bot type doesn't match the configured bot provider
         """
+        theBot: Optional[TheBot] = None
+        if self.botProvider == BotProvider.TELEGRAM and isinstance(bot, ExtBot):
+            theBot = TheBot(botProvider=self.botProvider, config=self.configManager.getBotConfig(), tgBot=bot)
+        elif self.botProvider == BotProvider.MAX and isinstance(bot, libMax.MaxBotClient):
+            theBot = TheBot(botProvider=self.botProvider, config=self.configManager.getBotConfig(), maxBot=bot)
+
+        if theBot is None:
+            raise ValueError("Unexpected bot class")
+
         for handler in self.handlers:
-            handler.injectMaxBot(bot)
+            handler.injectBot(theBot)
 
     def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
         """Get dictionary of all available command handlers.

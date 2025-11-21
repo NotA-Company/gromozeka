@@ -68,7 +68,7 @@ class MaxBotApplication:
         if self.maxBot is None:
             raise RuntimeError("Client is not initialized")
 
-        self.handlerManager.injectMaxBot(self.maxBot)
+        self.handlerManager.injectBot(self.maxBot)
         self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # TODO: set commands
