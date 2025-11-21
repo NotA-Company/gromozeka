@@ -34,9 +34,11 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
     """Update processor that processes updates parallel for each chatId + topicId"""
 
     async def initialize(self) -> None:
+        """Initialize the update processor with empty chat-topic mapping."""
         self.chatTopicMap: Dict[str, asyncio.Semaphore] = {}
 
     async def shutdown(self) -> None:
+        """Clean up resources when shutting down the processor."""
         pass
 
     async def do_process_update(self, update, coroutine: Awaitable) -> None:
@@ -82,7 +84,14 @@ class TelegramBotApplication:
         database: DatabaseWrapper,
         llmManager: LLMManager,
     ):
-        """Initialize bot application with token, database, and LLM model."""
+        """Initialize Telegram bot application.
+
+        Args:
+            configManager: Configuration manager instance
+            botToken: Telegram bot token for authentication
+            database: Database wrapper for data persistence
+            llmManager: LLM manager for language model operations
+        """
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
@@ -202,7 +211,11 @@ class TelegramBotApplication:
         logger.info("Bot handlers configured successfully")
 
     async def postInit(self, application: Application):
-        """Post-initialization tasks."""
+        """Perform post-initialization tasks.
+
+        Args:
+            application: Telegram application instance
+        """
         if self.application is None:
             raise RuntimeError("Application not initialized")
 
@@ -273,9 +286,13 @@ class TelegramBotApplication:
         # * :class:`telegram.BotCommandScopeAllChatAdministrators`
 
     async def postStop(self, application: Application) -> None:
-        """
+        """Handle application shutdown cleanup.
+
         See https://docs.python-telegram-bot.org/en/stable/telegram.ext.applicationbuilder.html#telegram.ext.ApplicationBuilder.post_stop
         for details
+
+        Args:
+            application: Telegram application instance
         """  # noqa: E501
 
         logger.info("Application stopping, stopping Delayed Tasks Scheduler...")
@@ -294,7 +311,7 @@ class TelegramBotApplication:
         logger.info("Rate limiters destroyed...")
 
     def run(self):
-        """Start the bot."""
+        """Start the Telegram bot application."""
         if self.botToken in ["", "YOUR_BOT_TOKEN_HERE"]:
             logger.error("Please set your bot token in config.toml!")
             sys.exit(1)

@@ -1,3 +1,7 @@
+"""
+Max Messenger bot application setup and management for Gromozeka.
+"""
+
 import asyncio
 import logging
 import random
@@ -22,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class MaxBotApplication:
-    """Manages Telegram bot application setup and execution."""
+    """Manages Max Messenger bot application setup and execution."""
 
     def __init__(
         self,
@@ -31,7 +35,14 @@ class MaxBotApplication:
         database: DatabaseWrapper,
         llmManager: LLMManager,
     ):
-        """Initialize bot application with token, database, and LLM model."""
+        """Initialize Max bot application with token, database, and LLM model.
+
+        Args:
+            configManager: Configuration manager instance
+            botToken: Max bot token for authentication
+            database: Database wrapper for data persistence
+            llmManager: LLM manager for language model operations
+        """
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
@@ -43,7 +54,12 @@ class MaxBotApplication:
         self.client: Optional[maxBot.MaxBotClient] = None
 
     async def postInit(self, *args, **kwargs):
-        """Post-initialization tasks."""
+        """Perform post-initialization tasks.
+
+        Args:
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+        """
         if self.client is None:
             raise RuntimeError("Client is not initialized")
 
@@ -53,8 +69,11 @@ class MaxBotApplication:
         # TODO: set commands
 
     async def postStop(self, *args, **kwargs) -> None:
-        """
-        TODO
+        """Handle application shutdown cleanup.
+
+        Args:
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
         """
         logger.info("Application stopping, stopping Delayed Tasks Scheduler...")
         await self.queueService.beginShutdown()
@@ -72,7 +91,7 @@ class MaxBotApplication:
         logger.info("Rate limiters destroyed...")
 
     def run(self):
-        """Start the bot."""
+        """Start the Max Messenger bot application."""
         if self.botToken in ["", "YOUR_BOT_TOKEN_HERE"]:
             logger.error("Please set your bot token in config.toml!")
             sys.exit(1)
@@ -85,6 +104,11 @@ class MaxBotApplication:
         asyncio.run(self._runPolling())
 
     async def maxHandler(self, update: maxModels.Update) -> None:
+        """Handle incoming Max Messenger updates.
+
+        Args:
+            update: Max Messenger update object
+        """
         logger.debug(f"Handling Update#{update.update_type}@{update.timestamp}")
         if self.client is None:
             raise RuntimeError("Client is not initialized")
@@ -125,11 +149,16 @@ class MaxBotApplication:
             logger.debug(f"Unsupported Update: {update}, ignoring for now...")
 
     async def maxExceptionHandler(self, exception: Exception) -> None:
+        """Handle exceptions from Max Messenger bot.
+
+        Args:
+            exception: Exception that occurred during bot operation
+        """
         logger.error(f"Unhandler MAX exception {type(exception).__name__}")
         logger.exception(exception)
 
     async def _runPolling(self):
-        """Run the bot polling."""
+        """Run the Max Messenger bot polling loop."""
 
         self.client = maxBot.MaxBotClient(self.botToken)
 

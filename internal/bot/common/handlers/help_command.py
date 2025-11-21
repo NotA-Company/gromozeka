@@ -1,5 +1,9 @@
 """
-Gromozeka Help command Handler.
+Help command handler for Gromozeka Telegram bot.
+
+This module provides the HelpHandler class which generates and displays
+help information for all available bot commands. It collects command
+information from all handlers and presents it in a user-friendly format.
 """
 
 import logging
@@ -27,15 +31,32 @@ logger = logging.getLogger(__name__)
 
 
 class CommandHandlerGetterInterface(ABC):
-    """Class for getting command handlers."""
+    """Interface for getting command handlers from a manager.
+
+    This abstract interface defines the contract for retrieving command
+    handler information from a handlers manager.
+    """
 
     @abstractmethod
     def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
+        """Get dictionary of command handlers.
+
+        Args:
+            useCache: If True, return cached commands; if False, rebuild cache
+
+        Returns:
+            Dictionary mapping command names to CommandHandlerInfo objects
+        """
         raise NotImplementedError
 
 
 class HelpHandler(BaseBotHandler):
-    """Special class for handling help command (to gather commands from all handlers)"""
+    """Special handler for help command that gathers commands from all handlers.
+
+    This class collects command information from all registered handlers
+    and presents it in a structured help format. It handles permission
+    filtering and command categorization.
+    """
 
     def __init__(
         self,
@@ -45,7 +66,15 @@ class HelpHandler(BaseBotHandler):
         botProvider: BotProvider,
         commandsGetter: CommandHandlerGetterInterface,
     ):
-        """Initialize handlers with database and LLM model."""
+        """Initialize help handler with required dependencies.
+
+        Args:
+            configManager: Configuration manager instance
+            database: Database wrapper for data persistence
+            llmManager: LLM manager for AI model operations
+            botProvider: Bot provider type (TELEGRAM or MAX)
+            commandsGetter: Interface to get command handlers from manager
+        """
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
         self.commandsGetter = commandsGetter
@@ -67,7 +96,15 @@ class HelpHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Handle the /help command."""
+        """Handle the /help command to display available commands.
+
+        Args:
+            ensuredMessage: Message containing the help command
+            command: Command name (always "help")
+            args: Command arguments (unused for help)
+            UpdateObj: Original update object from the platform
+            typingManager: Optional typing manager (unused for help)
+        """
         isBotOwner = await self.isAdmin(ensuredMessage.sender, allowBotOwners=True)
 
         commands: Dict[CommandHandlerOrder, List[str]] = {}

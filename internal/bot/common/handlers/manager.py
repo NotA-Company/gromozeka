@@ -1,5 +1,5 @@
 """
-Bot handlers manager
+Bot handlers manager for coordinating message processing across multiple handlers.
 """
 
 import logging
@@ -49,12 +49,23 @@ logger = logging.getLogger(__name__)
 
 class HandlersManager(CommandHandlerGetterInterface):
     """
-    Bot handlers manager
+    Manages and coordinates multiple bot handlers for message processing.
+
+    This class orchestrates the execution of various handlers in a specific order,
+    handles command parsing and routing, and manages handler lifecycle.
     """
 
     def __init__(
         self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
     ):
+        """Initialize the handlers manager with required services.
+
+        Args:
+            configManager: Configuration manager instance
+            database: Database wrapper for data persistence
+            llmManager: LLM manager for AI model operations
+            botProvider: Bot provider type (TELEGRAM or MAX)
+        """
         self.configManager = configManager
         self.db = database
         self.llmManager = llmManager
@@ -102,15 +113,32 @@ class HandlersManager(CommandHandlerGetterInterface):
         )
 
     def injectTGBot(self, bot: ExtBot) -> None:
+        """Inject Telegram bot instance into all handlers.
+
+        Args:
+            bot: Telegram bot instance from python-telegram-bot library
+        """
         for handler in self.handlers:
             handler.injectTGBot(bot)
 
     def injectMaxBot(self, bot: maxBot.MaxBotClient):
+        """Inject Max bot instance into all handlers.
+
+        Args:
+            bot: Max bot instance from lib.max_bot library
+        """
         for handler in self.handlers:
             handler.injectMaxBot(bot)
 
     def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
-        """TODO"""
+        """Get dictionary of all available command handlers.
+
+        Args:
+            useCache: If True, return cached commands; if False, rebuild cache
+
+        Returns:
+            Dictionary mapping command names to CommandHandlerInfo objects
+        """
         # logger.debug(f"gCHD(),p1, commands: {self._commands}")
         if useCache and self._commands:
             return self._commands
@@ -126,7 +154,14 @@ class HandlersManager(CommandHandlerGetterInterface):
         return self._commands
 
     async def parseCommand(self, ensuredMessage: EnsuredMessage) -> Optional[Tuple[str, str]]:
-        """Check if it is command and return command name and arguments if any"""
+        """Parse message to extract command name and arguments.
+
+        Args:
+            ensuredMessage: Message to parse for commands
+
+        Returns:
+            Tuple of (command, args) if message contains command, None otherwise
+        """
         if not self.handlers:
             # No handlers, no command
             logger.error("No handlers initialized, cannot parse command")
@@ -159,13 +194,16 @@ class HandlersManager(CommandHandlerGetterInterface):
         return None
 
     async def handleCommand(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> Optional[bool]:
-        """
-        TODO
+        """Handle command execution with permission checking.
 
-        Result:
-        None: Not a command
-        True: Command handled
-        False: Command, not handled, not need to handle
+        Args:
+            ensuredMessage: Message containing the command
+            updateObj: Original update object from the platform
+
+        Returns:
+            None: Not a command
+            True: Command handled successfully
+            False: Command not handled due to permissions or errors
         """
 
         commandTouple = await self.parseCommand(ensuredMessage)
@@ -282,6 +320,12 @@ class HandlersManager(CommandHandlerGetterInterface):
             return False
 
     async def handleNewMessage(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> None:
+        """Handle new message by routing through handlers in order.
+
+        Args:
+            ensuredMessage: Normalized message object
+            updateObj: Original update object from the platform
+        """
         ensuredMessage.setUserData(
             self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
         )
@@ -322,6 +366,14 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def handleCallback(
         self, ensuredMessage: EnsuredMessage, data: utils.PayloadDict, user: MessageSender, updateObj: UpdateObjectType
     ) -> None:
+        """Handle callback query from inline keyboard buttons.
+
+        Args:
+            ensuredMessage: Message associated with the callback
+            data: Callback data payload
+            user: User who triggered the callback
+            updateObj: Original update object from the platform
+        """
 
         retSet: Set[HandlerResultStatus] = set()
         for handler in self.handlers:

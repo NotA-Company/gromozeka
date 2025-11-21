@@ -14,8 +14,24 @@ class DelayedTaskFunction(StrEnum):
 
 
 class DelayedTask:
+    """Represents a delayed task to be executed at a specific time.
+
+    Attributes:
+        taskId: Unique identifier for the task
+        delayedUntil: Unix timestamp when the task should be executed
+        function: The type of function to execute
+        kwargs: Arguments to pass to the task handler
+    """
 
     def __init__(self, taskId: str, delayedUntil: float, function: DelayedTaskFunction, kwargs: Dict[str, Any]):
+        """Initialize a delayed task.
+
+        Args:
+            taskId: Unique identifier for the task
+            delayedUntil: Unix timestamp when the task should be executed
+            function: The type of function to execute
+            kwargs: Arguments to pass to the task handler
+        """
         self.taskId = taskId
         self.delayedUntil = delayedUntil
         self.function = function
