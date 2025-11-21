@@ -5,9 +5,13 @@ This module contains markup-related dataclasses including MarkupElement and all
 markup types for formatting text in messages.
 """
 
-from dataclasses import dataclass
+import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+from .base import BaseMaxBotModel
+
+logger = logging.getLogger(__name__)
 
 
 class MarkupType(str, Enum):
@@ -15,412 +19,247 @@ class MarkupType(str, Enum):
     Markup type enum
     """
 
-    BOLD = "bold"
-    ITALIC = "italic"
-    UNDERLINE = "underline"
+    UNSPECIFIED = "UNSPECIIFED"
+
+    STRONG = "strong"
+    """StrongMarkup"""
+    EMPHASIZED = "emphasized"
+    """EmphasizedMarkup"""
+    MONOSPACED = "monospaced"
+    """MonospacedMarkup"""
     STRIKETHROUGH = "strikethrough"
-    CODE = "code"
-    PRE = "pre"
-    TEXT_LINK = "text_link"
-    MENTION = "mention"
-    HASHTAG = "hashtag"
-    CASHTAG = "cashtag"
-    BOT_COMMAND = "bot_command"
-    URL = "url"
-    EMAIL = "email"
-    PHONE = "phone"
+    """StrikethroughMarkup"""
+    UNDERLINE = "underline"
+    """UnderlineMarkup"""
+    LINK = "link"
+    """LinkMarkup"""
+    USER_MENTION = "user_mention"
+    """UserMentionMarkup"""
+    # Those are not present in Swagger, but has classes for it =\
+    HEADING = "heading"
+    """HeadingMarkup"""
+    HIGHLIGHTED = "highlighted"
+    """HighlightedMarkup"""
+
+    @classmethod
+    def fromStr(cls, value: str) -> "MarkupType":
+        if value in cls.__members__:
+            return cls(value)
+        else:
+            logger.warning(f"{cls.__name__} does not have '{value}' value, returning UNSPECIFIED")
+            return cls.UNSPECIFIED
 
 
-@dataclass(slots=True)
-class MarkupElement:
+class MarkupElement(BaseMaxBotModel):
     """
     Base markup element for text formatting
     """
 
-    type: MarkupType
-    """Type of the markup element"""
-    offset: int
-    """Offset in UTF-16 code units to the start of the entity"""
-    length: int
-    """Length of the entity in UTF-16 code units"""
+    __slots__ = ("type", "offset", "length")
+
+    def __init__(self, *, type: MarkupType, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(api_kwargs=api_kwargs)
+        self.type: MarkupType = type
+        """
+        Тип элемента разметки.
+        Может быть:
+          **жирный**,
+          *курсив*,
+          ~зачеркнутый~,
+          <ins>подчеркнутый</ins>,
+          `моноширинный`,
+          ссылка или упоминание пользователя
+        """
+        self.offset: int = offset
+        """Индекс начала элемента разметки в тексте. Нумерация с нуля"""
+        self.length: int = length
+        """Длина элемента разметки"""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MarkupElement":
         """Create MarkupElement instance from API response dictionary."""
         return cls(
-            type=MarkupType(data.get("type", "bold")),
+            type=MarkupType.fromStr(data.get("type", MarkupType.UNSPECIFIED)),
             offset=data.get("offset", 0),
             length=data.get("length", 0),
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class BoldMarkup(MarkupElement):
-    """
-    Bold text markup
-    """
+class StrongMarkup(MarkupElement):
+    """Представляет **жирный** текст"""
 
-    def __post_init__(self):
-        """Set the markup type to bold."""
-        self.type = MarkupType.BOLD
+    __slots__ = ()
+
+    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.STRONG, offset=offset, length=length, api_kwargs=api_kwargs)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "BoldMarkup":
-        """Create BoldMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.BOLD,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-        )
+    def from_dict(cls, data: Dict[str, Any]) -> "StrongMarkup":
+        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
 
 
-@dataclass(slots=True)
-class ItalicMarkup(MarkupElement):
-    """
-    Italic text markup
-    """
+class EmphasizedMarkup(MarkupElement):
+    """Представляет *курсив*"""
 
-    def __post_init__(self):
-        """Set the markup type to italic."""
-        self.type = MarkupType.ITALIC
+    __slots__ = ()
+
+    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.EMPHASIZED, offset=offset, length=length, api_kwargs=api_kwargs)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ItalicMarkup":
-        """Create ItalicMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.ITALIC,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-        )
+    def from_dict(cls, data: Dict[str, Any]) -> "EmphasizedMarkup":
+        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
 
 
-@dataclass(slots=True)
-class UnderlineMarkup(MarkupElement):
-    """
-    Underlined text markup
-    """
+class MonospacedMarkup(MarkupElement):
+    """Представляет `моноширинный` или блок ```код``` в тексте"""
 
-    def __post_init__(self):
-        """Set the markup type to underline."""
-        self.type = MarkupType.UNDERLINE
+    __slots__ = ()
+
+    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.MONOSPACED, offset=offset, length=length, api_kwargs=api_kwargs)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "UnderlineMarkup":
-        """Create UnderlineMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.UNDERLINE,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-        )
+    def from_dict(cls, data: Dict[str, Any]) -> "MonospacedMarkup":
+        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
 
 
-@dataclass(slots=True)
 class StrikethroughMarkup(MarkupElement):
-    """
-    Strikethrough text markup
-    """
+    """Представляет ~зачекрнутый~ текст"""
 
-    def __post_init__(self):
-        """Set the markup type to strikethrough."""
-        self.type = MarkupType.STRIKETHROUGH
+    __slots__ = ()
+
+    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.STRIKETHROUGH, offset=offset, length=length, api_kwargs=api_kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StrikethroughMarkup":
-        """Create StrikethroughMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.STRIKETHROUGH,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-        )
+        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
 
 
-@dataclass(slots=True)
-class CodeMarkup(MarkupElement):
-    """
-    Inline code markup
-    """
+class UnderlineMarkup(MarkupElement):
+    """Представляет <ins>подчеркнутый</ins> текст"""
 
-    def __post_init__(self):
-        """Set the markup type to code."""
-        self.type = MarkupType.CODE
+    __slots__ = ()
+
+    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.UNDERLINE, offset=offset, length=length, api_kwargs=api_kwargs)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CodeMarkup":
-        """Create CodeMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.CODE,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-        )
+    def from_dict(cls, data: Dict[str, Any]) -> "UnderlineMarkup":
+        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
 
 
-@dataclass(slots=True)
-class PreMarkup(MarkupElement):
-    """
-    Preformatted code block markup
-    """
+class HeadingMarkup(MarkupElement):
+    """Представляет заголовок текста"""
 
-    language: Optional[str] = None
-    """Programming language of the code block"""
+    __slots__ = ()
 
-    def __post_init__(self):
-        """Set the markup type to pre."""
-        self.type = MarkupType.PRE
+    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.HEADING, offset=offset, length=length, api_kwargs=api_kwargs)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PreMarkup":
-        """Create PreMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.PRE,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-            language=data.get("language"),
-        )
+    def from_dict(cls, data: Dict[str, Any]) -> "HeadingMarkup":
+        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
 
 
-@dataclass(slots=True)
-class TextLinkMarkup(MarkupElement):
-    """
-    Text link markup
-    """
+class HighlightedMarkup(MarkupElement):
+    """Представляет выделенную часть текста"""
 
-    url: str
-    """URL that will be opened after user taps on the text"""
+    __slots__ = ()
 
-    def __post_init__(self):
-        """Set the markup type to text_link."""
-        self.type = MarkupType.TEXT_LINK
+    def __init__(self, *, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.HIGHLIGHTED, offset=offset, length=length, api_kwargs=api_kwargs)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TextLinkMarkup":
-        """Create TextLinkMarkup instance from API response dictionary."""
+    def from_dict(cls, data: Dict[str, Any]) -> "HighlightedMarkup":
+        return cls(offset=data.get("offset", 0), length=data.get("length", 0), api_kwargs=cls._getExtraKwargs(data))
+
+
+class LinkMarkup(MarkupElement):
+    """Представляет ссылку в тексте"""
+
+    __slots__ = ("url",)
+
+    def __init__(self, *, url: str, offset: int, length: int, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=MarkupType.LINK, offset=offset, length=length, api_kwargs=api_kwargs)
+        self.url: str = url
+        """URL ссылки"""
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LinkMarkup":
         return cls(
-            type=MarkupType.TEXT_LINK,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
             url=data.get("url", ""),
-        )
-
-
-@dataclass(slots=True)
-class MentionMarkup(MarkupElement):
-    """
-    Mention markup
-    """
-
-    user_id: int
-    """ID of the mentioned user"""
-
-    def __post_init__(self):
-        """Set the markup type to mention."""
-        self.type = MarkupType.MENTION
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MentionMarkup":
-        """Create MentionMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.MENTION,
             offset=data.get("offset", 0),
             length=data.get("length", 0),
-            user_id=data.get("user_id", 0),
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class HashtagMarkup(MarkupElement):
+class UserMentionMarkup(MarkupElement):
     """
-    Hashtag markup
+    Представляет упоминание пользователя в тексте.
+    Упоминание может быть как по имени пользователя,
+    так и по ID, если у пользователя нет имени
     """
 
-    hashtag: str
-    """Hashtag text"""
+    __slots__ = ("user_link", "user_id")
 
-    def __post_init__(self):
-        """Set the markup type to hashtag."""
-        self.type = MarkupType.HASHTAG
+    def __init__(
+        self,
+        *,
+        user_link: Optional[str] = None,
+        user_id: Optional[int] = None,
+        offset: int,
+        length: int,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(type=MarkupType.USER_MENTION, offset=offset, length=length, api_kwargs=api_kwargs)
+        self.user_link: Optional[str] = user_link
+        """`@username` упомянутого пользователя"""
+        self.user_id: Optional[int] = user_id
+        """ID упомянутого пользователя без имени"""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "HashtagMarkup":
-        """Create HashtagMarkup instance from API response dictionary."""
+    def from_dict(cls, data: Dict[str, Any]) -> "UserMentionMarkup":
         return cls(
-            type=MarkupType.HASHTAG,
+            user_link=data.get("user_link", None),
+            user_id=data.get("user_id", None),
             offset=data.get("offset", 0),
             length=data.get("length", 0),
-            hashtag=data.get("hashtag", ""),
+            api_kwargs=cls._getExtraKwargs(data),
         )
 
 
-@dataclass(slots=True)
-class CashtagMarkup(MarkupElement):
-    """
-    Cashtag markup
-    """
+def markupListFromList(dataList: List[Dict[str, Any]]) -> List[MarkupElement]:
+    ret: List[MarkupElement] = []
+    for v in dataList:
+        elemType = MarkupType.fromStr(v.get("type", MarkupType.UNSPECIFIED))
+        match elemType:
+            case MarkupType.STRONG:
+                ret.append(StrongMarkup.from_dict(v))
+            case MarkupType.EMPHASIZED:
+                ret.append(EmphasizedMarkup.from_dict(v))
+            case MarkupType.MONOSPACED:
+                ret.append(MonospacedMarkup.from_dict(v))
+            case MarkupType.STRIKETHROUGH:
+                ret.append(StrikethroughMarkup.from_dict(v))
+            case MarkupType.UNDERLINE:
+                ret.append(UnderlineMarkup.from_dict(v))
+            case MarkupType.LINK:
+                ret.append(LinkMarkup.from_dict(v))
+            case MarkupType.USER_MENTION:
+                ret.append(UserMentionMarkup.from_dict(v))
+            # Those are not present in Swagger, but has classes for it =\
+            case MarkupType.HEADING:
+                ret.append(HeadingMarkup.from_dict(v))
+            case MarkupType.HIGHLIGHTED:
+                ret.append(HighlightedMarkup.from_dict(v))
+            case MarkupType.UNSPECIFIED:
+                ret.append(MarkupElement.from_dict(v))
+            case _:
+                logger.error(f"Unsupported markup type: {elemType}")
+                ret.append(MarkupElement.from_dict(v))
 
-    cashtag: str
-    """Cashtag text"""
-
-    def __post_init__(self):
-        """Set the markup type to cashtag."""
-        self.type = MarkupType.CASHTAG
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CashtagMarkup":
-        """Create CashtagMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.CASHTAG,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-            cashtag=data.get("cashtag", ""),
-        )
-
-
-@dataclass(slots=True)
-class BotCommandMarkup(MarkupElement):
-    """
-    Bot command markup
-    """
-
-    command: str
-    """Bot command text"""
-    bot_id: Optional[int] = None
-    """ID of the bot"""
-
-    def __post_init__(self):
-        """Set the markup type to bot_command."""
-        self.type = MarkupType.BOT_COMMAND
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "BotCommandMarkup":
-        """Create BotCommandMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.BOT_COMMAND,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-            command=data.get("command", ""),
-            bot_id=data.get("bot_id"),
-        )
-
-
-@dataclass(slots=True)
-class UrlMarkup(MarkupElement):
-    """
-    URL markup
-    """
-
-    url: str
-    """URL text"""
-
-    def __post_init__(self):
-        """Set the markup type to url."""
-        self.type = MarkupType.URL
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "UrlMarkup":
-        """Create UrlMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.URL,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-            url=data.get("url", ""),
-        )
-
-
-@dataclass(slots=True)
-class EmailMarkup(MarkupElement):
-    """
-    Email markup
-    """
-
-    email: str
-    """Email address"""
-
-    def __post_init__(self):
-        """Set the markup type to email."""
-        self.type = MarkupType.EMAIL
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "EmailMarkup":
-        """Create EmailMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.EMAIL,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-            email=data.get("email", ""),
-        )
-
-
-@dataclass(slots=True)
-class PhoneMarkup(MarkupElement):
-    """
-    Phone number markup
-    """
-
-    phone: str
-    """Phone number"""
-
-    def __post_init__(self):
-        """Set the markup type to phone."""
-        self.type = MarkupType.PHONE
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PhoneMarkup":
-        """Create PhoneMarkup instance from API response dictionary."""
-        return cls(
-            type=MarkupType.PHONE,
-            offset=data.get("offset", 0),
-            length=data.get("length", 0),
-            phone=data.get("phone", ""),
-        )
-
-
-@dataclass(slots=True)
-class MarkupList:
-    """
-    List of markup elements
-    """
-
-    markup: List[MarkupElement]
-    """Array of markup elements"""
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MarkupList":
-        """Create MarkupList instance from API response dictionary."""
-        markup_data = data.get("markup", [])
-        markup = []
-
-        for element_data in markup_data:
-            markup_type = element_data.get("type", "bold")
-
-            # Create appropriate markup type based on the type field
-            if markup_type == "bold":
-                markup.append(BoldMarkup.from_dict(element_data))
-            elif markup_type == "italic":
-                markup.append(ItalicMarkup.from_dict(element_data))
-            elif markup_type == "underline":
-                markup.append(UnderlineMarkup.from_dict(element_data))
-            elif markup_type == "strikethrough":
-                markup.append(StrikethroughMarkup.from_dict(element_data))
-            elif markup_type == "code":
-                markup.append(CodeMarkup.from_dict(element_data))
-            elif markup_type == "pre":
-                markup.append(PreMarkup.from_dict(element_data))
-            elif markup_type == "text_link":
-                markup.append(TextLinkMarkup.from_dict(element_data))
-            elif markup_type == "mention":
-                markup.append(MentionMarkup.from_dict(element_data))
-            elif markup_type == "hashtag":
-                markup.append(HashtagMarkup.from_dict(element_data))
-            elif markup_type == "cashtag":
-                markup.append(CashtagMarkup.from_dict(element_data))
-            elif markup_type == "bot_command":
-                markup.append(BotCommandMarkup.from_dict(element_data))
-            elif markup_type == "url":
-                markup.append(UrlMarkup.from_dict(element_data))
-            elif markup_type == "email":
-                markup.append(EmailMarkup.from_dict(element_data))
-            elif markup_type == "phone":
-                markup.append(PhoneMarkup.from_dict(element_data))
-            else:
-                markup.append(MarkupElement.from_dict(element_data))
-
-        return cls(markup=markup)
+    return ret

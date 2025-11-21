@@ -30,7 +30,7 @@ Adopt Handlers:
 - [x] review models
 - [ ] ensuredMessage: support miltiple media
 - [x] Telegram: new callback schema support
-- [ ] Review and rewrite or delete models.markup.py
+- [x] Review and rewrite or delete models.markup.py
 
 # Our TODO list
 - [ ] instead of background tasks, use set like in `internal/bot/max/application.py`
