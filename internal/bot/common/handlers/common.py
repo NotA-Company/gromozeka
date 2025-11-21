@@ -333,7 +333,6 @@ class CommonHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             logger.error(f"Error while handling /remind command: {type(e).__name__}{e}")
-            # TODO: comment later after debug
             logger.exception(e)
             return
 

@@ -586,7 +586,6 @@ class BaseBotHandler(CommandHandlerMixin):
         if username:
             username = username.lower().lstrip("@")
 
-        # TODO: Add support of bot owners by userId
         if allowBotOwners and (username in self.botOwnersUsername or user.id in self.botOwnersId):
             # User is bot owner and bot owners are allowed
             return True
@@ -702,9 +701,8 @@ class BaseBotHandler(CommandHandlerMixin):
     ) -> List[EnsuredMessage]:
         match self.botProvider:
             case BotProvider.TELEGRAM:
-                # TODO: Refactoring needed
                 inlineKeyboardTg = self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None
-
+                # TODO: Refactoring needed
                 return await self._sendTelegramMessage(
                     replyToMessage=replyToMessage,
                     messageText=messageText,
@@ -1099,11 +1097,26 @@ class BaseBotHandler(CommandHandlerMixin):
         return ensuredReplyList
 
     async def deleteMessage(self, ensuredMessage: EnsuredMessage) -> bool:
-        """TODO"""
+        """Delete a message from the chat.
+
+        Args:
+            ensuredMessage: The message to delete, containing recipient and message ID
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
         return await self.deleteMessagesById(ensuredMessage.recipient.id, [ensuredMessage.messageId])
 
     async def deleteMessagesById(self, chatId: int, messageIds: List[MessageIdType]) -> bool:
-        """TODO"""
+        """Delete multiple messages by their IDs in the specified chat.
+
+        Args:
+            chatId: The ID of the chat where messages should be deleted
+            messageIds: List of message IDs to delete (int for Telegram, str for Max)
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
 
         if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
             return await self._tgBot.delete_messages(
@@ -1547,7 +1560,6 @@ class BaseBotHandler(CommandHandlerMixin):
         Raises:
             ValueError: If message doesn't contain a sticker
         """
-        # TODO: Support Max
         if self.botProvider != BotProvider.TELEGRAM:
             raise RuntimeError("Stickers are supported in Telegram only")
         baseMessage = ensuredMessage.getBaseMessage()
@@ -1599,7 +1611,6 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             [`MediaProcessingInfo`](internal/bot/models/media.py) with processing task and metadata
         """
-        # TODO: Support Max
         if self.botProvider != BotProvider.TELEGRAM:
             raise RuntimeError("Stickers are supported in Telegram only")
         baseMessage = ensuredMessage.getBaseMessage()
@@ -1698,8 +1709,15 @@ class BaseBotHandler(CommandHandlerMixin):
         return ret
 
     async def _maxFileDownloader(self, mediaId: str, fileId: str) -> Optional[bytes]:
-        """TODO
-        fileId is URL"""
+        """Download file attachment from Max Messenger platform.
+
+        Args:
+            mediaId: Unique identifier for the media in the database
+            fileId: URL of the file to download from Max Messenger
+
+        Returns:
+            File content as bytes, or None if download fails or platform mismatch
+        """
 
         if self.botProvider != BotProvider.MAX or self._maxBot is None:
             logger.error(f"_maxFileDownloader({mediaId}, {fileId}) called while platform is {self.botProvider}")
@@ -1708,8 +1726,15 @@ class BaseBotHandler(CommandHandlerMixin):
         return await self._maxBot.downloadAttachmentPayload(fileId)
 
     async def _telegramFileDownloader(self, mediaId: str, fileId: str) -> Optional[bytes]:
-        """TODO
-        fileId is file_id"""
+        """Download file attachment from Telegram platform.
+
+        Args:
+            mediaId: Unique identifier for the media in the database
+            fileId: Telegram file_id to download
+
+        Returns:
+            File content as bytes, or None if download fails or platform mismatch
+        """
 
         if self.botProvider != BotProvider.TELEGRAM or self._tgBot is None:
             logger.error(f"_telegramFileDownloader({mediaId}, {fileId}) called while platform is {self.botProvider}")
@@ -1729,7 +1754,21 @@ class BaseBotHandler(CommandHandlerMixin):
         metadata: Optional[Dict[str, Any]] = None,
         prompt: Optional[str] = None,
     ) -> MediaProcessingInfo:
-        """TODO"""
+        """
+        Process media attachments from messages, handling database storage and optional LLM parsing.
+
+        Args:
+            ensuredMessage: The validated message object containing media information
+            mediaType: Type of media (image, video, audio, etc.)
+            mediaId: Unique identifier for the media attachment
+            fileId: Platform-specific file identifier for downloading
+            dataGetter: Async function to retrieve media data by mediaId and fileId
+            metadata: Optional dictionary with additional media information
+            prompt: Optional prompt text for media processing
+
+        Returns:
+            MediaProcessingInfo: Object containing media processing status and async task
+        """
         ret = MediaProcessingInfo(
             id=mediaId,
             task=None,
