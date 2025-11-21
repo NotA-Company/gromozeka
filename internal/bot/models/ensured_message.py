@@ -1,17 +1,14 @@
 """
 Telegram Message Processing and Validation Module, dood!
 
-This module provides robust wrappers and utilities for processing Telegram messages,
-ensuring all essential attributes are present and properly formatted for downstream
-processing, especially for LLM interactions and database storage, dood.
+Provides wrappers and utilities for processing Telegram messages, ensuring essential
+attributes are present and properly formatted for downstream processing, especially
+for LLM interactions and database storage.
 
 Key Components:
     - MessageSender: Encapsulates sender information (user or chat)
     - MentionCheckResult: Stores results of bot mention detection
     - EnsuredMessage: Main wrapper class for Telegram messages with validation
-
-The module handles various message types (text, media, replies, quotes, topics)
-and provides formatting utilities for AI model consumption, dood.
 
 Constants:
     MAX_MEDIA_AWAIT_SECS: Maximum time to wait for media processing (300 seconds)
@@ -55,20 +52,50 @@ class ChatType(StrEnum):
 
 
 class MessageRecipient:
-    """TODO"""
+    """
+    Represents the recipient of a message, dood!
+
+    Encapsulates information about where a message was sent, including the chat ID
+    and type (private, group, or channel). Uses __slots__ for memory efficiency.
+
+    Attributes:
+        id (int): Unique identifier of the chat
+        chatType (ChatType): Type of chat (PRIVATE, GROUP, or CHANNEL)
+    """
 
     __slots__ = ("id", "chatType")
 
     def __init__(self, id: int, chatType: ChatType) -> None:
+        """
+        Initialize a MessageRecipient instance, dood!
+
+        Args:
+            id: Unique identifier of the chat
+            chatType: Type of chat (PRIVATE, GROUP, or CHANNEL)
+        """
         self.id = id
         self.chatType = chatType
 
     def __str__(self) -> str:
+        """
+        Return a string representation of the recipient, dood!
+
+        Returns:
+            Formatted string: "chatType#id"
+        """
         return f"{self.chatType.value}#{self.id}"
 
     @classmethod
     def fromTelegramChat(cls, chat: telegram.Chat) -> "MessageRecipient":
-        """TODO"""
+        """
+        Create a MessageRecipient from a Telegram Chat object, dood!
+
+        Args:
+            chat: Telegram Chat object containing chat information
+
+        Returns:
+            MessageRecipient instance populated with chat data
+        """
         chatType: ChatType = ChatType.GROUP
         match chat.type:
             case telegram.constants.ChatType.SENDER | telegram.constants.ChatType.PRIVATE:
@@ -84,7 +111,15 @@ class MessageRecipient:
 
     @classmethod
     def fromMaxRecipient(cls, recipient: maxModels.Recipient) -> "MessageRecipient":
-        """TODO"""
+        """
+        Create a MessageRecipient from a Max Messenger Recipient object, dood!
+
+        Args:
+            recipient: Max Messenger Recipient object containing recipient information
+
+        Returns:
+            MessageRecipient instance populated with recipient data
+        """
         chatType: ChatType = ChatType.GROUP
         match recipient.chat_type:
             case maxModels.ChatType.DIALOG:
@@ -108,9 +143,8 @@ class MessageSender:
     """
     Encapsulates sender information for a message, dood!
 
-    This class stores essential sender details (ID, name, username) and provides
-    factory methods to create instances from Telegram User or Chat objects.
-    Uses __slots__ for memory efficiency, dood.
+    Stores essential sender details (ID, name, username) and provides factory methods
+    to create instances from Telegram User or Chat objects. Uses __slots__ for memory efficiency.
 
     Attributes:
         id (int): Unique identifier of the sender (user ID or chat ID)
@@ -180,7 +214,16 @@ class MessageSender:
 
     @classmethod
     def fromMaxUser(cls, sender: maxModels.User) -> "MessageSender":
-        """TODO"""
+        """
+        Create a MessageSender from a Max Messenger User object, dood!
+
+        Args:
+            sender: Max Messenger User object containing user information
+
+        Returns:
+            MessageSender instance populated with user data.
+            Username is prefixed with @ if available, dood.
+        """
         full_name = sender.first_name
         if sender.last_name:
             full_name += " " + sender.last_name
@@ -192,9 +235,9 @@ class MentionCheckResult:
     """
     Stores the results of bot mention detection in a message, dood!
 
-    This dataclass holds information about where and how a bot was mentioned
-    in a message, including positions of mentions by nickname or username,
-    and the remaining text after mention removal.
+    Holds information about where and how a bot was mentioned in a message,
+    including positions of mentions by nickname or username, and the remaining
+    text after mention removal.
 
     Attributes:
         byNick: Tuple of (start_pos, end_pos) if bot was mentioned by custom nickname.
@@ -213,27 +256,25 @@ class MentionCheckResult:
 
 class EnsuredMessage:
     """
-    TODO: rewrite
     Wrapper class that ensures presence of essential Telegram message attributes, dood!
 
-    This class processes Telegram Message objects or database chat messages, extracting
-    and validating key information such as user, chat, message text, reply information,
-    quote information, topic-related data, and media content. It provides methods for
-    LLM formatting, media processing, and conversion to model messages for AI interactions.
+    Processes Telegram Message objects or database chat messages, extracting and validating
+    key information such as sender, recipient, message text, reply information, quote
+    information, topic-related data, and media content. Provides methods for LLM formatting,
+    media processing, and conversion to model messages for AI interactions.
 
-    The class handles various message types (text, images, videos, audio, documents, etc.)
-    and provides robust mention detection and media content processing capabilities, dood.
+    Handles various message types (text, images, videos, audio, documents, etc.) and provides
+    robust mention detection and media content processing capabilities.
 
     Attributes:
-        user (User): The user who sent the message
-        chat (Chat): The chat the message belongs to
         sender (MessageSender): The sender information (user or chat)
-        messageId (int): The unique identifier of the message
+        recipient (MessageRecipient): The recipient information (chat)
+        messageId (MessageIdType): The unique identifier of the message
         date (datetime.datetime): The date and time when the message was sent
         messageText (str): The text of the message, or empty string if not present
         messageType (MessageType): The type of the message (TEXT, IMAGE, VIDEO, AUDIO, etc.)
         isReply (bool): Indicates if the message is a reply
-        replyId (Optional[int]): The ID of the message being replied to, if applicable
+        replyId (Optional[MessageIdType]): The ID of the message being replied to, if applicable
         replyText (Optional[str]): The text of the message being replied to, if applicable
         isQuote (bool): Indicates if the message contains a quote
         quoteText (Optional[str]): The quoted text content, if applicable
@@ -242,28 +283,6 @@ class EnsuredMessage:
         mediaId (Optional[str]): Unique identifier for media attachments
         mediaContent (Optional[str]): Description of media content, if applicable
         userData (Optional[Dict[str, Any]]): Additional user data associated with the message
-
-    Class Methods:
-        fromMessage: Creates EnsuredMessage from a Telegram Message object
-        fromDBChatMessage: Creates EnsuredMessage from a database ChatMessageDict
-
-    Methods:
-        getBaseMessage: Returns the original Message object
-        setBaseMessage: Sets the original Message object
-        setUserData: Sets additional user data for the message
-        setMediaId: Sets the media identifier
-        setMediaProcessingInfo: Sets media processing information
-        updateMediaContent: Updates media content from database (async)
-        formatForLLM: Formats the message for LLM consumption in JSON or TEXT format (async)
-        toModelMessage: Converts to ModelMessage for AI model interactions (async)
-        setSender: Sets the sender information from User, Chat, or MessageSender
-        checkHasMention: Checks if the message contains bot mentions
-        clearMentionCheckResult: Clears cached mention check results
-        __str__: Returns a JSON string representation of the message's key attributes
-
-    Raises:
-        ValueError: If the message's user or chat information is missing, or if invalid
-                   sender type is provided, dood.
     """
 
     __slots__ = (
@@ -303,8 +322,8 @@ class EnsuredMessage:
         Initialize an EnsuredMessage instance, dood!
 
         Args:
-            user: The Telegram User who sent the message
-            chat: The Telegram Chat where the message was sent
+            sender: The MessageSender who sent the message
+            recipient: The MessageRecipient where the message was sent
             messageId: Unique identifier for the message
             date: Timestamp when the message was sent
             messageText: The text content of the message (default: empty string)
@@ -342,7 +361,17 @@ class EnsuredMessage:
     @classmethod
     def fromMaxMessage(cls, message: maxModels.Message) -> "EnsuredMessage":
         """
-        TODO
+        Create an EnsuredMessage from a Max Messenger Message object, dood!
+
+        Factory method that extracts all relevant information from a Max Messenger Message,
+        including text, media type, and reply information. Handles various message types
+        (text, images, videos, audio, documents, etc.) and properly sets up all attributes.
+
+        Args:
+            message: The Max Messenger Message object to process
+
+        Returns:
+            A fully initialized EnsuredMessage instance with all extracted data
         """
 
         messageText: str = ""
@@ -424,10 +453,10 @@ class EnsuredMessage:
         """
         Create an EnsuredMessage from a Telegram Message object, dood!
 
-        This factory method extracts all relevant information from a Telegram Message,
+        Factory method that extracts all relevant information from a Telegram Message,
         including text, media type, reply information, quotes, and topic data.
-        It handles various message types (text, photo, video, audio, documents, etc.)
-        and properly sets up all attributes, dood.
+        Handles various message types (text, photo, video, audio, documents, etc.)
+        and properly sets up all attributes.
 
         Args:
             message: The Telegram Message object to process
@@ -574,9 +603,9 @@ class EnsuredMessage:
         """
         Create an EnsuredMessage from a database ChatMessageDict, dood!
 
-        This factory method reconstructs an EnsuredMessage from database-stored
+        Factory method that reconstructs an EnsuredMessage from database-stored
         message data, including all metadata like replies, quotes, topics, and
-        media information, dood.
+        media information.
 
         Args:
             data: Dictionary containing chat message data from the database
@@ -715,9 +744,8 @@ class EnsuredMessage:
         """
         Wait for media processing to complete and retrieve media attachment, dood!
 
-        This method polls the database for media attachment status, waiting up to
-        MAX_MEDIA_AWAIT_SECS for processing to complete. It handles PENDING and
-        DONE statuses appropriately, dood.
+        Polls the database for media attachment status, waiting up to MAX_MEDIA_AWAIT_SECS
+        for processing to complete. Handles PENDING and DONE statuses appropriately.
 
         Args:
             db: Database wrapper instance for accessing media attachments
@@ -774,9 +802,9 @@ class EnsuredMessage:
         """
         Format the message for LLM consumption, dood!
 
-        This method converts the message into a format suitable for AI model processing,
-        supporting both JSON and TEXT formats. It includes media descriptions, quotes,
-        and user data when available, dood.
+        Converts the message into a format suitable for AI model processing,
+        supporting both JSON and TEXT formats. Includes media descriptions, quotes,
+        and user data when available.
 
         Args:
             db: Database wrapper for accessing media content
@@ -843,10 +871,10 @@ class EnsuredMessage:
         """
         Convert the message to a ModelMessage for AI model interactions, dood!
 
-        This method creates a ModelMessage object suitable for passing to AI models,
+        Creates a ModelMessage object suitable for passing to AI models,
         with the message content formatted according to the specified format.
         Supports SMART format which automatically chooses JSON for user messages
-        and TEXT for other roles, dood.
+        and TEXT for other roles.
 
         Args:
             db: Database wrapper for accessing media content
@@ -879,7 +907,7 @@ class EnsuredMessage:
 
         Creates a comprehensive JSON representation including all key attributes,
         with truncation of long text fields for readability. Omits None values
-        from the output, dood.
+        from the output.
 
         Returns:
             JSON-formatted string representation of the message
@@ -926,10 +954,9 @@ class EnsuredMessage:
         """
         Check if the message contains bot mentions by username or custom nicknames, dood!
 
-        This method searches for bot mentions in the message text, checking both
-        the bot's username and custom mention strings. Results are cached for
-        efficiency. The method handles mention stripping and returns the remaining
-        text after mention removal, dood.
+        Searches for bot mentions in the message text, checking both the bot's username
+        and custom mention strings. Results are cached for efficiency. Handles mention
+        stripping and returns the remaining text after mention removal.
 
         Args:
             username: The bot's username to check for (without @), can be None
@@ -1041,7 +1068,15 @@ class EnsuredMessage:
         return None
 
     def toTelegramMessage(self) -> telegram.Message:
-        """TODO"""
+        """
+        Convert this EnsuredMessage to a Telegram Message object, dood!
+
+        Creates a Telegram Message object from the EnsuredMessage data,
+        which can be useful for compatibility with Telegram-specific APIs.
+
+        Returns:
+            A Telegram Message object with the same data as this EnsuredMessage
+        """
         return telegram.Message(
             message_id=int(self.messageId),
             date=self.date,
