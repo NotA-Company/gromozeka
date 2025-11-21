@@ -27,9 +27,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import magic
 import telegram
-import telegram.ext as telegramExt
 
-import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot import constants
@@ -193,33 +191,17 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         return super().getCommandHandlersV2()
 
-    def injectTGBot(self, bot: telegramExt.ExtBot) -> None:
+    def injectBot(self, bot: TheBot) -> None:
         """
-        Inject the bot instance for use in handlers, dood!
-
-        This method must be called before handlers can send messages or
-        perform bot-specific operations.
+        Inject the bot instance into the handler for bot operations.
 
         Args:
-            bot: Telegram bot instance from python-telegram-bot library
-        """
-        if self.botProvider != BotProvider.TELEGRAM:
-            raise ValueError(f"Bot provider must be {BotProvider.TELEGRAM}")
-        self._bot = TheBot(botProvider=self.botProvider, config=self.config, tgBot=bot)
+            bot: The bot instance to inject for message handling and API operations
 
-    def injectMaxBot(self, bot: libMax.MaxBotClient) -> None:
+        Returns:
+            None
         """
-        Inject the bot instance for use in handlers, dood!
-
-        This method must be called before handlers can send messages or
-        perform bot-specific operations.
-
-        Args:
-            bot: Max bot instance from lib.max_bot library
-        """
-        if self.botProvider != BotProvider.MAX:
-            raise ValueError(f"Bot provider must be {BotProvider.MAX}")
-        self._bot = TheBot(botProvider=self.botProvider, config=self.config, maxBot=bot)
+        self._bot = bot
 
     ###
     # Chat settings Managenent

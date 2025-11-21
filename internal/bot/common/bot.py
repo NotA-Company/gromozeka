@@ -1,5 +1,7 @@
-"""Bot Class
-TODO: write docstring
+"""Multi-platform bot implementation for Telegram and Max Messenger.
+
+Provides unified bot interface supporting both Telegram and Max Messenger platforms
+with message handling, media processing, and administrative operations.
 """
 
 import logging
@@ -24,7 +26,17 @@ logger = logging.getLogger(__name__)
 
 
 class TheBot:
-    """TODO: write docstring"""
+    """Multi-platform bot client supporting Telegram and Max Messenger.
+
+    Provides unified interface for bot operations across different messaging platforms
+    including message sending, media handling, user management, and administrative functions.
+
+    Args:
+        botProvider: Platform type (Telegram or Max)
+        config: Bot configuration dictionary
+        maxBot: Max Messenger bot client instance (required if botProvider is MAX)
+        tgBot: Telegram bot client instance (required if botProvider is TELEGRAM)
+    """
 
     # TODO Add __slots__
 
@@ -36,6 +48,17 @@ class TheBot:
         maxBot: Optional[libMax.MaxBotClient] = None,
         tgBot: Optional[telegram.ext.ExtBot] = None,
     ) -> None:
+        """Initialize bot instance with platform-specific client.
+
+        Args:
+            botProvider: Platform type (BotProvider.TELEGRAM or BotProvider.MAX)
+            config: Configuration dictionary containing bot settings
+            maxBot: Max Messenger bot client (required if botProvider is MAX)
+            tgBot: Telegram bot client (required if botProvider is TELEGRAM)
+
+        Raises:
+            ValueError: If required bot client is not provided for the specified platform
+        """
 
         self.botProvider: BotProvider = botProvider
         self.config = config
@@ -68,6 +91,14 @@ class TheBot:
     ###
 
     async def getBotId(self) -> int:
+        """Get bot's unique identifier.
+
+        Returns:
+            Bot's unique ID from the active platform
+
+        Raises:
+            RuntimeError: If no active bot client is configured
+        """
         if self.tgBot:
             return self.tgBot.id
         elif self.maxBot:
@@ -76,6 +107,14 @@ class TheBot:
         raise RuntimeError("No Active bot found")
 
     async def getBotUserName(self) -> Optional[str]:
+        """Get bot's username.
+
+        Returns:
+            Bot's username from the active platform, or None if not set
+
+        Raises:
+            RuntimeError: If no active bot client is configured
+        """
         if self.tgBot:
             return self.tgBot.username
         elif self.maxBot:
@@ -167,6 +206,18 @@ class TheBot:
         inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
         useMarkdown: bool = True,
     ) -> bool:
+        """Edit existing message text or inline keyboard.
+
+        Args:
+            messageId: ID of message to edit
+            chatId: Chat ID where message is located
+            text: New message text (None to edit only keyboard)
+            inlineKeyboard: New inline keyboard layout
+            useMarkdown: Whether to parse text as Markdown
+
+        Returns:
+            True if edit was successful, False otherwise
+        """
 
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
             ret = None
@@ -216,6 +267,28 @@ class TheBot:
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
     ) -> List[EnsuredMessage]:
+        """Send message as reply with text and/or photo.
+
+        Args:
+            replyToMessage: Message to reply to
+            messageText: Text content (required if photoData is None)
+            addMessagePrefix: Prefix to add before message text
+            photoData: Photo bytes (required if messageText is None)
+            sendMessageKWargs: Additional platform-specific parameters
+            tryMarkdownV2: Whether to parse text as MarkdownV2
+            sendErrorIfAny: Whether to send error message on failure
+            skipLogs: Whether to skip debug logging
+            inlineKeyboard: Inline keyboard layout
+            typingManager: Manager for typing indicators
+            splitIfTooLong: Whether to split long messages
+
+        Returns:
+            List of sent message objects
+
+        Raises:
+            ValueError: If neither messageText nor photoData provided
+            RuntimeError: If no active bot client is configured
+        """
         match self.botProvider:
             case BotProvider.TELEGRAM:
                 inlineKeyboardTg = self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None
@@ -398,33 +471,27 @@ class TheBot:
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
     ) -> List[EnsuredMessage]:
-        """
-        Send a text or photo message as a reply, dood!
-
-        Handles message formatting (MarkdownV2), JSON parsing, photo sending,
-        and automatic message saving to database. Supports both text and photo messages.
+        """Send message via Telegram platform.
 
         Args:
             replyToMessage: Message to reply to
             messageText: Text content (required if photoData is None)
             addMessagePrefix: Prefix to add before message text
             photoData: Photo bytes (required if messageText is None)
-            photoCaption: Caption for photo messages
-            sendMessageKWargs: Additional kwargs for telegram send methods
-            tryMarkdownV2: If True, attempt to parse and send as MarkdownV2
-            tryParseInputJSON: Whether to parse JSON responses (None=auto-detect)
-            sendErrorIfAny: If True, send error message on failure
-            skipLogs: If True, skip debug logging
-            mediaPrompt: Optional prompt for media processing
-            messageCategory: Category for database storage (from [`MessageCategory`](internal/database/models.py))
-            replyMarkup: Optional reply markup (keyboard/buttons)
-            typingManager: Optional `TypingManager` object for managing typing action if any
-            splitIfTooLong: If True (default) - will split long messages to smaller ones
+            sendMessageKWargs: Additional Telegram-specific parameters
+            tryMarkdownV2: Whether to parse text as MarkdownV2
+            sendErrorIfAny: Whether to send error message on failure
+            skipLogs: Whether to skip debug logging
+            inlineKeyboard: Telegram inline keyboard markup
+            typingManager: Manager for typing indicators
+            splitIfTooLong: Whether to split long messages
+
         Returns:
-            Sent Message object, or None if sending failed
+            List of sent message objects
 
         Raises:
-            ValueError: If neither messageText nor photoData provided, or invalid chat type
+            ValueError: If neither messageText nor photoData provided
+            RuntimeError: If Telegram bot client is not configured
         """
 
         if photoData is None and messageText is None:
@@ -629,7 +696,18 @@ class TheBot:
             raise ValueError(f"Unexpected platform: {self.botProvider}")
 
     async def banUserInChat(self, *, chatId: int, userId: int) -> bool:
-        """TODO: Write docstring"""
+        """Ban user from chat.
+
+        Args:
+            chatId: ID of chat to ban user from
+            userId: ID of user to ban
+
+        Returns:
+            True if ban was successful, False otherwise
+
+        Raises:
+            ValueError: If platform is not supported
+        """
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
             if userId < 0:
                 return await self.tgBot.ban_chat_sender_chat(
@@ -648,7 +726,18 @@ class TheBot:
             raise ValueError(f"Unexpected platform: {self.botProvider}")
 
     async def unbanUserInChat(self, *, chatId: int, userId: int) -> bool:
-        """TODO: Write docstring"""
+        """Unban user from chat.
+
+        Args:
+            chatId: ID of chat to unban user from
+            userId: ID of user to unban
+
+        Returns:
+            True if unban was successful, False otherwise
+
+        Raises:
+            ValueError: If platform is not supported
+        """
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
             if userId > 0:
                 return await self.tgBot.unban_chat_member(chat_id=chatId, user_id=userId, only_if_banned=True)
