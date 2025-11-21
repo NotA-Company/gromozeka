@@ -28,6 +28,7 @@ import telegram
 import lib.max_bot.models as maxModels
 from internal.bot import constants
 from internal.bot.common.models import TypingAction, UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -48,7 +49,7 @@ from lib.ai import (
     ModelRunResult,
 )
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 
@@ -407,7 +408,6 @@ class LLMMessageHandler(BaseBotHandler):
         elif (
             self.botProvider == BotProvider.MAX
             and isinstance(message, maxModels.Message)
-            and self._maxBot is not None
             and message.link
             and message.link.type == maxModels.MessageLinkType.REPLY
             and message.link.sender

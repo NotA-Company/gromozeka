@@ -22,6 +22,7 @@ import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot import constants
 from internal.bot.common.models import TypingAction, UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -47,7 +48,7 @@ from lib.ai import (
     ModelResultStatus,
 )
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +432,7 @@ class MediaHandler(BaseBotHandler):
         if (
             self.botProvider == BotProvider.TELEGRAM
             and isinstance(parentMessage, telegram.Message)
-            and self._tgBot is not None
+            and self._bot is not None
         ):
             fileId: Optional[str] = None
             match parentEnsuredMessage.messageType:
@@ -454,25 +455,23 @@ class MediaHandler(BaseBotHandler):
                     )
                     return
 
-            mediaInfo = await self._tgBot.get_file(fileId)
-            logger.debug(f"Media info: {mediaInfo}")
-            mediaData = await self._telegramFileDownloader(mediaId="", fileId=fileId)
+            mediaData = await self._bot.downloadAttachment(mediaId="", fileId=fileId)
             if mediaData is not None:
                 mediaDataList.append(bytes(mediaData))
         elif (
             self.botProvider == BotProvider.MAX
             and isinstance(parentMessage, maxModels.Message)
-            and self._maxBot is not None
+            and self._bot is not None
             and parentMessage.body.attachments
         ):
             for attachment in parentMessage.body.attachments:
                 mediaData = None
                 if isinstance(attachment, maxModels.PhotoAttachment):
-                    mediaData = await self._maxFileDownloader(
+                    mediaData = await self._bot.downloadAttachment(
                         mediaId=attachment.payload.token, fileId=attachment.payload.url
                     )
                 elif isinstance(attachment, maxModels.StickerAttachment):
-                    mediaData = await self._maxFileDownloader(
+                    mediaData = await self._bot.downloadAttachment(
                         mediaId=attachment.payload.code, fileId=attachment.payload.url
                     )
 

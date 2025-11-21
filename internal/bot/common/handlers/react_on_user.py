@@ -12,6 +12,7 @@ from typing import Dict, Optional
 import telegram
 
 from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -28,7 +29,7 @@ from internal.bot.models import (
 from internal.database.models import MessageCategory
 from lib import utils
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 

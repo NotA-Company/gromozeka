@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 
 import lib.utils as utils
 from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     ChatType,
@@ -36,7 +37,7 @@ from internal.services.llm import LLMService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMManager
 
-from .base import BaseBotHandler, TypingManager
+from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
 

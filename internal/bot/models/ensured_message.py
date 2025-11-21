@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import telegram
 import telegram.constants
 
-import lib.max_bot as maxBot
+import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
@@ -1058,7 +1058,7 @@ class EnsuredMessage:
                 return None
             return EnsuredMessage.fromTelegramMessage(message.reply_to_message)
         elif isinstance(message, maxModels.Message):
-            linkedMessage = maxBot.MessageLinkToMessage(message)
+            linkedMessage = libMax.MessageLinkToMessage(message)
             if linkedMessage is None:
                 logger.error("getEnsuredRepliedToMessage(): message.link is None, but should be max Message()")
                 return None

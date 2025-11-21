@@ -30,6 +30,7 @@ import lib.utils as utils
 import lib.yandex_search as ys
 import lib.yandex_search.xml_parser as ys_xml
 from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
@@ -54,7 +55,7 @@ from lib.ai import (
 from lib.cache import JsonValueConverter
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
-from .base import BaseBotHandler, TypingManager
+from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
 
