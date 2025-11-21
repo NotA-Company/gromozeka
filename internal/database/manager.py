@@ -15,12 +15,23 @@ class DatabaseManager:
     """Manages database initialization and configuration for Gromozeka bot."""
 
     def __init__(self, config: Dict[str, Any]):
-        """Initialize DatabaseManager with database configuration."""
+        """Initialize DatabaseManager with database configuration.
+
+        Args:
+            config: Database configuration dictionary containing path, max_connections, and timeout
+        """
         self.config = config
         self.db = self._initDatabase()
 
     def _initDatabase(self) -> DatabaseWrapper:
-        """Initialize database connection."""
+        """Initialize database connection.
+
+        Returns:
+            DatabaseWrapper: The initialized database wrapper instance
+
+        Raises:
+            SystemExit: If database initialization fails
+        """
         dbPath = self.config.get("path", "bot_data.db")
         maxConnections = self.config.get("max_connections", 5)
         timeout = self.config.get("timeout", 30)
@@ -34,5 +45,9 @@ class DatabaseManager:
             sys.exit(1)
 
     def getDatabase(self) -> DatabaseWrapper:
-        """Get the database wrapper instance."""
+        """Get the database wrapper instance.
+
+        Returns:
+            DatabaseWrapper: The database wrapper instance
+        """
         return self.db

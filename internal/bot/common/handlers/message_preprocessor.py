@@ -33,8 +33,14 @@ class MessagePreprocessorHandler(BaseBotHandler):
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
-        """
-        TODO
+        """Preprocess incoming messages by processing media and saving to database.
+
+        Args:
+            ensuredMessage: Normalized message object to preprocess
+            updateObj: Original update object from the platform
+
+        Returns:
+            HandlerResultStatus.NEXT if preprocessing successful, ERROR if save failed
         """
 
         # Telegram has different messages for each media\document
@@ -57,6 +63,11 @@ class MessagePreprocessorHandler(BaseBotHandler):
         return HandlerResultStatus.NEXT
 
     async def _processTelegramMedia(self, ensuredMessage: EnsuredMessage) -> None:
+        """Process Telegram-specific media content (images and stickers).
+
+        Args:
+            ensuredMessage: Message containing media to process
+        """
         match ensuredMessage.messageType:
             case MessageType.TEXT:
                 # No special handling for text messages needed
