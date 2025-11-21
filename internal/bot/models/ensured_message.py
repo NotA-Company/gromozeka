@@ -96,12 +96,12 @@ class MessageRecipient:
             case _:
                 logger.warning(f"Unsupported chat type: {recipient.chat_type}")
 
-        recepientId = recipient.chat_id
-        if recepientId is None:
+        recipientId = recipient.chat_id
+        if recipientId is None:
             logger.error(f"Recipient ID is None: {recipient}")
-            recepientId = 0
+            recipientId = 0
 
-        return cls(recepientId, chatType)
+        return cls(recipientId, chatType)
 
 
 class MessageSender:
