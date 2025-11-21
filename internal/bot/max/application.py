@@ -80,7 +80,15 @@ class MaxBotApplication:
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
         """
-        logger.info("Application stopping, stopping Delayed Tasks Scheduler...")
+        await self.queueService.beginShutdown()
+        logger.info("Application stopping, Awaiting for all taskt to complete")
+        logger.info(f"Currently there are {len(self._tasks)} tasks active...")
+        while len(self._tasks) > 0:
+            await asyncio.sleep(1)
+            logger.info(f"{len(self._tasks)} tasks left...")
+        logger.info("All tasks awaited!")
+
+        logger.info("Stopping Delayed Tasks Scheduler...")
         await self.queueService.beginShutdown()
         logger.info("Step 1 of shutdown is done...")
 
