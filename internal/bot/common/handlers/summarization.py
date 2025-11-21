@@ -15,6 +15,7 @@ from typing import Dict, List, Optional
 import lib.utils as utils
 from internal.bot import constants
 from internal.bot.common.models import CallbackButton, UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     ButtonDataKey,
     ButtonSummarizationAction,
@@ -41,7 +42,7 @@ from lib.ai import (
     ModelRunResult,
 )
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 

@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
 
 from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
@@ -25,7 +26,7 @@ from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from lib.ai import LLMManager
 
-from .base import BaseBotHandler, TypingManager
+from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
 

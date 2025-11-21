@@ -20,25 +20,22 @@ Key Features:
 
 import asyncio
 import datetime
-import inspect
 import json
 import logging
-import re
-import time
-from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence
 
 import magic
 import telegram
-import telegram.constants
 import telegram.ext as telegramExt
 
-import lib.max_bot as maxBot
+import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot import constants
+from internal.bot.common.bot import TheBot
 from internal.bot.common.models import CallbackButton, TypingAction, UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -66,9 +63,10 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
-from lib.markdown import markdownToMarkdownV2
 
 logger = logging.getLogger(__name__)
+
+__all__ = ["HandlerResultStatus", "BaseBotHandler"]
 
 
 class HandlerResultStatus(Enum):
@@ -91,204 +89,6 @@ class HandlerResultStatus(Enum):
     NEXT = "next"  # Processed, need to process further
     ERROR = "error"  # Processing error (can be processed further)
     FATAL = "fatal"  # Fatal error, need to stop processing
-
-
-class TypingManager:
-    """
-    TODO
-    Helper class to manage continuous typing actions during long-running operations, dood!
-
-    This class provides a way to continuously send typing actions (like TYPING, UPLOAD_PHOTO, etc.)
-    to Telegram chats while time-consuming operations are in progress. It implements the
-    async context manager protocol for easy integration with async operations.
-
-    The manager handles timing control, state tracking, and automatic cleanup when operations
-    complete or timeout. It's particularly useful for commands that involve LLM processing,
-    media handling, or other operations that might take several seconds.
-
-    Usage:
-        ```python
-        async with await self.startTyping(message, action=ChatAction.TYPING) as typingManager:
-            # Long-running operation here
-            result = await someLongOperation()
-        ```
-
-    Attributes:
-        running: Boolean flag indicating if typing is currently active
-        action: The ChatAction to send (e.g., TYPING, UPLOAD_PHOTO, RECORD_VIDEO)
-        maxTimeout: Maximum duration in seconds to keep typing active
-        repeatInterval: Interval in seconds between typing actions
-        _task: Internal async task managing the typing loop
-        _sendActionFn: Function to call for sending typing actions
-        startTime: Timestamp when typing started (for timeout calculation)
-        iteration: Current iteration counter for timing control
-    """
-
-    __slots__ = (
-        "running",
-        "action",
-        "maxTimeout",
-        "repeatInterval",
-        "_task",
-        "_sendActionFn",
-        "startTime",
-        "iteration",
-    )
-
-    def __init__(
-        self,
-        action: TypingAction,
-        maxTimeout: int,
-        repeatInterval: int,
-    ) -> None:
-        """
-        Initialize the TypingManager with specified parameters, dood!
-
-        Sets up the typing manager with the action to perform, timeout limits,
-        and internal state for managing the typing loop.
-
-        Args:
-            action: The ChatAction to send (e.g., TYPING, UPLOAD_PHOTO)
-            maxTimeout: Maximum duration in seconds to keep typing active
-            repeatInterval: Interval in seconds between typing actions
-        """
-        self.running: bool = True
-        self.action: TypingAction = action
-        self.maxTimeout: int = maxTimeout
-        self.repeatInterval: int = repeatInterval
-
-        self._task: Optional[asyncio.Task] = None
-        self._sendActionFn: Optional[Callable[[], Awaitable]] = None
-
-        self.startTime: float = time.time()
-        self.iteration: int = 0
-
-    async def startTask(
-        self,
-        task: asyncio.Task,
-        sendActionFn: Optional[Callable[[], Awaitable]] = None,
-        runTaskOnStart: bool = True,
-    ) -> None:
-        """
-        Set the asyncio task and action function for this TypingManager, dood!
-
-        Configures the typing manager with the task to execute and the function
-        to call for sending typing actions. Resets the running state and start time.
-
-        Args:
-            task: The asyncio task to manage for continuous typing actions
-            sendActionFn: Optional function to call for sending typing actions
-            runTaskOnStart: If True, immediately send a typing action when starting
-        """
-        self._task = task
-        self._sendActionFn = sendActionFn
-        self.running = True
-        self.startTime = time.time()
-
-        if runTaskOnStart:
-            await self.sendTypingAction()
-
-    async def stopTask(self, wait: bool = True) -> None:
-        """
-        Stop the typing task and wait for it to complete, dood!
-
-        Sets the running flag to False and optionally awaits the completion of the typing task.
-        If the task is not awaitable, logs a warning message. Clears the task reference
-        to prevent multiple stops.
-
-        Args:
-            wait: If True, wait for the task to complete before returning
-        """
-        self.running = False
-        if self._task is None:
-            return
-        elif not inspect.isawaitable(self._task):
-            logger.warning(f"TypingManager: {type(self._task).__name__}({self._task}) is not awaitable")
-        elif wait:
-            await self._task
-        # it is possible, that we'll stop it several times:
-        #  (via sendMessage() and as aexit from contextManager)
-        #  it isn't error, so need to clear self.task
-        self._task = None
-
-    def isRunning(self) -> bool:
-        """
-        Check if typing is still active and within timeout limits, dood!
-
-        Determines if typing should continue based on the running flag and
-        whether the maximum timeout has been exceeded.
-
-        Returns:
-            True if typing is active and within timeout, False otherwise
-        """
-        if not self.running:
-            return False
-
-        return not self.isTimeout()
-
-    def isTimeout(self) -> bool:
-        """
-        Check if the typing manager has exceeded its maximum timeout duration, dood!
-
-        Determines whether the typing manager has exceeded its timeout limit based on
-        the elapsed time since it started. Returns True if the manager has exceeded
-        its timeout limit, False if it is still within the limit.
-
-        Returns:
-            bool: True if timeout exceeded, False if still within timeout limits
-        """
-        return self.startTime + self.maxTimeout <= time.time()
-
-    async def tick(self) -> int:
-        """
-        Advance the iteration counter for timing control, dood!
-
-        Sleeps for 1 second and increments the iteration counter, wrapping around
-        based on the repeatInterval. This method is used to control the timing
-        of typing actions in the continuous typing loop.
-
-        Returns:
-            The new iteration counter value
-        """
-        await asyncio.sleep(1)
-
-        self.iteration = (self.iteration + 1) % self.repeatInterval
-        return self.iteration
-
-    async def sendTypingAction(self) -> None:
-        """
-        Send a typing action and reset the iteration counter, dood!
-
-        This method is called to send a typing action and reset the iteration
-        counter to 0. This is used to control the timing of subsequent typing
-        actions in the continuous typing loop. Only sends if the manager is running.
-        """
-        if not self.isRunning():
-            logger.warning("TypingManager::sendTypingAction(): not running")
-            return
-
-        self.iteration = 0
-        if self._sendActionFn:
-            await self._sendActionFn()
-        else:
-            logger.warning("TypingManager: sendTypingAction called while action is None")
-
-    async def __aenter__(self) -> "TypingManager":
-        """
-        Enter the context manager, dood!
-
-        Returns:
-            TypingManager: The TypingManager instance
-        """
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        """
-        Exit the context manager, dood!
-
-        Stops the typing task and waits for it to complete.
-        """
-        await self.stopTask()
 
 
 class BaseBotHandler(CommandHandlerMixin):
@@ -343,11 +143,6 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # TODO: Put all botOwners and chatDefaults to some service to not duplicate it for each handler class
         # Init different defaults
-        self.botOwnersUsername = [
-            username.lower() for username in self.config.get("bot_owners", []) if isinstance(username, str)
-        ]
-        self.botOwnersId = [userId for userId in self.config.get("bot_owners", []) if isinstance(userId, int)]
-
         self.defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
             k: ChatSettingsValue("") for k in ChatSettingsKey
         }
@@ -384,8 +179,9 @@ class BaseBotHandler(CommandHandlerMixin):
 
         self.queueService = QueueService.getInstance()
 
-        self._tgBot: Optional[telegramExt.ExtBot] = None
-        self._maxBot: Optional[maxBot.MaxBotClient] = None
+        # self._tgBot: Optional[telegramExt.ExtBot] = None
+        # self._maxBot: Optional[libMax.MaxBotClient] = None
+        self._bot: Optional[TheBot] = None
 
     def getCommandHandlersV2(self) -> Sequence[CommandHandlerInfoV2]:
         """
@@ -409,9 +205,9 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         if self.botProvider != BotProvider.TELEGRAM:
             raise ValueError(f"Bot provider must be {BotProvider.TELEGRAM}")
-        self._tgBot = bot
+        self._bot = TheBot(botProvider=self.botProvider, config=self.config, tgBot=bot)
 
-    def injectMaxBot(self, bot: maxBot.MaxBotClient) -> None:
+    def injectMaxBot(self, bot: libMax.MaxBotClient) -> None:
         """
         Inject the bot instance for use in handlers, dood!
 
@@ -423,7 +219,7 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         if self.botProvider != BotProvider.MAX:
             raise ValueError(f"Bot provider must be {BotProvider.MAX}")
-        self._maxBot = bot
+        self._bot = TheBot(botProvider=self.botProvider, config=self.config, maxBot=bot)
 
     ###
     # Chat settings Managenent
@@ -548,20 +344,14 @@ class BaseBotHandler(CommandHandlerMixin):
     ###
 
     async def getBotId(self) -> int:
-        if self._tgBot:
-            return self._tgBot.id
-        elif self._maxBot:
-            return (await self._maxBot.getMyInfo()).user_id
-
-        raise RuntimeError("No Active bot found")
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        return await self._bot.getBotId()
 
     async def getBotUserName(self) -> Optional[str]:
-        if self._tgBot:
-            return self._tgBot.username
-        elif self._maxBot:
-            return (await self._maxBot.getMyInfo()).username
-
-        raise RuntimeError("No Active bot found")
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        return await self._bot.getBotUserName()
 
     async def isAdmin(
         self, user: MessageSender, chat: Optional[MessageRecipient] = None, allowBotOwners: bool = True
@@ -580,63 +370,10 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             True if user is admin/owner, False otherwise
         """
-        # If chat is None, then we are checking if it's bot owner only
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
 
-        username = user.username
-        if username:
-            username = username.lower().lstrip("@")
-
-        if allowBotOwners and (username in self.botOwnersUsername or user.id in self.botOwnersId):
-            # User is bot owner and bot owners are allowed
-            return True
-
-        if chat is None:
-            # No chat - can't be admin
-            return False
-
-        if chat.chatType == ChatType.PRIVATE:
-            return True
-
-        # If userId is the same as chatID, then it's Private chat or Anonymous Admin
-        if self.botProvider == BotProvider.TELEGRAM and user.id == chat.id:
-            return True
-
-        # If chat is passed, check if user is admin of given chat
-        chatAdmins = self.cache.getChatAdmins(chat.id)
-        if chatAdmins is not None:
-            return user.id in chatAdmins
-
-        chatAdmins = {}  # userID -> username
-        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
-            for admin in await self._tgBot.get_chat_administrators(chat_id=chat.id):
-                chatAdmins[admin.user.id] = admin.user.name
-
-        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
-            maxChatAdmins = (await self._maxBot.getAdmins(chatId=chat.id)).members
-            for admin in maxChatAdmins:
-                adminName = admin.username
-                if adminName is None:
-                    adminName = admin.first_name
-                    if admin.last_name:
-                        adminName += " " + admin.last_name
-                else:
-                    adminName = f"@{adminName}"
-
-                chatAdmins[admin.user_id] = adminName
-
-        else:
-            raise RuntimeError(f"Unexpected platform: {self.botProvider}")
-
-        self.cache.setChatAdmins(chat.id, chatAdmins)
-        return user.id in chatAdmins
-
-    def _keyboardToTelegram(self, keyboard: Sequence[Sequence[CallbackButton]]) -> telegram.InlineKeyboardMarkup:
-        return telegram.InlineKeyboardMarkup([[btn.toTelegram() for btn in row] for row in keyboard])
-
-    def _keyboardToMax(self, keyboard: Sequence[Sequence[CallbackButton]]) -> maxModels.InlineKeyboardAttachmentRequest:
-        return maxModels.InlineKeyboardAttachmentRequest(
-            payload=maxModels.Keyboard(buttons=[[btn.toMax() for btn in row] for row in keyboard])
-        )
+        return await self._bot.isAdmin(user=user, chat=chat, allowBotOwners=allowBotOwners)
 
     async def editMessage(
         self,
@@ -647,39 +384,15 @@ class BaseBotHandler(CommandHandlerMixin):
         inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
         useMarkdown: bool = True,
     ) -> bool:
-
-        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
-            ret = None
-            if text is None:
-                ret = await self._tgBot.edit_message_reply_markup(
-                    chat_id=chatId,
-                    message_id=int(messageId),
-                    reply_markup=self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None,
-                )
-            else:
-                kwargs = {}
-                if useMarkdown:
-                    kwargs["parse_mode"] = telegram.constants.ParseMode.MARKDOWN_V2
-                    text = markdownToMarkdownV2(text)
-                ret = await self._tgBot.edit_message_text(
-                    text=text,
-                    chat_id=chatId,
-                    message_id=int(messageId),
-                    reply_markup=self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None,
-                    **kwargs,
-                )
-            return bool(ret)
-        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
-            await self._maxBot.editMessage(
-                messageId=str(messageId),
-                text=text,
-                attachments=None if inlineKeyboard is not None else [],
-                inlineKeyboard=self._keyboardToMax(inlineKeyboard) if inlineKeyboard is not None else None,
-                format=maxModels.TextFormat.MARKDOWN if useMarkdown else None,
-            )
-        else:
-            logger.error(f"Can not edit message in platform {self.botProvider}")
-        return False
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        return await self._bot.editMessage(
+            messageId=messageId,
+            chatId=chatId,
+            text=text,
+            inlineKeyboard=inlineKeyboard,
+            useMarkdown=useMarkdown,
+        )
 
     async def sendMessage(
         self,
@@ -699,402 +412,40 @@ class BaseBotHandler(CommandHandlerMixin):
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
     ) -> List[EnsuredMessage]:
-        match self.botProvider:
-            case BotProvider.TELEGRAM:
-                inlineKeyboardTg = self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None
-                # TODO: Refactoring needed
-                return await self._sendTelegramMessage(
-                    replyToMessage=replyToMessage,
-                    messageText=messageText,
-                    addMessagePrefix=addMessagePrefix,
-                    photoData=photoData,
-                    sendMessageKWargs=sendMessageKWargs,
-                    tryMarkdownV2=tryMarkdownV2,
-                    tryParseInputJSON=tryParseInputJSON,
-                    sendErrorIfAny=sendErrorIfAny,
-                    skipLogs=skipLogs,
-                    mediaPrompt=mediaPrompt,
-                    messageCategory=messageCategory,
-                    inlineKeyboard=inlineKeyboardTg,
-                    typingManager=typingManager,
-                    splitIfTooLong=splitIfTooLong,
-                )
-
-            case BotProvider.MAX:
-                inlineKeyboardMax = self._keyboardToMax(inlineKeyboard) if inlineKeyboard is not None else None
-
-                return await self._sendMaxMessage(
-                    replyToMessage=replyToMessage,
-                    messageText=messageText,
-                    addMessagePrefix=addMessagePrefix,
-                    photoData=photoData,
-                    sendMessageKWargs=sendMessageKWargs,
-                    tryMarkdownV2=tryMarkdownV2,
-                    tryParseInputJSON=tryParseInputJSON,
-                    sendErrorIfAny=sendErrorIfAny,
-                    skipLogs=skipLogs,
-                    mediaPrompt=mediaPrompt,
-                    messageCategory=messageCategory,
-                    inlineKeyboard=inlineKeyboardMax,
-                    typingManager=typingManager,
-                    splitIfTooLong=splitIfTooLong,
-                )
-            case _:
-                raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
-
-    async def _sendMaxMessage(
-        self,
-        replyToMessage: EnsuredMessage,
-        messageText: Optional[str] = None,
-        *,
-        addMessagePrefix: str = "",
-        photoData: Optional[bytes] = None,
-        sendMessageKWargs: Optional[Dict[str, Any]] = None,
-        tryMarkdownV2: bool = True,
-        tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
-        sendErrorIfAny: bool = True,
-        skipLogs: bool = False,
-        mediaPrompt: Optional[str] = None,
-        messageCategory: MessageCategory = MessageCategory.BOT,
-        inlineKeyboard: Optional[maxModels.InlineKeyboardAttachmentRequest] = None,
-        typingManager: Optional[TypingManager] = None,
-        splitIfTooLong: bool = True,
-    ) -> List[EnsuredMessage]:
-        if self._maxBot is None:
-            raise RuntimeError("Max bot is Undefined")
-
-        if photoData is None and messageText is None:
-            logger.error("No message text or photo data provided")
-            raise ValueError("No message text or photo data provided")
-
-        replyMessageList: List[maxModels.Message] = []
-        ensuredReplyList: List[EnsuredMessage] = []
-        # message = replyToMessage.getBaseMessage()
-        # if not isinstance(message, maxModels.Message):
-        #     logger.error("Invalid message type")
-        #     raise ValueError("Invalid message type")
-        chatType = replyToMessage.recipient.chatType
-
-        if typingManager is not None:
-            await typingManager.stopTask()
-
-        if chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
-            logger.error("Cannot send message to chat type {}".format(chatType))
-            raise ValueError("Cannot send message to chat type {}".format(chatType))
-
-        if sendMessageKWargs is None:
-            sendMessageKWargs = {}
-
-        replyKwargs = sendMessageKWargs.copy()
-        replyKwargs.update(
-            {
-                "chatId": replyToMessage.recipient.id,
-                "replyTo": str(replyToMessage.messageId),
-                "format": maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
-            }
-        )
-        attachments: Optional[List[maxModels.AttachmentRequest]] = []
-
-        try:
-            if photoData is not None:
-                mimeType = magic.from_buffer(photoData, mime=True)
-                ext = mimeType.split("/")[1]
-                ret = await self._maxBot.uploadFile(
-                    filename=f"generated_image.{ext}",
-                    data=photoData,
-                    mimeType=mimeType,
-                    uploadType=maxModels.UploadType.IMAGE,
-                )
-                if isinstance(ret, maxModels.UploadedPhoto):
-                    attachments.append(
-                        maxModels.PhotoAttachmentRequest(
-                            payload=maxModels.PhotoAttachmentRequestPayload(
-                                photos=ret.payload.photos,
-                            )
-                        )
-                    )
-
-            if messageText is not None or attachments:
-                # Send Message
-                if not attachments:
-                    attachments = None
-                if messageText is None:
-                    messageText = ""
-
-                if not skipLogs:
-                    logger.debug(f"Sending reply to {replyToMessage}")
-
-                messageTextList: List[str] = [messageText]
-                maxMessageLength = maxBot.MAX_MESSAGE_LENGTH - len(addMessagePrefix)
-                if splitIfTooLong and len(messageText) > maxMessageLength:
-                    messageTextList = [
-                        messageText[i : i + maxMessageLength] for i in range(0, len(messageText), maxMessageLength)
-                    ]
-                for _messageText in messageTextList:
-                    ret = await self._maxBot.sendMessage(
-                        text=addMessagePrefix + _messageText,
-                        attachments=attachments,
-                        inlineKeyboard=inlineKeyboard,
-                        **replyKwargs,
-                    )
-                    attachments = None  # Send attachments with first message only
-                    inlineKeyboard = None
-                    replyMessageList.append(ret.message)
-
-            try:
-                if not replyMessageList:
-                    raise ValueError("No reply messages")
-
-                if not skipLogs:
-                    logger.debug(f"Sent messages: {[utils.jsonDumps(msg) for msg in replyMessageList]}")
-
-                # Save message
-                for replyMessage in replyMessageList:
-                    ensuredReplyMessage = EnsuredMessage.fromMaxMessage(replyMessage)
-                    ensuredReplyList.append(ensuredReplyMessage)
-                    if addMessagePrefix:
-                        replyText = ensuredReplyMessage.messageText
-                        if replyText.startswith(addMessagePrefix):
-                            replyText = replyText[len(addMessagePrefix) :]
-                            ensuredReplyMessage.messageText = replyText
-                    if replyMessage.body.attachments:
-                        # TODO: Process whole list
-                        mediaList = await self.processMaxMedia(ensuredReplyMessage, mediaPrompt)
-                        ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
-
-                    await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
-
-            except Exception as e:
-                logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-                logger.exception(e)
-                # Message was sent, so return it
-                return ensuredReplyList
-
-        except Exception as e:
-            logger.error(f"Error while sending message: {type(e).__name__}#{e}")
-            logger.exception(e)
-            if sendErrorIfAny:
-                try:
-                    await self._maxBot.sendMessage(
-                        text=f"Error while sending message: {type(e).__name__}#{e}",
-                        chatId=replyToMessage.recipient.id,
-                        replyTo=str(replyToMessage.messageId),
-                    )
-                except Exception as error_e:
-                    logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
-            return ensuredReplyList
-
-        return ensuredReplyList
-
-    async def _sendTelegramMessage(
-        self,
-        replyToMessage: EnsuredMessage,
-        messageText: Optional[str] = None,
-        *,
-        addMessagePrefix: str = "",
-        photoData: Optional[bytes] = None,
-        sendMessageKWargs: Optional[Dict[str, Any]] = None,
-        tryMarkdownV2: bool = True,
-        tryParseInputJSON: Optional[bool] = None,  # False - do not try, True - try, None - try to detect
-        sendErrorIfAny: bool = True,
-        skipLogs: bool = False,
-        mediaPrompt: Optional[str] = None,
-        messageCategory: MessageCategory = MessageCategory.BOT,
-        inlineKeyboard: Optional[telegram.InlineKeyboardMarkup] = None,
-        typingManager: Optional[TypingManager] = None,
-        splitIfTooLong: bool = True,
-    ) -> List[EnsuredMessage]:
-        """
-        Send a text or photo message as a reply, dood!
-
-        Handles message formatting (MarkdownV2), JSON parsing, photo sending,
-        and automatic message saving to database. Supports both text and photo messages.
-
-        Args:
-            replyToMessage: Message to reply to
-            messageText: Text content (required if photoData is None)
-            addMessagePrefix: Prefix to add before message text
-            photoData: Photo bytes (required if messageText is None)
-            photoCaption: Caption for photo messages
-            sendMessageKWargs: Additional kwargs for telegram send methods
-            tryMarkdownV2: If True, attempt to parse and send as MarkdownV2
-            tryParseInputJSON: Whether to parse JSON responses (None=auto-detect)
-            sendErrorIfAny: If True, send error message on failure
-            skipLogs: If True, skip debug logging
-            mediaPrompt: Optional prompt for media processing
-            messageCategory: Category for database storage (from [`MessageCategory`](internal/database/models.py))
-            replyMarkup: Optional reply markup (keyboard/buttons)
-            typingManager: Optional `TypingManager` object for managing typing action if any
-            splitIfTooLong: If True (default) - will split long messages to smaller ones
-        Returns:
-            Sent Message object, or None if sending failed
-
-        Raises:
-            ValueError: If neither messageText nor photoData provided, or invalid chat type
-        """
-
-        if photoData is None and messageText is None:
-            logger.error("No message text or photo data provided")
-            raise ValueError("No message text or photo data provided")
-
-        replyMessageList: List[telegram.Message] = []
-        ensuredReplyList: List[EnsuredMessage] = []
-        message = replyToMessage.toTelegramMessage()
-        message.set_bot(self._tgBot)
-        chatType = replyToMessage.recipient.chatType
-        isPrivate = chatType == ChatType.PRIVATE
-        isGroupChat = chatType == ChatType.GROUP
-
-        if typingManager is not None:
-            await typingManager.stopTask()
-
-        if not isPrivate and not isGroupChat:
-            logger.error("Cannot send message to chat type {}".format(chatType))
-            raise ValueError("Cannot send message to chat type {}".format(chatType))
-
-        if sendMessageKWargs is None:
-            sendMessageKWargs = {}
-
-        replyKwargs = sendMessageKWargs.copy()
-        replyKwargs.update(
-            {
-                "reply_to_message_id": replyToMessage.messageId,
-                "message_thread_id": replyToMessage.threadId,
-                "reply_markup": inlineKeyboard,
-            }
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        ret = await self._bot.sendMessage(
+            replyToMessage=replyToMessage,
+            messageText=messageText,
+            addMessagePrefix=addMessagePrefix,
+            photoData=photoData,
+            sendMessageKWargs=sendMessageKWargs,
+            tryMarkdownV2=tryMarkdownV2,
+            sendErrorIfAny=sendErrorIfAny,
+            skipLogs=skipLogs,
+            inlineKeyboard=inlineKeyboard,
+            typingManager=typingManager,
+            splitIfTooLong=splitIfTooLong,
         )
 
-        try:
-            if photoData is not None:
-                # Send photo
-                replyKwargs.update(
-                    {
-                        "photo": photoData,
-                    }
-                )
+        for ensuredReplyMessage in ret:
+            if addMessagePrefix:
+                replyText = ensuredReplyMessage.messageText
+                if replyText.startswith(addMessagePrefix):
+                    replyText = replyText[len(addMessagePrefix) :]
+                    ensuredReplyMessage.messageText = replyText
+            replyMessage = ensuredReplyMessage.getBaseMessage()
+            if isinstance(replyMessage, telegram.Message) and replyMessage.photo:
+                media = await self.processTelegramImage(ensuredReplyMessage, mediaPrompt)
+                ensuredReplyMessage.addMediaProcessingInfo(media)
+            elif isinstance(replyMessage, maxModels.Message) and replyMessage.body.attachments:
+                # TODO: Process whole list
+                mediaList = await self.processMaxMedia(ensuredReplyMessage, mediaPrompt)
+                ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
 
-                replyMessage: Optional[telegram.Message] = None
-                if tryMarkdownV2 and messageText is not None:
-                    try:
-                        messageTextParsed = markdownToMarkdownV2(addMessagePrefix + messageText)
-                        # logger.debug(f"Sending MarkdownV2: {replyText}")
-                        # TODO: One day start using self._tgBot
-                        replyMessage = await message.reply_photo(
-                            caption=messageTextParsed,
-                            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
-                            **replyKwargs,
-                        )
-                    except Exception as e:
-                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                        # Probably error in markdown formatting, fallback to raw text
+            await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
 
-                if replyMessage is None:
-                    _messageText = messageText if messageText is not None else ""
-                    replyMessage = await message.reply_photo(caption=addMessagePrefix + _messageText, **replyKwargs)
-                if replyMessage is not None:
-                    replyMessageList.append(replyMessage)
-
-            elif messageText is not None:
-                # Send text
-
-                # If response is json, parse it
-                # TODO: Not sure if it works properly
-                if tryParseInputJSON is None:
-                    tryParseInputJSON = re.match(r"^\s*`*\s*{", messageText) is not None
-                    if tryParseInputJSON:
-                        logger.debug(f"JSONPreParser: message '{messageText}' looks like JSON, tring parse it")
-
-                if tryParseInputJSON:
-                    try:
-                        jsonReply = json.loads(messageText.strip("` \n\r"))
-                        if "text" in jsonReply:
-                            messageText = str(jsonReply["text"]).strip()
-                        elif "message" in jsonReply:
-                            messageText = str(jsonReply["message"]).strip()
-                        elif "media_description" in jsonReply:
-                            messageText = str(jsonReply["media_description"]).strip()
-                        else:
-                            logger.warning(f"No text field found in json reply, fallback to text: {jsonReply}")
-                            raise ValueError("No text field found in json reply")
-                    except Exception as e:
-                        logger.debug(f"Error while parsing LLM reply, assume it's text: {type(e).__name__}#{e}")
-
-                if not skipLogs:
-                    logger.debug(f"Sending reply to {replyToMessage}")
-
-                messageTextList: List[str] = [messageText]
-                maxMessageLength = constants.TELEGRAM_MAX_MESSAGE_LENGTH - len(addMessagePrefix)
-                if splitIfTooLong and len(messageText) > maxMessageLength:
-                    messageTextList = [
-                        messageText[i : i + maxMessageLength] for i in range(0, len(messageText), maxMessageLength)
-                    ]
-                for _messageText in messageTextList:
-                    replyMessage: Optional[telegram.Message] = None
-                    # Try to send Message as MarkdownV2 first
-                    if tryMarkdownV2:
-                        try:
-                            messageTextParsed = markdownToMarkdownV2(addMessagePrefix + _messageText)
-                            # logger.debug(f"Sending MarkdownV2: {replyText}")
-                            replyMessage = await message.reply_text(
-                                text=messageTextParsed,
-                                parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
-                                **replyKwargs,
-                            )
-                        except Exception as e:
-                            logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                            # Probably error in markdown formatting, fallback to raw text
-
-                    if replyMessage is None:
-                        replyMessage = await message.reply_text(text=addMessagePrefix + _messageText, **replyKwargs)
-
-                    if replyMessage is not None:
-                        replyMessageList.append(replyMessage)
-
-            try:
-                if not replyMessageList:
-                    raise ValueError("No reply messages")
-
-                if not skipLogs:
-                    logger.debug(f"Sent messages: {[utils.dumpTelegramMessage(msg) for msg in replyMessageList]}")
-
-                # Save message
-                for replyMessage in replyMessageList:
-                    ensuredReplyMessage = EnsuredMessage.fromTelegramMessage(replyMessage)
-                    ensuredReplyList.append(ensuredReplyMessage)
-                    if addMessagePrefix:
-                        replyText = ensuredReplyMessage.messageText
-                        if replyText.startswith(addMessagePrefix):
-                            replyText = replyText[len(addMessagePrefix) :]
-                            ensuredReplyMessage.messageText = replyText
-                    if replyMessage.photo:
-                        media = await self.processTelegramImage(ensuredReplyMessage, mediaPrompt)
-                        ensuredReplyMessage.addMediaProcessingInfo(media)
-
-                    if isGroupChat or isPrivate:
-                        await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
-                    else:
-                        raise ValueError("Unknown chat type")
-
-            except Exception as e:
-                logger.error(f"Error while saving chat message: {type(e).__name__}#{e}")
-                logger.exception(e)
-                # Message was sent, so return True anyway
-                return ensuredReplyList
-
-        except Exception as e:
-            logger.error(f"Error while sending message: {type(e).__name__}#{e}")
-            logger.exception(e)
-            if sendErrorIfAny:
-                try:
-                    await message.reply_text(
-                        f"Error while sending message: {type(e).__name__}#{e}",
-                        reply_to_message_id=int(replyToMessage.messageId),
-                    )
-                except Exception as error_e:
-                    logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
-            return ensuredReplyList
-
-        return ensuredReplyList
+        return ret
 
     async def deleteMessage(self, ensuredMessage: EnsuredMessage) -> bool:
         """Delete a message from the chat.
@@ -1105,7 +456,9 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             bool: True if deletion was successful, False otherwise
         """
-        return await self.deleteMessagesById(ensuredMessage.recipient.id, [ensuredMessage.messageId])
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        return await self._bot.deleteMessage(ensuredMessage)
 
     async def deleteMessagesById(self, chatId: int, messageIds: List[MessageIdType]) -> bool:
         """Delete multiple messages by their IDs in the specified chat.
@@ -1118,16 +471,9 @@ class BaseBotHandler(CommandHandlerMixin):
             bool: True if deletion was successful, False otherwise
         """
 
-        if self.botProvider == BotProvider.TELEGRAM and self._tgBot is not None:
-            return await self._tgBot.delete_messages(
-                chat_id=chatId,
-                message_ids=[int(v) for v in messageIds],
-            )
-        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
-            return await self._maxBot.deleteMessages([str(messageId) for messageId in messageIds])
-
-        logger.error(f"Can not delete {messageIds} in platform {self.botProvider}")
-        return False
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        return await self._bot.deleteMessagesById(chatId=chatId, messageIds=messageIds)
 
     def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """
@@ -1195,7 +541,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
             except Exception as e:
                 logger.error(f"Error updating chat info: {e}")
-        elif self.botProvider == BotProvider.MAX and self._maxBot is not None:
+        elif self.botProvider == BotProvider.MAX and self._bot is not None and self._bot.maxBot is not None:
             # Chat info isn't presend in message, so we need to request it explicitelly,
             # But we do not want to do it often. Looks like we need to check updated_at
             chatId = message.recipient.id
@@ -1210,7 +556,8 @@ class BaseBotHandler(CommandHandlerMixin):
             if not needChange:
                 return
 
-            maxChatInfo = await self._maxBot.getChat(chatId)
+            # TODO: Think, how to not use self._bot.maxBot directly
+            maxChatInfo = await self._bot.maxBot.getChat(chatId)
             self.cache.setChatInfo(
                 chatId,
                 {
@@ -1402,23 +749,10 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # logger.debug(f"startContinousTyping(,{action},{maxTimeout},{repeatInterval}) started...")
 
-        async def sendTelegramAction():
-            if self.botProvider != BotProvider.TELEGRAM or self._tgBot is None:
-                raise RuntimeError("Telegram bot is undefined")
-            await self._tgBot.send_chat_action(
-                chat_id=ensuredMessage.recipient.id,
-                action=typingManager.action.toTelegram(),
-                message_thread_id=ensuredMessage.threadId,
-            )
-
-        async def sendMaxAction():
-            if self.botProvider != BotProvider.MAX or self._maxBot is None:
-                raise RuntimeError("Max bot is undefined")
-
-            await self._maxBot.sendAction(
-                chatId=ensuredMessage.recipient.id,
-                action=typingManager.action.toMax(),
-            )
+        async def sendChatAction():
+            if self._bot is None:
+                raise ValueError("Bot is not initialized")
+            return await self._bot.sendChatAction(ensuredMessage, typingManager.action)
 
         async def _sendTyping() -> None:
             typingManager.iteration = 0
@@ -1433,17 +767,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     f"startTyping({ensuredMessage}) reached timeout ({typingManager.maxTimeout}), exiting..."
                 )
 
-        sendAction: Optional[Callable[[], Awaitable]] = None
-        match self.botProvider:
-            case BotProvider.TELEGRAM:
-                sendAction = sendTelegramAction
-            case BotProvider.MAX:
-                sendAction = sendMaxAction
-            case _:
-                logger.error(f"Unexpected Platform: {self.botProvider}")
-                raise RuntimeError(f"Unexpected Platform: {self.botProvider}")
-
-        await typingManager.startTask(asyncio.create_task(_sendTyping()), sendAction, True)
+        await typingManager.startTask(asyncio.create_task(_sendTyping()), sendChatAction, True)
         return typingManager
 
     def getChatTitle(
@@ -1591,7 +915,6 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaType=MessageType.IMAGE,
             mediaId=sticker.file_unique_id,
             fileId=sticker.file_id,
-            dataGetter=self._telegramFileDownloader,
             metadata=metadata,
         )
 
@@ -1631,7 +954,6 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaType=MessageType.IMAGE,
             mediaId=bestPhotoSize.file_unique_id,
             fileId=bestPhotoSize.file_id,
-            dataGetter=self._telegramFileDownloader,
             metadata=metadata,
             prompt=prompt,
         )
@@ -1659,7 +981,6 @@ class BaseBotHandler(CommandHandlerMixin):
                         mediaType=MessageType.IMAGE,
                         mediaId=mediaId,
                         fileId=url,
-                        dataGetter=self._maxFileDownloader,
                         prompt=prompt,
                         metadata={
                             "token": attachment.payload.token,
@@ -1695,7 +1016,6 @@ class BaseBotHandler(CommandHandlerMixin):
                         mediaType=MessageType.STICKER,
                         mediaId=mediaId,
                         fileId=url,
-                        dataGetter=self._maxFileDownloader,
                         prompt=prompt,
                         metadata={
                             "wifth": attachment.width,
@@ -1708,49 +1028,12 @@ class BaseBotHandler(CommandHandlerMixin):
 
         return ret
 
-    async def _maxFileDownloader(self, mediaId: str, fileId: str) -> Optional[bytes]:
-        """Download file attachment from Max Messenger platform.
-
-        Args:
-            mediaId: Unique identifier for the media in the database
-            fileId: URL of the file to download from Max Messenger
-
-        Returns:
-            File content as bytes, or None if download fails or platform mismatch
-        """
-
-        if self.botProvider != BotProvider.MAX or self._maxBot is None:
-            logger.error(f"_maxFileDownloader({mediaId}, {fileId}) called while platform is {self.botProvider}")
-            return None
-
-        return await self._maxBot.downloadAttachmentPayload(fileId)
-
-    async def _telegramFileDownloader(self, mediaId: str, fileId: str) -> Optional[bytes]:
-        """Download file attachment from Telegram platform.
-
-        Args:
-            mediaId: Unique identifier for the media in the database
-            fileId: Telegram file_id to download
-
-        Returns:
-            File content as bytes, or None if download fails or platform mismatch
-        """
-
-        if self.botProvider != BotProvider.TELEGRAM or self._tgBot is None:
-            logger.error(f"_telegramFileDownloader({mediaId}, {fileId}) called while platform is {self.botProvider}")
-            return None
-
-        fileInfo = await self._tgBot.get_file(fileId)
-        logger.debug(f"{mediaId}#{fileId} File info: {fileInfo}")
-        return bytes(await fileInfo.download_as_bytearray())
-
     async def _processMediaV2(
         self,
         ensuredMessage: EnsuredMessage,
         mediaType: MessageType,
         mediaId: str,
         fileId: str,
-        dataGetter: Callable[[str, str], Awaitable[Optional[bytes]]],  # async fn(mediaId, fileId) -> bytes
         metadata: Optional[Dict[str, Any]] = None,
         prompt: Optional[str] = None,
     ) -> MediaProcessingInfo:
@@ -1868,7 +1151,9 @@ class BaseBotHandler(CommandHandlerMixin):
         if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
             # Do not redownload file if it was downloaded already
             if mediaData is None:
-                mediaData = await dataGetter(mediaId, fileId)
+                if self._bot is None:
+                    raise ValueError("Bot is not initialized")
+                mediaData = await self._bot.downloadAttachment(mediaId, fileId)
 
             if mediaData is None:
                 logger.error(f"{ret.type}#{ret.id} is None, cannot parse it")
