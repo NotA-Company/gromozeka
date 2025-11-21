@@ -97,24 +97,19 @@ class MediaAttachmentPayload(AttachmentPayload):
 
 
 class PhotoAttachmentPayload(AttachmentPayload):
-    """TODO"""
-
-    # photo_id: int
-    # """Уникальный ID этого изображения"""
-    # "token": str
-    # """
-    #  Используйте `token`, если вы пытаетесь
-    #  повторно использовать одно и то же вложение в другом сообщении.
-    # """
-    # url: str
-    # """URL изображения"""
+    """Photo attachment payload with photo ID and token for reusing attachments."""
 
     __slots__ = ("photo_id", "token")
 
     def __init__(self, *, photo_id: int, token: str, url: str, api_kwargs: Dict[str, Any] | None = None):
         super().__init__(url=url, api_kwargs=api_kwargs)
         self.photo_id: int = photo_id
+        """Уникальный ID этого изображения"""
         self.token: str = token
+        """
+        Используйте `token`, если вы пытаетесь
+        повторно использовать одно и то же вложение в другом сообщении.
+        """
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PhotoAttachmentPayload":
@@ -147,7 +142,7 @@ class FileAttachmentPayload(AttachmentPayload):
 
 
 class PhotoAttachment(Attachment):
-    """TODO"""
+    """Photo attachment with payload containing photo information."""
 
     __slots__ = ("payload",)
 
@@ -642,6 +637,14 @@ class DataAttachment(Attachment):
 
 
 def attachmentFromDict(data: Dict[str, Any]) -> Attachment:
+    """Create appropriate Attachment instance from API response dictionary.
+
+    Args:
+        data: Dictionary containing attachment data from API response.
+
+    Returns:
+        Attachment: Appropriate attachment instance based on type.
+    """
     attachmentType = AttachmentType(data.get("type", AttachmentType.UNSPECIFIED))
 
     match attachmentType:
