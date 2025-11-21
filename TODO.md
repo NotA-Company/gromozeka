@@ -33,7 +33,8 @@ Adopt Handlers:
 - [ ] Review and rewrite or delete models.markup.py
 
 # Our TODO list
-- [ ] General framework above Telegram and Max
+- [ ] instead of background tasks, use set like in `internal/bot/max/application.py`
+- [x] General framework above Telegram and Max
 - [ ] Add ENV\.env support in config secrets
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Save info about used tools to put it into context

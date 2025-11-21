@@ -6,7 +6,8 @@ import asyncio
 import logging
 import random
 import sys
-from typing import Optional
+from collections.abc import MutableSet
+from typing import Awaitable, Dict, Optional
 
 import lib.max_bot as maxBot
 import lib.max_bot.models as maxModels
@@ -51,7 +52,11 @@ class MaxBotApplication:
         self.handlerManager = HandlersManager(configManager, database, llmManager, BotProvider.MAX)
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
-        self.client: Optional[maxBot.MaxBotClient] = None
+        self.maxBot: Optional[maxBot.MaxBotClient] = None
+
+        self.chatSemaphoreMap: Dict[int, asyncio.Semaphore] = {}
+        self._tasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
+        self.maxTasks = 128
 
     async def postInit(self, *args, **kwargs):
         """Perform post-initialization tasks.
@@ -60,10 +65,10 @@ class MaxBotApplication:
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
         """
-        if self.client is None:
+        if self.maxBot is None:
             raise RuntimeError("Client is not initialized")
 
-        self.handlerManager.injectMaxBot(self.client)
+        self.handlerManager.injectMaxBot(self.maxBot)
         self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # TODO: set commands
@@ -103,6 +108,38 @@ class MaxBotApplication:
         # Start the bot
         asyncio.run(self._runPolling())
 
+    async def runAsynced(self, ensuredMessage: EnsuredMessage, coroutine: Awaitable) -> None:
+        # if there are too many tasks, wait for some to discard itself
+        while len(self._tasks) > self.maxTasks:
+            logger.warning(f"There are {len(self._tasks)} active tasks, awaiting fo someone to be done...")
+            await asyncio.sleep(1)
+
+        task = asyncio.create_task(
+            self.runWithSemaphore(
+                ensuredMessage,
+                coroutine,
+            )
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def runWithSemaphore(self, ensuredMessage: EnsuredMessage, coroutine: Awaitable) -> None:
+        key = ensuredMessage.recipient.id
+        topicSemaphore = self.chatSemaphoreMap.get(key, None)
+        if not isinstance(topicSemaphore, asyncio.Semaphore):
+            topicSemaphore = asyncio.BoundedSemaphore(1)
+            self.chatSemaphoreMap[key] = topicSemaphore
+
+        async with topicSemaphore:
+            # logger.debug(f"awaiting corutine for chatId: {key}")
+            try:
+                # Each request should be processed for at most 30 minutes
+                # Just to workaround diffetent stucks in externat services\libs
+                await asyncio.wait_for(coroutine, 60 * 30)
+            except Exception as e:
+                logger.error(f"Error during awaiting coroutine for {ensuredMessage}:{coroutine}")
+                logger.exception(e)
+
     async def maxHandler(self, update: maxModels.Update) -> None:
         """Handle incoming Max Messenger updates.
 
@@ -110,15 +147,17 @@ class MaxBotApplication:
             update: Max Messenger update object
         """
         logger.debug(f"Handling Update#{update.update_type}@{update.timestamp}")
-        if self.client is None:
+        if self.maxBot is None:
             raise RuntimeError("Client is not initialized")
 
         if isinstance(update, maxModels.MessageCreatedUpdate):
             logger.debug("It's new message, processing...")
             ensuredMessage = EnsuredMessage.fromMaxMessage(update.message)
 
-            # TODO: Add some parallelism support via asyncio.task(...)
-            return await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
+            return await self.runAsynced(
+                ensuredMessage,
+                self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update),
+            )
 
         elif isinstance(update, maxModels.MessageCallbackUpdate):
             logger.debug("It's callback, processing...")
@@ -140,9 +179,11 @@ class MaxBotApplication:
                 username=update.callback.user.username or "",
             )
 
-            # TODO: self.client.answerCallbackQuery()
-            return await self.handlerManager.handleCallback(
-                ensuredMessage=ensuredMessage, data=payload, user=user, updateObj=update
+            return await self.runAsynced(
+                ensuredMessage,
+                self.handlerManager.handleCallback(
+                    ensuredMessage=ensuredMessage, data=payload, user=user, updateObj=update
+                ),
             )
 
         else:
@@ -160,15 +201,15 @@ class MaxBotApplication:
     async def _runPolling(self):
         """Run the Max Messenger bot polling loop."""
 
-        self.client = maxBot.MaxBotClient(self.botToken)
+        self.maxBot = maxBot.MaxBotClient(self.botToken)
 
         try:
-            botInfo = await self.client.getMyInfo()
+            botInfo = await self.maxBot.getMyInfo()
             logger.debug(botInfo)
 
             await self.postInit()
             logger.info("Start MAX polling....")
-            await self.client.startPolling(
+            await self.maxBot.startPolling(
                 handler=self.maxHandler,
                 types=None,
                 timeout=30,
@@ -176,10 +217,10 @@ class MaxBotApplication:
             )
 
             # TODO: Somehow allow to await it properly
-            if self.client._pollingTask is not None:
-                await self.client._pollingTask
+            if self.maxBot._pollingTask is not None:
+                await self.maxBot._pollingTask
             logger.info("After polling...")
         finally:
             logger.info("Work is done, exiting...")
             await self.postStop()
-            await self.client.aclose()
+            await self.maxBot.aclose()

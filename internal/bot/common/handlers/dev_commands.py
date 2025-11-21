@@ -413,7 +413,7 @@ class DevCommandsHandler(BaseBotHandler):
         visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         helpOrder=CommandHandlerOrder.TEST,
-        category=CommandCategory.PRIVATE,
+        category=CommandCategory.TECHNICAL,
     )
     async def test_command(
         self,
@@ -468,10 +468,18 @@ class DevCommandsHandler(BaseBotHandler):
                         messageText=f"Iteration {i}",
                         skipLogs=True,  # Do not spam logs
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                        typingManager=typingManager if i >= iterationsCount - 1 else None,
+                        typingManager=None,
                     )
                     if i < iterationsCount - 1:
                         await asyncio.sleep(delay)
+                await asyncio.sleep(0.5)
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText="Done",
+                    skipLogs=True,  # Do not spam logs
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    typingManager=typingManager,
+                )
 
             case "delayedQueue":
                 await self.sendMessage(

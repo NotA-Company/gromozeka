@@ -55,7 +55,7 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
             if update.message.is_topic_message:
                 topicId = update.message.message_thread_id
 
-        key = f"{chatId}_{topicId}"
+        key = f"{chatId}:{topicId}"
         # logger.debug(f"Processing update for chatId: {chatId}, topicId: {topicId}")
 
         topicSemaphore = self.chatTopicMap.get(key, None)

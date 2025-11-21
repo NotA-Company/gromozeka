@@ -436,9 +436,9 @@ class MediaHandler(BaseBotHandler):
             fileId: Optional[str] = None
             match parentEnsuredMessage.messageType:
                 case MessageType.IMAGE:
-                    if parentMessage.photo is None:
-                        raise ValueError("Photo is None")
-                    # TODO: Should I try to get optimal image size like in processImage()?
+                    if not parentMessage.photo:
+                        raise ValueError("Photo is empty")
+
                     fileId = parentMessage.photo[-1].file_id
                 case MessageType.STICKER:
                     if parentMessage.sticker is None:
