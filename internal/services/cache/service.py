@@ -10,6 +10,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
+from internal.models import MessageIdType
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib import utils
@@ -510,14 +511,28 @@ class CacheService:
 
     # ## ChatPersistent spamWarningMessages
 
-    def getSpamWarningMessageInfo(self, chatId: int, messageId: int) -> Optional[HCSpamWarningMessageInfo]:
-        """..."""
+    def getSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> Optional[HCSpamWarningMessageInfo]:
+        """Get spam warning message info from persistent cache.
+
+        Args:
+            chatId: The chat ID to get spam warning info for
+            messageId: The message ID to get spam warning info for
+
+        Returns:
+            The spam warning message info if found, None otherwise
+        """
         chatPCache = self.chatPersistent.get(chatId, {})
         messages = chatPCache.get("spamWarningMessages", {})
         return messages.get(messageId, None)
 
-    def addSpamWarningMessage(self, chatId: int, messageId: int, data: HCSpamWarningMessageInfo) -> None:
-        """..."""
+    def addSpamWarningMessage(self, chatId: int, messageId: MessageIdType, data: HCSpamWarningMessageInfo) -> None:
+        """Add spam warning message info to persistent cache.
+
+        Args:
+            chatId: The chat ID to add spam warning info for
+            messageId: The message ID to add spam warning info for
+            data: The spam warning message info to add
+        """
         chatPCache = self.chatPersistent.get(chatId, {})
         if "spamWarningMessages" not in chatPCache:
             chatPCache["spamWarningMessages"] = {}
@@ -528,8 +543,13 @@ class CacheService:
         self.dirtyKeys[CacheNamespace.CHAT_PERSISTENT].add(chatId)
         logger.debug(f"Updated spamWarningMessage {messageId} for {chatId}, dood!")
 
-    def removeSpamWarningMessageInfo(self, chatId: int, messageId: int) -> None:
-        """..."""
+    def removeSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> None:
+        """Remove spam warning message info from persistent cache.
+
+        Args:
+            chatId: The chat ID to remove spam warning info for
+            messageId: The message ID to remove spam warning info for
+        """
         chatPCache = self.chatPersistent.get(chatId, {})
         if "spamWarningMessages" not in chatPCache:
             return

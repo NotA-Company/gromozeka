@@ -1,14 +1,16 @@
 [bot]
+# bot mode: "telegram" or "max"
+mode = "telegram"
 # Your Telegram bot token from @BotFather
 token = "YOUR_BOT_TOKEN_HERE"
-bot_owners = ["YOUR_BOT_OWNER_USERNAME_HERE"]
+bot_owners = ["YOUR_BOT_OWNER_USERNAME_OR_USER_ID_HERE"]
 
 # Salt for signing [not]spam buttons to reject those actions on random messages
 spam-button-salt = "YOUR_SALT_HERE"
 
 [database]
 # Database configuration
-path = "bot_data.db"
+path = "storage/bot_data.db"
 # Connection pool settings
 max_connections = 5
 timeout = 30

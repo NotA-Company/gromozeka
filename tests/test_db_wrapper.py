@@ -204,7 +204,7 @@ class TestChatMessageOperations:
 
         message = inMemoryDb.getChatMessageByMessageId(sampleChatId, 300)
         assert message is not None
-        assert message["message_id"] == 300
+        assert int(message["message_id"]) == 300
         assert message["message_text"] == "Find me"
         assert message["username"] == "testuser"
 
@@ -336,7 +336,7 @@ class TestChatMessageOperations:
 
         replies = inMemoryDb.getChatMessagesByRootId(sampleChatId, rootId)
         assert len(replies) == 3
-        assert all(msg["root_message_id"] == rootId for msg in replies)
+        assert all(int(msg["root_message_id"]) == rootId for msg in replies)
 
     def testGetChatMessagesByUser(self, inMemoryDb, sampleChatId):
         """Test retrieving messages by user ID."""
@@ -742,50 +742,6 @@ class TestMediaOperations:
         """Test retrieving non-existent media returns None."""
         media = inMemoryDb.getMediaAttachment("nonexistent")
         assert media is None
-
-    def testUpdateMediaAttachment(self, inMemoryDb):
-        """Test updating a media attachment."""
-        fileUniqueId = "unique_update"
-        inMemoryDb.addMediaAttachment(
-            fileUniqueId=fileUniqueId,
-            fileId="file_update",
-            mediaType=MessageType.IMAGE,
-            status=MediaStatus.NEW,
-        )
-
-        result = inMemoryDb.updateMediaAttachment(
-            fileUniqueId=fileUniqueId,
-            status=MediaStatus.DONE,
-            description="Updated description",
-        )
-        assert result is True
-
-        media = inMemoryDb.getMediaAttachment(fileUniqueId)
-        assert media["status"] == MediaStatus.DONE
-        assert media["description"] == "Updated description"
-
-    def testUpdateMediaAttachmentMultipleFields(self, inMemoryDb):
-        """Test updating multiple fields of media attachment."""
-        fileUniqueId = "unique_multi"
-        inMemoryDb.addMediaAttachment(
-            fileUniqueId=fileUniqueId,
-            fileId="file_multi",
-            mediaType=MessageType.IMAGE,
-        )
-
-        inMemoryDb.updateMediaAttachment(
-            fileUniqueId=fileUniqueId,
-            status=MediaStatus.DONE,
-            localUrl="/new/path.jpg",
-            prompt="New prompt",
-            description="New description",
-        )
-
-        media = inMemoryDb.getMediaAttachment(fileUniqueId)
-        assert media["status"] == MediaStatus.DONE
-        assert media["local_url"] == "/new/path.jpg"
-        assert media["prompt"] == "New prompt"
-        assert media["description"] == "New description"
 
 
 # ============================================================================

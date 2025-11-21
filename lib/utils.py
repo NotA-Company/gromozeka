@@ -6,12 +6,15 @@ import datetime
 import json
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
 
 if TYPE_CHECKING:
     from telegram import Message
 
 logger = logging.getLogger(__name__)
+
+PayloadDict = Dict[str | int, str | int | float | bool | None]
 
 
 def getAgeInSecs(dt: datetime.datetime) -> float:
@@ -120,7 +123,7 @@ def jsonDumps(data: Any, compact: Optional[bool] = None, **kwargs) -> str:
 
 
 def packDict(
-    data: Dict[str | int, str | int | float | bool | None],
+    data: PayloadDict,
     kvSeparator: str = ":",
     valuesSeparator: str = ",",
     sortKeys: bool = True,
@@ -164,7 +167,7 @@ def unpackDict(
     data: str,
     kvSeparator: str = ":",
     valuesSeparator: str = ",",
-) -> Dict[str | int, str | int | float | bool | None]:
+) -> PayloadDict:
     """
     Unpack string representation back to dictionary.
 
@@ -223,7 +226,7 @@ def unpackDict(
     return result
 
 
-def dumpMessage(message: "Message") -> str:
+def dumpTelegramMessage(message: "Message") -> str:
     """
     Dump a Telegram Message object to string using original __repr__, dood!
 
@@ -324,3 +327,9 @@ def extractInt(args: Optional[Sequence[str]]) -> Optional[int]:
             pass
 
     return None
+
+
+def checkIfProperCommandName(command: str) -> bool:
+    """Check if given string is proper command name for suggestion"""
+
+    return re.match(r"^[a-z][a-z_0-9]*$", command) is not None

@@ -9,13 +9,14 @@ import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional
+from types import UnionType
+from typing import Any, Dict, List, Optional, cast
 
 import dateutil
 from telegram import Chat
 
 # Import from shared_enums to avoid circular dependency
-from internal.models import MessageType
+from internal.models import MessageIdType, MessageType
 
 from .models import (
     CacheDict,
@@ -96,6 +97,7 @@ class DatabaseWrapper:
     """
 
     def __init__(self, dbPath: str, maxConnections: int = 5, timeout: float = 30.0):
+        logger.info(f"Initializing SQLite database wrapper with path {dbPath}")
         self.dbPath = dbPath
         self.maxConnections = maxConnections
         self.timeout = timeout
@@ -199,9 +201,9 @@ class DatabaseWrapper:
                     # Keep as string if not a valid enum value
 
             # Ensure required fields are present with proper types
-            required_fields = {
+            required_fields: Dict[str, UnionType | type | tuple[type, ...]] = {
                 "chat_id": int,
-                "message_id": int,
+                "message_id": MessageIdType,
                 "date": datetime.datetime,
                 "user_id": int,
                 "thread_id": int,
@@ -223,7 +225,7 @@ class DatabaseWrapper:
                     )
 
             # Return the validated dictionary cast as ChatMessageDict
-            return row_dict  # type: ignore
+            return cast(ChatMessageDict, row_dict)
 
         except Exception as e:
             logger.error(f"Failed to validate ChatMessageDict: {e}")
@@ -593,17 +595,23 @@ class DatabaseWrapper:
         date: datetime.datetime,
         chatId: int,
         userId: int,
-        messageId: int,
-        replyId: Optional[int] = None,
+        messageId: MessageIdType,
+        replyId: Optional[MessageIdType] = None,
         threadId: Optional[int] = None,
         messageText: str = "",
         messageType: MessageType = MessageType.TEXT,
         messageCategory: MessageCategory = MessageCategory.UNSPECIFIED,
-        rootMessageId: Optional[int] = None,
+        rootMessageId: Optional[MessageIdType] = None,
         quoteText: Optional[str] = None,
         mediaId: Optional[str] = None,
     ) -> bool:
         """Save a chat message with detailed information."""
+        messageId = str(messageId)
+        if replyId is not None:
+            replyId = str(replyId)
+        if rootMessageId is not None:
+            rootMessageId = str(rootMessageId)
+
         if threadId is None:
             threadId = DEFAULT_THREAD_ID
         try:
@@ -737,9 +745,10 @@ class DatabaseWrapper:
             )
             return []
 
-    def getChatMessageByMessageId(self, chatId: int, messageId: int) -> Optional[ChatMessageDict]:
+    def getChatMessageByMessageId(self, chatId: int, messageId: MessageIdType) -> Optional[ChatMessageDict]:
         """Get a specific chat message by message_id, chat_id, and optional thread_id."""
         logger.debug(f"Getting chat message for chat {chatId}, message_id {messageId}")
+        messageId = str(messageId)
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -823,7 +832,7 @@ class DatabaseWrapper:
     def updateChatMessageCategory(
         self,
         chatId: int,
-        messageId: int,
+        messageId: MessageIdType,
         messageCategory: MessageCategory,
     ) -> bool:
         """Update the category of a chat message."""
@@ -1371,8 +1380,8 @@ class DatabaseWrapper:
         self,
         chatId: int,
         topicId: Optional[int],
-        firstMessageId: int,
-        lastMessageId: int,
+        firstMessageId: MessageIdType,
+        lastMessageId: MessageIdType,
         prompt: str,
     ) -> str:
         """Make CSID for chat summarization cache"""
@@ -1380,7 +1389,13 @@ class DatabaseWrapper:
         return f"{chatId}:{topicId}_{firstMessageId}:{lastMessageId}-{prompt}"
 
     def addChatSummarization(
-        self, chatId: int, topicId: Optional[int], firstMessageId: int, lastMessageId: int, prompt: str, summary: str
+        self,
+        chatId: int,
+        topicId: Optional[int],
+        firstMessageId: MessageIdType,
+        lastMessageId: MessageIdType,
+        prompt: str,
+        summary: str,
     ) -> bool:
         """Store chat summarization into cache"""
         csid = self._makeChatSummarizationCSID(chatId, topicId, firstMessageId, lastMessageId, prompt)
@@ -1418,8 +1433,8 @@ class DatabaseWrapper:
         self,
         chatId: int,
         topicId: Optional[int],
-        firstMessageId: int,
-        lastMessageId: int,
+        firstMessageId: MessageIdType,
+        lastMessageId: MessageIdType,
         prompt: str,
     ) -> Optional[ChatSummarizationCacheDict]:
         """Fetch chat summarization from cache by chatId, topicId, firstMessageId, lastMessageId and prompt"""
@@ -1449,6 +1464,7 @@ class DatabaseWrapper:
 
     def addMediaAttachment(
         self,
+        *,
         fileUniqueId: str,
         fileId: str,
         fileSize: Optional[int] = None,
@@ -1497,7 +1513,9 @@ class DatabaseWrapper:
 
     def updateMediaAttachment(
         self,
-        fileUniqueId: str,
+        mediaId: str,
+        *,
+        fileSize: Optional[int] = None,
         status: Optional[MediaStatus] = None,
         metadata: Optional[str] = None,
         mimeType: Optional[str] = None,
@@ -1508,7 +1526,7 @@ class DatabaseWrapper:
         """Update a media attachment in the database."""
         try:
             query = ""
-            values = {"fileUniqueId": fileUniqueId}
+            values: Dict[str, str | int] = {"fileUniqueId": mediaId}
 
             if status is not None:
                 query += "status = :status, "
@@ -1528,6 +1546,9 @@ class DatabaseWrapper:
             if prompt is not None:
                 query += "prompt = :prompt, "
                 values["prompt"] = prompt
+            if fileSize is not None:
+                query += "file_size = :fileSize, "
+                values["fileSize"] = fileSize
 
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -1546,7 +1567,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to update media attachment: {e}")
             return False
 
-    def getMediaAttachment(self, fileUniqueId: str) -> Optional[MediaAttachmentDict]:
+    def getMediaAttachment(self, mediaId: str) -> Optional[MediaAttachmentDict]:
         """Get a media attachment from the database."""
         try:
             with self.getCursor() as cursor:
@@ -1555,7 +1576,7 @@ class DatabaseWrapper:
                     SELECT * FROM media_attachments
                     WHERE file_unique_id = ?
                 """,
-                    (fileUniqueId,),
+                    (mediaId,),
                 )
 
                 row = cursor.fetchone()
@@ -1641,9 +1662,10 @@ class DatabaseWrapper:
     ###
 
     def addSpamMessage(
-        self, chatId: int, userId: int, messageId: int, messageText: str, spamReason: SpamReason, score: float
+        self, chatId: int, userId: int, messageId: MessageIdType, messageText: str, spamReason: SpamReason, score: float
     ) -> bool:
         """Add spam message to the database."""
+        messageId = str(messageId)
         try:
             with self.getCursor() as cursor:
                 cursor.execute(
@@ -1668,9 +1690,10 @@ class DatabaseWrapper:
             return False
 
     def addHamMessage(
-        self, chatId: int, userId: int, messageId: int, messageText: str, spamReason: SpamReason, score: float
+        self, chatId: int, userId: int, messageId: MessageIdType, messageText: str, spamReason: SpamReason, score: float
     ) -> bool:
         """Add ham message to the database."""
+        messageId = str(messageId)
         try:
             with self.getCursor() as cursor:
                 cursor.execute(

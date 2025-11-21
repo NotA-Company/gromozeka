@@ -6,6 +6,8 @@ import datetime
 from enum import StrEnum
 from typing import Optional, TypedDict, Union
 
+from internal.models import MessageIdType
+
 
 class MediaStatus(StrEnum):
     """
@@ -52,7 +54,7 @@ class SpamReason(StrEnum):
 class ChatMessageDict(TypedDict):
     # From chat_message table
     chat_id: int
-    message_id: int
+    message_id: MessageIdType
     date: datetime.datetime
     user_id: int
     reply_id: Optional[int]

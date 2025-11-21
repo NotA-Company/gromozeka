@@ -1,4 +1,43 @@
+# Max Support TODO:
+Adopt Handlers:
+- [x] base.py
+  - [x] Media Download support
+  - [x] Media Upload support
+  - [x] Proper message sending support
+  - [x] Typing action support
+  - [x] Chat Info handling support
+  - [x] Admins support
+  - [x] BotOwner By ID support
+- [x] common.py
+- [x] configure.py
+- [x] dev_commands.py
+- [x] example.py
+- [x] help_command.py
+- [x] llm_messages.py
+- [x] manager.py
+- [x] media.py
+- [x] message_preprocessor.py
+- [x] react_on_user.py
+- [x] spam.py (Entities parsing)
+- [x] summarization.py
+- [x] user_data.py
+- [x] weather.py
+- [x] yandex_search.py
+
+- [x] Keyboard+Callback support
+- [x] Fix docstrings
+- [x] Drop dataclasses
+- [x] review models
+
+- [x] Telegram: new callback schema support
+- [x] Review and rewrite or delete models.markup.py
+
 # Our TODO list
+- [ ] ensuredMessage: support miltiple media
+- [ ] instead of background tasks, use set like in `internal/bot/max/application.py`
+- [x] General framework above Telegram and Max
+- [ ] Add ENV\.env support in config secrets
+- [ ] ConfigManager: Use TypedDict's
 - [ ] Save info about used tools to put it into context
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
 - [ ] Add ability for different chats use different rate-limiters 

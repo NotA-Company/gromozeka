@@ -13,7 +13,8 @@ import os
 import sys
 from typing import List, Optional
 
-from internal.bot.application import BotApplication
+from internal.bot.max.application import MaxBotApplication
+from internal.bot.telegram.application import TelegramBotApplication
 from internal.config.manager import ConfigManager
 from internal.database.manager import DatabaseManager
 from lib.ai.manager import LLMManager
@@ -49,12 +50,26 @@ class GromozekBot:
         asyncio.run(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
         # Initialize bot application
-        self.botApp = BotApplication(
-            configManager=self.configManager,
-            botToken=self.configManager.getBotToken(),
-            database=self.database_manager.getDatabase(),
-            llmManager=self.llmManager,
-        )
+        botConfig = self.configManager.getBotConfig()
+        self.botMode = botConfig.get("mode", "telegram")
+
+        match self.botMode:
+            case "telegram":
+                self.botApp = TelegramBotApplication(
+                    configManager=self.configManager,
+                    botToken=self.configManager.getBotToken(),
+                    database=self.database_manager.getDatabase(),
+                    llmManager=self.llmManager,
+                )
+            case "max":
+                self.botApp = MaxBotApplication(
+                    configManager=self.configManager,
+                    botToken=self.configManager.getBotToken(),
+                    database=self.database_manager.getDatabase(),
+                    llmManager=self.llmManager,
+                )
+            case _:
+                raise ValueError(f"Unknown bot mode: {self.botMode}")
 
     def run(self):
         """Start the bot."""

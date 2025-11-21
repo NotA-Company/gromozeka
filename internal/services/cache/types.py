@@ -6,6 +6,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypeAlias, TypedDict
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
+from internal.models import MessageIdType
+from lib import utils
 
 if TYPE_CHECKING:
     from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
@@ -14,8 +16,8 @@ if TYPE_CHECKING:
 class HCSpamWarningMessageInfo(TypedDict):
     """Spam warning message metadata, dood."""
 
-    # messageId: int
-    parentMessageId: NotRequired[Optional[int]]
+    # messageId: MessageIdType
+    parentMessageId: NotRequired[Optional[MessageIdType]]
     userId: int
     username: str
     ts: float
@@ -24,7 +26,7 @@ class HCSpamWarningMessageInfo(TypedDict):
 class HCChatPersistentCacheDict(TypedDict):
     """Persistent chat cache data, dood."""
 
-    spamWarningMessages: NotRequired[Dict[int, HCSpamWarningMessageInfo]]
+    spamWarningMessages: NotRequired[Dict[MessageIdType, HCSpamWarningMessageInfo]]
 
 
 class HCChatAdminsDict(TypedDict):
@@ -65,8 +67,9 @@ class UserActiveActionEnum(StrEnum):
 
 class UserActiveConfigurationDict(TypedDict):
 
-    data: Dict[str | int, Any]
-    messageId: int
+    data: utils.PayloadDict
+    messageId: MessageIdType
+    messageChatId: int
 
 
 class HCUserCacheDict(TypedDict):

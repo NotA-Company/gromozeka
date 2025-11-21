@@ -1,17 +1,14 @@
 """
 Telegram Message Processing and Validation Module, dood!
 
-This module provides robust wrappers and utilities for processing Telegram messages,
-ensuring all essential attributes are present and properly formatted for downstream
-processing, especially for LLM interactions and database storage, dood.
+Provides wrappers and utilities for processing Telegram messages, ensuring essential
+attributes are present and properly formatted for downstream processing, especially
+for LLM interactions and database storage.
 
 Key Components:
     - MessageSender: Encapsulates sender information (user or chat)
     - MentionCheckResult: Stores results of bot mention detection
     - EnsuredMessage: Main wrapper class for Telegram messages with validation
-
-The module handles various message types (text, media, replies, quotes, topics)
-and provides formatting utilities for AI model consumption, dood.
 
 Constants:
     MAX_MEDIA_AWAIT_SECS: Maximum time to wait for media processing (300 seconds)
@@ -23,17 +20,20 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from enum import StrEnum
+from typing import Any, Dict, Optional, Sequence, Tuple
 
+import telegram
 import telegram.constants
-from telegram import Chat, Message, User
 
+import lib.max_bot as maxBot
+import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.database.wrapper import DatabaseWrapper
+from internal.models import MessageIdType, MessageType
 from lib.ai.models import ModelMessage
 
-from ...models import MessageType
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
 
@@ -44,13 +44,107 @@ MEDIA_AWAIT_DELAY = 2.5
 WORD_BREAKERS = ' \t\n\r\f\v.,;:?!…()[]{}<>«»„“”‘’"-–—+=×*÷=<>=≠≤≥%&|\\/@#$№©™®_.'  # Provided By Alice
 
 
+class ChatType(StrEnum):
+
+    PRIVATE = "private"
+    GROUP = "group"
+    CHANNEL = "channel"
+
+
+class MessageRecipient:
+    """
+    Represents the recipient of a message, dood!
+
+    Encapsulates information about where a message was sent, including the chat ID
+    and type (private, group, or channel). Uses __slots__ for memory efficiency.
+
+    Attributes:
+        id (int): Unique identifier of the chat
+        chatType (ChatType): Type of chat (PRIVATE, GROUP, or CHANNEL)
+    """
+
+    __slots__ = ("id", "chatType")
+
+    def __init__(self, id: int, chatType: ChatType) -> None:
+        """
+        Initialize a MessageRecipient instance, dood!
+
+        Args:
+            id: Unique identifier of the chat
+            chatType: Type of chat (PRIVATE, GROUP, or CHANNEL)
+        """
+        self.id = id
+        self.chatType = chatType
+
+    def __str__(self) -> str:
+        """
+        Return a string representation of the recipient, dood!
+
+        Returns:
+            Formatted string: "chatType#id"
+        """
+        return f"{self.chatType.value}#{self.id}"
+
+    @classmethod
+    def fromTelegramChat(cls, chat: telegram.Chat) -> "MessageRecipient":
+        """
+        Create a MessageRecipient from a Telegram Chat object, dood!
+
+        Args:
+            chat: Telegram Chat object containing chat information
+
+        Returns:
+            MessageRecipient instance populated with chat data
+        """
+        chatType: ChatType = ChatType.GROUP
+        match chat.type:
+            case telegram.constants.ChatType.SENDER | telegram.constants.ChatType.PRIVATE:
+                chatType = ChatType.PRIVATE
+            case telegram.constants.ChatType.GROUP | telegram.constants.ChatType.SUPERGROUP:
+                chatType = ChatType.GROUP
+            case telegram.constants.ChatType.CHANNEL:
+                chatType = ChatType.CHANNEL
+            case _:
+                logger.warning(f"Unsupported chat type: {chat.type}")
+
+        return cls(chat.id, chatType)
+
+    @classmethod
+    def fromMaxRecipient(cls, recipient: maxModels.Recipient) -> "MessageRecipient":
+        """
+        Create a MessageRecipient from a Max Messenger Recipient object, dood!
+
+        Args:
+            recipient: Max Messenger Recipient object containing recipient information
+
+        Returns:
+            MessageRecipient instance populated with recipient data
+        """
+        chatType: ChatType = ChatType.GROUP
+        match recipient.chat_type:
+            case maxModels.ChatType.DIALOG:
+                chatType = ChatType.PRIVATE
+            case maxModels.ChatType.CHAT:
+                chatType = ChatType.GROUP
+            case maxModels.ChatType.CHANNEL:
+                chatType = ChatType.CHANNEL
+            case _:
+                logger.warning(f"Unsupported chat type: {recipient.chat_type}")
+
+        recipientId = recipient.chat_id
+        if recipientId is None:
+            logger.error(f"Recipient ID is None: {recipient}")
+            recipientId = 0
+
+        return cls(recipientId, chatType)
+
+
 class MessageSender:
     """
     Encapsulates sender information for a message, dood!
 
-    This class stores essential sender details (ID, name, username) and provides
-    factory methods to create instances from Telegram User or Chat objects.
-    Uses __slots__ for memory efficiency, dood.
+    Stores essential sender details (ID, name, username) and provides factory methods
+    to create instances from Telegram User or Chat objects. Uses __slots__ for memory efficiency.
 
     Attributes:
         id (int): Unique identifier of the sender (user ID or chat ID)
@@ -92,7 +186,7 @@ class MessageSender:
         return MessageSender(self.id, self.name, self.username)
 
     @classmethod
-    def fromUser(cls, user: User) -> "MessageSender":
+    def fromTelegramUser(cls, user: telegram.User) -> "MessageSender":
         """
         Create a MessageSender from a Telegram User object, dood!
 
@@ -105,7 +199,7 @@ class MessageSender:
         return cls(user.id, user.full_name, user.name)
 
     @classmethod
-    def fromChat(cls, chat: Chat) -> "MessageSender":
+    def fromTelegramChat(cls, chat: telegram.Chat) -> "MessageSender":
         """
         Create a MessageSender from a Telegram Chat object, dood!
 
@@ -118,15 +212,32 @@ class MessageSender:
         """
         return cls(chat.id, chat.effective_name or "", f"@{chat.username}" if chat.username else "")
 
+    @classmethod
+    def fromMaxUser(cls, sender: maxModels.User) -> "MessageSender":
+        """
+        Create a MessageSender from a Max Messenger User object, dood!
+
+        Args:
+            sender: Max Messenger User object containing user information
+
+        Returns:
+            MessageSender instance populated with user data.
+            Username is prefixed with @ if available, dood.
+        """
+        full_name = sender.first_name
+        if sender.last_name:
+            full_name += " " + sender.last_name
+        return cls(sender.user_id, full_name.strip(), f"@{sender.username}" if sender.username else "")
+
 
 @dataclass
 class MentionCheckResult:
     """
     Stores the results of bot mention detection in a message, dood!
 
-    This dataclass holds information about where and how a bot was mentioned
-    in a message, including positions of mentions by nickname or username,
-    and the remaining text after mention removal.
+    Holds information about where and how a bot was mentioned in a message,
+    including positions of mentions by nickname or username, and the remaining
+    text after mention removal.
 
     Attributes:
         byNick: Tuple of (start_pos, end_pos) if bot was mentioned by custom nickname.
@@ -147,24 +258,23 @@ class EnsuredMessage:
     """
     Wrapper class that ensures presence of essential Telegram message attributes, dood!
 
-    This class processes Telegram Message objects or database chat messages, extracting
-    and validating key information such as user, chat, message text, reply information,
-    quote information, topic-related data, and media content. It provides methods for
-    LLM formatting, media processing, and conversion to model messages for AI interactions.
+    Processes Telegram Message objects or database chat messages, extracting and validating
+    key information such as sender, recipient, message text, reply information, quote
+    information, topic-related data, and media content. Provides methods for LLM formatting,
+    media processing, and conversion to model messages for AI interactions.
 
-    The class handles various message types (text, images, videos, audio, documents, etc.)
-    and provides robust mention detection and media content processing capabilities, dood.
+    Handles various message types (text, images, videos, audio, documents, etc.) and provides
+    robust mention detection and media content processing capabilities.
 
     Attributes:
-        user (User): The user who sent the message
-        chat (Chat): The chat the message belongs to
         sender (MessageSender): The sender information (user or chat)
-        messageId (int): The unique identifier of the message
+        recipient (MessageRecipient): The recipient information (chat)
+        messageId (MessageIdType): The unique identifier of the message
         date (datetime.datetime): The date and time when the message was sent
         messageText (str): The text of the message, or empty string if not present
         messageType (MessageType): The type of the message (TEXT, IMAGE, VIDEO, AUDIO, etc.)
         isReply (bool): Indicates if the message is a reply
-        replyId (Optional[int]): The ID of the message being replied to, if applicable
+        replyId (Optional[MessageIdType]): The ID of the message being replied to, if applicable
         replyText (Optional[str]): The text of the message being replied to, if applicable
         isQuote (bool): Indicates if the message contains a quote
         quoteText (Optional[str]): The quoted text content, if applicable
@@ -173,35 +283,12 @@ class EnsuredMessage:
         mediaId (Optional[str]): Unique identifier for media attachments
         mediaContent (Optional[str]): Description of media content, if applicable
         userData (Optional[Dict[str, Any]]): Additional user data associated with the message
-
-    Class Methods:
-        fromMessage: Creates EnsuredMessage from a Telegram Message object
-        fromDBChatMessage: Creates EnsuredMessage from a database ChatMessageDict
-
-    Methods:
-        getBaseMessage: Returns the original Message object
-        setBaseMessage: Sets the original Message object
-        setUserData: Sets additional user data for the message
-        setMediaId: Sets the media identifier
-        setMediaProcessingInfo: Sets media processing information
-        updateMediaContent: Updates media content from database (async)
-        formatForLLM: Formats the message for LLM consumption in JSON or TEXT format (async)
-        toModelMessage: Converts to ModelMessage for AI model interactions (async)
-        setSender: Sets the sender information from User, Chat, or MessageSender
-        checkHasMention: Checks if the message contains bot mentions
-        clearMentionCheckResult: Clears cached mention check results
-        __str__: Returns a JSON string representation of the message's key attributes
-
-    Raises:
-        ValueError: If the message's user or chat information is missing, or if invalid
-                   sender type is provided, dood.
     """
 
     __slots__ = (
         "_message",
-        "user",
-        "chat",
         "sender",
+        "recipient",
         "messageId",
         "date",
         "messageText",
@@ -217,15 +304,16 @@ class EnsuredMessage:
         "mediaId",
         "_mediaProcessingInfo",
         "userData",
-        "_rawMessageText",
+        "_parsedMessageText",
         "_mentionCheckResult",
     )
 
     def __init__(
         self,
-        user: User,
-        chat: Chat,
-        messageId: int,
+        *,
+        sender: MessageSender,
+        recipient: MessageRecipient,
+        messageId: MessageIdType,
         date: datetime.datetime,
         messageText: str = "",
         messageType: MessageType = MessageType.UNKNOWN,
@@ -234,27 +322,26 @@ class EnsuredMessage:
         Initialize an EnsuredMessage instance, dood!
 
         Args:
-            user: The Telegram User who sent the message
-            chat: The Telegram Chat where the message was sent
+            sender: The MessageSender who sent the message
+            recipient: The MessageRecipient where the message was sent
             messageId: Unique identifier for the message
             date: Timestamp when the message was sent
             messageText: The text content of the message (default: empty string)
             messageType: The type of message (default: MessageType.UNKNOWN)
         """
-        self._message: Optional[Message] = None
+        self._message: Optional[telegram.Message | maxModels.Message] = None
 
-        self.user: User = user
-        self.chat: Chat = chat
-        self.sender: MessageSender = MessageSender.fromUser(user)
+        self.sender: MessageSender = sender
+        self.recipient: MessageRecipient = recipient
 
-        self.messageId: int = messageId
+        self.messageId: MessageIdType = messageId
         self.date: datetime.datetime = date
         self.messageText: str = messageText
-        self._rawMessageText: str = messageText  # Message text without any formating
+        self._parsedMessageText: str = messageText  # Message text unparsed into Markdown\MarkdownV2
         self.messageType: MessageType = messageType
 
         # If this is reply, then set replyId and replyText
-        self.replyId: Optional[int] = None
+        self.replyId: Optional[MessageIdType] = None
         self.replyText: Optional[str] = None
         self.isReply: bool = False
         self.isQuote: bool = False
@@ -272,14 +359,104 @@ class EnsuredMessage:
         self._mentionCheckResult: Optional[MentionCheckResult] = None
 
     @classmethod
-    def fromMessage(cls, message: Message) -> "EnsuredMessage":
+    def fromMaxMessage(cls, message: maxModels.Message) -> "EnsuredMessage":
+        """
+        Create an EnsuredMessage from a Max Messenger Message object, dood!
+
+        Factory method that extracts all relevant information from a Max Messenger Message,
+        including text, media type, and reply information. Handles various message types
+        (text, images, videos, audio, documents, etc.) and properly sets up all attributes.
+
+        Args:
+            message: The Max Messenger Message object to process
+
+        Returns:
+            A fully initialized EnsuredMessage instance with all extracted data
+        """
+
+        messageText: str = ""
+        messageType: MessageType = MessageType.TEXT
+        parsedMessageText: str = ""  # Message text parsed to Markdown
+        if message.body.text:
+            # TODO: think about parsing Entities to Markdown, but without escaping
+            # messageText = message.text_markdown_v2
+            messageText = message.body.text
+            parsedMessageText = message.body.text
+        elif message.link and message.link.type == maxModels.MessageLinkType.FORWARD and message.link.message.text:
+            # TODO: Add originalAuthor info
+            messageText = message.link.message.text
+            parsedMessageText = message.link.message.text
+            # It's forward, get text from forward
+
+        if message.body.attachments:
+            match message.body.attachments[0].type:
+                case maxModels.AttachmentType.IMAGE:
+                    messageType = MessageType.IMAGE
+                case maxModels.AttachmentType.VIDEO:
+                    messageType = MessageType.VIDEO
+                case maxModels.AttachmentType.AUDIO:
+                    messageType = MessageType.AUDIO
+                case maxModels.AttachmentType.FILE:
+                    messageType = MessageType.DOCUMENT
+                case maxModels.AttachmentType.STICKER:
+                    messageType = MessageType.STICKER
+                # case maxModels.AttachmentType.CONTACT:
+                #     messageType = MessageType.UNKNOWN
+                # case maxModels.AttachmentType.INLINE_KEYBOARD:
+                #     messageType = MessageType.UNKNOWN
+                # case maxModels.AttachmentType.SHARE:
+                #     messageType = MessageType.UNKNOWN
+                # case maxModels.AttachmentType.LOCATION:
+                #     messageType = MessageType.UNKNOWN
+                # case maxModels.AttachmentType.REPLY_KEYBOARD:
+                #     messageType = MessageType.UNKNOWN
+                case maxModels.AttachmentType.DATA:
+                    messageType = MessageType.DOCUMENT
+                # case _:
+                #     messageType = MessageType.UNKNOWN
+
+        if messageType == MessageType.TEXT:
+            if not messageText:
+                # Probably not a text message, just log it for now
+                logger.error(f"Message text undefined: {message}")
+                messageType = MessageType.UNKNOWN
+
+        ensuredMessage = EnsuredMessage(
+            sender=MessageSender.fromMaxUser(message.sender),
+            recipient=MessageRecipient.fromMaxRecipient(message.recipient),
+            messageId=message.body.mid,
+            date=datetime.datetime.fromtimestamp(message.timestamp / 1000, datetime.timezone.utc),
+            messageText=messageText,
+            messageType=messageType,
+        )
+        ensuredMessage.setBaseMessage(message)
+        ensuredMessage.setParsedMessageText(parsedMessageText)
+
+        # If this is reply, then set replyId and replyText
+        if message.link and message.link.type == maxModels.MessageLinkType.REPLY:
+            # If reply_to_message is message about creating topic, then it isn't reply
+            repliedMessage = message.link.message
+            ensuredMessage.replyId = repliedMessage.mid
+            ensuredMessage.isReply = True
+            if repliedMessage.text:
+                ensuredMessage.replyText = repliedMessage.text  # TODO: Parse markup
+
+        # NOTE: No Quote support in Max
+
+        # NOTE: No Topics support in Max
+
+        logger.debug(f"Ensured Message from Max: {ensuredMessage}")
+        return ensuredMessage
+
+    @classmethod
+    def fromTelegramMessage(cls, message: telegram.Message) -> "EnsuredMessage":
         """
         Create an EnsuredMessage from a Telegram Message object, dood!
 
-        This factory method extracts all relevant information from a Telegram Message,
+        Factory method that extracts all relevant information from a Telegram Message,
         including text, media type, reply information, quotes, and topic data.
-        It handles various message types (text, photo, video, audio, documents, etc.)
-        and properly sets up all attributes, dood.
+        Handles various message types (text, photo, video, audio, documents, etc.)
+        and properly sets up all attributes.
 
         Args:
             message: The Telegram Message object to process
@@ -298,16 +475,16 @@ class EnsuredMessage:
 
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
-        rawMessageText: str = ""  # Message text without any formating
+        parsedMessageText: str = ""  # Message text parsed to MarkdownV2
         if message.text:
             # TODO: think about parsing Entities to Markdown, but without escaping
             # messageText = message.text_markdown_v2
             messageText = message.text
-            rawMessageText = message.text
+            parsedMessageText = message.text
         elif message.caption:
             # messageText = message.caption_markdown_v2
             messageText = message.caption
-            rawMessageText = message.caption
+            parsedMessageText = message.caption
 
         # If there are photo in message, set proper type + handle caption (if any) as messageText
         if message.photo:
@@ -381,16 +558,22 @@ class EnsuredMessage:
                 logger.error(f"Message text undefined: {message}")
                 messageType = MessageType.UNKNOWN
 
+        sender: Optional[MessageSender] = None
+        if message.sender_chat:
+            sender = MessageSender.fromTelegramChat(message.sender_chat)
+        else:
+            sender = MessageSender.fromTelegramUser(message.from_user)
+
         ensuredMessage = EnsuredMessage(
-            user=message.from_user,
-            chat=message.chat,
+            sender=sender,
+            recipient=MessageRecipient.fromTelegramChat(message.chat),
             messageId=message.message_id,
             date=message.date,
             messageText=messageText,
             messageType=messageType,
         )
         ensuredMessage.setBaseMessage(message)
-        ensuredMessage.setRawMessageText(rawMessageText)
+        ensuredMessage.setParsedMessageText(parsedMessageText)
 
         # If this is reply, then set replyId and replyText
         if message.reply_to_message:
@@ -412,11 +595,6 @@ class EnsuredMessage:
             ensuredMessage.isTopicMessage = True
             ensuredMessage.threadId = message.message_thread_id
 
-        if message.sender_chat:
-            ensuredMessage.setSender(message.sender_chat)
-        else:
-            ensuredMessage.setSender(message.from_user)
-
         logger.debug(f"Ensured Message from Telegram: {ensuredMessage}")
         return ensuredMessage
 
@@ -425,9 +603,9 @@ class EnsuredMessage:
         """
         Create an EnsuredMessage from a database ChatMessageDict, dood!
 
-        This factory method reconstructs an EnsuredMessage from database-stored
+        Factory method that reconstructs an EnsuredMessage from database-stored
         message data, including all metadata like replies, quotes, topics, and
-        media information, dood.
+        media information.
 
         Args:
             data: Dictionary containing chat message data from the database
@@ -436,18 +614,14 @@ class EnsuredMessage:
             A fully initialized EnsuredMessage instance populated with database data
         """
         ensuredMessage = EnsuredMessage(
-            user=User(
-                id=data["user_id"],
-                first_name=data["full_name"],
-                is_bot=data["message_category"] == "bot",
-                username=data["username"].lstrip("@"),
-            ),
-            chat=Chat(
-                id=data["chat_id"],
-                type=(
-                    telegram.constants.ChatType.PRIVATE
-                    if data["user_id"] == data["chat_id"]
-                    else telegram.constants.ChatType.SUPERGROUP
+            sender=MessageSender(id=data["user_id"], name=data["full_name"], username=data["username"]),
+            recipient=MessageRecipient(
+                data["chat_id"],
+                chatType=(
+                    # TODO: Think about fetching real chat type from DB
+                    ChatType.PRIVATE
+                    if data["chat_id"] > 0
+                    else ChatType.GROUP
                 ),
             ),
             messageId=data["message_id"],
@@ -484,7 +658,7 @@ class EnsuredMessage:
         """
         self.userData = userData.copy()
 
-    def getBaseMessage(self) -> Message:
+    def getBaseMessage(self) -> telegram.Message | maxModels.Message:
         """
         Get the original Telegram Message object, dood!
 
@@ -498,7 +672,7 @@ class EnsuredMessage:
             raise ValueError("Message is not set")
         return self._message
 
-    def setBaseMessage(self, message: Message):
+    def setBaseMessage(self, message: telegram.Message | maxModels.Message):
         """
         Set the original Telegram Message object, dood!
 
@@ -507,23 +681,23 @@ class EnsuredMessage:
         """
         self._message = message
 
-    def setRawMessageText(self, rawMessageText: str):
+    def setParsedMessageText(self, rawMessageText: str):
         """
         Set the raw message text without any formatting, dood!
 
         Args:
             rawMessageText: The unformatted message text
         """
-        self._rawMessageText = rawMessageText
+        self._parsedMessageText = rawMessageText
 
-    def getRawMessageText(self) -> str:
+    def getParsedMessageText(self) -> str:
         """
         Get the raw message text without any formatting, dood!
 
         Returns:
             The unformatted message text
         """
-        return self._rawMessageText
+        return self._parsedMessageText
 
     def setMediaId(self, mediaId: str):
         """
@@ -534,7 +708,7 @@ class EnsuredMessage:
         """
         self.mediaId = mediaId
 
-    def setMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
+    def addMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
         """
         Set media processing information and extract media ID, dood!
 
@@ -570,9 +744,8 @@ class EnsuredMessage:
         """
         Wait for media processing to complete and retrieve media attachment, dood!
 
-        This method polls the database for media attachment status, waiting up to
-        MAX_MEDIA_AWAIT_SECS for processing to complete. It handles PENDING and
-        DONE statuses appropriately, dood.
+        Polls the database for media attachment status, waiting up to MAX_MEDIA_AWAIT_SECS
+        for processing to complete. Handles PENDING and DONE statuses appropriately.
 
         Args:
             db: Database wrapper instance for accessing media attachments
@@ -629,9 +802,9 @@ class EnsuredMessage:
         """
         Format the message for LLM consumption, dood!
 
-        This method converts the message into a format suitable for AI model processing,
-        supporting both JSON and TEXT formats. It includes media descriptions, quotes,
-        and user data when available, dood.
+        Converts the message into a format suitable for AI model processing,
+        supporting both JSON and TEXT formats. Includes media descriptions, quotes,
+        and user data when available.
 
         Args:
             db: Database wrapper for accessing media content
@@ -648,29 +821,28 @@ class EnsuredMessage:
         await self.updateMediaContent(db)
 
         messageText = self.messageText if replaceMessageText is None else replaceMessageText
-        userName = self.user.name
+        userName = self.sender.username
         if stripAtsign:
             userName = userName.lstrip("@")
         match format:
             case LLMMessageFormat.JSON:
+                # Drop empty-values to save context
                 ret = {
-                    "login": userName,
-                    "name": self.user.full_name,
-                    "date": self.date.isoformat(),
-                    "messageId": self.messageId,
-                    "type": str(self.messageType),
-                    "text": messageText,
+                    k: v
+                    for k, v in {
+                        "login": userName,
+                        "name": self.sender.name,
+                        "date": self.date.isoformat(),
+                        "messageId": self.messageId,
+                        "type": str(self.messageType),
+                        "text": messageText,
+                        "replyId": self.replyId,
+                        "quote": self.quoteText if self.isQuote else None,
+                        "mediaDescription": self.mediaContent,
+                        "userData": self.userData,
+                    }.items()
+                    if v
                 }
-                if self.replyId:
-                    ret["replyId"] = self.replyId
-                if self.isQuote and self.quoteText:
-                    ret["quote"] = self.quoteText
-
-                if self.mediaContent:
-                    ret["mediaDescription"] = self.mediaContent
-
-                if self.userData:
-                    ret["userData"] = self.userData
 
                 # logger.debug(f"EM.formatForLLM():{self} -> {ret}")
                 return utils.jsonDumps(ret, compact=False)
@@ -699,10 +871,10 @@ class EnsuredMessage:
         """
         Convert the message to a ModelMessage for AI model interactions, dood!
 
-        This method creates a ModelMessage object suitable for passing to AI models,
+        Creates a ModelMessage object suitable for passing to AI models,
         with the message content formatted according to the specified format.
         Supports SMART format which automatically chooses JSON for user messages
-        and TEXT for other roles, dood.
+        and TEXT for other roles.
 
         Args:
             db: Database wrapper for accessing media content
@@ -715,10 +887,13 @@ class EnsuredMessage:
             ModelMessage object ready for AI model consumption, dood.
         """
         if format == LLMMessageFormat.SMART:
-            if role == "user":
-                format = LLMMessageFormat.JSON
-            else:
+            if role == "assistant":
+                # It's better to use TEXT format for assistant messages
+                # To not show LLM that it should respond in JSON format
                 format = LLMMessageFormat.TEXT
+            else:
+                format = LLMMessageFormat.JSON
+
         return ModelMessage(
             role=role,
             content=await self.formatForLLM(
@@ -732,7 +907,7 @@ class EnsuredMessage:
 
         Creates a comprehensive JSON representation including all key attributes,
         with truncation of long text fields for readability. Omits None values
-        from the output, dood.
+        from the output.
 
         Returns:
             JSON-formatted string representation of the message
@@ -745,7 +920,7 @@ class EnsuredMessage:
             quoteText = f"{quoteText[:25]}...({len(quoteText)})"
         ret = {
             "sender": self.sender,
-            "chat.id": self.chat.id,
+            "recipient": self.recipient,
             "messageId": self.messageId,
             "date": self.date.isoformat(),
             "messageType": self.messageType,
@@ -766,28 +941,6 @@ class EnsuredMessage:
                 ret.pop(key, None)
         return utils.jsonDumps(ret, compact=False, sort_keys=False)
 
-    def setSender(self, sender: Union[User, Chat, MessageSender]):
-        """
-        Set the sender information from User, Chat, or MessageSender, dood!
-
-        This method accepts different types of sender objects and converts them
-        to a MessageSender instance, creating a copy to avoid external modifications.
-
-        Args:
-            sender: The sender object (User, Chat, or MessageSender)
-
-        Raises:
-            ValueError: If an invalid sender type is provided, dood.
-        """
-        if isinstance(sender, User):
-            self.sender = MessageSender.fromUser(sender)
-        elif isinstance(sender, Chat):
-            self.sender = MessageSender.fromChat(sender)
-        elif isinstance(sender, MessageSender):
-            self.sender = sender.copy()
-        else:
-            raise ValueError(f"Invalid sender type: {type(sender)}")
-
     def clearMentionCheckResult(self) -> None:
         """
         Clear the cached mention check result, dood!
@@ -801,10 +954,9 @@ class EnsuredMessage:
         """
         Check if the message contains bot mentions by username or custom nicknames, dood!
 
-        This method searches for bot mentions in the message text, checking both
-        the bot's username and custom mention strings. Results are cached for
-        efficiency. The method handles mention stripping and returns the remaining
-        text after mention removal, dood.
+        Searches for bot mentions in the message text, checking both the bot's username
+        and custom mention strings. Results are cached for efficiency. Handles mention
+        stripping and returns the remaining text after mention removal.
 
         Args:
             username: The bot's username to check for (without @), can be None
@@ -823,7 +975,7 @@ class EnsuredMessage:
         if not customMentions:
             logger.error("No custom mentions found")
 
-        messageText = self._rawMessageText
+        messageText = self._parsedMessageText
         messageTextLower = messageText.lower()
         offset = 0
 
@@ -883,3 +1035,58 @@ class EnsuredMessage:
 
         self._mentionCheckResult = ret
         return ret
+
+    def getEnsuredRepliedToMessage(self) -> Optional["EnsuredMessage"]:
+        """
+        Get the message that this message is replying to, dood.
+
+        Returns:
+            EnsuredMessage object if this message is a reply, dood. None otherwise.
+        """
+        if not self.isReply:
+            return None
+        if self._message is None:
+            logger.error("getEnsuredRepliedToMessage(): message is None")
+            return None
+
+        message = self.getBaseMessage()
+        if isinstance(message, telegram.Message):
+            if not message.reply_to_message:
+                logger.error(
+                    "getEnsuredRepliedToMessage(): message.reply_to_message is None, but should be telegram Message()"
+                )
+                return None
+            return EnsuredMessage.fromTelegramMessage(message.reply_to_message)
+        elif isinstance(message, maxModels.Message):
+            linkedMessage = maxBot.MessageLinkToMessage(message)
+            if linkedMessage is None:
+                logger.error("getEnsuredRepliedToMessage(): message.link is None, but should be max Message()")
+                return None
+            return EnsuredMessage.fromMaxMessage(linkedMessage)
+
+        logger.error(f"getEnsuredRepliedToMessage(): message has unexpected type: {type(message)}")
+        return None
+
+    def toTelegramMessage(self) -> telegram.Message:
+        """
+        Convert this EnsuredMessage to a Telegram Message object, dood!
+
+        Creates a Telegram Message object from the EnsuredMessage data,
+        which can be useful for compatibility with Telegram-specific APIs.
+
+        Returns:
+            A Telegram Message object with the same data as this EnsuredMessage
+        """
+        return telegram.Message(
+            message_id=int(self.messageId),
+            date=self.date,
+            chat=telegram.Chat(
+                id=self.recipient.id,
+                type=telegram.Chat.PRIVATE if self.recipient.chatType == ChatType.PRIVATE else telegram.Chat.SUPERGROUP,
+            ),
+            from_user=telegram.User(
+                id=self.sender.id, first_name=self.sender.name, username=self.sender.username, is_bot=False
+            ),
+            text=self.messageText,
+            message_thread_id=self.threadId,
+        )
