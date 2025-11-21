@@ -23,6 +23,7 @@ import telegram
 from telegram._utils.entities import parse_message_entity
 from telegram.constants import MessageEntityType
 
+import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.models import (
@@ -292,7 +293,7 @@ class SpamHandler(BaseBotHandler):
             logger.info(f"SPAM: Found {len(sameSpamMessages)} spam messages, so deciding, that it is SPAM")
             spamScore = max(spamScore, 100)
 
-        # TODO: Entities Parsing is supported for TelegramOnly for now
+        # Parse entities
         if isinstance(message, telegram.Message):
             messageText = ensuredMessage.messageText
             entities = message.entities
@@ -329,6 +330,37 @@ class SpamHandler(BaseBotHandler):
                                         f"SPAM: Found mention of bot ({mentionStr}) in message, "
                                         "adding 40 more to spam score"
                                     )
+        elif isinstance(message, maxModels.Message):
+            entities = message.body.markup
+            messageText = ensuredMessage.messageText
+            if messageText and entities:
+                for entity in entities:
+                    match entity.type:
+                        case maxModels.MarkupType.LINK:
+                            # Any URL looks like a spam
+                            spamScore = spamScore + 60
+                            logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
+                        case maxModels.MarkupType.USER_MENTION:
+                            if isinstance(entity, maxModels.UserMentionMarkup):
+                                username = entity.user_link
+                                # userId = entity.user_id
+                                if username:
+                                    chatUser = self.db.getChatUserByUsername(
+                                        chatId=ensuredMessage.recipient.id, username=username
+                                    )
+                                    if chatUser is None:
+                                        # Mentioning user not from chat looks like spam
+                                        spamScore = spamScore + 60
+                                        logger.debug(
+                                            f"SPAM: Found mention ({username}) in message, adding 60 to spam score"
+                                        )
+                                        if username.endswith("bot"):
+                                            spamScore = spamScore + 40
+                                            logger.debug(
+                                                f"SPAM: Found mention of bot ({username}) in message, "
+                                                "adding 40 more to spam score"
+                                            )
+        # End of entities parsing
 
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
         banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
