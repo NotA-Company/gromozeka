@@ -133,12 +133,12 @@ class CacheService:
             # Initialize namespaces with LRU caches
             self._caches: Dict[
                 CacheNamespace,
-                LRUCache[int, HCChatCacheDict]
+                LRUCache[int | str, HCChatCacheDict]
                 | LRUCache[str, HCChatUserCacheDict]
                 | LRUCache[int, HCUserCacheDict]
                 | LRUCache[int, HCChatPersistentCacheDict],
             ] = {
-                CacheNamespace.CHATS: LRUCache[int, HCChatCacheDict](self.maxCacheSize),
+                CacheNamespace.CHATS: LRUCache[int | str, HCChatCacheDict](self.maxCacheSize),
                 CacheNamespace.CHAT_PERSISTENT: LRUCache[int, HCChatPersistentCacheDict](self.maxCacheSize),
                 CacheNamespace.CHAT_USERS: LRUCache[str, HCChatUserCacheDict](self.maxCacheSize),
                 CacheNamespace.USERS: LRUCache[int, HCUserCacheDict](self.maxCacheSize),
@@ -163,7 +163,7 @@ class CacheService:
         return cls()
 
     @property
-    def chats(self) -> LRUCache[int, HCChatCacheDict]:
+    def chats(self) -> LRUCache[int | str, HCChatCacheDict]:
         """Access chats namespace"""
         return self._caches[CacheNamespace.CHATS]  # pyright: ignore[reportReturnType]
 
@@ -200,9 +200,52 @@ class CacheService:
     # ## Convenience methods
 
     # # ChatSettings
+    def setDefaultChatSettings(self, key: Optional[str], value: Dict["ChatSettingsKey", "ChatSettingsValue"]) -> None:
+        """Set default chat settings for a given key in the cache.
+
+        Updates the settings for the specified key in the chats cache. If the key
+        doesn't exist in the cache, a new entry will be created. The settings
+        are stored under the 'settings' key in the chat cache dictionary.
+
+        Args:
+            key: The key to identify the chat settings (typically chat ID or 'default')
+            value: A dictionary mapping ChatSettingsKey to ChatSettingsValue
+                   containing the settings to be stored
+
+        Returns:
+            None
+        """
+        key = str(key)
+        chatCache = self.chats.get(key, {})
+        chatCache["settings"] = value.copy()
+        self.chats.set(key, chatCache)
+
+        # TODO: Should we persist it in DB to ensure it won't be wanished from cache?
+        logger.debug(f"Updated default chat settings for {key}, dood!")
+
+    def getDefaultChatSettings(self, key: Optional[str]) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
+        """Get default chat settings for a given key from the cache.
+
+        Retrieves the chat settings for the specified key from the chats cache.
+        If the key doesn't exist in the cache or has no settings, an empty
+        dictionary is returned.
+
+        Args:
+            key: The key to identify the chat settings (typically chat ID or 'default')
+
+        Returns:
+            A dictionary mapping ChatSettingsKey to ChatSettingsValue containing
+            the retrieved settings, or an empty dictionary if no settings exist
+        """
+        key = str(key)
+        chatCache = self.chats.get(key, {})
+
+        # TODO: Should I add loading from DB?
+        return chatCache.get("settings", {}).copy()
+
     def getChatSettings(self, chatId: int) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
         """Get chat settings with cache"""
-        # Preventing circullar dependencies
+        # Preventing circullar dependencies TODO: Do something with it
         from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
 
         chatCache = self.chats.get(chatId, {})
