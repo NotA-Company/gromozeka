@@ -48,3 +48,15 @@ support_tools = true
 support_text = true
 support_images = false
 can_be_choosen = true
+
+[models.models."openrouter/qwen3-235b-a22b:free"]
+# https://openrouter.ai/qwen/qwen3-235b-a22b:free
+provider = "openrouter"
+model_id = "qwen/qwen3-235b-a22b:free"
+model_version = "latest"
+temparature = 0.3
+context = 131100
+support_tools = true
+support_text = true
+support_images = false
+can_be_choosen = true
