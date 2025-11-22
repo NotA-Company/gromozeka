@@ -1,6 +1,5 @@
 # Our TODO list
 - [ ] ensuredMessage: support miltiple media
-- [ ] instead of background tasks, use set like in `internal/bot/max/application.py`
 - [ ] Add ENV\.env support in config secrets
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Save info about used tools to put it into context
@@ -24,6 +23,7 @@
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add coverage badge?
+- [x] instead of background tasks, use set like in `internal/bot/max/application.py`
 - [x] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
 - [x] General framework above Telegram and Max
 - [x] Add Better geocoder (https://geocode.maps.co/docs/ looks good)

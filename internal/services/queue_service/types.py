@@ -9,7 +9,6 @@ from typing import Any, Awaitable, Callable, Dict, TypeAlias
 class DelayedTaskFunction(StrEnum):
     SEND_MESSAGE = "sendMessage"
     DELETE_MESSAGE = "deleteMessage"
-    PROCESS_BACKGROUND_TASKS = "processBackgroundTasks"
     DO_EXIT = "doExit"
 
 

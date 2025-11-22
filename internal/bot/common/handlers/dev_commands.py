@@ -490,6 +490,13 @@ class DevCommandsHandler(BaseBotHandler):
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 
+            case "backgroundTasks":
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=f"```\n{self.queueService.backgroundTasks}\n```",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+
             case "cacheStats":
                 await self.sendMessage(
                     ensuredMessage,

@@ -24,11 +24,11 @@ Example:
 
 import asyncio
 import datetime
-import inspect
 import json
 import logging
 import time
 import uuid
+from collections.abc import MutableSet
 from threading import RLock
 from typing import Any, Dict, List, Optional
 
@@ -112,7 +112,7 @@ class QueueService:
         if not hasattr(self, "initialized"):
             self.db: Optional["DatabaseWrapper"] = None
 
-            self.asyncTasksQueue = asyncio.Queue()
+            self.backgroundTasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
             self.queueLastUpdated = time.time()
 
             self.delayedActionsQueue = asyncio.PriorityQueue()
@@ -145,121 +145,33 @@ class QueueService:
 
     async def addBackgroundTask(self, task: asyncio.Task) -> None:
         """
-        Add an asyncio task to the background tasks queue, dood!
+        Add an asyncio task to the background tasks set for execution, dood!
 
-        If the queue exceeds MAX_QUEUE_LENGTH, the oldest task is processed
-        immediately before adding the new one. Updates the queue timestamp
-        for age-based processing.
-
-        Args:
-            task (asyncio.Task): The asyncio task to add to the queue
-
-        Raises:
-            Logs error if queue contains non-Task objects
-
-        Note:
-            Queue size is limited by constants.MAX_QUEUE_LENGTH (default: 32)
-            Tasks are processed based on queue age (constants.MAX_QUEUE_AGE)
-        """
-        if self.asyncTasksQueue.qsize() > constants.MAX_QUEUE_LENGTH:
-            logger.info("Queue is full, processing oldest task")
-            oldTask = await self.asyncTasksQueue.get()
-            if not inspect.isawaitable(oldTask):
-                logger.info(f"Task {oldTask} is not awaitable, but a {type(oldTask)}")
-            else:
-                await oldTask
-            self.asyncTasksQueue.task_done()
-
-        # logger.info(f"Adding task {type(task)}({task}) to background tasks queue")
-        await self.asyncTasksQueue.put(task)
-        self.queueLastUpdated = time.time()
-
-    async def processBackgroundTasks(self, forceProcessAll: bool = False) -> None:
-        """
-        Process all pending background tasks in the queue, dood!
-
-        Tasks are processed when either:
-        - forceProcessAll is True (immediate processing)
-        - Queue age exceeds MAX_QUEUE_AGE (30 minutes by default)
+        This method manages the background task queue with automatic size limiting.
+        If the queue exceeds MAX_QUEUE_LENGTH (32), it waits for tasks to complete
+        before adding new ones. Completed tasks are automatically removed from the
+        set via a done callback.
 
         Args:
-            forceProcessAll (bool, optional): If True, process all tasks immediately
-                regardless of queue age. Defaults to False.
+            task (asyncio.Task): The asyncio task to add to the background tasks set
 
         Note:
-            - Updates queueLastUpdated to prevent concurrent processing
-            - Processes all tasks currently in queue (not new ones added during processing)
-            - Logs errors for individual task failures without stopping processing
-            - Empty queue returns immediately without processing
-
-        Raises:
-            Logs exceptions for task execution errors but continues processing
+            - Queue size is limited by constants.MAX_QUEUE_LENGTH (default: 32)
+            - Method blocks when queue is full, waiting for tasks to complete
+            - Completed tasks are automatically removed from the set
+            - Tasks are not processed based on age - they run independently
         """
+        while len(self.backgroundTasks) > constants.MAX_QUEUE_LENGTH:
+            logger.info(
+                f"Background tasks set has {len(self.backgroundTasks)} tasks "
+                f"which is more, than limit {constants.MAX_QUEUE_LENGTH} "
+                "awaiting for some task to complete..."
+            )
+            await asyncio.sleep(0.5)
 
-        if self.asyncTasksQueue.empty():
-            return
-
-        if (not forceProcessAll) and (self.queueLastUpdated + constants.MAX_QUEUE_AGE > time.time()):
-            return
-
-        if forceProcessAll:
-            logger.info("Processing background tasks queue due to forceProcessAll=True")
-        else:
-            logger.info(f"Processing queue due to age ({constants.MAX_QUEUE_AGE})")
-
-        # TODO: Do it properly
-        # Little hack to avoid concurency in processing queue
-        self.queueLastUpdated = time.time()
-        # TODO: Process only existing elements to avoid endless processing new ones
-
-        try:
-            while True:
-                task = await self.asyncTasksQueue.get_nowait()
-                if not inspect.isawaitable(task):
-                    # By some reason all finished tasks magically converts to it's results
-                    logger.info(f"Task {task} is not awaitable, but a {type(task)}")
-                else:
-                    try:
-                        logger.debug(f"Awaiting task {task}...")
-                        ret = await task
-                        logger.debug(f"Task {task} returned {ret}")
-                    except Exception as e:
-                        logger.error(f"Error in background task: {e}")
-                        logger.exception(e)
-
-                self.asyncTasksQueue.task_done()
-        except asyncio.QueueEmpty:
-            logger.info("All background tasks were processed")
-        except Exception as e:
-            logger.error(f"Error in background task processing: {e}")
-            logger.exception(e)
-
-    async def _processBackgroundTasksHandler(self, task: DelayedTask) -> None:
-        """
-        Handler for PROCESS_BACKGROUND_TASKS delayed task type, dood!
-
-        Processes background tasks queue and schedules the next processing
-        cycle in 600 seconds (10 minutes). This creates a recurring task
-        that ensures background tasks are processed periodically.
-
-        Args:
-            task (DelayedTask): The delayed task triggering this handler
-
-        Note:
-            - Calls processBackgroundTasks with forceProcessAll=False
-            - Schedules next processing with skipDB=True for efficiency
-            - Part of the automatic background task processing cycle
-        """
-
-        logger.debug(f"Processing background tasks: {task}")
-        await self.processBackgroundTasks(forceProcessAll=False)
-        # Add next processing cycle
-        await self.addDelayedTask(
-            time.time() + 600,
-            DelayedTaskFunction.PROCESS_BACKGROUND_TASKS,
-            kwargs={},
-            skipDB=True,
-        )
+        # logger.info(f"Adding task {type(task)}({task}) to background tasks set")
+        self.backgroundTasks.add(task)
+        task.add_done_callback(self.backgroundTasks.discard)
 
     async def _doExitHandler(self, task: DelayedTask) -> None:
         """
@@ -277,8 +189,10 @@ class QueueService:
             - Part of the shutdown sequence
         """
 
-        logger.info("doExit: processing backgroundTask if any...")
-        await self.processBackgroundTasks(forceProcessAll=True)
+        logger.info("Exit, Awaiting backgroundTask if any...")
+        while len(self.backgroundTasks) > 0:
+            logger.info(f"There are {len(self.backgroundTasks)} left, awaiting...")
+            await asyncio.sleep(1)
 
     def registerDelayedTaskHandler(self, function: DelayedTaskFunction, handler: DelayedTaskHandler) -> None:
         """
@@ -346,9 +260,6 @@ class QueueService:
 
         self.db = db
 
-        self.registerDelayedTaskHandler(
-            DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, self._processBackgroundTasksHandler
-        )
         self.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
 
         tasks = self.db.getPendingDelayedTasks()
@@ -362,14 +273,9 @@ class QueueService:
             )
             logger.info(f"Restored delayed task: {task}")
 
-        # Add background tasks processing
-        await self.addDelayedTask(
-            time.time() + 600, DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True
-        )
+        await self._startDelayedQueuProcessLoop()
 
-        await self._processDelayedQueue()
-
-    async def _processDelayedQueue(self) -> None:
+    async def _startDelayedQueuProcessLoop(self) -> None:
         """
         Main processing loop for the delayed tasks priority queue, dood!
 

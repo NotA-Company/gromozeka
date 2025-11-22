@@ -13,7 +13,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from internal.services.queue_service import constants
 from internal.services.queue_service.service import QueueService, makeEmptyAsyncTask
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from tests.utils import createAsyncMock
@@ -86,7 +85,6 @@ class TestQueueServiceInitialization:
         """Test that QueueService initializes with correct default state."""
         assert queueService.initialized is True
         assert queueService.db is None
-        assert isinstance(queueService.asyncTasksQueue, asyncio.Queue)
         assert isinstance(queueService.delayedActionsQueue, asyncio.PriorityQueue)
         assert isinstance(queueService.tasksHandlers, dict)
         assert len(queueService.tasksHandlers) == 0
@@ -162,16 +160,13 @@ class TestTaskRegistration:
         """Test registering handlers for different task types."""
         sendHandler = createAsyncMock()
         deleteHandler = createAsyncMock()
-        processHandler = createAsyncMock()
 
         queueService.registerDelayedTaskHandler(DelayedTaskFunction.SEND_MESSAGE, sendHandler)
         queueService.registerDelayedTaskHandler(DelayedTaskFunction.DELETE_MESSAGE, deleteHandler)
-        queueService.registerDelayedTaskHandler(DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, processHandler)
 
-        assert len(queueService.tasksHandlers) == 3
+        assert len(queueService.tasksHandlers) == 2
         assert queueService.tasksHandlers[DelayedTaskFunction.SEND_MESSAGE][0] is sendHandler
         assert queueService.tasksHandlers[DelayedTaskFunction.DELETE_MESSAGE][0] is deleteHandler
-        assert queueService.tasksHandlers[DelayedTaskFunction.PROCESS_BACKGROUND_TASKS][0] is processHandler
 
     def testRegisterHandlerOrder(self, queueService):
         """Test that handlers are called in registration order."""
@@ -255,18 +250,6 @@ class TestTaskScheduling:
         assert len(taskId) > 0
 
     @pytest.mark.asyncio
-    async def testScheduleTaskSkipDatabase(self, queueService, mockDatabaseWrapper):
-        """Test scheduling a task with skipDB=True doesn't persist to database."""
-        queueService.db = mockDatabaseWrapper
-
-        await queueService.addDelayedTask(
-            delayedUntil=time.time() + 60, function=DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, kwargs={}, skipDB=True
-        )
-
-        assert queueService.delayedActionsQueue.qsize() == 1
-        mockDatabaseWrapper.addDelayedTask.assert_not_called()
-
-    @pytest.mark.asyncio
     async def testScheduleMultipleTasks(self, queueService, mockDatabaseWrapper):
         """Test scheduling multiple tasks."""
         queueService.db = mockDatabaseWrapper
@@ -312,109 +295,6 @@ class TestTaskScheduling:
 
         assert queueService.delayedActionsQueue.qsize() == 1
         mockDatabaseWrapper.addDelayedTask.assert_called_once()
-
-
-# ============================================================================
-# Background Task Tests
-# ============================================================================
-
-
-class TestBackgroundTasks:
-    """Test background task queue functionality."""
-
-    @pytest.mark.asyncio
-    async def testAddBackgroundTask(self, queueService):
-        """Test adding a background task to the queue."""
-        task = makeEmptyAsyncTask()
-
-        await queueService.addBackgroundTask(task)
-
-        assert queueService.asyncTasksQueue.qsize() == 1
-        assert queueService.queueLastUpdated > 0
-
-    @pytest.mark.asyncio
-    async def testAddMultipleBackgroundTasks(self, queueService):
-        """Test adding multiple background tasks."""
-        tasks = [makeEmptyAsyncTask() for _ in range(5)]
-
-        for task in tasks:
-            await queueService.addBackgroundTask(task)
-
-        assert queueService.asyncTasksQueue.qsize() == 5
-
-    @pytest.mark.asyncio
-    async def testBackgroundQueueOverflow(self, queueService):
-        """Test that queue processes oldest task when full."""
-        # Fill queue to max capacity
-        for _ in range(constants.MAX_QUEUE_LENGTH + 1):
-            task = makeEmptyAsyncTask()
-            await queueService.addBackgroundTask(task)
-
-        # Queue should not significantly exceed max length (allow for race conditions)
-        assert queueService.asyncTasksQueue.qsize() <= constants.MAX_QUEUE_LENGTH + 2
-
-    @pytest.mark.asyncio
-    async def testProcessBackgroundTasksEmpty(self, queueService):
-        """Test processing empty background tasks queue."""
-        await queueService.processBackgroundTasks(forceProcessAll=True)
-
-        # Should complete without error
-        assert queueService.asyncTasksQueue.qsize() == 0
-
-    @pytest.mark.asyncio
-    async def testProcessBackgroundTasksForced(self, queueService):
-        """Test forced processing of background tasks."""
-        # Add some tasks
-        for _ in range(3):
-            task = makeEmptyAsyncTask()
-            await queueService.addBackgroundTask(task)
-
-        await queueService.processBackgroundTasks(forceProcessAll=True)
-
-        # All tasks should be processed
-        assert queueService.asyncTasksQueue.qsize() == 0
-
-    @pytest.mark.asyncio
-    async def testProcessBackgroundTasksAgeBasedNotReady(self, queueService):
-        """Test that age-based processing doesn't trigger when queue is young."""
-        task = makeEmptyAsyncTask()
-        await queueService.addBackgroundTask(task)
-
-        # Queue is fresh, shouldn't process
-        await queueService.processBackgroundTasks(forceProcessAll=False)
-
-        # Task should still be in queue
-        assert queueService.asyncTasksQueue.qsize() == 1
-
-    @pytest.mark.asyncio
-    async def testProcessBackgroundTasksAgeBasedReady(self, queueService):
-        """Test that age-based processing triggers when queue is old."""
-        task = makeEmptyAsyncTask()
-        await queueService.addBackgroundTask(task)
-
-        # Make queue appear old
-        queueService.queueLastUpdated = time.time() - constants.MAX_QUEUE_AGE - 1
-
-        await queueService.processBackgroundTasks(forceProcessAll=False)
-
-        # Task should be processed
-        assert queueService.asyncTasksQueue.qsize() == 0
-
-    @pytest.mark.asyncio
-    async def testProcessBackgroundTasksWithError(self, queueService):
-        """Test that errors in background tasks are handled gracefully."""
-
-        async def failingTask():
-            raise ValueError("Test error")
-
-        task = asyncio.create_task(failingTask())
-        await queueService.addBackgroundTask(task)
-
-        # Should not raise exception
-        await queueService.processBackgroundTasks(forceProcessAll=True)
-
-        # Queue should be empty
-        assert queueService.asyncTasksQueue.qsize() == 0
 
 
 # ============================================================================
@@ -702,25 +582,6 @@ class TestShutdown:
         task = await queueService.delayedActionsQueue.get()
         assert task.function == DelayedTaskFunction.DO_EXIT
 
-    @pytest.mark.asyncio
-    async def testDoExitHandler(self, queueService):
-        """Test that DO_EXIT handler processes background tasks."""
-        # Add some background tasks
-        for _ in range(3):
-            await queueService.addBackgroundTask(makeEmptyAsyncTask())
-
-        assert queueService.asyncTasksQueue.qsize() == 3
-
-        # Execute DO_EXIT handler
-        exitTask = DelayedTask(
-            taskId="exit-task", delayedUntil=time.time(), function=DelayedTaskFunction.DO_EXIT, kwargs={}
-        )
-
-        await queueService._doExitHandler(exitTask)
-
-        # Background tasks should be processed
-        assert queueService.asyncTasksQueue.qsize() == 0
-
 
 # ============================================================================
 # Integration Tests
@@ -780,44 +641,6 @@ class TestIntegration:
         assert json.loads(callKwargs["kwargs"]) == testKwargs
 
     @pytest.mark.asyncio
-    async def testRestoreTasksFromDatabase(self, queueService, mockDatabaseWrapper):
-        """Test restoring pending tasks from database on startup."""
-        # Mock database with pending tasks
-        pendingTasks = [
-            {
-                "id": "task-1",
-                "delayed_ts": str(int(time.time() + 60)),
-                "function": DelayedTaskFunction.SEND_MESSAGE.value,
-                "kwargs": json.dumps({"chat_id": 123, "text": "Task 1"}),
-            },
-            {
-                "id": "task-2",
-                "delayed_ts": str(int(time.time() + 120)),
-                "function": DelayedTaskFunction.DELETE_MESSAGE.value,
-                "kwargs": json.dumps({"chat_id": 456, "message_id": 789}),
-            },
-        ]
-        mockDatabaseWrapper.getPendingDelayedTasks.return_value = pendingTasks
-
-        # Register handlers to prevent errors
-        queueService.registerDelayedTaskHandler(DelayedTaskFunction.PROCESS_BACKGROUND_TASKS, createAsyncMock())
-        queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, createAsyncMock())
-
-        # Start scheduler (will restore tasks)
-        # We need to cancel it quickly to avoid infinite loop
-        schedulerTask = asyncio.create_task(queueService.startDelayedScheduler(mockDatabaseWrapper))
-        await asyncio.sleep(0.1)  # Let it initialize
-        schedulerTask.cancel()
-
-        try:
-            await schedulerTask
-        except asyncio.CancelledError:
-            pass
-
-        # Verify tasks were restored (2 from DB + 1 PROCESS_BACKGROUND_TASKS)
-        assert queueService.delayedActionsQueue.qsize() >= 2
-
-    @pytest.mark.asyncio
     async def testMultipleTaskTypesExecution(self, queueService, mockDatabaseWrapper):
         """Test executing multiple different task types."""
         queueService.db = mockDatabaseWrapper
@@ -859,36 +682,6 @@ class TestIntegration:
         assert any(log[0] == "send" for log in executionLog)
         assert any(log[0] == "delete" for log in executionLog)
 
-    @pytest.mark.asyncio
-    async def testBackgroundTasksProcessingCycle(self, queueService, mockDatabaseWrapper):
-        """Test the automatic background tasks processing cycle."""
-        queueService.db = mockDatabaseWrapper
-
-        # Add background tasks
-        for _ in range(3):
-            await queueService.addBackgroundTask(makeEmptyAsyncTask())
-
-        assert queueService.asyncTasksQueue.qsize() == 3
-
-        # Make queue appear old so it will be processed
-        queueService.queueLastUpdated = time.time() - constants.MAX_QUEUE_AGE - 1
-
-        # Create and execute PROCESS_BACKGROUND_TASKS task
-        processTask = DelayedTask(
-            taskId="process-task",
-            delayedUntil=time.time(),
-            function=DelayedTaskFunction.PROCESS_BACKGROUND_TASKS,
-            kwargs={},
-        )
-
-        await queueService._processBackgroundTasksHandler(processTask)
-
-        # Background tasks should be processed
-        assert queueService.asyncTasksQueue.qsize() == 0
-
-        # New PROCESS_BACKGROUND_TASKS should be scheduled
-        assert queueService.delayedActionsQueue.qsize() == 1
-
 
 # ============================================================================
 # Concurrency Tests
@@ -915,20 +708,6 @@ class TestConcurrency:
         await asyncio.gather(*[scheduleTask(i) for i in range(10)])
 
         assert queueService.delayedActionsQueue.qsize() == 10
-
-    @pytest.mark.asyncio
-    async def testConcurrentBackgroundTaskAddition(self, queueService):
-        """Test adding background tasks concurrently."""
-
-        async def addTask(i):
-            task = makeEmptyAsyncTask()
-            await queueService.addBackgroundTask(task)
-
-        # Add 20 tasks concurrently
-        await asyncio.gather(*[addTask(i) for i in range(20)])
-
-        # Some tasks might have been processed if queue was full
-        assert queueService.asyncTasksQueue.qsize() <= constants.MAX_QUEUE_LENGTH
 
     @pytest.mark.asyncio
     async def testConcurrentHandlerRegistration(self, queueService):
@@ -1255,17 +1034,6 @@ class TestPerformance:
             queueService.registerDelayedTaskHandler(DelayedTaskFunction.SEND_MESSAGE, handler)
 
         assert len(queueService.tasksHandlers[DelayedTaskFunction.SEND_MESSAGE]) == handlerCount
-
-    @pytest.mark.asyncio
-    async def testBackgroundQueueStressTest(self, queueService):
-        """Test background queue under stress."""
-        # Add tasks up to and beyond max capacity
-        for _ in range(constants.MAX_QUEUE_LENGTH + 10):
-            task = makeEmptyAsyncTask()
-            await queueService.addBackgroundTask(task)
-
-        # Queue should handle overflow gracefully (allow for race conditions)
-        assert queueService.asyncTasksQueue.qsize() <= constants.MAX_QUEUE_LENGTH + 2
 
 
 # ============================================================================
