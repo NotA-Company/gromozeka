@@ -233,11 +233,11 @@ class MaxBotClient:
 
         isUpdatePolling = method == HTTP_GET and endpoint == "/updates"
 
+        # Log request (without sensitive data)
         if EXTENDED_DEBUG and not isUpdatePolling:
             logger.debug(f"Making {method} request to {url} with body {kwargs}")
-
-        # Log request (without sensitive data)
-        logger.debug(f"Making {method} request to {url}")
+        elif not isUpdatePolling:
+            logger.debug(f"Making {method} request to {url}")
 
         last_exception = None
         attempt = 0
@@ -249,7 +249,8 @@ class MaxBotClient:
                 if response.status_code == 200:
                     try:
                         data = response.json()
-                        logger.debug(f"Request successful: {method} {url}")
+                        if EXTENDED_DEBUG and not isUpdatePolling:
+                            logger.debug(f"Request successful: {method} {url}")
                         return data
                     except Exception as e:
                         raise MaxBotError(f"Invalid JSON response: {e}")
@@ -285,8 +286,8 @@ class MaxBotClient:
                 if isUpdatePolling:
                     # It is natural to get such error during polling
                     #  if there is no updates. Just skip
-                    if EXTENDED_DEBUG:
-                        logger.debug("No updates for now...")
+                    # if EXTENDED_DEBUG:
+                    #     logger.debug("No updates for now...")
                     continue
                 last_exception = NetworkError(f"Read timeout: {type(e).__name__}#{e}")
                 logger.warning(f"Read timeout on attempt {attempt + 1}: {type(e).__name__}#{e}")
@@ -1193,7 +1194,7 @@ class MaxBotClient:
             params["types"] = ",".join(types)
 
         response = await self.get("/updates", params=params)
-        if EXTENDED_DEBUG:
+        if EXTENDED_DEBUG and response.get("updates", []):
             logger.debug(f"Received updates: {utils.jsonDumps(response, indent=2)}")
         return UpdateList.from_dict(response)
 

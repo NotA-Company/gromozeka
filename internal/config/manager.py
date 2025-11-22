@@ -3,10 +3,11 @@ Configuration management for Gromozeka bot.
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import os
+
 import tomli
 
 from lib.rate_limiter import RateLimiterManagerConfig
@@ -22,7 +23,7 @@ class ConfigManager:
         self.config_path = config_path
         self.config_dirs = config_dirs or []
         self.config = self._loadConfig()
-        rootDir =  self.config.get("application", {}).get("root-dir", None)
+        rootDir = self.config.get("application", {}).get("root-dir", None)
         if rootDir is not None:
             os.chdir(rootDir)
             logger.info(f"Changed root directory to {rootDir}")
