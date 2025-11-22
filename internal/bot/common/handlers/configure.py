@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     ButtonConfigureAction,
@@ -43,7 +44,7 @@ from internal.services.cache.types import UserActiveActionEnum
 from lib.ai.manager import LLMManager
 from lib.markdown import markdownToMarkdownV2
 
-from .base import BaseBotHandler, HandlerResultStatus, TypingManager
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 

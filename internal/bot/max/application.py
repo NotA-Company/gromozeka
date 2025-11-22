@@ -9,7 +9,7 @@ import sys
 from collections.abc import MutableSet
 from typing import Awaitable, Dict, Optional
 
-import lib.max_bot as maxBot
+import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 from internal.bot.common.handlers.manager import HandlersManager
 from internal.bot.models import BotProvider, EnsuredMessage
@@ -52,7 +52,7 @@ class MaxBotApplication:
         self.handlerManager = HandlersManager(configManager, database, llmManager, BotProvider.MAX)
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
-        self.maxBot: Optional[maxBot.MaxBotClient] = None
+        self.maxBot: Optional[libMax.MaxBotClient] = None
 
         self.chatSemaphoreMap: Dict[int, asyncio.Semaphore] = {}
         self._tasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
@@ -68,7 +68,7 @@ class MaxBotApplication:
         if self.maxBot is None:
             raise RuntimeError("Client is not initialized")
 
-        self.handlerManager.injectMaxBot(self.maxBot)
+        self.handlerManager.injectBot(self.maxBot)
         self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # TODO: set commands
@@ -209,7 +209,7 @@ class MaxBotApplication:
     async def _runPolling(self):
         """Run the Max Messenger bot polling loop."""
 
-        self.maxBot = maxBot.MaxBotClient(self.botToken)
+        self.maxBot = libMax.MaxBotClient(self.botToken)
 
         try:
             botInfo = await self.maxBot.getMyInfo()

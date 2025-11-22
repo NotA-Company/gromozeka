@@ -25,6 +25,7 @@ import telegram
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     ChatSettingsKey,
     ChatSettingsValue,
@@ -39,7 +40,7 @@ from internal.bot.models.ensured_message import MessageRecipient
 from internal.database.models import MessageCategory
 from internal.services.cache import CacheNamespace
 
-from .base import BaseBotHandler, TypingManager
+from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
 
@@ -486,6 +487,13 @@ class DevCommandsHandler(BaseBotHandler):
                     ensuredMessage,
                     messageText=f"```\n{self.queueService.delayedActionsQueue}\n\n"
                     f"{self.queueService.delayedActionsQueue.qsize()}\n```",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+
+            case "backgroundTasks":
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=f"```\n{self.queueService.backgroundTasks}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
 

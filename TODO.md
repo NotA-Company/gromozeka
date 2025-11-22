@@ -1,41 +1,5 @@
-# Max Support TODO:
-Adopt Handlers:
-- [x] base.py
-  - [x] Media Download support
-  - [x] Media Upload support
-  - [x] Proper message sending support
-  - [x] Typing action support
-  - [x] Chat Info handling support
-  - [x] Admins support
-  - [x] BotOwner By ID support
-- [x] common.py
-- [x] configure.py
-- [x] dev_commands.py
-- [x] example.py
-- [x] help_command.py
-- [x] llm_messages.py
-- [x] manager.py
-- [x] media.py
-- [x] message_preprocessor.py
-- [x] react_on_user.py
-- [x] spam.py (Entities parsing)
-- [x] summarization.py
-- [x] user_data.py
-- [x] weather.py
-- [x] yandex_search.py
-
-- [x] Keyboard+Callback support
-- [x] Fix docstrings
-- [x] Drop dataclasses
-- [x] review models
-
-- [x] Telegram: new callback schema support
-- [x] Review and rewrite or delete models.markup.py
-
 # Our TODO list
 - [ ] ensuredMessage: support miltiple media
-- [ ] instead of background tasks, use set like in `internal/bot/max/application.py`
-- [x] General framework above Telegram and Max
 - [ ] Add ENV\.env support in config secrets
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Save info about used tools to put it into context
@@ -54,12 +18,14 @@ Adopt Handlers:
 - [ ] Add support for local LLM-providers (Like Ollama or LLama.cpp)
 - [ ] Add commands for listing topics and renaming topics in DB
 - [ ] Run LLM and other requests in separate threads
-- [ ] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add coverage badge?
+- [x] instead of background tasks, use set like in `internal/bot/max/application.py`
+- [x] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
+- [x] General framework above Telegram and Max
 - [x] Add Better geocoder (https://geocode.maps.co/docs/ looks good)
 - [x] Add rate-limiters for weather and other external tools
 - [x] Add Per PR tests (make lint + make test)

@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 import lib.utils as utils
 from internal.bot import constants
 from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
@@ -37,7 +38,7 @@ from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
 from lib.geocode_maps import GeocodeMapsClient, SearchResult
 from lib.openweathermap import OpenWeatherMapClient, WeatherData
 
-from .base import BaseBotHandler, TypingManager
+from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
 
