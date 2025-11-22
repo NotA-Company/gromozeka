@@ -139,39 +139,6 @@ class BaseBotHandler(CommandHandlerMixin):
         self.llmManager = llmManager
         self.botProvider = botProvider
 
-        # TODO: Put all botOwners and chatDefaults to some service to not duplicate it for each handler class
-        # Init different defaults
-        self.defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            k: ChatSettingsValue("") for k in ChatSettingsKey
-        }
-        self.defaultSettings.update(
-            {
-                ChatSettingsKey(k): ChatSettingsValue(v)
-                for k, v in self.config.get("defaults", {}).items()
-                if k in ChatSettingsKey
-            }
-        )
-        self.privateDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            ChatSettingsKey(k): ChatSettingsValue(v)
-            for k, v in self.config.get("private-defaults", {}).items()
-            if k in ChatSettingsKey
-        }
-        self.chatDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            ChatSettingsKey(k): ChatSettingsValue(v)
-            for k, v in self.config.get("chat-defaults", {}).items()
-            if k in ChatSettingsKey
-        }
-
-        # Debug purposes
-        # logger.debug("Config")
-        # logger.debug(utils.jsonDumps(self.config, indent=2))
-        # logger.debug("defaults")
-        # logger.debug(utils.jsonDumps(self.defaultSettings, indent=2))
-        # logger.debug("private-defaults")
-        # logger.debug(utils.jsonDumps(self.privateDefaultSettings, indent=2))
-        # logger.debug("chat-defaults")
-        # logger.debug(utils.jsonDumps(self.chatDefaultSettings, indent=2))
-
         # Init cache
         self.cache = CacheService.getInstance()
 
@@ -241,11 +208,8 @@ class BaseBotHandler(CommandHandlerMixin):
             chatType = ChatType.GROUP
 
         if returnDefault:
-            defaultSettings = self.defaultSettings.copy()
-            if chatType == ChatType.PRIVATE:  # it's Private Chat
-                defaultSettings.update(self.privateDefaultSettings)
-            elif chatType == ChatType.GROUP:  # it's Group Chat
-                defaultSettings.update(self.chatDefaultSettings)
+            defaultSettings = self.cache.getDefaultChatSettings(None)
+            defaultSettings.update(self.cache.getDefaultChatSettings(chatType))
 
         if chatId is None:
             return defaultSettings

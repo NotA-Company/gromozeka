@@ -21,6 +21,7 @@ from internal.bot.models import (
     CommandPermission,
     EnsuredMessage,
 )
+from internal.bot.models.chat_settings import ChatSettingsValue
 from internal.bot.models.ensured_message import MessageSender
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
@@ -79,7 +80,33 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.cache.injectDatabase(self.db)
 
         self.queueService = QueueService.getInstance()
+        # Initialize default Chat Settings
+        # TODO: Put all botOwners and chatDefaults to some service to not duplicate it for each handler class
+        # Init different defaults
+        botConfig = configManager.getBotConfig()
+        defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {k: ChatSettingsValue("") for k in ChatSettingsKey}
+        defaultSettings.update(
+            {
+                ChatSettingsKey(k): ChatSettingsValue(v)
+                for k, v in botConfig.get("defaults", {}).items()
+                if k in ChatSettingsKey
+            }
+        )
+        self.cache.setDefaultChatSettings(None, defaultSettings)
+        privateDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
+            ChatSettingsKey(k): ChatSettingsValue(v)
+            for k, v in botConfig.get("private-defaults", {}).items()
+            if k in ChatSettingsKey
+        }
+        self.cache.setDefaultChatSettings(ChatType.PRIVATE, privateDefaultSettings)
+        chatDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
+            ChatSettingsKey(k): ChatSettingsValue(v)
+            for k, v in botConfig.get("chat-defaults", {}).items()
+            if k in ChatSettingsKey
+        }
+        self.cache.setDefaultChatSettings(ChatType.GROUP, chatDefaultSettings)
 
+        # Initialize handlers
         self.handlers: List[BaseBotHandler] = [
             # Should be first to check for spam before other handlers
             SpamHandler(configManager, database, llmManager, botProvider),
