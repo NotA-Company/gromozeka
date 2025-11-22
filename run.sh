@@ -5,6 +5,11 @@ cd `dirname $0`
 . ./.env
 
 [ -z "$ENV" ] && ENV="local"
+[ -z "$ENV_MAX" ] && ENV_MAX="local-max"
+if [ "$1" = "--max" ]; then
+    shift
+    ENV=$ENV_MAX
+fi
 [ -z "$COMPRESSOR" ] && COMPRESSOR="xz -9e"
 [ -z "$DO_PIP_UPDATE" ] && DO_PIP_UPDATE="1"
 [ -z "$DO_GIT_PULL" ] && DO_GIT_PULL="0"
@@ -36,7 +41,12 @@ if [ "$USE_PROFILER" = "1" ]; then
     PROFILER=" -m cProfile -o $PROFILR_LOG "
 fi
 
-./venv/bin/python $PROFILER ./main.py --config-dir ./configs/00-defaults --config-dir "./configs/$ENV" $*
+CONFIG_DIRS=""
+for v in $ENV; do
+    CONFIG_DIRS="$CONFIG_DIRS --config-dir ./configs/$v"
+done
+
+./venv/bin/python $PROFILER ./main.py --config-dir ./configs/00-defaults $CONFIG_DIRS $*
 #2>&1 | tee `date '+logs/%Y-%m-%d_%H-%M.log'`
 
 if [ -n "$PROFILR_LOG" ]; then
