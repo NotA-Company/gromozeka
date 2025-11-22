@@ -1,3 +1,5 @@
+[application]
+root-dir = "storage"
 [bot]
 # bot mode: "telegram" or "max"
 mode = "telegram"
@@ -10,7 +12,7 @@ spam-button-salt = "YOUR_SALT_HERE"
 
 [database]
 # Database configuration
-path = "storage/bot_data.db"
+path = "bot_data.db"
 # Connection pool settings
 max_connections = 5
 timeout = 30
