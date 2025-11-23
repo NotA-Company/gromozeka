@@ -365,7 +365,7 @@ class TopicManagerHandler(BaseBotHandler):
                 await self.editMessage(
                     messageId=messageId,
                     chatId=messageChatId,
-                    text="Настройка топиков отменена",
+                    text="Настройка топиков завершена",
                 )
                 return
             case ButtonTopicManagementAction.ChatSelected:
