@@ -276,7 +276,7 @@ class TopicManagerHandler(BaseBotHandler):
                 chatId=messageChatId,
                 text=f"Готово. В чате\n{chatTitle}\n"
                 f"Имя топика:\n`{topicInfo['topic_id']}` **{topicInfo['name']}**\n"
-                "Изменено на **{value}**",
+                f"Изменено на **{value}**",
                 inlineKeyboard=[
                     [
                         CallbackButton(
@@ -365,7 +365,7 @@ class TopicManagerHandler(BaseBotHandler):
                 await self.editMessage(
                     messageId=messageId,
                     chatId=messageChatId,
-                    text="Суммаризация отменена",
+                    text="Настройка топиков отменена",
                 )
                 return
             case ButtonTopicManagementAction.ChatSelected:
