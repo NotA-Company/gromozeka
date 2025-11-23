@@ -52,11 +52,6 @@ save-images = true
 # Should we parse images via LLM
 parse-images = true
 
-# For LLM-parsing We'll try to get smallest image, but larger than this
-# Set to 0 to get largest image possible
-# Set to 1 to get smallest image possible
-optimal-image-size        = 896
-
 # Allow tools commands (/draw, /analyze, etc...)
 allow-tools-commands = true
 # Delete message with commands, which deniend in chat (for flood protection purposes)

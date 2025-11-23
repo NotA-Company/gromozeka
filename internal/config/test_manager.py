@@ -180,7 +180,7 @@ class TestConfigManagerInitialization:
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         configDir = createConfigDir(tempDir, "defaults", {"defaults.toml": defaultsToml})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         assert manager.config_dirs == [str(configDir)]
         assert manager.config is not None
@@ -191,7 +191,7 @@ class TestConfigManagerInitialization:
         nonExistentPath = str(tempDir / "nonexistent.toml")
 
         # Should succeed if config dirs have bot token
-        manager = ConfigManager(nonExistentPath, config_dirs=[str(configDir)])
+        manager = ConfigManager(nonExistentPath, configDirs=[str(configDir)])
         assert manager.config["bot"]["token"] == "default_token"
 
     def testInitWithNonExistentConfigAndNoDirs(self, tempDir):
@@ -226,7 +226,7 @@ class TestConfigurationLoading:
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         configDir = createConfigDir(tempDir, "defaults", {"defaults.toml": defaultsToml})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Main config is loaded first, then config dirs merge on top
         # So config dirs override main config values (including arrays)
@@ -253,7 +253,7 @@ class TestConfigurationLoading:
             },
         )
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         assert manager.config is not None
         assert "bot" in manager.config
@@ -263,7 +263,7 @@ class TestConfigurationLoading:
         configPath = createConfigFile(tempDir, "config.toml", emptyToml)
         configDir = createConfigDir(tempDir, "defaults", {"defaults.toml": defaultsToml})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Should have defaults
         assert manager.config["bot"]["token"] == "default_token"
@@ -301,7 +301,7 @@ token = "override_token"
         configPath = createConfigFile(tempDir, "config.toml", base)
         configDir = createConfigDir(tempDir, "configs", {"override.toml": override})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Token should be overridden
         assert manager.config["bot"]["token"] == "override_token"
@@ -322,7 +322,7 @@ extra = "new_value"
         configPath = createConfigFile(tempDir, "config.toml", nestedConfigToml)
         configDir = createConfigDir(tempDir, "configs", {"override.toml": override})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Nested values should be merged
         assert manager.config["bot"]["settings"]["timeout"] == 60
@@ -358,7 +358,7 @@ token = "third_token"
             },
         )
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Last file should win
         assert manager.config["bot"]["token"] == "third_token"
@@ -376,7 +376,7 @@ token = "main_token"
         dir1 = createConfigDir(tempDir, "dir1", {"config1.toml": "[bot]\nowners = [1]"})
         dir2 = createConfigDir(tempDir, "dir2", {"config2.toml": "[database]\npath = 'test.db'"})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(dir1), str(dir2)])
+        manager = ConfigManager(str(configPath), configDirs=[str(dir1), str(dir2)])
 
         assert manager.config["bot"]["token"] == "main_token"
         assert manager.config["bot"]["owners"] == [1]
@@ -397,7 +397,7 @@ owners = [4, 5]
         configPath = createConfigFile(tempDir, "config.toml", base)
         configDir = createConfigDir(tempDir, "configs", {"override.toml": override})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Arrays should be replaced, not merged
         assert manager.config["bot"]["owners"] == [4, 5]
@@ -640,7 +640,7 @@ class TestErrorHandling:
         configDir = createConfigDir(tempDir, "configs", {"invalid.toml": invalidSyntaxToml})
 
         # Should not crash, just skip invalid file
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Main config should still be loaded
         assert manager.config["bot"]["token"] == "test_bot_token_123"
@@ -651,7 +651,7 @@ class TestErrorHandling:
         nonExistentDir = str(tempDir / "nonexistent")
 
         # Should not crash, just skip non-existent directory
-        manager = ConfigManager(str(configPath), config_dirs=[nonExistentDir])
+        manager = ConfigManager(str(configPath), configDirs=[nonExistentDir])
 
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
@@ -661,7 +661,7 @@ class TestErrorHandling:
         filePath = createConfigFile(tempDir, "notadir.txt", "content")
 
         # Should not crash, just skip invalid directory
-        manager = ConfigManager(str(configPath), config_dirs=[str(filePath)])
+        manager = ConfigManager(str(configPath), configDirs=[str(filePath)])
 
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
@@ -735,7 +735,7 @@ temperature = 0.7
             },
         )
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Verify merged configuration
         # Main config is loaded first, then config dirs merge on top
@@ -772,7 +772,7 @@ token = "test_token"
         subdir2.mkdir()
         createConfigFile(subdir2, "gpt4.toml", "[models]\ngpt4 = 'config'")
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Should find configs in subdirectories
         assert "providers" in manager.config
@@ -814,7 +814,7 @@ level = "WARNING"
             },
         )
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Both configs should be merged
         assert "database" in manager.config
@@ -838,7 +838,7 @@ feature_b = false
         configPath = createConfigFile(tempDir, "config.toml", base)
         configDir = createConfigDir(tempDir, "configs", {"override.toml": override})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         # Inheritance: base values unless overridden
         assert manager.config["bot"]["feature_a"] is True
@@ -860,7 +860,7 @@ class TestEdgeCases:
         emptyDir = tempDir / "empty"
         emptyDir.mkdir()
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(emptyDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(emptyDir)])
 
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
@@ -876,7 +876,7 @@ class TestEdgeCases:
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         configDir = createConfigDir(tempDir, "configs", {"comments.toml": commentsOnly})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(configDir)])
+        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
@@ -957,7 +957,7 @@ token = "main_token"
         dir1 = createConfigDir(tempDir, "dir1", {"config.toml": "[bot]\nvalue = 1"})
         dir2 = createConfigDir(tempDir, "dir2", {"config.toml": "[bot]\nvalue = 2"})
 
-        manager = ConfigManager(str(configPath), config_dirs=[str(dir1), str(dir2)])
+        manager = ConfigManager(str(configPath), configDirs=[str(dir1), str(dir2)])
 
         # Later directory should override
         assert manager.config["bot"]["value"] == 2

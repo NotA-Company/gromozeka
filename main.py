@@ -11,9 +11,9 @@ import json
 import logging
 import os
 import sys
-from typing import List, Optional
 
 from internal.bot.max.application import MaxBotApplication
+from internal.bot.models.enums import BotProvider
 from internal.bot.telegram.application import TelegramBotApplication
 from internal.config.manager import ConfigManager
 from internal.database.manager import DatabaseManager
@@ -31,10 +31,10 @@ logger = logging.getLogger(__name__)
 class GromozekBot:
     """Main bot orchestrator that coordinates all components."""
 
-    def __init__(self, configPath: str = "config.toml", config_dirs: Optional[List[str]] = None):
+    def __init__(self, configManager: ConfigManager):
         """Initialize bot with all components."""
         # Initialize configuration
-        self.configManager = ConfigManager(configPath, config_dirs)
+        self.configManager = configManager
 
         # Initialize logging with config
         initLogging(self.configManager.getLoggingConfig())
@@ -51,17 +51,17 @@ class GromozekBot:
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
-        self.botMode = botConfig.get("mode", "telegram")
+        self.botMode = BotProvider(botConfig.get("mode", BotProvider.TELEGRAM))
 
         match self.botMode:
-            case "telegram":
+            case BotProvider.TELEGRAM:
                 self.botApp = TelegramBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database_manager.getDatabase(),
                     llmManager=self.llmManager,
                 )
-            case "max":
+            case BotProvider.MAX:
                 self.botApp = MaxBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
@@ -107,6 +107,11 @@ def parse_arguments():
         "--print-config",
         action="store_true",
         help="Pretty-print loaded configuration and exit, dood!",
+    )
+    parser.add_argument(
+        "--dotenv-file",
+        default=".env",
+        help="Path to .env file with env variables for substitute in configs",
     )
     args = parser.parse_args()
     # Convert relative paths to absolute paths before daemon mode changes working directory
@@ -197,13 +202,18 @@ def prettyPrintConfig(config_manager: ConfigManager):
 def main():
     """Main entry point."""
     args = parse_arguments()
+    configManager = ConfigManager(
+        configPath=args.config,
+        configDirs=args.config_dir,
+        dotEnvFile=args.dotenv_file,
+    )
 
     try:
         # Handle --print-config argument first
         if args.print_config:
             # Initialize only the config manager to load and print config
-            config_manager = ConfigManager(config_path=args.config, config_dirs=args.config_dir)
-            prettyPrintConfig(config_manager)
+
+            prettyPrintConfig(configManager)
             sys.exit(0)
 
         # Fork to background if daemon mode requested
@@ -211,7 +221,7 @@ def main():
             daemonize(args.pid_file)
 
         # Initialize bot with custom config path and directories
-        bot = GromozekBot(configPath=args.config, config_dirs=args.config_dir)
+        bot = GromozekBot(configManager)
         bot.run()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")

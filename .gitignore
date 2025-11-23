@@ -15,7 +15,8 @@ __pycache__/
 .pytest_cache/
 
 # Environments
-.env
+/.env
+/.env.*
 .venv
 env/
 venv/
