@@ -510,13 +510,14 @@ class BaseBotHandler(CommandHandlerMixin):
             iconColor: Topic icon color code
             customEmojiId: Custom emoji ID for topic icon
             name: Topic name
-            force: If True, update even if already in cache
+            force: If True, update even if already in DB
         """
         _topicId = topicId if topicId is not None else 0
         storedTopicInfo = self.cache.getChatTopicInfo(chatId=chatId, topicId=_topicId)
 
         if not force and storedTopicInfo:
-            # No need to rewrite topic info
+            # No need to rewrite topic info as for Telegram
+            #  we always get initial topic info, not current one
             return
 
         self.cache.setChatTopicInfo(

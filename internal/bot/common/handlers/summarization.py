@@ -104,7 +104,7 @@ class SummarizationHandler(BaseBotHandler):
             case _:
                 logger.error(f"Wrong K in data {activeSummarization}")
         await self._handle_summarization(
-            data=data,  # pyright: ignore[reportArgumentType]
+            data=data,
             messageId=activeSummarization["messageId"],
             messageChatId=activeSummarization["messageChatId"],
             user=user,
@@ -733,15 +733,6 @@ class SummarizationHandler(BaseBotHandler):
         Note:
             Bot owner can bypass this restriction in private chats.
         """
-        # message = ensuredMessage.getBaseMessage()
-        # if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
-        #     await self.sendMessage(
-        #         ensuredMessage,
-        #         messageText="Команда не поддержана на данной платформе",
-        #         messageCategory=MessageCategory.BOT_ERROR,
-        #         typingManager=typingManager,
-        #     )
-        #     return
 
         isTopicSummary = command.lower().startswith("topic_summary")
 
