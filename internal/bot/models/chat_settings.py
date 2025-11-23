@@ -65,7 +65,6 @@ class ChatSettingsKey(StrEnum):
     USE_TOOLS = "use-tools"
     SAVE_IMAGES = "save-images"
     PARSE_IMAGES = "parse-images"
-    OPTIMAL_IMAGE_SIZE = "optimal-image-size"
 
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
