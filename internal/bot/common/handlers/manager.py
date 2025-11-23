@@ -42,10 +42,10 @@ from .message_preprocessor import MessagePreprocessorHandler
 from .react_on_user import ReactOnUserMessageHandler
 from .spam import SpamHandler
 from .summarization import SummarizationHandler
+from .topic_manager import TopicManagerHandler
 from .user_data import UserDataHandler
 from .weather import WeatherHandler
 from .yandex_search import YandexSearchHandler
-from .topic_manager import TopicManagerHandler
 
 logger = logging.getLogger(__name__)
 
