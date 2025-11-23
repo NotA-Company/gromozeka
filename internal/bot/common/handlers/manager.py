@@ -45,6 +45,7 @@ from .summarization import SummarizationHandler
 from .user_data import UserDataHandler
 from .weather import WeatherHandler
 from .yandex_search import YandexSearchHandler
+from .topic_manager import TopicManagerHandler
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +82,6 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self.queueService = QueueService.getInstance()
         # Initialize default Chat Settings
-        # TODO: Put all botOwners and chatDefaults to some service to not duplicate it for each handler class
-        # Init different defaults
         botConfig = configManager.getBotConfig()
         defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {k: ChatSettingsValue("") for k in ChatSettingsKey}
         defaultSettings.update(
@@ -125,7 +124,14 @@ class HandlersManager(CommandHandlerGetterInterface):
         ]
 
         if self.botProvider == BotProvider.TELEGRAM:
-            self.handlers.append(ReactOnUserMessageHandler(configManager, database, llmManager, botProvider))
+            self.handlers.extend(
+                [
+                    ReactOnUserMessageHandler(configManager, database, llmManager, botProvider),
+                    TopicManagerHandler(
+                        configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider
+                    ),
+                ]
+            )
 
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
         openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()

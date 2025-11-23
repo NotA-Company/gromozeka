@@ -63,6 +63,7 @@ class UserActiveActionEnum(StrEnum):
     Configuration = "activeConfigure"
     Summarization = "activeSummarization"
     UserDataConfig = "activeUserDataConfig"
+    TopicManagement = "activeTopicManagement"
 
 
 class UserActiveConfigurationDict(TypedDict):
@@ -72,12 +73,8 @@ class UserActiveConfigurationDict(TypedDict):
     messageChatId: int
 
 
-class HCUserCacheDict(TypedDict):
-    """User-level cache for active actions, dood."""
-
-    activeConfigure: NotRequired[UserActiveConfigurationDict]
-    activeSummarization: NotRequired[UserActiveConfigurationDict]
-    activeUserDataConfig: NotRequired[UserActiveConfigurationDict]
+HCUserCacheDict = Dict[UserActiveActionEnum, UserActiveConfigurationDict]
+"""User-level cache for active actions, dood."""
 
 
 class HandlersCacheDict(TypedDict):

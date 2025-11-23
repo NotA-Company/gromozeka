@@ -518,12 +518,12 @@ class CacheService:
     ) -> Optional[UserActiveConfigurationDict]:
         """Get temporary user state (persisted on shutdown)"""
         userState = self.users.get(userId, {})
-        return userState.get(stateKey.value, default)
+        return userState.get(stateKey, default)
 
     def setUserState(self, userId: int, stateKey: UserActiveActionEnum, value: UserActiveConfigurationDict) -> None:
         """Set temporary user state (persisted on shutdown)"""
         userState = self.users.get(userId, {})
-        userState[stateKey.value] = value
+        userState[stateKey] = value
         self.users.set(userId, userState)
         self.dirtyKeys[CacheNamespace.USERS].add(userId)
         logger.debug(f"Updated user state for {userId}, key={stateKey}, dood!")
@@ -546,7 +546,7 @@ class CacheService:
         userState = self.users.get(userId, {})
         stateList = [stateKey] if stateKey else [k for k in UserActiveActionEnum]
         for k in stateList:
-            userState.pop(k.value, None)
+            userState.pop(k, None)
             logger.debug(f"Cleared user state for #{userId}, key={stateKey}, dood!")
 
         self.users.set(userId, userState)

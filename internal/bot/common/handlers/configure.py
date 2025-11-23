@@ -13,7 +13,7 @@ The configuration system supports:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
@@ -150,7 +150,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
     async def chatConfiguration_Init(
         self,
-        data: Dict[str | int, Any],
+        data: utils.PayloadDict,
         messageId: MessageIdType,
         messageChatId: int,
         user: MessageSender,
@@ -235,7 +235,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
     async def chatConfiguration_ConfigureChat(
         self,
-        data: Dict[str | int, Any],
+        data: utils.PayloadDict,
         messageId: MessageIdType,
         messageChatId: int,
         user: MessageSender,
@@ -373,7 +373,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
     async def chatConfiguration_ConfigureKey(
         self,
-        data: Dict[str | int, Any],
+        data: utils.PayloadDict,
         messageId: MessageIdType,
         messageChatId: int,
         user: MessageSender,
@@ -404,7 +404,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         """
         keyId = data.get(ButtonDataKey.Key, None)
 
-        if chatId is None or keyId is None:
+        if chatId is None or not isinstance(keyId, int):
             logger.error(f"ConfigureKey: chatId or key is None in {data}")
             await self.editMessage(
                 messageId=messageId,
@@ -576,7 +576,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
     async def chatConfiguration_SetValue(
         self,
-        data: Dict[str | int, Any],
+        data: utils.PayloadDict,
         messageId: MessageIdType,
         messageChatId: int,
         user: MessageSender,
@@ -611,7 +611,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         keyId = data.get(ButtonDataKey.Key, None)
         action = data.get(ButtonDataKey.ConfigureAction, None)
 
-        if chatId is None or keyId is None:
+        if chatId is None or not isinstance(keyId, int):
             logger.error(f"[Re]SetValue: chatId or key is None in {data}")
             await self.editMessage(
                 messageId=messageId,
@@ -734,7 +734,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
     async def _handle_chat_configuration(
         self,
-        data: Dict[str | int, Any],
+        data: utils.PayloadDict,
         *,
         messageId: MessageIdType,
         messageChatId: int,
