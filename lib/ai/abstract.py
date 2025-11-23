@@ -229,6 +229,7 @@ class AbstractModel(ABC):
             "response": result.resultText,
             "model": self.modelId,
             "provider": type(self.provider).__name__,
+            "raw": str(result.result),
         }
         with open(filename, "a") as f:
             f.write(utils.jsonDumps(data) + "\n")
