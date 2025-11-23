@@ -2,14 +2,23 @@
 set -x
 
 cd `dirname $0`
-. ./.env
+ENV_FILE=".env"
 
-[ -z "$ENV" ] && ENV="local"
-[ -z "$ENV_MAX" ] && ENV_MAX="local-max"
-if [ "$1" = "--max" ]; then
-    shift
-    ENV=$ENV_MAX
-fi
+case "$1" in
+    --env=*)
+        env_value=`echo "$1" | cut -d= -f2`
+        ENV_FILE="$ENV_FILE.$env_value"
+        shift
+        break
+        ;;
+esac
+
+# Do not show env file content as it can content secrets
+set +x
+. "$ENV_FILE"
+set -x
+
+[ -z "$CONFIGS" ] && CONFIGS="local"
 [ -z "$COMPRESSOR" ] && COMPRESSOR="xz -9e"
 [ -z "$DO_PIP_UPDATE" ] && DO_PIP_UPDATE="1"
 [ -z "$DO_GIT_PULL" ] && DO_GIT_PULL="0"
@@ -42,11 +51,11 @@ if [ "$USE_PROFILER" = "1" ]; then
 fi
 
 CONFIG_DIRS=""
-for v in $ENV; do
+for v in $CONFIGS; do
     CONFIG_DIRS="$CONFIG_DIRS --config-dir ./configs/$v"
 done
 
-./venv/bin/python $PROFILER ./main.py --config-dir ./configs/00-defaults $CONFIG_DIRS $*
+./venv/bin/python $PROFILER ./main.py --dotenv-file "$ENV_FILE" --config-dir ./configs/00-defaults $CONFIG_DIRS $EXTRA_ARGS $*
 #2>&1 | tee `date '+logs/%Y-%m-%d_%H-%M.log'`
 
 if [ -n "$PROFILR_LOG" ]; then

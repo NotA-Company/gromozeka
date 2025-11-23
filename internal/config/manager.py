@@ -4,25 +4,70 @@ Configuration management for Gromozeka bot.
 
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import tomli
 
+import lib.utils as utils
 from lib.rate_limiter import RateLimiterManagerConfig
 
 logger = logging.getLogger(__name__)
 
 
+def replaceMatchToEnv(match: re.Match[str]) -> str:
+    """Replace environment variable placeholders with actual values.
+
+    Args:
+        match: A regex match object containing the environment variable name.
+
+    Returns:
+        str: The value of the environment variable or the original placeholder
+             if the variable is not set.
+    """
+    key = match.group(1)
+    return os.getenv(key, match.group(0))
+
+
+def substituteEnvVars(value: Any) -> Any:
+    """Recursively substitute environment variable placeholders in configuration values.
+
+    This function processes strings, dictionaries, and lists to replace placeholders
+    in the format ${VAR_NAME} with their corresponding environment variable values.
+
+    Args:
+        value: The configuration value to process. Can be a string, dict, list, or other type.
+
+    Returns:
+        The processed value with environment variables substituted:
+        - For strings: returns the string with placeholders replaced
+        - For dictionaries: returns a new dict with substituted values
+        - For lists: returns a new list with substituted items
+        - For other types: returns the original value unchanged
+    """
+    if isinstance(value, str):
+        return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_-]*)\}", replaceMatchToEnv, value)
+    elif isinstance(value, dict):
+        return {k: substituteEnvVars(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [substituteEnvVars(item) for item in value]
+    return value
+
+
 class ConfigManager:
     """Manages configuration loading and validation for Gromozeka bot."""
 
-    def __init__(self, config_path: str = "config.toml", config_dirs: Optional[List[str]] = None):
+    def __init__(
+        self, configPath: str = "config.toml", configDirs: Optional[List[str]] = None, dotEnvFile: str = ".env"
+    ):
         """Initialize ConfigManager with config file path and optional config directories."""
-        self.config_path = config_path
-        self.config_dirs = config_dirs or []
-        self.config = self._loadConfig()
+        self.config_path = configPath
+        self.config_dirs = configDirs or []
+        utils.load_dotenv(path=dotEnvFile)
+        self.config = substituteEnvVars(self._loadConfig())
+
         rootDir = self.config.get("application", {}).get("root-dir", None)
         if rootDir is not None:
             os.chdir(rootDir)

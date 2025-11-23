@@ -77,12 +77,23 @@ class TheBot:
         else:
             raise ValueError(f"Unexpected botProvider: {self.botProvider}")
 
-        # Init different defaults
-        self.botOwnersUsername = [
-            username.lower() for username in self.config.get("bot_owners", []) if isinstance(username, str)
-        ]
-        self.botOwnersId = [userId for userId in self.config.get("bot_owners", []) if isinstance(userId, int)]
+        self.botOwnersUsername: List[str] = []
+        self.botOwnersId: List[int] = []
+        for val in self.config.get("bot_owners", []):
+            if isinstance(val, int):
+                self.botOwnersId.append(val)
+            elif isinstance(val, str):
+                self.botOwnersUsername.append(val)
+                if val and val[0] in "-0123456789":
+                    try:
+                        intVal = int(val)
+                        self.botOwnersId.append(intVal)
+                    except ValueError:
+                        pass
+            else:
+                raise ValueError(f"Unexpected type of botowner value '{val}': {type(val).__name__}")
 
+        logger.debug(f"Bot Owners: byId: {self.botOwnersId}, byUsername: {self.botOwnersUsername}")
         self.cache = CacheService.getInstance()
 
         ###
