@@ -94,6 +94,9 @@ class BasicOpenAIModel(AbstractModel):
             #       print(chunk.choices[0].delta.content, end="")
 
             # Response validation (for better error messages)
+            if not isinstance(response, ChatCompletion):
+                logger.error(f"response is not ChatCompletion, but {type(response)}: {response}")
+                raise ValueError(f"Invalid response from OpenAI-compatible model: 0#{response}")
             if not hasattr(response, "choices"):
                 logger.error(
                     f"response does not have field 'choices' {self.modelId}: {type(response).__name__}({response})"
@@ -135,6 +138,7 @@ class BasicOpenAIModel(AbstractModel):
                 #        type='function',
                 #        index=0,
                 #    )
+                logger.debug(f"ToolCalls: {retMessage.tool_calls}")
                 toolCalls = [
                     LLMToolCall(
                         id=tool.id,
