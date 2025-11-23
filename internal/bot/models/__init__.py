@@ -27,6 +27,7 @@ from .enums import (
     ButtonConfigureAction,
     ButtonDataKey,
     ButtonSummarizationAction,
+    ButtonTopicManagementAction,
     ButtonUserDataConfigAction,
     LLMMessageFormat,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "LLMMessageFormat",
     "MessageType",
     "ButtonUserDataConfigAction",
+    "ButtonTopicManagementAction",
     # Media
     "MediaProcessingInfo",
     # User Metadata

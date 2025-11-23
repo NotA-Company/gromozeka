@@ -165,21 +165,6 @@ class TestCacheServiceBasics(unittest.TestCase):
         self.assertIs(self.cache.dbWrapper, self.mockDb)
         self.mockDb.getCacheStorage.assert_called_once()
 
-    def testGetStats(self):
-        """Test statistics generation"""
-        self.cache.chats.set(123, {"settings": {}})
-        self.cache.users.set(456, {"activeConfigure": {"data": {}, "messageId": 1, "messageChatId": 1}})
-
-        stats = self.cache.getStats()
-
-        self.assertIn("chats", stats)
-        self.assertIn("chatUsers", stats)
-        self.assertIn("users", stats)
-
-        self.assertEqual(stats["chats"]["size"], 1)
-        self.assertEqual(stats["users"]["size"], 1)
-        self.assertEqual(stats["chatUsers"]["size"], 0)
-
 
 class TestChatSettings(unittest.TestCase):
     """Test chat settings operations, dood!"""

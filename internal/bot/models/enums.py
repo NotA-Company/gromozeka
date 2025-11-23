@@ -19,13 +19,13 @@ class LLMMessageFormat(StrEnum):
 
 
 class ButtonDataKey(StrEnum):
-
     # Which action is this button for, should be unique
     # Use as less symbols as possible to save space in data
-    ConfigureAction = "a"  # `a`` - Action
-    SummarizationAction = "s"  # `s`` - Summarization
+    ConfigureAction = "a"  # `a` - Action
+    SummarizationAction = "s"  # `s` - Summarization
     SpamAction = "spam"  # `spam` - spam messages don't use to much arguments
-    UserDataConfigAction = "d"  # `d`` - Data
+    UserDataConfigAction = "d"  # `d` - Data
+    TopicManagementAction = "tm"  # `tm` Topic Management
 
     ChatId = "c"
     TopicId = "t"
@@ -40,7 +40,8 @@ class ButtonDataKey(StrEnum):
 
 
 class ButtonConfigureAction(StrEnum):
-    # ButtonDataKey.ConfigureAction values
+    """ButtonDataKey.ConfigureAction values"""
+
     Init = "init"
     Cancel = "cancel"
 
@@ -53,7 +54,8 @@ class ButtonConfigureAction(StrEnum):
 
 
 class ButtonSummarizationAction(StrEnum):
-    # ButtonDataKey.SummarizationAction values
+    """ButtonDataKey.SummarizationAction values"""
+
     Summarization = "s"
     TopicSummarization = "t"
     SummarizationStart = "s+"
@@ -67,7 +69,8 @@ class ButtonSummarizationAction(StrEnum):
 
 
 class ButtonUserDataConfigAction(StrEnum):
-    # ButtonDataKey.UserDataConfigurationAction values
+    """ButtonDataKey.UserDataConfigurationAction values"""
+
     Init = "init"
     Cancel = "cancel"
 
@@ -76,6 +79,20 @@ class ButtonUserDataConfigAction(StrEnum):
     SetValue = "s"
     DeleteKey = "d"
     ClearChatData = "clear"
+
+    @classmethod
+    def all(cls) -> list[str]:
+        return [v.value for v in cls]
+
+
+class ButtonTopicManagementAction(StrEnum):
+    """ButtonDataKey.TopicManagementAction values"""
+
+    Init = "init"
+    Cancel = "cancel"
+
+    ChatSelected = "c"
+    TopicSelected = "t"
 
     @classmethod
     def all(cls) -> list[str]:
