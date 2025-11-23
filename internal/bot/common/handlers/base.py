@@ -435,45 +435,40 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def updateChatInfo(self, message: EnsuredMessage) -> None:
         """
-        TODO
-        """
+        Updates chat information and topic details based on the message received.
 
+        Fetches and caches chat info if it's older than 12 hours. Also updates topic
+        information for Telegram forum topics or sets default topic for other providers.
+
+        Args:
+            message: The message containing chat and topic information to update
+        """
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+
+        chatId = message.recipient.id
+        storedChatInfo = self.getChatInfo(chatId=chatId)
+        needChange = True
+        now = datetime.datetime.now()
+        if storedChatInfo is not None:
+            timeDiff = now - storedChatInfo["updated_at"]
+            needChange = timeDiff.total_seconds() > 60 * 60 * 12
+
+        if needChange:
+            chatInfo = await self._bot.getChatInfo(message)
+            self.cache.setChatInfo(chatId, chatInfo)
+
+        # Update topics info as well
         if self.botProvider == BotProvider.TELEGRAM:
             try:
-                baseMessage = message.getBaseMessage()
-                if not isinstance(baseMessage, telegram.Message):
-                    raise ValueError("Base message is not a telegram.Message")
-                chat = baseMessage.chat
-                chatId = chat.id
-                storedChatInfo = self.getChatInfo(chatId=chatId)
-
-                isForum = chat.is_forum or False
-
-                if (
-                    storedChatInfo is None
-                    or chat.title != storedChatInfo["title"]
-                    or chat.username != storedChatInfo["username"]
-                    or isForum != storedChatInfo["is_forum"]
-                    or message.recipient.chatType != storedChatInfo["type"]
-                ):
-                    self.cache.setChatInfo(
-                        chat.id,
-                        {
-                            "chat_id": chat.id,
-                            "title": chat.title,
-                            "username": chat.username,
-                            "is_forum": isForum,
-                            "type": message.recipient.chatType,
-                            "created_at": datetime.datetime.now(),
-                            "updated_at": datetime.datetime.now(),
-                        },
-                    )
-
                 # TODO: Actually topic name and emoji could be changed after that
                 # but currently we have no way to know it (except of see
                 # https://docs.python-telegram-bot.org/en/stable/telegram.forumtopicedited.html )
                 # Think about it later
                 if message.isTopicMessage:
+                    baseMessage = message.getBaseMessage()
+                    if not isinstance(baseMessage, telegram.Message):
+                        raise ValueError("Base message is not a telegram.Message")
                     repliedMessage = baseMessage.reply_to_message
                     if repliedMessage and repliedMessage.forum_topic_created:
                         self.updateTopicInfo(
@@ -487,36 +482,8 @@ class BaseBotHandler(CommandHandlerMixin):
                     self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
             except Exception as e:
                 logger.error(f"Error updating chat info: {e}")
-        elif self.botProvider == BotProvider.MAX and self._bot is not None and self._bot.maxBot is not None:
-            # Chat info isn't presend in message, so we need to request it explicitelly,
-            # But we do not want to do it often. Looks like we need to check updated_at
-            chatId = message.recipient.id
-            storedChatInfo = self.getChatInfo(chatId=chatId)
-            now = datetime.datetime.now()
-            needChange = True
-            if storedChatInfo is not None:
-
-                timeDiff = now - storedChatInfo["updated_at"]
-                needChange = timeDiff.total_seconds() > 60 * 60 * 12
-
-            if not needChange:
-                return
-
-            # TODO: Think, how to not use self._bot.maxBot directly
-            maxChatInfo = await self._bot.maxBot.getChat(chatId)
-            self.cache.setChatInfo(
-                chatId,
-                {
-                    "chat_id": chatId,
-                    "title": maxChatInfo.title,
-                    "username": maxChatInfo.link,
-                    "is_forum": False,
-                    "type": message.recipient.chatType,
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
-
+        elif self.botProvider == BotProvider.MAX:
+            # No topics in Max, but for consistency assume there is one default topic
             self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
 
         else:
