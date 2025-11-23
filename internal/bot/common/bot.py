@@ -83,7 +83,7 @@ class TheBot:
             if isinstance(val, int):
                 self.botOwnersId.append(val)
             elif isinstance(val, str):
-                self.botOwnersUsername.append(val)
+                self.botOwnersUsername.append(val.lower())
                 if val and val[0] in "-0123456789":
                     try:
                         intVal = int(val)
