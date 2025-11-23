@@ -4,6 +4,7 @@ Provides unified bot interface supporting both Telegram and Max Messenger platfo
 with message handling, media processing, and administrative operations.
 """
 
+import datetime
 import logging
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional
@@ -17,6 +18,7 @@ import lib.max_bot.models as maxModels
 from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import BotProvider, ChatType, EnsuredMessage, MessageRecipient, MessageSender
+from internal.database.models import ChatInfoDict
 from internal.models import MessageIdType
 from internal.services.cache import CacheService
 from lib import utils
@@ -757,5 +759,66 @@ class TheBot:
         elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
             logger.warning("There is no unban action in Max messenger...")
             return False
+        else:
+            raise ValueError(f"Unexpected platform: {self.botProvider}")
+
+    async def getChatInfo(self, message: EnsuredMessage) -> ChatInfoDict:
+        """
+        Get chat information from the message.
+
+        Extracts chat information from the provided message, handling different bot
+        platforms (Telegram and MAX) appropriately. For Telegram messages, extracts
+        directly from the base message. For MAX messages, retrieves chat information
+        from the MAX bot API.
+
+        Args:
+            message: The message to extract chat information from as
+                      [`EnsuredMessage`](internal/bot/models/ensured_message.py)
+
+        Returns:
+            Chat information dictionary as [`ChatInfoDict`](internal/database/models.py)
+
+        Raises:
+            ValueError: If the base message is not a telegram.Message when using
+                          Telegram provider, or if an unexpected platform is encountered
+        """
+        if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
+            baseMessage = message.getBaseMessage()
+            if not isinstance(baseMessage, telegram.Message):
+                raise ValueError("Base message is not a telegram.Message")
+            chat = baseMessage.chat
+
+            now = datetime.datetime.now()
+            return {
+                "chat_id": chat.id,
+                "title": chat.title,
+                "username": chat.username,
+                "is_forum": chat.is_forum or False,
+                "type": message.recipient.chatType,
+                "created_at": now,
+                "updated_at": now,
+            }
+
+        elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
+            maxChatInfo = await self.maxBot.getChat(message.recipient.id)
+            chatUsername = maxChatInfo.link
+            if maxChatInfo.dialog_with_user is not None:
+                chatUsername = maxChatInfo.dialog_with_user.username
+                if not chatUsername:
+                    chatUsername = maxChatInfo.dialog_with_user.first_name
+                    if maxChatInfo.dialog_with_user.last_name:
+                        chatUsername += " " + maxChatInfo.dialog_with_user.last_name
+
+            now = datetime.datetime.now()
+            return {
+                "chat_id": maxChatInfo.chat_id,
+                "title": maxChatInfo.title,
+                "username": chatUsername,
+                "is_forum": False,
+                "type": message.recipient.chatType,
+                "created_at": now,
+                "updated_at": now,
+            }
+
         else:
             raise ValueError(f"Unexpected platform: {self.botProvider}")
