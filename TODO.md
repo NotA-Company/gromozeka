@@ -15,13 +15,13 @@
 - [ ] Meta wizard to guide through all commands
 - [ ] Add support for embeddings + Vector search on chat's database
 - [ ] Add support for local LLM-providers (Like Ollama or LLama.cpp)
-- [ ] Add commands for listing topics and renaming topics in DB
 - [ ] Run LLM and other requests in separate threads
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add coverage badge?
+- [x] Add commands for listing topics and renaming topics in DB
 - [x] Add ENV\.env support in config secrets
 - [x] instead of background tasks, use set like in `internal/bot/max/application.py`
 - [x] Bug: Think about issue: Each handler initialize chat default settings (move it to separate service?)
