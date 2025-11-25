@@ -291,6 +291,9 @@ def load_dotenv(path: str = ".env", populateEnv: bool = True) -> Dict[str, str]:
         Dictionary of key-value pairs from .env file
     """
     ret: Dict[str, str] = {}
+    if not os.path.exists(path):
+        logger.error(f"File {path} not found")
+        return ret
     with open(path, "rt") as f:
         for line in f:
             splitted_line = line.split("=")
