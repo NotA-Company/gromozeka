@@ -21,6 +21,17 @@ support_text = true
 support_images = false
 can_be_choosen = true
 
+[models.models.aliceai-llm]
+provider = "yc-openai"
+model_id = "aliceai-llm"
+model_version = "latest"
+temperature = 0.5
+context = 32768
+support_tools = true
+support_text = true
+support_images = false
+can_be_choosen = true
+
 [models.models."yc/gpt-oss-120b"]
 provider = "yc-openai"
 model_id = "gpt-oss-120b"
