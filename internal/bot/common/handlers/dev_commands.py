@@ -509,7 +509,7 @@ class DevCommandsHandler(BaseBotHandler):
                     await self.sendMessage(
                         ensuredMessage,
                         messageText=f"**{ns}**: \n"
-                        f"```json\n{utils.jsonDumps(self.cache._caches[ns], indent=2)}\n```\n\n"
+                        f"```json\n{utils.jsonDumps(self.cache._caches[ns], indent=2, sort_keys=False)}\n```\n\n"
                         "Dirty keys: \n"
                         f"```\n{self.cache.dirtyKeys[ns]}\n```\n",
                         messageCategory=MessageCategory.BOT_COMMAND_REPLY,
