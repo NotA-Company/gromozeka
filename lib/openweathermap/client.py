@@ -12,6 +12,7 @@ from typing import List, Optional
 import httpx
 
 from lib.cache import CacheInterface, NullCache
+from lib.rate_limiter import RateLimiterManager
 
 from .models import CombinedWeatherResult, CurrentWeather, DailyWeather, GeocodingResult, WeatherData
 
