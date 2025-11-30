@@ -756,9 +756,12 @@ class BaseBotHandler(CommandHandlerMixin):
         chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
         try:
-            llmModel = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
+            imageParsingLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
+            imageParsingFallbackLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL].toModel(
+                self.llmManager
+            )
             logger.debug(f"Prompting Image {ensuredMessage.mediaId} LLM for image with prompt: {messages[:1]}")
-            llmRet = await llmModel.generateText(messages)
+            llmRet = await imageParsingLLM.generateTextWithFallBack(messages, imageParsingFallbackLLM)
             logger.debug(f"Image LLM Response: {llmRet}")
 
             if llmRet.status != ModelResultStatus.FINAL:

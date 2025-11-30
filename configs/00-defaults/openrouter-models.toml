@@ -42,3 +42,14 @@ context = 32768
 support_tools = true
 support_text = true
 support_images = true
+
+[models.models."openrouter/qwen3-vl-235b-a22b-instruct"]
+# https://openrouter.ai/qwen/qwen3-vl-235b-a22b-instruct
+provider = "openrouter"
+model_id = "qwen/qwen3-vl-235b-a22b-instruct"
+model_version = "latest"
+temparature = 0.3
+context = 262144
+support_tools = true
+support_text = true
+support_images = true
