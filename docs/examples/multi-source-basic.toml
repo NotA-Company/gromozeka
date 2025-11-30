@@ -1,0 +1,27 @@
+# Multi-Source Database Configuration - Basic Example
+# This example shows a simple two-source setup with primary and archive databases
+
+[database]
+# Default source for operations without explicit routing
+default = "primary"
+
+# Primary database - main active bot database
+[database.sources.primary]
+path = "bot.db"
+readonly = false
+pool-size = 5
+timeout = 30.0
+
+# Archive database - old/inactive chats (readonly for safety)
+[database.sources.archive]
+path = "archive.db"
+readonly = true  # Prevents accidental modifications
+pool-size = 3    # Lower pool size for readonly source
+timeout = 30.0
+
+# Chat-to-source mapping
+# Map specific chats to the archive database
+[database.chatMapping]
+-1001234567890 = "archive"  # Old inactive chat
+-1002345678901 = "archive"  # Another old chat
+# All other chats use the default "primary" source

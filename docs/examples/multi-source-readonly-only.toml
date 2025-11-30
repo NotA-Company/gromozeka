@@ -1,0 +1,124 @@
+# Multi-Source Database Configuration - Readonly-Only Example
+# This example shows a read-only bot that queries multiple databases
+# without any write permissions - perfect for monitoring, analytics, or reporting bots
+
+[database]
+# Default source for read operations
+default = "primary_readonly"
+
+# ============================================================================
+# DATA SOURCES - ALL READONLY
+# ============================================================================
+
+# Primary bot database (readonly access)
+[database.sources.primary_readonly]
+path = "/shared/primary_bot.db"
+readonly = true  # Readonly - this bot only reads, never writes
+pool-size = 5    # Moderate pool for frequent queries
+timeout = 30.0
+
+# Archive database (readonly access)
+[database.sources.archive_readonly]
+path = "/shared/archive.db"
+readonly = true
+pool-size = 3
+timeout = 30.0
+
+# Another bot's database (readonly access)
+[database.sources.bot2_readonly]
+path = "/shared/bot2.db"
+readonly = true
+pool-size = 3
+timeout = 30.0
+
+# Analytics database (readonly access)
+[database.sources.analytics_readonly]
+path = "/shared/analytics.db"
+readonly = true
+pool-size = 2
+timeout = 30.0
+
+# ============================================================================
+# CHAT MAPPINGS (Optional for readonly bot)
+# ============================================================================
+# Even in readonly mode, you can map chats to specific sources
+# This is useful for organizing queries across multiple databases
+
+[database.chatMapping]
+# Map chats to their respective sources
+-1001111111111 = "primary_readonly"
+-1002222222222 = "archive_readonly"
+-1003333333333 = "bot2_readonly"
+
+# ============================================================================
+# USE CASES FOR READONLY-ONLY CONFIGURATION
+# ============================================================================
+
+# Use Case 1: Monitoring Bot
+# - Reads from multiple bot databases
+# - Generates reports and statistics
+# - Never modifies any data
+
+# Use Case 2: Analytics Bot
+# - Aggregates data from multiple sources
+# - Performs cross-bot analysis
+# - Readonly access ensures data integrity
+
+# Use Case 3: Backup Verification Bot
+# - Queries backup databases
+# - Verifies data consistency
+# - No risk of corrupting backups
+
+# Use Case 4: Audit Bot
+# - Reads from production databases
+# - Generates audit reports
+# - Readonly access prevents tampering
+
+# ============================================================================
+# EXAMPLE QUERIES
+# ============================================================================
+
+# Example 1: Query specific readonly source
+# messages = db.getChatMessages(chatId=123, dataSource="primary_readonly")
+
+# Example 2: Cross-source aggregation (all readonly sources)
+# all_chats = db.getAllGroupChats()  # Queries all sources safely
+
+# Example 3: Analytics across multiple bots
+# bot1_chats = db.getAllGroupChats(dataSource="primary_readonly")
+# bot2_chats = db.getAllGroupChats(dataSource="bot2_readonly")
+
+# Example 4: Archive analysis
+# archive_messages = db.getChatMessages(chatId=123, dataSource="archive_readonly")
+
+# ============================================================================
+# BENEFITS OF READONLY-ONLY CONFIGURATION
+# ============================================================================
+
+# 1. Safety: Impossible to accidentally modify data
+# 2. Security: No write permissions = no data corruption risk
+# 3. Audit Trail: Data remains untampered
+# 4. Cross-Bot Access: Safely read from multiple bot databases
+# 5. Backup Protection: Query backups without modification risk
+
+# ============================================================================
+# IMPORTANT NOTES
+# ============================================================================
+
+# - ALL write operations will raise ValueError
+# - This is intentional and provides safety
+# - If you need to write, use a different bot with write permissions
+# - Readonly mode is enforced at SQLite level (PRAGMA query_only = ON)
+
+# Example of what will fail:
+# db.addChatMessage(...)  # ValueError: Cannot perform write operation on readonly source
+# db.updateChatInfo(...)  # ValueError: Cannot perform write operation on readonly source
+
+# ============================================================================
+# PERFORMANCE CONSIDERATIONS
+# ============================================================================
+
+# - Readonly sources can use smaller connection pools
+# - No write contention = better read performance
+# - Consider caching frequently accessed data
+# - Use explicit dataSource for known locations to avoid routing overhead

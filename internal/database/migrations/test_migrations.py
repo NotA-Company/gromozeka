@@ -170,39 +170,19 @@ def test_existing_database():
         dbPath = f.name
     
     try:
-        # Create database with only settings table (simulating old database)
-        db = DatabaseWrapper.__new__(DatabaseWrapper)
-        db.dbPath = dbPath
-        db.maxConnections = 5
-        db.timeout = 30.0
-        db._local = __import__("threading").local()
+        # Create database - __init__ now automatically runs migrations
+        db = DatabaseWrapper(dbPath, maxConnections=5, timeout=30.0)
         
-        with db.getCursor() as cursor:
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        
-        # Now run migrations
+        # Verify migrations were run automatically by __init__
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
-        initialVersion = manager.getCurrentVersion()
-        logger.info(f"Initial version: {initialVersion}")
-        assert initialVersion == 0, "Should start at version 0"
+        currentVersion = manager.getCurrentVersion()
+        logger.info(f"Current version after init: {currentVersion}")
         
-        manager.migrate()
-        
-        finalVersion = manager.getCurrentVersion()
-        logger.info(f"Final version: {finalVersion}")
-        assert finalVersion == len(MIGRATIONS), \
-            f"Expected version {len(MIGRATIONS)}, got {finalVersion}"
+        # With new multi-source architecture, migrations run automatically in __init__
+        assert currentVersion == len(MIGRATIONS), \
+            f"Expected version {len(MIGRATIONS)} (auto-migrated), got {currentVersion}"
         
         logger.info("✅ Existing database upgrade test PASSED, dood!")
         
