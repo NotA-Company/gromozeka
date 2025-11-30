@@ -26,18 +26,29 @@ class MessageCategory(StrEnum):
     """
 
     UNSPECIFIED = "unspecified"
-    UNKNOWN = "unknown"
+    """Unspecified"""
 
     USER = "user"
+    """Message from user"""
     USER_COMMAND = "user-command"
+    """Command from user"""
+
+    CHANNEL = "channel"
+    """Message from channel\automatic forward"""
 
     BOT = "bot"
+    """Message from bot"""
     BOT_COMMAND_REPLY = "bot-command-reply"
+    """Bot reply to command"""
     BOT_ERROR = "bot-error"
+    """Bot returned some error"""
     BOT_SUMMARY = "bot-summary"
+    """Summary message from bot"""
 
     BOT_SPAM_NOTIFICATION = "bot-spam-notification"
+    """Spam notification message from bot"""
     USER_SPAM = "user-spam"
+    """Spam message from user"""
 
 
 class SpamReason(StrEnum):

@@ -719,7 +719,7 @@ class LLMMessageHandler(BaseBotHandler):
                             chatId=chatId,
                             threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
                             limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
-                            # messageCategory=[MessageCategory.USER, MessageCategory.BOT],
+                            # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
                         )
                     )
                 )
