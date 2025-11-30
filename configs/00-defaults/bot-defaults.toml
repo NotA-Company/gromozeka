@@ -97,6 +97,7 @@ fallback-model                  = "openrouter/gemma-3-12b-it:free"
 summary-model                   = "openrouter/gemma-3-12b-it:free"
 summary-fallback-model          = "openrouter/deepseek-chat-v3.1:free"
 image-parsing-model             = "openrouter/gemma-3-27b-it:free"
+image-parsing-fallback-model    = "openrouter/qwen3-vl-235b-a22b-instruct"
 image-generation-model          = "yandex-art"
 image-generation-fallback-model = "openrouter/gemini-2.5-flash-image"
 
