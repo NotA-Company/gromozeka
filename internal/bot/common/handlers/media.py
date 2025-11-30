@@ -426,6 +426,7 @@ class MediaHandler(BaseBotHandler):
             return
 
         parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
+        parserFallbackLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL].toModel(self.llmManager)
 
         mediaDataList: List[bytes] = []
 
@@ -511,7 +512,7 @@ class MediaHandler(BaseBotHandler):
                 ),
             ]
 
-            llmRet = await parserLLM.generateText(reqMessages)
+            llmRet = await parserLLM.generateTextWithFallBack(reqMessages, parserFallbackLLM)
             logger.debug(f"LLM result: {llmRet}")
             if llmRet.status != ModelResultStatus.FINAL:
                 await self.sendMessage(
