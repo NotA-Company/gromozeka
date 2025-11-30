@@ -103,3 +103,25 @@
 * Enables cross-bot data sharing
 * Maintains 100% backward compatibility
 * Reduces implementation complexity significantly
+
+[2025-11-30 17:47:00] - Phase 3 Multi-Source Database Implementation Decisions
+
+### Decision: Cross-Source Aggregation with Intelligent Deduplication
+
+* **Deduplication Keys Strategy**: Each cross-chat method uses appropriate keys based on data semantics:
+  - getUserChats(): (userId, chat_id) - User-chat relationship uniqueness
+  - getAllGroupChats(): chat_id - Chat uniqueness
+  - getSpamMessages(): (chat_id, message_id) - Message uniqueness within chat
+  - getCacheStorage(): (namespace, key) - Cache entry uniqueness
+  - getCacheEntry(): First match (no deduplication) - Performance optimization
+
+* **Error Handling**: Continue aggregation on individual source failures with warning logs
+* **Backward Compatibility**: Optional parameter design ensures zero breaking changes
+* **Performance**: Set-based deduplication provides O(n) complexity for result merging
+
+### Rationale
+
+* **Data Integrity**: Proper deduplication prevents duplicate entries in cross-source queries
+* **Resilience**: Partial failures don't break entire operations
+* **Maintainability**: Clear deduplication strategy documented for future reference
+* **Performance**: Efficient algorithms ensure minimal overhead for multi-source operations

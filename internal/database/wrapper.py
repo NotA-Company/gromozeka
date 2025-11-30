@@ -90,36 +90,279 @@ sqlite3.register_converter("boolean", convert_boolean)
 sqlite3.register_adapter(datetime.datetime, adapt_datetime)
 
 
+class SourceConfig:
+    """
+    Configuration for a single database source.
+    """
+
+    __slots__ = ["dbPath", "readonly", "timeout", "poolSize"]
+
+    def __init__(
+        self,
+        *,
+        dbPath: str,
+        readonly: bool = False,
+        timeout: int = 10,
+        poolSize: int = 5,
+    ) -> None:
+        self.dbPath = dbPath
+        """Path do DB file"""
+        self.readonly = readonly
+        """Whether the database is read-only"""
+        self.timeout = timeout
+        """Connection timeout in seconds"""
+        self.poolSize = poolSize
+        """Maximum connections per source"""
+
+    def __repr__(self) -> str:
+        retList = []
+        for slot in self.__slots__:
+            retList.append(f"{slot}={getattr(self, slot)}")
+
+        return self.__class__.__name__ + "(" + ", ".join(retList) + ")"
+
+
 class DatabaseWrapper:
     """
     A wrapper around SQLite that provides a consistent interface
     that can be easily replaced with other database backends.
     """
 
-    def __init__(self, dbPath: str, maxConnections: int = 5, timeout: float = 30.0):
-        logger.info(f"Initializing SQLite database wrapper with path {dbPath}")
-        self.dbPath = dbPath
-        self.maxConnections = maxConnections
-        self.timeout = timeout
-        self._local = threading.local()
+    def __init__(
+        self,
+        dbPath: Optional[str] = None,
+        maxConnections: int = 5,
+        timeout: float = 30.0,
+        config: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize database wrapper with single or multi-source configuration, dood!
+
+        Args:
+            dbPath: Single database path (legacy mode, mutually exclusive with config)
+            maxConnections: Max connections per source (default: 5)
+            timeout: Connection timeout in seconds (default: 30.0)
+            config: Multi-source config dict with 'sources', 'chatMapping', 'defaultSource'
+
+        Raises:
+            ValueError: If neither or both dbPath and config provided
+        """
+        # Validate initialization parameters
+        if dbPath is None and config is None:
+            raise ValueError("Either dbPath or config must be provided, dood!")
+        if dbPath is not None and config is not None:
+            raise ValueError("Cannot provide both dbPath and config - choose one mode, dood!")
+
+        if dbPath:
+            config = {
+                "default": "default",
+                "sources": {
+                    "default": {
+                        "path": dbPath,
+                        "readonly": False,
+                        "pool-size": maxConnections,
+                        "timeout": timeout,
+                    },
+                },
+            }
+
+        if config is None:
+            raise RuntimeError("Somehow config is None")
+
+        logger.info("Initializing database wrapper in multi-source mode, dood!")
+        self._initializeMultiSource(config, maxConnections, timeout)
+
+        # Initialize database schema (works for both modes)
         self._initDatabase()
 
-    def _getConnection(self) -> sqlite3.Connection:
-        """Get a thread-local database connection."""
-        if not hasattr(self._local, "connection"):
-            self._local.connection = sqlite3.connect(
-                self.dbPath,
-                timeout=self.timeout,
-                check_same_thread=False,
-                detect_types=sqlite3.PARSE_DECLTYPES,
+    def _initializeMultiSource(self, config: Dict[str, Any], defaultMaxConnections: int, defaultTimeout: float):
+        """
+        Initialize multi-source configuration and connection pools, dood!
+
+        Args:
+            config: Multi-source config dict with sources, chatMapping, default
+            defaultMaxConnections: Default max connections per source
+            defaultTimeout: Default timeout per source in seconds
+        """
+        # Initialize data structures for multi-source mode
+        self._connections: Dict[str, threading.local] = {}
+        self._sources: Dict[str, SourceConfig] = {}
+        self._chatMapping: Dict[int, str] = {}
+        self._locks: Dict[str, threading.Lock] = {}
+        self._defaultSource: str = config.get("default", "default")
+
+        # Parse and store source configurations
+        sources = config.get("sources", {})
+        if not sources:
+            raise ValueError("Multi-source config must contain at least one source, dood!")
+
+        for sourceName, sourceConfig in sources.items():
+            if "path" not in sourceConfig:
+                raise ValueError(f"Source '{sourceName}' missing required 'path' field, dood!")
+
+            # Store source configuration with defaults
+            self._sources[sourceName] = SourceConfig(
+                dbPath=sourceConfig["path"],
+                readonly=sourceConfig.get("readonly", False),
+                poolSize=sourceConfig.get("pool-size", defaultMaxConnections),
+                timeout=sourceConfig.get("timeout", defaultTimeout),
             )
-            self._local.connection.row_factory = sqlite3.Row
-        return self._local.connection
+
+            # Initialize thread-local storage for this source
+            self._connections[sourceName] = threading.local()
+
+            # Initialize lock for thread-safe connection management
+            self._locks[sourceName] = threading.Lock()
+
+            logger.info(f"Configured source '{sourceName}': {self._sources[sourceName]}, dood!")
+
+        # Validate default source exists
+        if self._defaultSource not in self._sources:
+            raise ValueError(f"Default source '{self._defaultSource}' not found in sources configuration, dood!")
+
+        # Parse chat-to-source mapping
+        chatMapping = config.get("chatMapping", {})
+        for chatId, sourceName in chatMapping.items():
+            # Convert chatId to int if it's a string
+            chatIdInt = int(chatId) if isinstance(chatId, str) else chatId
+
+            # Validate source exists
+            if sourceName not in self._sources:
+                logger.warning(
+                    f"Chat {chatIdInt} mapped to non-existent source '{sourceName}', "
+                    f"will fall back to default source '{self._defaultSource}', dood!"
+                )
+                continue
+
+            self._chatMapping[chatIdInt] = sourceName
+            logger.debug(f"Mapped chat {chatIdInt} to source '{sourceName}', dood!")
+
+        logger.info(
+            f"Multi-source initialization complete: {len(self._sources)} sources, "
+            f"{len(self._chatMapping)} chat mappings, default='{self._defaultSource}', dood!"
+        )
+
+    def _getConnection(
+        self,
+        *,
+        chatId: Optional[int] = None,
+        dataSource: Optional[str] = None,
+        readonly: bool = False,
+    ) -> sqlite3.Connection:
+        """
+        Get thread-local connection with 3-tier routing: dataSource → chatMapping → default, dood!
+
+        Args:
+            chatId: Chat ID for tier-2 routing via chatMapping
+            dataSource: Explicit source name for tier-1 routing (highest priority)
+            readonly: Request readonly connection (default: False = writable)
+
+        Returns:
+            sqlite3.Connection: Thread-local connection for selected source
+
+        Raises:
+            ValueError: If readonly=False on readonly source
+        """
+        # Multi-source mode - determine which source to use via 3-tier routing
+        sourceName: str
+
+        # Tier 1: Explicit dataSource parameter (highest priority)
+        if dataSource is not None:
+            if dataSource not in self._sources:
+                logger.warning(
+                    f"Explicit dataSource '{dataSource}' not found in configuration, "
+                    f"falling back to default source '{self._defaultSource}', dood!"
+                )
+                sourceName = self._defaultSource
+            else:
+                logger.debug(f"Using explicit dataSource '{dataSource}' (tier 1 routing), dood!")
+                sourceName = dataSource
+
+        # Tier 2: ChatId mapping lookup (medium priority)
+        elif chatId is not None:
+            if chatId in self._chatMapping:
+                mappedSource = self._chatMapping[chatId]
+                # Validate mapped source still exists
+                if mappedSource not in self._sources:
+                    logger.warning(
+                        f"Chat {chatId} mapped to non-existent source '{mappedSource}', "
+                        f"falling back to default source '{self._defaultSource}', dood!"
+                    )
+                    sourceName = self._defaultSource
+                else:
+                    logger.debug(f"Using chatId {chatId} mapping to source '{mappedSource}' (tier 2 routing), dood!")
+                    sourceName = mappedSource
+            else:
+                logger.debug(
+                    f"Chat {chatId} not in mapping, using default source "
+                    f"'{self._defaultSource}' (tier 3 fallback), dood!"
+                )
+                sourceName = self._defaultSource
+
+        # Tier 3: Default source fallback (lowest priority)
+        else:
+            logger.debug(
+                f"No routing parameters provided, using default source '{self._defaultSource}' (tier 3 fallback), dood!"
+            )
+            sourceName = self._defaultSource
+
+        # Readonly validation - check before returning connection
+        sourceConfig = self._sources[sourceName]
+        if not readonly and sourceConfig.readonly:
+            raise ValueError(
+                f"Cannot perform write operation on readonly source '{sourceName}', dood! "
+                f"This source is configured as readonly."
+            )
+
+        # Get or create thread-local connection for this source
+        threadLocal = self._connections[sourceName]
+
+        if not hasattr(threadLocal, "connection"):
+            # Need to create new connection - acquire lock for thread safety
+            with self._locks[sourceName]:
+                # Double-check after acquiring lock (another thread might have created it)
+                if not hasattr(threadLocal, "connection"):
+                    logger.debug(
+                        f"Creating new connection for source '{sourceName}' "
+                        f"(path={sourceConfig.dbPath}, readonly={sourceConfig.readonly}), dood!"
+                    )
+
+                    # Create connection with source-specific configuration
+                    threadLocal.connection = sqlite3.connect(
+                        sourceConfig.dbPath,
+                        timeout=sourceConfig.timeout,
+                        check_same_thread=False,
+                        detect_types=sqlite3.PARSE_DECLTYPES,
+                    )
+                    threadLocal.connection.row_factory = sqlite3.Row
+
+                    # Enable query_only mode for readonly sources
+                    if sourceConfig.readonly:
+                        threadLocal.connection.execute("PRAGMA query_only = ON")
+                        logger.debug(f"Enabled query_only mode for readonly source '{sourceName}', dood!")
+
+        return threadLocal.connection
 
     @contextmanager
-    def getCursor(self):
-        """Context manager for database operations."""
-        conn = self._getConnection()
+    def getCursor(
+        self,
+        *,
+        chatId: Optional[int] = None,
+        dataSource: Optional[str] = None,
+        readonly: bool = False,
+    ):
+        """
+        Context manager for database operations with routing support, dood!
+
+        Args:
+            chatId: Chat ID for routing
+            dataSource: Explicit source name for routing
+            readonly: Request readonly connection (default: False = writable)
+
+        Yields:
+            sqlite3.Cursor: Database cursor with auto-commit/rollback
+        """
+        conn = self._getConnection(chatId=chatId, dataSource=dataSource, readonly=readonly)
         cursor = conn.cursor()
         try:
             yield cursor
@@ -133,43 +376,54 @@ class DatabaseWrapper:
             cursor.close()
 
     def close(self):
-        """Close database connections."""
-        if hasattr(self._local, "connection"):
-            self._local.connection.close()
+        """Close all database connections across all sources, dood!"""
+        for sourceName, threadLocal in self._connections.items():
+            if hasattr(threadLocal, "connection"):
+                try:
+                    threadLocal.connection.close()
+                    logger.debug(f"Closed connection for source '{sourceName}', dood!")
+                except Exception as e:
+                    logger.error(f"Error closing connection for source '{sourceName}': {e}")
 
     def _initDatabase(self):
-        """Initialize the database with required tables, dood!"""
-        with self.getCursor() as cursor:
-            # Settings table for storing key-value pairs
-            # This table is needed BEFORE migrations run for version tracking
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """
-            )
-
+        """Initialize database schema and run migrations for all non-readonly sources, dood!"""
         # Import here to avoid circular dependency, dood!
         from .migrations import MigrationManager
 
-        # Run migrations, dood!
-        migrationManager = MigrationManager(self)
+        # Initialize each non-readonly datasource
+        for sourceName, sourceConfig in self._sources.items():
+            if sourceConfig.readonly:
+                logger.info(f"Skipping initialization for readonly source '{sourceName}', dood!")
+                continue
 
-        # Try auto-discovery first, fall back to manual registration
-        try:
-            migrationManager.loadMigrationsFromVersions()
-            logger.info("Using auto-discovered migrations, dood!")
-        except Exception as e:
-            logger.error(f"Migrations Auto-discovery failed: {e}")
-            raise e
+            logger.info(f"Initializing database for source '{sourceName}', dood!")
 
-        migrationManager.migrate()
+            # Create settings table (needed before migrations for version tracking)
+            with self.getCursor(dataSource=sourceName) as cursor:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """
+                )
 
-        logger.info("Database initialization complete, dood!")
+            # Run migrations for this source
+            migrationManager = MigrationManager(self)
+            try:
+                migrationManager.loadMigrationsFromVersions()
+                logger.info(f"Loaded migrations for source '{sourceName}', dood!")
+            except Exception as e:
+                logger.error(f"Migration auto-discovery failed for source '{sourceName}': {e}")
+                raise e
+
+            migrationManager.migrate()  # TODO: add dataSourceSupport in migrations
+            logger.info(f"Database initialization complete for source '{sourceName}', dood!")
+
+        logger.info("All non-readonly databases initialized, dood!")
 
     ###
     # TypedDict validation and conversion helpers
@@ -547,9 +801,21 @@ class DatabaseWrapper:
     ###
 
     def setSetting(self, key: str, value: str) -> bool:
-        """Set a configuration setting."""
+        """
+        Set a configuration setting.
+
+        Args:
+            key: Setting key
+            value: Setting value
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT OR REPLACE INTO settings
@@ -569,7 +835,7 @@ class DatabaseWrapper:
     def getSetting(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Get a configuration setting."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=True) as cursor:
                 cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
                 row = cursor.fetchone()
                 return row["value"] if row else default
@@ -580,7 +846,7 @@ class DatabaseWrapper:
     def getSettings(self) -> Dict[str, str]:
         """Get all configuration settings."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=True) as cursor:
                 cursor.execute("SELECT * FROM settings")
                 return {row["key"]: row["value"] for row in cursor.fetchall()}
         except Exception as e:
@@ -605,7 +871,29 @@ class DatabaseWrapper:
         quoteText: Optional[str] = None,
         mediaId: Optional[str] = None,
     ) -> bool:
-        """Save a chat message with detailed information."""
+        """
+        Save a chat message with detailed information.
+
+        Args:
+            date: Message timestamp
+            chatId: Chat identifier (used for source routing)
+            userId: User identifier
+            messageId: Message identifier
+            replyId: Optional reply message ID
+            threadId: Optional thread ID
+            messageText: Message text content
+            messageType: Type of message
+            messageCategory: Message category
+            rootMessageId: Optional root message ID for threads
+            quoteText: Optional quoted text
+            mediaId: Optional media attachment ID
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         messageId = str(messageId)
         if replyId is not None:
             replyId = str(replyId)
@@ -615,7 +903,7 @@ class DatabaseWrapper:
         if threadId is None:
             threadId = DEFAULT_THREAD_ID
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 today = date.replace(hour=0, minute=0, second=0, microsecond=0)
                 cursor.execute(
                     """
@@ -717,7 +1005,7 @@ class DatabaseWrapper:
                     placeholders.append(f":messageCategory{i}")
                     params[f"messageCategory{i}"] = category
 
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=True) as cursor:
                 query = f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX}  FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
@@ -745,12 +1033,24 @@ class DatabaseWrapper:
             )
             return []
 
-    def getChatMessageByMessageId(self, chatId: int, messageId: MessageIdType) -> Optional[ChatMessageDict]:
-        """Get a specific chat message by message_id, chat_id, and optional thread_id."""
+    def getChatMessageByMessageId(
+        self, chatId: int, messageId: MessageIdType, *, dataSource: Optional[str] = None
+    ) -> Optional[ChatMessageDict]:
+        """
+        Get a specific chat message by message_id, chat_id, and optional thread_id.
+
+        Args:
+            chatId: Chat identifier
+            messageId: Message identifier
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            ChatMessageDict or None if not found
+        """
         logger.debug(f"Getting chat message for chat {chatId}, message_id {messageId}")
         messageId = str(messageId)
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
@@ -775,7 +1075,7 @@ class DatabaseWrapper:
         """Get all chat messages in a conversation thread by root message ID."""
         logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=True) as cursor:
                 cursor.execute(
                     f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
@@ -802,11 +1102,24 @@ class DatabaseWrapper:
             )
             return []
 
-    def getChatMessagesByUser(self, chatId: int, userId: int, limit: int = 100) -> List[ChatMessageDict]:
-        """Get all chat messages by user ID."""
+    def getChatMessagesByUser(
+        self, chatId: int, userId: int, limit: int = 100, *, dataSource: Optional[str] = None
+    ) -> List[ChatMessageDict]:
+        """
+        Get all chat messages by user ID.
+
+        Args:
+            chatId: Chat identifier
+            userId: User identifier
+            limit: Maximum number of messages to return (default: 100)
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            List of ChatMessageDict
+        """
         logger.debug(f"Getting chat messages for chat {chatId}, user {userId}")
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
@@ -837,7 +1150,7 @@ class DatabaseWrapper:
     ) -> bool:
         """Update the category of a chat message."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     UPDATE chat_messages
@@ -869,8 +1182,8 @@ class DatabaseWrapper:
         their @username, full_name, and updated_at timestamp will be refreshed.
 
         Args:
-            chatId: The unique identifier of the chat, dood
-            userId: The unique identifier of the user, dood
+            chatId: The unique identifier of the chat (used for source routing)
+            userId: The unique identifier of the user
             username: The current @username of the user (may be None) (Note: Should be with @ sign)
             fullName: The current full name/display name of the user
 
@@ -878,11 +1191,12 @@ class DatabaseWrapper:
             bool: True if the operation succeeded, False if an exception occurred
 
         Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
             The updated_at timestamp is automatically set to CURRENT_TIMESTAMP
             on both insert and update operations, dood.
         """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO chat_users
@@ -906,10 +1220,20 @@ class DatabaseWrapper:
             logger.error(f"Failed to update username for user {userId} in chat {chatId}: {e}")
             return False
 
-    def getChatUser(self, chatId: int, userId: int) -> Optional[ChatUserDict]:
-        """Get the username of a user in a chat."""
+    def getChatUser(self, chatId: int, userId: int, *, dataSource: Optional[str] = None) -> Optional[ChatUserDict]:
+        """
+        Get the username of a user in a chat.
+
+        Args:
+            chatId: Chat identifier
+            userId: User identifier
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            ChatUserDict or None if not found
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_users
@@ -927,9 +1251,22 @@ class DatabaseWrapper:
             return None
 
     def markUserIsSpammer(self, chatId: int, userId: int, isSpammer: bool) -> bool:
-        """Mark a user as spammer."""
+        """
+        Mark a user as spammer.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            userId: User identifier
+            isSpammer: Whether user is a spammer
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     UPDATE chat_users
@@ -950,9 +1287,22 @@ class DatabaseWrapper:
             return False
 
     def updateUserMetadata(self, chatId: int, userId: int, metadata: str) -> bool:
-        """Update metadata for a chat user."""
+        """
+        Update metadata for a chat user.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            userId: User identifier
+            metadata: Metadata string
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     UPDATE chat_users
@@ -973,10 +1323,26 @@ class DatabaseWrapper:
             logger.error(f"Failed to update metadata for user {userId} in chat {chatId}: {e}")
             return False
 
-    def getChatUserByUsername(self, chatId: int, username: str) -> Optional[ChatUserDict]:
-        """Get the user id of a user in a chat."""
+    def getChatUserByUsername(
+        self,
+        chatId: int,
+        username: str,
+        *,
+        dataSource: Optional[str] = None,
+    ) -> Optional[ChatUserDict]:
+        """
+        Get the user id of a user in a chat.
+
+        Args:
+            chatId: Chat identifier
+            username: Username to search for
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            ChatUserDict or None if not found
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_users
@@ -1004,7 +1370,7 @@ class DatabaseWrapper:
     ) -> List[ChatUserDict]:
         """Get the usernames of all users in a chat, optionally filtered by when they last sent a message."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_users
@@ -1026,56 +1392,119 @@ class DatabaseWrapper:
             logger.error(f"Failed to get users for chat {chatId}: {e}")
             return []
 
-    def getUserChats(self, userId: int) -> List[ChatInfoDict]:
-        """Get chats, user was seen in"""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT ci.* FROM chat_info ci
-                    JOIN chat_users cu ON cu.chat_id = ci.chat_id
-                    WHERE
-                        user_id = :userId
-                """,
-                    {
-                        "userId": userId,
-                    },
-                )
-                return [self._validateDictIsChatInfoDict(dict(row)) for row in cursor.fetchall()]
-        except Exception as e:
-            logger.error(f"Failed to get user#{userId} chats: {e}")
-            logger.exception(e)
-            return []
+    def getUserChats(self, userId: int, *, dataSource: Optional[str] = None) -> List[ChatInfoDict]:
+        """
+        Get chats user was seen in.
 
-    def getAllGroupChats(self) -> List[ChatInfoDict]:
-        """Get chats, user was seen in"""
-        try:
-            with self.getCursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT ci.* FROM chat_info ci
-                    WHERE
-                        type in (:groupChat, :supergroupChat)
-                """,
-                    {
-                        "groupChat": Chat.GROUP,
-                        "supergroupChat": Chat.SUPERGROUP,
-                    },
-                )
-                return [self._validateDictIsChatInfoDict(dict(row)) for row in cursor.fetchall()]
-        except Exception as e:
-            logger.error(f"Failed to get group chats: {e}")
-            logger.exception(e)
-            return []
+        Args:
+            userId: User identifier
+            dataSource: Optional data source name. If None in multi-source mode,
+                       aggregates from all sources and deduplicates by (userId, chatId).
+
+        Returns:
+            List of ChatInfoDict
+        """
+
+        # Multi-source aggregation
+        logger.debug(f"Aggregating getUserChats for user {userId} from sources, dood!")
+        allResults = []
+        seen = set()  # Deduplicate by (userId, chatId)
+
+        sourcesList = [dataSource] if dataSource else self._sources.keys()
+
+        for sourceName in sourcesList:
+            try:
+                with self.getCursor(dataSource=sourceName) as cursor:
+                    cursor.execute(
+                        """
+                        SELECT ci.* FROM chat_info ci
+                        JOIN chat_users cu ON cu.chat_id = ci.chat_id
+                        WHERE
+                            user_id = :userId
+                    """,
+                        {
+                            "userId": userId,
+                        },
+                    )
+                    for row in cursor.fetchall():
+                        chatInfo = self._validateDictIsChatInfoDict(dict(row))
+                        key = (userId, chatInfo["chat_id"])
+                        if key not in seen:
+                            seen.add(key)
+                            allResults.append(chatInfo)
+            except Exception as e:
+                logger.warning(f"Failed to get chats from source '{sourceName}': {e}, dood!")
+                continue
+
+        logger.debug(f"Aggregated {len(allResults)} unique chats for user {userId}, dood!")
+        return allResults
+
+    def getAllGroupChats(self, *, dataSource: Optional[str] = None) -> List[ChatInfoDict]:
+        """
+        Get all group chats.
+
+        Args:
+            dataSource: Optional data source name. If None in multi-source mode,
+                       aggregates from all sources and deduplicates by chatId.
+
+        Returns:
+            List of ChatInfoDict
+        """
+        # Multi-source aggregation
+        logger.debug("Aggregating getAllGroupChats from sources, dood!")
+        allResults = []
+        seen = set()  # Deduplicate by chatId
+
+        sourcesList = [dataSource] if dataSource else self._sources.keys()
+        for sourceName in sourcesList:
+            try:
+                with self.getCursor(dataSource=sourceName) as cursor:
+                    cursor.execute(
+                        """
+                        SELECT ci.* FROM chat_info ci
+                        WHERE
+                            type in (:groupChat, :supergroupChat)
+                    """,
+                        {
+                            "groupChat": Chat.GROUP,
+                            "supergroupChat": Chat.SUPERGROUP,
+                        },
+                    )
+                    for row in cursor.fetchall():
+                        chatInfo = self._validateDictIsChatInfoDict(dict(row))
+                        chatId = chatInfo["chat_id"]
+                        if chatId not in seen:
+                            seen.add(chatId)
+                            allResults.append(chatInfo)
+            except Exception as e:
+                logger.warning(f"Failed to get group chats from source '{sourceName}': {e}, dood!")
+                continue
+
+        logger.debug(f"Aggregated {len(allResults)} unique group chats, dood!")
+        return allResults
 
     ###
     # User Data manipulation functions
     ###
 
     def addUserData(self, userId: int, chatId: int, key: str, data: str) -> bool:
-        """Add user knowledge to the database."""
+        """
+        Add user knowledge to the database.
+
+        Args:
+            userId: User identifier
+            chatId: Chat identifier (used for source routing)
+            key: Data key
+            data: Data value
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO user_data
@@ -1098,10 +1527,20 @@ class DatabaseWrapper:
             logger.error(f"Failed to add user knowledge: {e}")
             return False
 
-    def getUserData(self, userId: int, chatId: int) -> Dict[str, str]:
-        """Get user knowledge from the database."""
+    def getUserData(self, userId: int, chatId: int, *, dataSource: Optional[str] = None) -> Dict[str, str]:
+        """
+        Get user knowledge from the database.
+
+        Args:
+            userId: User identifier
+            chatId: Chat identifier
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            Dictionary mapping keys to data values
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM user_data
@@ -1119,9 +1558,22 @@ class DatabaseWrapper:
             return {}
 
     def deleteUserData(self, userId: int, chatId: int, key: str) -> bool:
-        """Delete specific user data"""
+        """
+        Delete specific user data.
+
+        Args:
+            userId: User identifier
+            chatId: Chat identifier (used for source routing)
+            key: Data key to delete
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     DELETE FROM user_data
@@ -1141,9 +1593,21 @@ class DatabaseWrapper:
             return False
 
     def clearUserData(self, userId: int, chatId: int) -> bool:
-        """Clear all user data in chat"""
+        """
+        Clear all user data in chat.
+
+        Args:
+            userId: User identifier
+            chatId: Chat identifier (used for source routing)
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     DELETE FROM user_data
@@ -1165,9 +1629,22 @@ class DatabaseWrapper:
     ###
 
     def setChatSetting(self, chatId: int, key: str, value: Any) -> bool:
-        """Set a setting for a chat."""
+        """
+        Set a setting for a chat.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            key: Setting key
+            value: Setting value
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT OR REPLACE INTO chat_settings
@@ -1183,9 +1660,21 @@ class DatabaseWrapper:
             return False
 
     def unsetChatSetting(self, chatId: int, key: str) -> bool:
-        """UnSet a setting for a chat."""
+        """
+        Unset a setting for a chat.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            key: Setting key to remove
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     DELETE FROM chat_settings
@@ -1200,9 +1689,20 @@ class DatabaseWrapper:
             return False
 
     def clearChatSettings(self, chatId: int) -> bool:
-        """Clear all a settings for a chat."""
+        """
+        Clear all settings for a chat.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     DELETE FROM chat_settings
@@ -1215,10 +1715,20 @@ class DatabaseWrapper:
             logger.error(f"Failed to clear settings for chat {chatId}: {e}")
             return False
 
-    def getChatSetting(self, chatId: int, setting: str) -> Optional[str]:
-        """Get a setting for a chat."""
+    def getChatSetting(self, chatId: int, setting: str, *, dataSource: Optional[str] = None) -> Optional[str]:
+        """
+        Get a setting for a chat.
+
+        Args:
+            chatId: Chat identifier
+            setting: Setting key to retrieve
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            Setting value or None if not found
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     """
                     SELECT value FROM chat_settings
@@ -1235,10 +1745,10 @@ class DatabaseWrapper:
             logger.error(f"Failed to get setting {setting} for chat {chatId}: {e}")
             return None
 
-    def getChatSettings(self, chatId: int) -> Dict[str, str]:
+    def getChatSettings(self, chatId: int, *, dataSource: Optional[str] = None) -> Dict[str, str]:
         """Get all settings for a chat."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT key, value FROM chat_settings
@@ -1266,7 +1776,7 @@ class DatabaseWrapper:
         if isForum is None:
             isForum = False
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO chat_info
@@ -1294,10 +1804,19 @@ class DatabaseWrapper:
             logger.exception(e)
             return False
 
-    def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
-        """Get chat info from the database."""
+    def getChatInfo(self, chatId: int, *, dataSource: Optional[str] = None) -> Optional[ChatInfoDict]:
+        """
+        Get chat info from the database.
+
+        Args:
+            chatId: Chat identifier
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            ChatInfoDict or None if not found
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_info
@@ -1324,11 +1843,26 @@ class DatabaseWrapper:
         customEmojiId: Optional[str] = None,
         topicName: Optional[str] = None,
     ) -> bool:
-        """Store user as chat member + update username and updated_at."""
+        """
+        Store or update chat topic information.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            topicId: Topic identifier
+            iconColor: Optional icon color
+            customEmojiId: Optional custom emoji ID
+            topicName: Optional topic name
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         if topicName is None:
             topicName = "Default"
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO chat_topics
@@ -1354,10 +1888,19 @@ class DatabaseWrapper:
             logger.error(f"Failed to update chat topic {topicId} in chat {chatId}: {e}")
             return False
 
-    def getChatTopics(self, chatId: int) -> List[ChatTopicInfoDict]:
-        """Get chat topics."""
+    def getChatTopics(self, chatId: int, *, dataSource: Optional[str] = None) -> List[ChatTopicInfoDict]:
+        """
+        Get chat topics.
+
+        Args:
+            chatId: Chat identifier
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            List of ChatTopicInfoDict
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_topics
@@ -1397,11 +1940,27 @@ class DatabaseWrapper:
         prompt: str,
         summary: str,
     ) -> bool:
-        """Store chat summarization into cache"""
+        """
+        Store chat summarization into cache.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            topicId: Optional topic identifier
+            firstMessageId: First message ID in range
+            lastMessageId: Last message ID in range
+            prompt: Summarization prompt
+            summary: Generated summary
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         csid = self._makeChatSummarizationCSID(chatId, topicId, firstMessageId, lastMessageId, prompt)
 
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO chat_summarization_cache
@@ -1436,11 +1995,13 @@ class DatabaseWrapper:
         firstMessageId: MessageIdType,
         lastMessageId: MessageIdType,
         prompt: str,
+        *,
+        dataSource: Optional[str] = None,
     ) -> Optional[ChatSummarizationCacheDict]:
         """Fetch chat summarization from cache by chatId, topicId, firstMessageId, lastMessageId and prompt"""
         try:
             csid = self._makeChatSummarizationCSID(chatId, topicId, firstMessageId, lastMessageId, prompt)
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_summarization_cache
@@ -1476,9 +2037,29 @@ class DatabaseWrapper:
         prompt: Optional[str] = None,
         description: Optional[str] = None,
     ) -> bool:
-        """Add a media attachment to the database."""
+        """
+        Add a media attachment to the database.
+
+        Args:
+            fileUniqueId: Unique file identifier
+            fileId: File identifier
+            fileSize: Optional file size
+            mediaType: Type of media
+            mimeType: Optional MIME type
+            metadata: JSON metadata
+            status: Media status
+            localUrl: Optional local URL
+            prompt: Optional prompt
+            description: Optional description
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO media_attachments
@@ -1523,7 +2104,25 @@ class DatabaseWrapper:
         description: Optional[str] = None,
         prompt: Optional[str] = None,
     ) -> bool:
-        """Update a media attachment in the database."""
+        """
+        Update a media attachment in the database.
+
+        Args:
+            mediaId: Media identifier
+            fileSize: Optional file size
+            status: Optional media status
+            metadata: Optional JSON metadata
+            mimeType: Optional MIME type
+            localUrl: Optional local URL
+            description: Optional description
+            prompt: Optional prompt
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
         try:
             query = ""
             values: Dict[str, str | int] = {"fileUniqueId": mediaId}
@@ -1550,7 +2149,7 @@ class DatabaseWrapper:
                 query += "file_size = :fileSize, "
                 values["fileSize"] = fileSize
 
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     f"""
                     UPDATE media_attachments
@@ -1567,10 +2166,10 @@ class DatabaseWrapper:
             logger.error(f"Failed to update media attachment: {e}")
             return False
 
-    def getMediaAttachment(self, mediaId: str) -> Optional[MediaAttachmentDict]:
+    def getMediaAttachment(self, mediaId: str, *, dataSource: Optional[str] = None) -> Optional[MediaAttachmentDict]:
         """Get a media attachment from the database."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM media_attachments
@@ -1593,9 +2192,23 @@ class DatabaseWrapper:
     ###
 
     def addDelayedTask(self, taskId: str, function: str, kwargs: str, delayedTS: int) -> bool:
-        """Add a delayed task to the database."""
+        """
+        Add a delayed task to the database.
+
+        Args:
+            taskId: Task identifier
+            function: Function name
+            kwargs: JSON kwargs
+            delayedTS: Delayed timestamp
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO delayed_tasks
@@ -1616,9 +2229,21 @@ class DatabaseWrapper:
             return False
 
     def updateDelayedTask(self, id: str, isDone: bool) -> bool:
-        """Update a delayed task in the database."""
+        """
+        Update a delayed task in the database.
+
+        Args:
+            id: Task identifier
+            isDone: Whether task is done
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     """
                     UPDATE delayed_tasks
@@ -1638,10 +2263,10 @@ class DatabaseWrapper:
             logger.error(f"Failed to update delayed task: {e}")
             return False
 
-    def getPendingDelayedTasks(self) -> List[DelayedTaskDict]:
+    def getPendingDelayedTasks(self, *, dataSource: Optional[str] = None) -> List[DelayedTaskDict]:
         """Get all pending delayed tasks from the database."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM delayed_tasks
@@ -1662,12 +2287,34 @@ class DatabaseWrapper:
     ###
 
     def addSpamMessage(
-        self, chatId: int, userId: int, messageId: MessageIdType, messageText: str, spamReason: SpamReason, score: float
+        self,
+        chatId: int,
+        userId: int,
+        messageId: MessageIdType,
+        messageText: str,
+        spamReason: SpamReason,
+        score: float,
     ) -> bool:
-        """Add spam message to the database."""
+        """
+        Add spam message to the database.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            userId: User identifier
+            messageId: Message identifier
+            messageText: Message text
+            spamReason: Reason for spam classification
+            score: Spam score
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         messageId = str(messageId)
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO spam_messages
@@ -1690,12 +2337,34 @@ class DatabaseWrapper:
             return False
 
     def addHamMessage(
-        self, chatId: int, userId: int, messageId: MessageIdType, messageText: str, spamReason: SpamReason, score: float
+        self,
+        chatId: int,
+        userId: int,
+        messageId: MessageIdType,
+        messageText: str,
+        spamReason: SpamReason,
+        score: float,
     ) -> bool:
-        """Add ham message to the database."""
+        """
+        Add ham message to the database.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            userId: User identifier
+            messageId: Message identifier
+            messageText: Message text
+            spamReason: Reason for ham classification
+            score: Ham score
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         messageId = str(messageId)
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO ham_messages
@@ -1717,10 +2386,10 @@ class DatabaseWrapper:
             logger.error(f"Failed to add ham message: {e}")
             return False
 
-    def getSpamMessagesByText(self, text: str) -> List[SpamMessageDict]:
+    def getSpamMessagesByText(self, text: str, *, dataSource: Optional[str] = None) -> List[SpamMessageDict]:
         """Get spam messages by text."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM spam_messages
@@ -1736,10 +2405,10 @@ class DatabaseWrapper:
             logger.error(f"Failed to get spam messages: {e}")
             return []
 
-    def getSpamMessages(self, limit: int = 1000) -> List[SpamMessageDict]:
+    def getSpamMessages(self, limit: int = 1000, *, dataSource: Optional[str] = None) -> List[SpamMessageDict]:
         """Get spam messages."""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM spam_messages
@@ -1755,9 +2424,21 @@ class DatabaseWrapper:
             return []
 
     def deleteSpamMessagesByUserId(self, chatId: int, userId: int) -> bool:
-        """Delete spam messages by user id."""
+        """
+        Delete spam messages by user id.
+
+        Args:
+            chatId: Chat identifier (used for source routing)
+            userId: User identifier
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
                     DELETE FROM spam_messages
@@ -1775,10 +2456,22 @@ class DatabaseWrapper:
             logger.error(f"Failed to delete spam messages: {e}")
             return False
 
-    def getSpamMessagesByUserId(self, chatId: int, userId: int) -> List[SpamMessageDict]:
-        """Get spam messages by user id."""
+    def getSpamMessagesByUserId(
+        self, chatId: int, userId: int, *, dataSource: Optional[str] = None
+    ) -> List[SpamMessageDict]:
+        """
+        Get spam messages by user id.
+
+        Args:
+            chatId: Chat identifier
+            userId: User identifier
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            List of SpamMessageDict
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM spam_messages
@@ -1803,7 +2496,7 @@ class DatabaseWrapper:
     def getCacheStorage(self) -> List[CacheStorageDict]:
         """Get all cache storage entries"""
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT namespace, key, value, updated_at
@@ -1817,9 +2510,22 @@ class DatabaseWrapper:
             return []
 
     def setCacheStorage(self, namespace: str, key: str, value: str) -> bool:
-        """Store cache entry in cache_storage table"""
+        """
+        Store cache entry in cache_storage table.
+
+        Args:
+            namespace: Cache namespace
+            key: Cache key
+            value: Cache value
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT INTO cache_storage
@@ -1842,9 +2548,21 @@ class DatabaseWrapper:
             return False
 
     def unsetCacheStorage(self, namespace: str, key: str) -> bool:
-        """Store cache entry in cache_storage table"""
+        """
+        Delete cache entry from cache_storage table.
+
+        Args:
+            namespace: Cache namespace
+            key: Cache key
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     """
                     DELETE FROM cache_storage
@@ -1862,22 +2580,40 @@ class DatabaseWrapper:
             logger.error(f"Failed to unset cache storage: {e}")
             return False
 
-    def getCacheEntry(self, key: str, cacheType: CacheType, ttl: Optional[int] = None) -> Optional[CacheDict]:
-        """Get weather cache entry by key and type"""
-        try:
-            # TTL of 0 or negative means entry must be from the future (impossible), so return None
-            if ttl is not None and ttl <= 0:
-                return None
+    def getCacheEntry(
+        self,
+        key: str,
+        cacheType: CacheType,
+        ttl: Optional[int] = None,
+        *,
+        dataSource: Optional[str] = None,
+    ) -> Optional[CacheDict]:
+        """
+        Get cache entry by key and type.
 
-            # Use datetime.now(datetime.UTC) to match SQLite's CURRENT_TIMESTAMP which is in UTC
-            minimalUpdatedAt = (
-                datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=ttl)
-                if ttl is not None and ttl > 0
-                else None
-            )
-            # logger.debug(f"getCacheEntry({key}, {cacheType}, {ttl})")
-            # logger.debug(f"ttl is {ttl}, minimal updated_at is {minimalUpdatedAt}")
-            with self.getCursor() as cursor:
+        Args:
+            key: Cache key
+            cacheType: Type of cache
+            ttl: Time-to-live in seconds (optional)
+            dataSource: Optional data source name. If None in multi-source mode,
+                       returns first match from any source.
+
+        Returns:
+            CacheDict or None if not found
+        """
+        # TTL of 0 or negative means entry must be from the future (impossible), so return None
+        if ttl is not None and ttl <= 0:
+            return None
+
+        # Use datetime.now(datetime.UTC) to match SQLite's CURRENT_TIMESTAMP which is in UTC
+        minimalUpdatedAt = (
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=ttl)
+            if ttl is not None and ttl > 0
+            else None
+        )
+
+        try:
+            with self.getCursor(dataSource=dataSource) as cursor:
                 cursor.execute(
                     f"""
                     SELECT *
@@ -1893,17 +2629,30 @@ class DatabaseWrapper:
 
                 row = cursor.fetchone()
                 if row:
-                    row_dict = dict(row)
-                    return self._validateDictIsCacheDict(row_dict)
+                    rowDict = dict(row)
+                    return self._validateDictIsCacheDict(rowDict)
                 return None
         except Exception as e:
             logger.error(f"Failed to get cache entry: {e}")
             return None
 
     def setCacheEntry(self, key: str, data: str, cacheType: CacheType) -> bool:
-        """Store weather cache entry"""
+        """
+        Store cache entry.
+
+        Args:
+            key: Cache key
+            data: Cache data
+            cacheType: Type of cache
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     f"""
                     INSERT INTO cache_{cacheType}
@@ -1930,9 +2679,12 @@ class DatabaseWrapper:
 
         Raises:
             Logs an error message if the cache clearing operation fails
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
         """
         try:
-            with self.getCursor() as cursor:
+            with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     f"""
                     DELETE FROM cache_{cacheType}

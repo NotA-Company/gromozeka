@@ -1,0 +1,132 @@
+# Multi-Source Database Configuration - Advanced Example
+# This example demonstrates a complex multi-source setup with multiple databases,
+# custom pool sizes, and sophisticated chat mappings
+
+[database]
+# Default source for operations without explicit routing
+default = "primary"
+
+# ============================================================================
+# DATA SOURCES
+# ============================================================================
+
+# Primary database - main active bot database
+[database.sources.primary]
+path = "bot.db"
+readonly = false
+pool-size = 10  # High traffic, many concurrent operations
+timeout = 30.0
+
+# Archive database - old/inactive chats from 2023 and earlier
+[database.sources.archive_2023]
+path = "archive_2023.db"
+readonly = true  # Readonly for data integrity
+pool-size = 3    # Lower traffic, occasional queries
+timeout = 30.0
+
+# Archive database - old/inactive chats from 2024
+[database.sources.archive_2024]
+path = "archive_2024.db"
+readonly = true
+pool-size = 3
+timeout = 30.0
+
+# External bot database - read from another bot instance
+[database.sources.other_bot]
+path = "/shared/other_bot.db"
+readonly = true  # Never write to external bot's database
+pool-size = 2    # Minimal pool for occasional cross-bot queries
+timeout = 10.0   # Shorter timeout for external database
+
+# Test database - for development and testing
+[database.sources.test]
+path = "test.db"
+readonly = false
+pool-size = 5
+timeout = 30.0
+
+# Backup database - for disaster recovery queries
+[database.sources.backup]
+path = "/backups/bot_backup.db"
+readonly = true  # Never modify backups
+pool-size = 1    # Minimal pool, rarely used
+timeout = 60.0   # Longer timeout for potentially slow backup storage
+
+# ============================================================================
+# CHAT MAPPINGS
+# ============================================================================
+# Map specific chats to specific data sources
+# Format: chatId = "sourceName"
+
+[database.chatMapping]
+
+# Archive 2023 chats (inactive since 2023)
+-1001111111111 = "archive_2023"
+-1001222222222 = "archive_2023"
+-1001333333333 = "archive_2023"
+
+# Archive 2024 chats (inactive since 2024)
+-1002111111111 = "archive_2024"
+-1002222222222 = "archive_2024"
+
+# Test chats (development/testing)
+-1003111111111 = "test"
+-1003222222222 = "test"
+
+# Active production chats (explicitly mapped to primary)
+-1004111111111 = "primary"
+-1004222222222 = "primary"
+-1004333333333 = "primary"
+
+# Note: Chats not listed here will use the default source ("primary")
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+
+# Example 1: Query specific source explicitly
+# messages = db.getChatMessages(chatId=-1001111111111, dataSource="archive_2023")
+
+# Example 2: Use chat mapping (automatic routing)
+# messages = db.getChatMessages(chatId=-1001111111111)  # Routes to archive_2023
+
+# Example 3: Cross-source aggregation
+# all_chats = db.getAllGroupChats()  # Queries all sources, deduplicates
+
+# Example 4: Query external bot
+# other_messages = db.getChatMessages(chatId=123, dataSource="other_bot")
+
+# Example 5: Backup verification
+# backup_data = db.getChatInfo(chatId=123, dataSource="backup")
+
+# ============================================================================
+# PERFORMANCE NOTES
+# ============================================================================
+
+# Pool Size Guidelines:
+# - primary: 10 connections (high traffic, many concurrent operations)
+# - archives: 3 connections (medium traffic, occasional queries)
+# - other_bot: 2 connections (low traffic, cross-bot queries)
+# - test: 5 connections (moderate traffic during development)
+# - backup: 1 connection (minimal traffic, disaster recovery only)
+
+# Timeout Guidelines:
+# - Local databases: 30.0 seconds (standard)
+# - External databases: 10.0 seconds (faster failure for unavailable sources)
+# - Backup storage: 60.0 seconds (may be on slower storage)
+
+# ============================================================================
+# SECURITY NOTES
+# ============================================================================
+
+# Readonly sources provide protection against:
+# - Accidental data modification
+# - Unauthorized writes
+# - Data corruption
+# - Cross-bot interference
+
+# Always mark these as readonly:
+# - Archive databases
+# - External bot databases
+# - Backup databases
+# - Shared databases
