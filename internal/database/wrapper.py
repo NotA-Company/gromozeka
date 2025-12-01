@@ -834,9 +834,15 @@ class DatabaseWrapper:
             return False
 
     def getSetting(self, key: str, default: Optional[str] = None, *, dataSource: Optional[str] = None) -> Optional[str]:
-        """
-        TODO: Rewrite docstring, be compact
-        Get a configuration setting."""
+        """Get a configuration setting.
+
+        Args:
+            key: Setting key to retrieve
+            default: Default value if key not found
+            dataSource: Optional data source name
+
+        Returns:
+            Setting value or default if not found"""
         try:
             with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -847,9 +853,13 @@ class DatabaseWrapper:
             return default
 
     def getSettings(self, *, dataSource: Optional[str] = None) -> Dict[str, str]:
-        """
-        TODO: Rewrite docstring, be compact
-        Get all configuration settings."""
+        """Get all configuration settings.
+
+        Args:
+            dataSource: Optional data source name
+
+        Returns:
+            Dictionary of all key-value settings"""
         try:
             with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute("SELECT * FROM settings")
@@ -988,9 +998,24 @@ class DatabaseWrapper:
         threadId: Optional[int] = None,
         limit: Optional[int] = None,
         messageCategory: Optional[List[MessageCategory]] = None,
+        *,
+        dataSource: Optional[str] = None,
     ) -> List[ChatMessageDict]:
-        """Get chat messages from a specific chat newer than the given date."""
-        # TODO: Add dataSource support + proper getCursor() call
+        """
+        Get chat messages from a specific chat newer than the given date.
+
+        Args:
+            chatId: Chat identifier
+            sinceDateTime: Optional start date for message filtering
+            tillDateTime: Optional end date for message filtering
+            threadId: Optional thread identifier for filtering
+            limit: Optional maximum number of messages to return
+            messageCategory: Optional list of message categories to filter
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            List of ChatMessageDict objects matching the criteria
+        """
         logger.debug(
             f"Getting chat messages for chat {chatId}:{threadId} "
             f"date: [{sinceDateTime},{tillDateTime}], limit: {limit}, "
@@ -1011,7 +1036,7 @@ class DatabaseWrapper:
                     placeholders.append(f":messageCategory{i}")
                     params[f"messageCategory{i}"] = category
 
-            with self.getCursor(readonly=True) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 query = f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX}  FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
