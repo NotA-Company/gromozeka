@@ -390,10 +390,18 @@ class DatabaseWrapper:
         # Import here to avoid circular dependency, dood!
         from .migrations import MigrationManager
 
+        migrationManager = MigrationManager(self)
+        try:
+            migrationManager.loadMigrationsFromVersions()
+            logger.info("Loaded migrations, dood!")
+        except Exception as e:
+            logger.error(f"Migration auto-discovery failed: {e}")
+            raise e
+
         # Initialize each non-readonly datasource
         for sourceName, sourceConfig in self._sources.items():
             if sourceConfig.readonly:
-                logger.info(f"Skipping initialization for readonly source '{sourceName}', dood!")
+                logger.info(f"Skipping DB initialization for readonly source '{sourceName}', dood!")
                 continue
 
             logger.info(f"Initializing database for source '{sourceName}', dood!")
@@ -412,15 +420,7 @@ class DatabaseWrapper:
                 )
 
             # Run migrations for this source
-            migrationManager = MigrationManager(self)
-            try:
-                migrationManager.loadMigrationsFromVersions()
-                logger.info(f"Loaded migrations for source '{sourceName}', dood!")
-            except Exception as e:
-                logger.error(f"Migration auto-discovery failed for source '{sourceName}': {e}")
-                raise e
-
-            migrationManager.migrate()  # TODO: add dataSourceSupport in migrations
+            migrationManager.migrate(dataSource=sourceName)
             logger.info(f"Database initialization complete for source '{sourceName}', dood!")
 
         logger.info("All non-readonly databases initialized, dood!")
@@ -800,13 +800,14 @@ class DatabaseWrapper:
     # Global Settings manipulation functions (Are they used an all?)
     ###
 
-    def setSetting(self, key: str, value: str) -> bool:
+    def setSetting(self, key: str, value: str, *, dataSource: Optional[str] = None) -> bool:
         """
         Set a configuration setting.
 
         Args:
             key: Setting key
             value: Setting value
+            dataSource: Optional data source name for explicit routing
 
         Returns:
             bool: True if successful, False otherwise
@@ -815,7 +816,7 @@ class DatabaseWrapper:
             Writes to default source. Cannot write to readonly sources.
         """
         try:
-            with self.getCursor(readonly=False) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
                 cursor.execute(
                     """
                     INSERT OR REPLACE INTO settings
@@ -829,28 +830,32 @@ class DatabaseWrapper:
                 )
                 return True
         except Exception as e:
-            logger.error(f"Failed to set setting {key}: {e}")
+            logger.error(f"Failed to set setting {key} in {dataSource}: {e}")
             return False
 
-    def getSetting(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """Get a configuration setting."""
+    def getSetting(self, key: str, default: Optional[str] = None, *, dataSource: Optional[str] = None) -> Optional[str]:
+        """
+        TODO: Rewrite docstring, be compact
+        Get a configuration setting."""
         try:
-            with self.getCursor(readonly=True) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
                 row = cursor.fetchone()
                 return row["value"] if row else default
         except Exception as e:
-            logger.error(f"Failed to get setting {key}: {e}")
+            logger.error(f"Failed to get setting {key} in {dataSource}: {e}")
             return default
 
-    def getSettings(self) -> Dict[str, str]:
-        """Get all configuration settings."""
+    def getSettings(self, *, dataSource: Optional[str] = None) -> Dict[str, str]:
+        """
+        TODO: Rewrite docstring, be compact
+        Get all configuration settings."""
         try:
-            with self.getCursor(readonly=True) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute("SELECT * FROM settings")
                 return {row["key"]: row["value"] for row in cursor.fetchall()}
         except Exception as e:
-            logger.error(f"Failed to get settings: {e}")
+            logger.error(f"Failed to get settings in {dataSource}: {e}")
             return {}
 
     ###
@@ -985,6 +990,7 @@ class DatabaseWrapper:
         messageCategory: Optional[List[MessageCategory]] = None,
     ) -> List[ChatMessageDict]:
         """Get chat messages from a specific chat newer than the given date."""
+        # TODO: Add dataSource support + proper getCursor() call
         logger.debug(
             f"Getting chat messages for chat {chatId}:{threadId} "
             f"date: [{sinceDateTime},{tillDateTime}], limit: {limit}, "
@@ -1073,6 +1079,7 @@ class DatabaseWrapper:
         self, chatId: int, rootMessageId: int, threadId: Optional[int] = None
     ) -> List[ChatMessageDict]:
         """Get all chat messages in a conversation thread by root message ID."""
+        # TODO: Add dataSource support + proper getCursor() call
         logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
         try:
             with self.getCursor(readonly=True) as cursor:
@@ -1368,7 +1375,11 @@ class DatabaseWrapper:
         limit: int = 10,
         seenSince: Optional[datetime.datetime] = None,
     ) -> List[ChatUserDict]:
-        """Get the usernames of all users in a chat, optionally filtered by when they last sent a message."""
+        """
+        Get the usernames of all users in a chat,
+        optionally filtered by when they last sent a message.
+        """
+        # TODO: Add dataSource support + proper getCursor() call
         try:
             with self.getCursor(readonly=True) as cursor:
                 cursor.execute(
@@ -1928,7 +1939,7 @@ class DatabaseWrapper:
         prompt: str,
     ) -> str:
         """Make CSID for chat summarization cache"""
-        # TODO: Should we use some SHA512?
+        # TODO: Use SHA512 or other fast hash function
         return f"{chatId}:{topicId}_{firstMessageId}:{lastMessageId}-{prompt}"
 
     def addChatSummarization(

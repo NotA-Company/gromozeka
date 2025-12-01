@@ -51,7 +51,7 @@ def test_fresh_database():
         # Check migration version
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
-        currentVersion = manager.getCurrentVersion()
+        currentVersion = manager.getCurrentVersion(dataSource=None)
         
         logger.info(f"Current migration version: {currentVersion}")
         logger.info(f"Expected version: {len(MIGRATIONS)}")
@@ -100,7 +100,7 @@ def test_migration_status():
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
-        status = manager.getStatus()
+        status = manager.getStatus(dataSource=None)
         logger.info(f"Migration status: {status}")
         
         assert status["current_version"] == status["latest_version"], \
@@ -130,7 +130,7 @@ def test_rollback():
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
-        initialVersion = manager.getCurrentVersion()
+        initialVersion = manager.getCurrentVersion(dataSource=None)
         logger.info(f"Initial version: {initialVersion}")
         
         # Rollback to version 2 (to remove metadata column from migration 003)
@@ -139,9 +139,9 @@ def test_rollback():
         stepsToRollback = initialVersion - targetVersion
         logger.info(f"Rolling back {stepsToRollback} migrations to reach version {targetVersion}")
         
-        manager.rollback(steps=stepsToRollback)
+        manager.rollback(steps=stepsToRollback, dataSource=None)
         
-        newVersion = manager.getCurrentVersion()
+        newVersion = manager.getCurrentVersion(dataSource=None)
         logger.info(f"Version after rollback: {newVersion}")
         
         assert newVersion == targetVersion, \
@@ -177,7 +177,7 @@ def test_existing_database():
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
-        currentVersion = manager.getCurrentVersion()
+        currentVersion = manager.getCurrentVersion(dataSource=None)
         logger.info(f"Current version after init: {currentVersion}")
         
         # With new multi-source architecture, migrations run automatically in __init__
@@ -305,7 +305,7 @@ def test_database_wrapper_auto_discovery():
         
         # Check that all migrations were applied
         manager = MigrationManager(db)
-        currentVersion = manager.getCurrentVersion()
+        currentVersion = manager.getCurrentVersion(dataSource=None)
         
         assert currentVersion == len(DISCOVERED_MIGRATIONS), \
             f"Expected version {len(DISCOVERED_MIGRATIONS)}, got {currentVersion}"

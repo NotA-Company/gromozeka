@@ -2,11 +2,8 @@
 Base migration class for database migrations, dood!
 """
 
+import sqlite3
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ..wrapper import DatabaseWrapper
 
 
 class BaseMigration(ABC):
@@ -17,21 +14,21 @@ class BaseMigration(ABC):
     description: str
 
     @abstractmethod
-    def up(self, db: "DatabaseWrapper") -> None:
+    def up(self, cursor: sqlite3.Cursor) -> None:
         """
         Apply the migration, dood!
         
         Args:
-            db: DatabaseWrapper instance to execute SQL commands
+            cursor: SQLite cursor to execute SQL commands
         """
         pass
 
     @abstractmethod
-    def down(self, db: "DatabaseWrapper") -> None:
+    def down(self, cursor: sqlite3.Cursor) -> None:
         """
         Rollback the migration, dood!
         
         Args:
-            db: DatabaseWrapper instance to execute SQL commands
+            cursor: SQLite cursor to execute SQL commands
         """
         pass
