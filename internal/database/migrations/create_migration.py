@@ -77,11 +77,10 @@ def createMigration(description: str) -> None:
 TODO: Implement the migration logic below
 """
 
-from typing import TYPE_CHECKING, Type
-from ..base import BaseMigration
+import sqlite3
+from typing import Type
 
-if TYPE_CHECKING:
-    from ...wrapper import DatabaseWrapper
+from ..base import BaseMigration
 
 
 class {class_name}(BaseMigration):
@@ -90,31 +89,35 @@ class {class_name}(BaseMigration):
     version = {version}
     description = "{description}"
 
-    def up(self, db: "DatabaseWrapper") -> None:
+    def up(self, cursor: sqlite3.Cursor) -> None:
         """
         Apply the migration, dood!
         
+        Args:
+            cursor: SQLite cursor to execute SQL commands
+        
         TODO: Implement migration logic here
         Example:
-            with db.getCursor() as cursor:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS new_table (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS new_table (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         """
         raise NotImplementedError("Migration not implemented yet, dood!")
 
-    def down(self, db: "DatabaseWrapper") -> None:
+    def down(self, cursor: sqlite3.Cursor) -> None:
         """
         Rollback the migration, dood!
         
+        Args:
+            cursor: SQLite cursor to execute SQL commands
+        
         TODO: Implement rollback logic here
         Example:
-            with db.getCursor() as cursor:
-                cursor.execute("DROP TABLE IF EXISTS new_table")
+            cursor.execute("DROP TABLE IF EXISTS new_table")
         """
         raise NotImplementedError("Rollback not implemented yet, dood!")
 

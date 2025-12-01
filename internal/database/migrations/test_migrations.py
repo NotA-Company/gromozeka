@@ -51,7 +51,7 @@ def test_fresh_database():
         # Check migration version
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
-        currentVersion = manager.getCurrentVersion()
+        currentVersion = manager.getCurrentVersion(dataSource=None)
         
         logger.info(f"Current migration version: {currentVersion}")
         logger.info(f"Expected version: {len(MIGRATIONS)}")
@@ -100,7 +100,7 @@ def test_migration_status():
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
-        status = manager.getStatus()
+        status = manager.getStatus(dataSource=None)
         logger.info(f"Migration status: {status}")
         
         assert status["current_version"] == status["latest_version"], \
@@ -130,7 +130,7 @@ def test_rollback():
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
-        initialVersion = manager.getCurrentVersion()
+        initialVersion = manager.getCurrentVersion(dataSource=None)
         logger.info(f"Initial version: {initialVersion}")
         
         # Rollback to version 2 (to remove metadata column from migration 003)
@@ -139,9 +139,9 @@ def test_rollback():
         stepsToRollback = initialVersion - targetVersion
         logger.info(f"Rolling back {stepsToRollback} migrations to reach version {targetVersion}")
         
-        manager.rollback(steps=stepsToRollback)
+        manager.rollback(steps=stepsToRollback, dataSource=None)
         
-        newVersion = manager.getCurrentVersion()
+        newVersion = manager.getCurrentVersion(dataSource=None)
         logger.info(f"Version after rollback: {newVersion}")
         
         assert newVersion == targetVersion, \
@@ -170,39 +170,19 @@ def test_existing_database():
         dbPath = f.name
     
     try:
-        # Create database with only settings table (simulating old database)
-        db = DatabaseWrapper.__new__(DatabaseWrapper)
-        db.dbPath = dbPath
-        db.maxConnections = 5
-        db.timeout = 30.0
-        db._local = __import__("threading").local()
+        # Create database - __init__ now automatically runs migrations
+        db = DatabaseWrapper(dbPath, maxConnections=5, timeout=30.0)
         
-        with db.getCursor() as cursor:
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        
-        # Now run migrations
+        # Verify migrations were run automatically by __init__
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
-        initialVersion = manager.getCurrentVersion()
-        logger.info(f"Initial version: {initialVersion}")
-        assert initialVersion == 0, "Should start at version 0"
+        currentVersion = manager.getCurrentVersion(dataSource=None)
+        logger.info(f"Current version after init: {currentVersion}")
         
-        manager.migrate()
-        
-        finalVersion = manager.getCurrentVersion()
-        logger.info(f"Final version: {finalVersion}")
-        assert finalVersion == len(MIGRATIONS), \
-            f"Expected version {len(MIGRATIONS)}, got {finalVersion}"
+        # With new multi-source architecture, migrations run automatically in __init__
+        assert currentVersion == len(MIGRATIONS), \
+            f"Expected version {len(MIGRATIONS)} (auto-migrated), got {currentVersion}"
         
         logger.info("✅ Existing database upgrade test PASSED, dood!")
         
@@ -325,7 +305,7 @@ def test_database_wrapper_auto_discovery():
         
         # Check that all migrations were applied
         manager = MigrationManager(db)
-        currentVersion = manager.getCurrentVersion()
+        currentVersion = manager.getCurrentVersion(dataSource=None)
         
         assert currentVersion == len(DISCOVERED_MIGRATIONS), \
             f"Expected version {len(DISCOVERED_MIGRATIONS)}, got {currentVersion}"

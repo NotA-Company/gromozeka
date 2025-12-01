@@ -70,7 +70,7 @@ class MigrationManager:
         self.registerMigrations(DISCOVERED_MIGRATIONS)
         logger.info(f"Auto-loaded {len(DISCOVERED_MIGRATIONS)} migrations, dood!")
 
-    def getCurrentVersion(self) -> int:
+    def getCurrentVersion(self, *, dataSource: Optional[str]) -> int:
         """
         Get current migration version from settings table, dood!
         
@@ -78,22 +78,22 @@ class MigrationManager:
             Current version (0 if no migrations run)
         """
         try:
-            versionStr = self.db.getSetting(MIGRATION_VERSION_KEY, "0")
+            versionStr = self.db.getSetting(MIGRATION_VERSION_KEY, "0", dataSource=dataSource)
             return int(versionStr) if versionStr else 0
         except Exception as e:
-            logger.error(f"Failed to get current migration version: {e}")
+            logger.error(f"Failed to get current migration version for {dataSource}: {e}")
             return 0
 
-    def _setVersion(self, version: int) -> None:
+    def _setVersion(self, version: int, *, dataSource: Optional[str]) -> None:
         """
         Update migration version in settings table, dood!
         
         Args:
             version: New version number
         """
-        self.db.setSetting(MIGRATION_VERSION_KEY, str(version))
-        self.db.setSetting(MIGRATION_LAST_RUN_KEY, datetime.now().isoformat())
-        logger.info(f"Updated migration version to {version}, dood!")
+        self.db.setSetting(MIGRATION_VERSION_KEY, str(version), dataSource=dataSource)
+        self.db.setSetting(MIGRATION_LAST_RUN_KEY, datetime.now().isoformat(), dataSource=dataSource)
+        logger.info(f"Updated migration in {dataSource} version to {version}, dood!")
 
     def getAvailableMigrations(self) -> List[Type[BaseMigration]]:
         """
@@ -104,17 +104,17 @@ class MigrationManager:
         """
         return self.migrations
 
-    def getPendingMigrations(self) -> List[Type[BaseMigration]]:
+    def getPendingMigrations(self, *, dataSource: Optional[str]) -> List[Type[BaseMigration]]:
         """
         Get list of pending migrations, dood!
         
         Returns:
             List of migration classes that haven't been applied yet
         """
-        currentVersion = self.getCurrentVersion()
+        currentVersion = self.getCurrentVersion(dataSource=dataSource)
         return [m for m in self.migrations if m.version > currentVersion]
 
-    def migrate(self, targetVersion: Optional[int] = None) -> None:
+    def migrate(self, targetVersion: Optional[int] = None, *, dataSource: Optional[str]) -> None:
         """
         Run migrations up to target version, dood!
         
@@ -124,7 +124,7 @@ class MigrationManager:
         Raises:
             MigrationError: If migration fails
         """
-        currentVersion = self.getCurrentVersion()
+        currentVersion = self.getCurrentVersion(dataSource=dataSource)
         logger.info(f"Current migration version: {currentVersion}, dood!")
 
         # Determine target version
@@ -168,10 +168,11 @@ class MigrationManager:
             
             try:
                 startTime = datetime.now()
-                migration.up(self.db)
+                with self.db.getCursor(dataSource=dataSource) as cursor:
+                    migration.up(cursor)
                 duration = (datetime.now() - startTime).total_seconds()
                 
-                self._setVersion(migration.version)
+                self._setVersion(migration.version, dataSource=dataSource)
                 logger.info(
                     f"Migration {migration.version} completed in {duration:.2f}s, dood!"
                 )
@@ -186,7 +187,7 @@ class MigrationManager:
 
         logger.info(f"All migrations completed successfully, dood!")
 
-    def rollback(self, steps: int = 1) -> None:
+    def rollback(self, steps: int = 1, *, dataSource: Optional[str]) -> None:
         """
         Rollback N migrations, dood!
         
@@ -196,7 +197,7 @@ class MigrationManager:
         Raises:
             MigrationError: If rollback fails
         """
-        currentVersion = self.getCurrentVersion()
+        currentVersion = self.getCurrentVersion(dataSource=dataSource)
         
         if currentVersion == 0:
             logger.info("No migrations to rollback, dood!")
@@ -223,12 +224,13 @@ class MigrationManager:
             
             try:
                 startTime = datetime.now()
-                migration.down(self.db)
+                with self.db.getCursor(dataSource=dataSource) as cursor:
+                    migration.down(cursor)
                 duration = (datetime.now() - startTime).total_seconds()
                 
                 # Set version to previous migration
                 newVersion = migration.version - 1
-                self._setVersion(newVersion)
+                self._setVersion(newVersion, dataSource=dataSource)
                 logger.info(
                     f"Migration {migration.version} rolled back in {duration:.2f}s, dood!"
                 )
@@ -243,15 +245,15 @@ class MigrationManager:
 
         logger.info(f"Rollback completed successfully, dood!")
 
-    def getStatus(self) -> dict:
+    def getStatus(self, *, dataSource: Optional[str]) -> dict:
         """
         Get migration status information, dood!
         
         Returns:
             Dictionary with migration status
         """
-        currentVersion = self.getCurrentVersion()
-        pendingMigrations = self.getPendingMigrations()
+        currentVersion = self.getCurrentVersion(dataSource=dataSource)
+        pendingMigrations = self.getPendingMigrations(dataSource=dataSource)
         
         return {
             "current_version": currentVersion,

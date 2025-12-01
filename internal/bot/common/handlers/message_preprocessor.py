@@ -9,6 +9,8 @@ saves messages to the database, dood!
 
 import logging
 
+import telegram
+
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import BotProvider, EnsuredMessage, MessageType
 from internal.database.models import MessageCategory
@@ -43,11 +45,18 @@ class MessagePreprocessorHandler(BaseBotHandler):
             HandlerResultStatus.NEXT if preprocessing successful, ERROR if save failed
         """
 
+        messageCategory = MessageCategory.USER
         # Telegram has different messages for each media\document
         # While Each Max Message can contain multiple attachments of different types
         match self.botProvider:
             case BotProvider.TELEGRAM:
                 await self._processTelegramMedia(ensuredMessage)
+                baseMessage = ensuredMessage.getBaseMessage()
+                # If it's an automatic forward from linked channel,
+                #  then mark message as channel message, so we can do something in future
+                #  (For example forward somewhere)
+                if isinstance(baseMessage, telegram.Message) and baseMessage.is_automatic_forward:
+                    messageCategory = MessageCategory.CHANNEL
             case BotProvider.MAX:
                 mediaList = await self.processMaxMedia(ensuredMessage)
                 if mediaList:
@@ -56,7 +65,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
             case _:
                 logger.error(f"Unsupported bot provider: {self.botProvider}")
 
-        if not await self.saveChatMessage(ensuredMessage, messageCategory=MessageCategory.USER):
+        if not await self.saveChatMessage(ensuredMessage, messageCategory=messageCategory):
             logger.error("Failed to save chat message")
             return HandlerResultStatus.ERROR
 
