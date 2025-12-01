@@ -4,11 +4,9 @@ Initial schema migration - creates all base tables, dood!
 This migration extracts all table creation from the original _initDatabase() method.
 """
 
-from typing import TYPE_CHECKING, Type
+import sqlite3
+from typing import Type
 from ..base import BaseMigration
-
-if TYPE_CHECKING:
-    from ...wrapper import DatabaseWrapper
 
 
 class Migration006NewCacheTables(BaseMigration):
@@ -17,27 +15,34 @@ class Migration006NewCacheTables(BaseMigration):
     version = 6
     description = "Add New Cache Tables"
 
-    def up(self, db: "DatabaseWrapper") -> None:
-        """Create all initial tables, dood!"""
-        with db.getCursor() as cursor:
-            # Create all Cache Tables
-            # Import CacheType here to avoid circular dependency
-            from ...models import CacheType
-            
-            for cacheType in CacheType:
-                cursor.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS cache_{cacheType} (
-                        key TEXT PRIMARY KEY,
-                        data TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                    """
+    def up(self, cursor: sqlite3.Cursor) -> None:
+        """Create all initial tables, dood!
+        
+        Args:
+            cursor: SQLite cursor to execute SQL commands
+        """
+        # Create all Cache Tables
+        # Import CacheType here to avoid circular dependency
+        from ...models import CacheType
+        
+        for cacheType in CacheType:
+            cursor.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS cache_{cacheType} (
+                    key TEXT PRIMARY KEY,
+                    data TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
+                """
+            )
 
-    def down(self, db: "DatabaseWrapper") -> None:
-        """Do not want to"""
+    def down(self, cursor: sqlite3.Cursor) -> None:
+        """Do not want to
+        
+        Args:
+            cursor: SQLite cursor to execute SQL commands
+        """
         pass
 
 

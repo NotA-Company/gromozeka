@@ -4,11 +4,9 @@ Add_cache_storage_table, dood!
 TODO: Implement the migration logic below
 """
 
-from typing import TYPE_CHECKING, Type
+import sqlite3
+from typing import Type
 from ..base import BaseMigration
-
-if TYPE_CHECKING:
-    from ...wrapper import DatabaseWrapper
 
 
 class Migration004Add_cache_storage_table(BaseMigration):
@@ -17,38 +15,40 @@ class Migration004Add_cache_storage_table(BaseMigration):
     version = 4
     description = "add_cache_storage_table"
 
-    def up(self, db: "DatabaseWrapper") -> None:
+    def up(self, cursor: sqlite3.Cursor) -> None:
+        """Create cache_storage table for CacheService persistence, dood!
+        
+        Args:
+            cursor: SQLite cursor to execute SQL commands
         """
-        Create cache_storage table for CacheService persistence, dood!
-        """
-        with db.getCursor() as cursor:
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS cache_storage (
-                    namespace TEXT NOT NULL,
-                    key TEXT NOT NULL,
-                    value TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (namespace, key)
-                )
-                """
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cache_storage (
+                namespace TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (namespace, key)
             )
-            
-            # Create index for faster lookups by namespace
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_cache_namespace
-                ON cache_storage(namespace)
-                """
-            )
+            """
+        )
+        
+        # Create index for faster lookups by namespace
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_cache_namespace
+            ON cache_storage(namespace)
+            """
+        )
 
-    def down(self, db: "DatabaseWrapper") -> None:
+    def down(self, cursor: sqlite3.Cursor) -> None:
+        """Drop cache_storage table and its index, dood!
+        
+        Args:
+            cursor: SQLite cursor to execute SQL commands
         """
-        Drop cache_storage table and its index, dood!
-        """
-        with db.getCursor() as cursor:
-            cursor.execute("DROP INDEX IF EXISTS idx_cache_namespace")
-            cursor.execute("DROP TABLE IF EXISTS cache_storage")
+        cursor.execute("DROP INDEX IF EXISTS idx_cache_namespace")
+        cursor.execute("DROP TABLE IF EXISTS cache_storage")
 
 
 def getMigration() -> Type[BaseMigration]:
