@@ -47,3 +47,5 @@
 * **Architecture**: Service-oriented with clean separation of concerns
 
 [2025-11-30 17:47:00] - Completed Phase 3 of multi-source database architecture: Updated all 14 read methods with optional dataSource parameter and cross-source aggregation logic. All 961 tests passing, dood!
+[2025-12-01 08:45:00] - Fixed 3 TODOs in DatabaseWrapper: Rewrote getSetting() and getSettings() docstrings to be compact but complete, and updated getChatMessagesSince() to use proper chatId routing in getCursor() call. All 961 tests passing, dood!
+[2025-12-01 08:52:00] - Fixed getChatMessagesSince method TODO: Added dataSource parameter with proper routing and updated docstring. All 961 tests passing, dood!
