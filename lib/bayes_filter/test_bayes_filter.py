@@ -344,11 +344,11 @@ async def test_bayes_filter():
         logger.info("Test 9: Storage interface methods")
 
         # Get top spam tokens
-        top_spam = await storage.getTopSpamTokens(limit=5, chat_id=12345)
+        top_spam = await storage.getTopSpamTokens(limit=5, chatId=12345)
         logger.info(f"Top spam tokens: {[(t.token, t.spamCount, t.hamCount) for t in top_spam[:3]]}")
 
         # Get top ham tokens
-        top_ham = await storage.getTopHamTokens(limit=5, chat_id=12345)
+        top_ham = await storage.getTopHamTokens(limit=5, chatId=12345)
         logger.info(f"Top ham tokens: {[(t.token, t.spamCount, t.hamCount) for t in top_ham[:3]]}")
 
         # Test 10: Cleanup rare tokens

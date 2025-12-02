@@ -11,10 +11,12 @@ bot_owners = ["YOUR_BOT_OWNER_USERNAME_OR_USER_ID_HERE"]
 spam-button-salt = "YOUR_SALT_HERE"
 
 [database]
-# Database configuration
+default = "default"
+
+[database.sources.default]
 path = "bot_data.db"
-# Connection pool settings
-max_connections = 5
+readonly = false
+pool-size = 5
 timeout = 30
 
 # [ratelimiter]

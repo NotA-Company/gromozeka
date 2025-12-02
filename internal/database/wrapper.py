@@ -5,6 +5,7 @@ with other database backends in the future.
 """
 
 import datetime
+import hashlib
 import logging
 import sqlite3
 import threading
@@ -95,7 +96,7 @@ class SourceConfig:
     Configuration for a single database source.
     """
 
-    __slots__ = ["dbPath", "readonly", "timeout", "poolSize"]
+    __slots__ = ("dbPath", "readonly", "timeout", "poolSize")
 
     def __init__(
         self,
@@ -130,10 +131,7 @@ class DatabaseWrapper:
 
     def __init__(
         self,
-        dbPath: Optional[str] = None,
-        maxConnections: int = 5,
-        timeout: float = 30.0,
-        config: Optional[Dict[str, Any]] = None,
+        config: Dict[str, Any],
     ):
         """
         Initialize database wrapper with single or multi-source configuration, dood!
@@ -147,30 +145,8 @@ class DatabaseWrapper:
         Raises:
             ValueError: If neither or both dbPath and config provided
         """
-        # Validate initialization parameters
-        if dbPath is None and config is None:
-            raise ValueError("Either dbPath or config must be provided, dood!")
-        if dbPath is not None and config is not None:
-            raise ValueError("Cannot provide both dbPath and config - choose one mode, dood!")
-
-        if dbPath:
-            config = {
-                "default": "default",
-                "sources": {
-                    "default": {
-                        "path": dbPath,
-                        "readonly": False,
-                        "pool-size": maxConnections,
-                        "timeout": timeout,
-                    },
-                },
-            }
-
-        if config is None:
-            raise RuntimeError("Somehow config is None")
-
         logger.info("Initializing database wrapper in multi-source mode, dood!")
-        self._initializeMultiSource(config, maxConnections, timeout)
+        self._initializeMultiSource(config, 5, 30)
 
         # Initialize database schema (works for both modes)
         self._initDatabase()
@@ -1081,7 +1057,7 @@ class DatabaseWrapper:
         logger.debug(f"Getting chat message for chat {chatId}, message_id {messageId}")
         messageId = str(messageId)
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
@@ -1101,13 +1077,27 @@ class DatabaseWrapper:
             return None
 
     def getChatMessagesByRootId(
-        self, chatId: int, rootMessageId: int, threadId: Optional[int] = None
+        self,
+        chatId: int,
+        rootMessageId: int,
+        threadId: Optional[int] = None,
+        *,
+        dataSource: Optional[str] = None,
     ) -> List[ChatMessageDict]:
-        """Get all chat messages in a conversation thread by root message ID."""
-        # TODO: Add dataSource support + proper getCursor() call
+        """Get all chat messages in a conversation thread by root message ID.
+
+        Args:
+            chatId: Chat identifier
+            rootMessageId: Root message ID to find thread messages for
+            threadId: Optional thread ID to filter by
+            dataSource: Optional data source identifier for multi-source database routing
+
+        Returns:
+            List of chat message dictionaries in the thread
+        """
         logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
         try:
-            with self.getCursor(readonly=True) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
@@ -1151,7 +1141,7 @@ class DatabaseWrapper:
         """
         logger.debug(f"Getting chat messages for chat {chatId}, user {userId}")
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     f"""
                     SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
@@ -1265,7 +1255,7 @@ class DatabaseWrapper:
             ChatUserDict or None if not found
         """
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_users
@@ -1374,7 +1364,7 @@ class DatabaseWrapper:
             ChatUserDict or None if not found
         """
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_users
@@ -1399,14 +1389,24 @@ class DatabaseWrapper:
         chatId: int,
         limit: int = 10,
         seenSince: Optional[datetime.datetime] = None,
+        *,
+        dataSource: Optional[str] = None,
     ) -> List[ChatUserDict]:
         """
         Get the usernames of all users in a chat,
         optionally filtered by when they last sent a message.
+
+        Args:
+            chatId: The chat ID to get users from
+            limit: Maximum number of users to return
+            seenSince: Optional datetime to filter users by last message time
+            dataSource: Optional data source identifier for multi-source database routing
+
+        Returns:
+            List of ChatUserDict objects representing users in the chat
         """
-        # TODO: Add dataSource support + proper getCursor() call
         try:
-            with self.getCursor(readonly=True) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_users
@@ -1450,7 +1450,7 @@ class DatabaseWrapper:
 
         for sourceName in sourcesList:
             try:
-                with self.getCursor(dataSource=sourceName) as cursor:
+                with self.getCursor(dataSource=sourceName, readonly=True) as cursor:
                     cursor.execute(
                         """
                         SELECT ci.* FROM chat_info ci
@@ -1494,7 +1494,7 @@ class DatabaseWrapper:
         sourcesList = [dataSource] if dataSource else self._sources.keys()
         for sourceName in sourcesList:
             try:
-                with self.getCursor(dataSource=sourceName) as cursor:
+                with self.getCursor(dataSource=sourceName, readonly=True) as cursor:
                     cursor.execute(
                         """
                         SELECT ci.* FROM chat_info ci
@@ -1576,7 +1576,7 @@ class DatabaseWrapper:
             Dictionary mapping keys to data values
         """
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM user_data
@@ -1764,7 +1764,7 @@ class DatabaseWrapper:
             Setting value or None if not found
         """
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT value FROM chat_settings
@@ -1852,7 +1852,7 @@ class DatabaseWrapper:
             ChatInfoDict or None if not found
         """
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_info
@@ -1936,7 +1936,7 @@ class DatabaseWrapper:
             List of ChatTopicInfoDict
         """
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM chat_topics
@@ -1963,9 +1963,21 @@ class DatabaseWrapper:
         lastMessageId: MessageIdType,
         prompt: str,
     ) -> str:
-        """Make CSID for chat summarization cache"""
-        # TODO: Use SHA512 or other fast hash function
-        return f"{chatId}:{topicId}_{firstMessageId}:{lastMessageId}-{prompt}"
+        """
+        Make CSID for chat summarization cache using SHA512 hash.
+
+        Args:
+            chatId: Chat identifier
+            topicId: Optional topic identifier
+            firstMessageId: First message ID in the range
+            lastMessageId: Last message ID in the range
+            prompt: Summarization prompt text
+
+        Returns:
+            SHA512 hash string of the cache key components
+        """
+        cacheKeyString = f"{chatId}:{topicId}_{firstMessageId}:{lastMessageId}-{prompt}"
+        return hashlib.sha512(cacheKeyString.encode("utf-8")).hexdigest()
 
     def addChatSummarization(
         self,
@@ -2507,7 +2519,7 @@ class DatabaseWrapper:
             List of SpamMessageDict
         """
         try:
-            with self.getCursor(chatId=chatId, dataSource=dataSource) as cursor:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM spam_messages
@@ -2529,10 +2541,16 @@ class DatabaseWrapper:
     # Cache manipulation functions
     ###
 
-    def getCacheStorage(self) -> List[CacheStorageDict]:
-        """Get all cache storage entries"""
+    def getCacheStorage(self, *, dataSource: Optional[str] = None) -> List[CacheStorageDict]:
+        """Get all cache storage entries
+
+        Args:
+            dataSource: Optional data source identifier for multi-source database routing
+
+        Returns:
+            List of cache storage dictionaries"""
         try:
-            with self.getCursor(readonly=True) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
                     SELECT namespace, key, value, updated_at
@@ -2649,7 +2667,7 @@ class DatabaseWrapper:
         )
 
         try:
-            with self.getCursor(dataSource=dataSource) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     f"""
                     SELECT *
@@ -2672,7 +2690,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to get cache entry: {e}")
             return None
 
-    def setCacheEntry(self, key: str, data: str, cacheType: CacheType) -> bool:
+    def setCacheEntry(self, key: str, data: str, cacheType: CacheType, *, dataSource: Optional[str] = None) -> bool:
         """
         Store cache entry.
 
@@ -2688,7 +2706,7 @@ class DatabaseWrapper:
             Writes to default source. Cannot write to readonly sources.
         """
         try:
-            with self.getCursor(readonly=False) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
                 cursor.execute(
                     f"""
                     INSERT INTO cache_{cacheType}
@@ -2706,7 +2724,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to set cache entry: {e}")
             return False
 
-    def clearCache(self, cacheType: CacheType) -> None:
+    def clearCache(self, cacheType: CacheType, *, dataSource: Optional[str] = None) -> None:
         """
         Clear all entries from a specific cache table.
 
@@ -2720,7 +2738,7 @@ class DatabaseWrapper:
             Writes to default source. Cannot write to readonly sources.
         """
         try:
-            with self.getCursor(readonly=False) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
                 cursor.execute(
                     f"""
                     DELETE FROM cache_{cacheType}
