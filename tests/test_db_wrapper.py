@@ -39,7 +39,15 @@ def tempDbPath():
 @pytest.fixture
 def inMemoryDb():
     """Create an in-memory database for testing."""
-    db = DatabaseWrapper(":memory:")
+    config = {
+        "sources": {
+            "default": {
+                "path": ":memory:",
+            }
+        },
+        "default": "default",
+    }
+    db = DatabaseWrapper(config)
     yield db
     db.close()
 
@@ -47,7 +55,15 @@ def inMemoryDb():
 @pytest.fixture
 def testDb(tempDbPath):
     """Create a test database with file storage."""
-    db = DatabaseWrapper(tempDbPath)
+    config = {
+        "sources": {
+            "default": {
+                "path": tempDbPath,
+            }
+        },
+        "default": "default",
+    }
+    db = DatabaseWrapper(config)
     yield db
     db.close()
 
@@ -86,7 +102,15 @@ class TestDatabaseInitialization:
 
     def testInitWithMemoryDatabase(self):
         """Test initialization with in-memory database."""
-        db = DatabaseWrapper(":memory:")
+        config = {
+            "sources": {
+                "default": {
+                    "path": ":memory:",
+                }
+            },
+            "default": "default",
+        }
+        db = DatabaseWrapper(config)
         # Multi-source architecture - internal attributes are private
         # Just verify database works by testing a basic operation
         assert db.getSetting("test_key", "default") == "default"
@@ -94,7 +118,15 @@ class TestDatabaseInitialization:
 
     def testInitWithFileDatabase(self, tempDbPath):
         """Test initialization with file-based database."""
-        db = DatabaseWrapper(tempDbPath)
+        config = {
+            "sources": {
+                "default": {
+                    "path": tempDbPath,
+                }
+            },
+            "default": "default",
+        }
+        db = DatabaseWrapper(config)
         # Verify file was created
         assert Path(tempDbPath).exists()
         # Verify database works
@@ -103,7 +135,17 @@ class TestDatabaseInitialization:
 
     def testInitWithCustomParameters(self, tempDbPath):
         """Test initialization with custom connection parameters."""
-        db = DatabaseWrapper(tempDbPath, maxConnections=10, timeout=60.0)
+        config = {
+            "sources": {
+                "default": {
+                    "path": tempDbPath,
+                    "pool-size": 10,
+                    "timeout": 60.0,
+                }
+            },
+            "default": "default",
+        }
+        db = DatabaseWrapper(config)
         # Multi-source architecture - parameters are stored internally per source
         # Just verify database works with custom parameters
         assert db.getSetting("test_key", "default") == "default"
@@ -1276,14 +1318,30 @@ class TestConnectionManagement:
 
     def testConnectionClose(self, tempDbPath):
         """Test closing database connection."""
-        db = DatabaseWrapper(tempDbPath)
+        config = {
+            "sources": {
+                "default": {
+                    "path": tempDbPath,
+                }
+            },
+            "default": "default",
+        }
+        db = DatabaseWrapper(config)
         db.close()
         # Should not raise error
 
     def testMultipleConnections(self, tempDbPath):
         """Test multiple database instances."""
-        db1 = DatabaseWrapper(tempDbPath)
-        db2 = DatabaseWrapper(tempDbPath)
+        config = {
+            "sources": {
+                "default": {
+                    "path": tempDbPath,
+                }
+            },
+            "default": "default",
+        }
+        db1 = DatabaseWrapper(config)
+        db2 = DatabaseWrapper(config)
 
         db1.setSetting("key", "value1")
         value = db2.getSetting("key")
@@ -1816,31 +1874,63 @@ class TestCleanupAndResources:
 
     def testDatabaseCloseCleanup(self, tempDbPath):
         """Test that database close properly cleans up resources."""
-        db = DatabaseWrapper(tempDbPath)
+        config = {
+            "sources": {
+                "default": {
+                    "path": tempDbPath,
+                }
+            },
+            "default": "default",
+        }
+        db = DatabaseWrapper(config)
         db.setSetting("test", "value")
         db.close()
 
         # Should be able to open again
-        db2 = DatabaseWrapper(tempDbPath)
+        db2 = DatabaseWrapper(config)
         value = db2.getSetting("test")
         assert value == "value"
         db2.close()
 
     def testMultipleCloseCallsSafe(self, tempDbPath):
         """Test that multiple close calls don't cause errors."""
-        db = DatabaseWrapper(tempDbPath)
+        config = {
+            "sources": {
+                "default": {
+                    "path": tempDbPath,
+                }
+            },
+            "default": "default",
+        }
+        db = DatabaseWrapper(config)
         db.close()
         db.close()  # Should not raise error
 
     def testDatabaseFileCreation(self, tempDbPath):
         """Test that database file is created."""
-        db = DatabaseWrapper(tempDbPath)
+        config = {
+            "sources": {
+                "default": {
+                    "path": tempDbPath,
+                }
+            },
+            "default": "default",
+        }
+        db = DatabaseWrapper(config)
         assert Path(tempDbPath).exists()
         db.close()
 
     def testInMemoryDatabaseNoFile(self):
         """Test that in-memory database doesn't create file."""
-        db = DatabaseWrapper(":memory:")
+        config = {
+            "sources": {
+                "default": {
+                    "path": ":memory:",
+                }
+            },
+            "default": "default",
+        }
+        db = DatabaseWrapper(config)
         # No file should be created
         db.close()
 
