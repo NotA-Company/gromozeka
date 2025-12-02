@@ -96,7 +96,7 @@ class SourceConfig:
     Configuration for a single database source.
     """
 
-    __slots__ = ["dbPath", "readonly", "timeout", "poolSize"]
+    __slots__ = ("dbPath", "readonly", "timeout", "poolSize")
 
     def __init__(
         self,
@@ -131,10 +131,7 @@ class DatabaseWrapper:
 
     def __init__(
         self,
-        dbPath: Optional[str] = None,
-        maxConnections: int = 5,
-        timeout: float = 30.0,
-        config: Optional[Dict[str, Any]] = None,
+        config: Dict[str, Any],
     ):
         """
         Initialize database wrapper with single or multi-source configuration, dood!
@@ -148,30 +145,8 @@ class DatabaseWrapper:
         Raises:
             ValueError: If neither or both dbPath and config provided
         """
-        # Validate initialization parameters
-        if dbPath is None and config is None:
-            raise ValueError("Either dbPath or config must be provided, dood!")
-        if dbPath is not None and config is not None:
-            raise ValueError("Cannot provide both dbPath and config - choose one mode, dood!")
-
-        if dbPath:
-            config = {
-                "default": "default",
-                "sources": {
-                    "default": {
-                        "path": dbPath,
-                        "readonly": False,
-                        "pool-size": maxConnections,
-                        "timeout": timeout,
-                    },
-                },
-            }
-
-        if config is None:
-            raise RuntimeError("Somehow config is None")
-
         logger.info("Initializing database wrapper in multi-source mode, dood!")
-        self._initializeMultiSource(config, maxConnections, timeout)
+        self._initializeMultiSource(config, 5, 30)
 
         # Initialize database schema (works for both modes)
         self._initDatabase()
