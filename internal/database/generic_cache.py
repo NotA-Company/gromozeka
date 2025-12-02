@@ -50,12 +50,16 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         >>> weather = await cache.get("moscow")
     """
 
+    __slots__ = ("db", "dataSource", "namespace", "keyGenerator", "valueConverter")
+
     def __init__(
         self,
         db: DatabaseWrapper,
         namespace: CacheType,
         keyGenerator: Optional[KeyGenerator[K]] = None,
         valueConverter: Optional[ValueConverter[V]] = None,
+        *,
+        dataSource: Optional[str] = None,
     ):
         """
         Initialize cache with database wrapper
@@ -69,6 +73,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
                            If None, uses JsonValueConverter by default.
         """
         self.db = db
+        self.dataSource = dataSource
         self.namespace = namespace
         self.keyGenerator: KeyGenerator[K] = keyGenerator if keyGenerator is not None else HashKeyGenerator()
         self.valueConverter: ValueConverter[V] = (
@@ -79,7 +84,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         """Get cached data if exists and not expired"""
         try:
             _key = self.keyGenerator.generateKey(key)
-            cacheEntry = self.db.getCacheEntry(_key, cacheType=self.namespace, ttl=ttl)
+            cacheEntry = self.db.getCacheEntry(_key, cacheType=self.namespace, ttl=ttl, dataSource=self.dataSource)
             if cacheEntry is not None:
                 return self.valueConverter.decode(cacheEntry["data"])
             return None
@@ -92,7 +97,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         try:
             _key = self.keyGenerator.generateKey(key)
             data = self.valueConverter.encode(value)
-            return self.db.setCacheEntry(_key, data=data, cacheType=self.namespace)
+            return self.db.setCacheEntry(_key, data=data, cacheType=self.namespace, dataSource=self.dataSource)
         except Exception as e:
             logger.error(f"Failed to set cache entry {key}: {e}")
             return False
