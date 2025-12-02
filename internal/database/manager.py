@@ -1,9 +1,6 @@
-"""
-Database management for Gromozeka bot.
-"""
+"""Database manager for Gromozeka bot with configuration and wrapper initialization."""
 
 import logging
-import sys
 from typing import Any, Dict
 
 from .wrapper import DatabaseWrapper
@@ -12,42 +9,27 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
-    """Manages database initialization and configuration for Gromozeka bot."""
+    """Manages database initialization and configuration.
+
+    Initializes DatabaseWrapper with provided configuration and handles database setup.
+    """
+
+    __slots__ = ("config", "db")
 
     def __init__(self, config: Dict[str, Any]):
-        """Initialize DatabaseManager with database configuration.
+        """Initialize DatabaseManager with configuration.
 
         Args:
-            config: Database configuration dictionary containing path, max_connections, and timeout
+            config: Database configuration dict
         """
         self.config = config
-        self.db = self._initDatabase()
-
-    def _initDatabase(self) -> DatabaseWrapper:
-        """Initialize database connection.
-
-        Returns:
-            DatabaseWrapper: The initialized database wrapper instance
-
-        Raises:
-            SystemExit: If database initialization fails
-        """
-        dbPath = self.config.get("path", "bot_data.db")
-        maxConnections = self.config.get("max_connections", 5)
-        timeout = self.config.get("timeout", 30)
-
-        try:
-            db = DatabaseWrapper(dbPath, maxConnections, timeout)
-            logger.info(f"Database initialized: {dbPath}")
-            return db
-        except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
-            sys.exit(1)
+        self.db = DatabaseWrapper(config=self.config)
+        logger.info(f"Database initialized: {self.config}")
 
     def getDatabase(self) -> DatabaseWrapper:
         """Get the database wrapper instance.
 
         Returns:
-            DatabaseWrapper: The database wrapper instance
+            DatabaseWrapper instance for database operations
         """
         return self.db
