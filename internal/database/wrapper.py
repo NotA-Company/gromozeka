@@ -2715,7 +2715,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to get cache entry: {e}")
             return None
 
-    def setCacheEntry(self, key: str, data: str, cacheType: CacheType) -> bool:
+    def setCacheEntry(self, key: str, data: str, cacheType: CacheType, *, dataSource: Optional[str] = None) -> bool:
         """
         Store cache entry.
 
@@ -2731,7 +2731,7 @@ class DatabaseWrapper:
             Writes to default source. Cannot write to readonly sources.
         """
         try:
-            with self.getCursor(readonly=False) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
                 cursor.execute(
                     f"""
                     INSERT INTO cache_{cacheType}
@@ -2749,7 +2749,7 @@ class DatabaseWrapper:
             logger.error(f"Failed to set cache entry: {e}")
             return False
 
-    def clearCache(self, cacheType: CacheType) -> None:
+    def clearCache(self, cacheType: CacheType, *, dataSource: Optional[str] = None) -> None:
         """
         Clear all entries from a specific cache table.
 
@@ -2763,7 +2763,7 @@ class DatabaseWrapper:
             Writes to default source. Cannot write to readonly sources.
         """
         try:
-            with self.getCursor(readonly=False) as cursor:
+            with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
                 cursor.execute(
                     f"""
                     DELETE FROM cache_{cacheType}
