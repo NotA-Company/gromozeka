@@ -30,7 +30,16 @@ from internal.models import MessageType
 @pytest.fixture
 def inMemoryDb():
     """Provide in-memory SQLite database for testing, dood!"""
-    db = DatabaseWrapper(":memory:")
+    config = {
+        "sources": {
+            "default": {
+                "path": ":memory:",
+                "readonly": False,
+            }
+        },
+        "default": "default",
+    }
+    db = DatabaseWrapper(config)
     yield db
     db.close()
 
@@ -43,7 +52,16 @@ def threadSafeDb(tmp_path):
     unlike in-memory databases which are isolated per connection.
     """
     dbPath = tmp_path / "test_threading.db"
-    db = DatabaseWrapper(str(dbPath))
+    config = {
+        "sources": {
+            "default": {
+                "path": str(dbPath),
+                "readonly": False,
+            }
+        },
+        "default": "default",
+    }
+    db = DatabaseWrapper(config)
     yield db
     db.close()
 
