@@ -1,0 +1,17 @@
+[resender]
+enabled = false
+
+[[resender.jobs]]
+id = "resend-from-chat"
+dataSource = "telegram-ro"
+sourceChatId = -123
+sourceTheadId = 2
+targetChatId = -321
+messageTypes = ["user"]
+messagePrefix = """
+Пересланное сообщение от {{full_name}}:
+"""
+messageSuffix = """
+
+Конец пересланного сообщения ({{date}})"""
+lastMessageDate = "2026-01-01 00:00:00"

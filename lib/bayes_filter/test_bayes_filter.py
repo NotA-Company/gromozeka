@@ -243,7 +243,7 @@ async def test_bayes_filter():
     db: Optional[DatabaseWrapper] = None
     try:
         # Initialize database and storage
-        db = DatabaseWrapper(db_path)
+        db = DatabaseWrapper({"sources": {"default": {"path": db_path}}, "default": "default"})
         storage = DatabaseBayesStorage(db)
 
         # Initialize Bayes filter

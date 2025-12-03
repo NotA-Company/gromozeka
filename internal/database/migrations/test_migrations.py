@@ -46,7 +46,12 @@ def test_fresh_database():
     
     try:
         # Initialize database (should run migrations automatically)
-        db = DatabaseWrapper(dbPath)
+        db = DatabaseWrapper({
+            "sources": {
+                "default": {"path": dbPath}
+            },
+            "default": "default"
+        })
         
         # Check migration version
         manager = MigrationManager(db)
@@ -96,7 +101,12 @@ def test_migration_status():
         dbPath = f.name
     
     try:
-        db = DatabaseWrapper(dbPath)
+        db = DatabaseWrapper({
+            "sources": {
+                "default": {"path": dbPath}
+            },
+            "default": "default"
+        })
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
@@ -126,7 +136,12 @@ def test_rollback():
     
     try:
         # Initialize database
-        db = DatabaseWrapper(dbPath)
+        db = DatabaseWrapper({
+            "sources": {
+                "default": {"path": dbPath}
+            },
+            "default": "default"
+        })
         manager = MigrationManager(db)
         manager.registerMigrations(MIGRATIONS)
         
@@ -171,7 +186,16 @@ def test_existing_database():
     
     try:
         # Create database - __init__ now automatically runs migrations
-        db = DatabaseWrapper(dbPath, maxConnections=5, timeout=30.0)
+        db = DatabaseWrapper({
+            "sources": {
+                "default": {
+                    "path": dbPath,
+                    "maxConnections": 5,
+                    "timeout": 30.0
+                }
+            },
+            "default": "default"
+        })
         
         # Verify migrations were run automatically by __init__
         manager = MigrationManager(db)
@@ -266,7 +290,12 @@ def test_loadMigrationsFromVersions():
         dbPath = f.name
     
     try:
-        db = DatabaseWrapper(dbPath)
+        db = DatabaseWrapper({
+            "sources": {
+                "default": {"path": dbPath}
+            },
+            "default": "default"
+        })
         manager = MigrationManager(db)
         
         # Test loadMigrationsFromVersions()
@@ -301,7 +330,12 @@ def test_database_wrapper_auto_discovery():
     
     try:
         # Initialize database (should use auto-discovery)
-        db = DatabaseWrapper(dbPath)
+        db = DatabaseWrapper({
+            "sources": {
+                "default": {"path": dbPath}
+            },
+            "default": "default"
+        })
         
         # Check that all migrations were applied
         manager = MigrationManager(db)

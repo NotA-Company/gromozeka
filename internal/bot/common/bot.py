@@ -267,7 +267,7 @@ class TheBot:
 
     async def sendMessage(
         self,
-        replyToMessage: EnsuredMessage,
+        replyToMessage: Optional[EnsuredMessage],
         messageText: Optional[str] = None,
         *,
         addMessagePrefix: str = "",
@@ -279,11 +279,13 @@ class TheBot:
         inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
+        chatId: Optional[int] = None,
+        threadId: Optional[int] = None,
     ) -> List[EnsuredMessage]:
         """Send message as reply with text and/or photo.
 
         Args:
-            replyToMessage: Message to reply to
+            replyToMessage: Message to reply to (Or None if it is not answer to a message)
             messageText: Text content (required if photoData is None)
             addMessagePrefix: Prefix to add before message text
             photoData: Photo bytes (required if messageText is None)
@@ -294,6 +296,8 @@ class TheBot:
             inlineKeyboard: Inline keyboard layout
             typingManager: Manager for typing indicators
             splitIfTooLong: Whether to split long messages
+            chatId: Chat ID to send message to (only useful if `replyToMessage` is None)
+            threadId: Thread ID to send message to (only useful if `replyToMessage` is None)
 
         Returns:
             List of sent message objects
@@ -318,6 +322,8 @@ class TheBot:
                     inlineKeyboard=inlineKeyboardTg,
                     typingManager=typingManager,
                     splitIfTooLong=splitIfTooLong,
+                    chatId=chatId,
+                    threadId=threadId,
                 )
 
             case BotProvider.MAX:
@@ -335,13 +341,15 @@ class TheBot:
                     inlineKeyboard=inlineKeyboardMax,
                     typingManager=typingManager,
                     splitIfTooLong=splitIfTooLong,
+                    chatId=chatId,
+                    threadId=threadId,
                 )
             case _:
                 raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
 
     async def _sendMaxMessage(
         self,
-        replyToMessage: EnsuredMessage,
+        replyToMessage: Optional[EnsuredMessage],
         messageText: Optional[str] = None,
         *,
         addMessagePrefix: str = "",
@@ -353,9 +361,23 @@ class TheBot:
         inlineKeyboard: Optional[maxModels.InlineKeyboardAttachmentRequest] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
+        chatId: Optional[int] = None,
+        threadId: Optional[int] = None,
     ) -> List[EnsuredMessage]:
         if self.maxBot is None:
             raise RuntimeError("Max bot is Undefined")
+
+        replyToMessageId: Optional[MessageIdType] = None
+        chatType: ChatType = ChatType.PRIVATE
+        if replyToMessage is not None:
+            chatId = replyToMessage.recipient.id
+            # threadId = replyToMessage.threadId  # threadId is unused in Max
+            replyToMessageId = replyToMessage.messageId
+            chatType = replyToMessage.recipient.chatType
+        else:
+            if chatId is None:
+                raise ValueError("ChatId or replyToMessage is required")
+            chatType = ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
 
         if photoData is None and messageText is None:
             logger.error("No message text or photo data provided")
@@ -363,11 +385,6 @@ class TheBot:
 
         replyMessageList: List[maxModels.Message] = []
         ensuredReplyList: List[EnsuredMessage] = []
-        # message = replyToMessage.getBaseMessage()
-        # if not isinstance(message, maxModels.Message):
-        #     logger.error("Invalid message type")
-        #     raise ValueError("Invalid message type")
-        chatType = replyToMessage.recipient.chatType
 
         if typingManager is not None:
             await typingManager.stopTask()
@@ -382,8 +399,8 @@ class TheBot:
         replyKwargs = sendMessageKWargs.copy()
         replyKwargs.update(
             {
-                "chatId": replyToMessage.recipient.id,
-                "replyTo": str(replyToMessage.messageId),
+                "chatId": chatId,
+                "replyTo": replyToMessageId,
                 "format": maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
             }
         )
@@ -460,8 +477,8 @@ class TheBot:
                 try:
                     await self.maxBot.sendMessage(
                         text=f"Error while sending message: {type(e).__name__}#{e}",
-                        chatId=replyToMessage.recipient.id,
-                        replyTo=str(replyToMessage.messageId),
+                        chatId=chatId,
+                        replyTo=str(replyToMessageId) if replyToMessageId is not None else None,
                     )
                 except Exception as error_e:
                     logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
@@ -471,7 +488,7 @@ class TheBot:
 
     async def _sendTelegramMessage(
         self,
-        replyToMessage: EnsuredMessage,
+        replyToMessage: Optional[EnsuredMessage],
         messageText: Optional[str] = None,
         *,
         addMessagePrefix: str = "",
@@ -483,6 +500,8 @@ class TheBot:
         inlineKeyboard: Optional[telegram.InlineKeyboardMarkup] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
+        chatId: Optional[int] = None,
+        threadId: Optional[int] = None,
     ) -> List[EnsuredMessage]:
         """Send message via Telegram platform.
 
@@ -513,16 +532,28 @@ class TheBot:
 
         replyMessageList: List[telegram.Message] = []
         ensuredReplyList: List[EnsuredMessage] = []
-        message = replyToMessage.toTelegramMessage()
-        message.set_bot(self.tgBot)
-        chatType = replyToMessage.recipient.chatType
-        isPrivate = chatType == ChatType.PRIVATE
-        isGroupChat = chatType == ChatType.GROUP
+
+        replyToMessageId: Optional[MessageIdType] = None
+        chatType: ChatType = ChatType.PRIVATE
+        if replyToMessage is not None:
+            chatId = replyToMessage.recipient.id
+            # threadId = replyToMessage.threadId  # threadId is unused in Max
+            replyToMessageId = replyToMessage.messageId
+            chatType = replyToMessage.recipient.chatType
+        else:
+            if chatId is None:
+                raise ValueError("ChatId or replyToMessage is required")
+            chatType = ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
+
+        # message = replyToMessage.toTelegramMessage()
+        # message.set_bot(self.tgBot)
+        if self.tgBot is None:
+            raise RuntimeError("Telegram bot client is not configured")
 
         if typingManager is not None:
             await typingManager.stopTask()
 
-        if not isPrivate and not isGroupChat:
+        if chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
             logger.error("Cannot send message to chat type {}".format(chatType))
             raise ValueError("Cannot send message to chat type {}".format(chatType))
 
@@ -532,9 +563,10 @@ class TheBot:
         replyKwargs = sendMessageKWargs.copy()
         replyKwargs.update(
             {
-                "reply_to_message_id": replyToMessage.messageId,
-                "message_thread_id": replyToMessage.threadId,
+                "reply_to_message_id": replyToMessageId,
+                "message_thread_id": threadId,
                 "reply_markup": inlineKeyboard,
+                "chat_id": chatId,
             }
         )
 
@@ -553,7 +585,7 @@ class TheBot:
                         messageTextParsed = markdownToMarkdownV2(addMessagePrefix + messageText)
                         # logger.debug(f"Sending MarkdownV2: {replyText}")
                         # TODO: One day start using self.tgBot
-                        replyMessage = await message.reply_photo(
+                        replyMessage = await self.tgBot.send_photo(
                             caption=messageTextParsed,
                             parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
                             **replyKwargs,
@@ -564,7 +596,7 @@ class TheBot:
 
                 if replyMessage is None:
                     _messageText = messageText if messageText is not None else ""
-                    replyMessage = await message.reply_photo(caption=addMessagePrefix + _messageText, **replyKwargs)
+                    replyMessage = await self.tgBot.send_photo(caption=addMessagePrefix + _messageText, **replyKwargs)
                 if replyMessage is not None:
                     replyMessageList.append(replyMessage)
 
@@ -587,7 +619,7 @@ class TheBot:
                         try:
                             messageTextParsed = markdownToMarkdownV2(addMessagePrefix + _messageText)
                             # logger.debug(f"Sending MarkdownV2: {replyText}")
-                            replyMessage = await message.reply_text(
+                            replyMessage = await self.tgBot.send_message(
                                 text=messageTextParsed,
                                 parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
                                 **replyKwargs,
@@ -597,7 +629,9 @@ class TheBot:
                             # Probably error in markdown formatting, fallback to raw text
 
                     if replyMessage is None:
-                        replyMessage = await message.reply_text(text=addMessagePrefix + _messageText, **replyKwargs)
+                        replyMessage = await self.tgBot.send_message(
+                            text=addMessagePrefix + _messageText, **replyKwargs
+                        )
 
                     if replyMessage is not None:
                         replyMessageList.append(replyMessage)
@@ -625,9 +659,11 @@ class TheBot:
             logger.exception(e)
             if sendErrorIfAny:
                 try:
-                    await message.reply_text(
-                        f"Error while sending message: {type(e).__name__}#{e}",
-                        reply_to_message_id=int(replyToMessage.messageId),
+                    await self.tgBot.send_message(
+                        chat_id=chatId,
+                        text=f"Error while sending message: {type(e).__name__}#{e}",
+                        reply_to_message_id=int(replyToMessageId) if replyToMessageId is not None else None,
+                        message_thread_id=threadId,
                     )
                 except Exception as error_e:
                     logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")

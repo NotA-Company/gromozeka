@@ -1,0 +1,33 @@
+[storage]
+# Storage backend type
+# - "s3" for Amazon S3
+# - "fs" for local filesystem
+# - "null" for no storage
+type = "null"
+
+[storage.s3]
+# S3 endpoint URL
+# - AWS S3: "https://s3.amazonaws.com" or "https://s3.<region>.amazonaws.com"
+# - Yandex Object Storage: "https://storage.yandexcloud.net"
+# - MinIO: "http://localhost:9000" or your MinIO server URL
+endpoint = "https://s3.amazonaws.com"
+# S3 region (required)
+# Examples: "us-east-1", "eu-west-1", "ru-central1" (for Yandex)
+region = "your-region"
+
+# Access credentials (use environment variables for security!)
+key-id = "${AWS_ACCESS_KEY_ID}"
+key-secret = "${AWS_SECRET_ACCESS_KEY}"
+
+# S3 bucket name (must already exist)
+bucket = "your-bucket"
+# Optional: Prefix for all object keys
+# Useful for organizing objects or sharing buckets between environments
+# Examples: "prod/", "staging/", "objects/"
+# Leave empty for no prefix
+prefix = "your-prefix/"
+
+[storage.fs]
+# Base directory for storing objects
+# This directory will be created automatically if it doesn't exist
+base-dir = "storage"
