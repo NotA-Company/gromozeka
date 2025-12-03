@@ -28,6 +28,7 @@ from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache import CacheService
 from internal.services.queue_service import QueueService
+from internal.services.storage import StorageService
 from lib import utils
 from lib.ai import LLMManager
 
@@ -80,6 +81,9 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self.cache = CacheService.getInstance()
         self.cache.injectDatabase(self.db)
+
+        self.storage = StorageService.getInstance()
+        self.storage.injectConfig(self.configManager)
 
         self.queueService = QueueService.getInstance()
         # Initialize default Chat Settings

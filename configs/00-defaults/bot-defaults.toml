@@ -47,10 +47,13 @@ bot-nicknames = "Громозека, Gro"
 llm-message-format = "smart"
 # Can we use tools
 use-tools = true
-# Should we save images to S3 for future using? (Unimplemented)
-save-images = true
 # Should we parse images via LLM
 parse-images = true
+
+# Should we save attachments to S3 for future using? (currently usefull for ResenderHandler only)
+save-attachments = false
+# Prefix for saved attachments
+save-prefix = "media-"
 
 # Allow tools commands (/draw, /analyze, etc...)
 allow-tools-commands = true

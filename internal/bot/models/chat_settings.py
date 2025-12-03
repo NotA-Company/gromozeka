@@ -64,8 +64,10 @@ class ChatSettingsKey(StrEnum):
     BOT_NICKNAMES = "bot-nicknames"
     LLM_MESSAGE_FORMAT = "llm-message-format"
     USE_TOOLS = "use-tools"
-    SAVE_IMAGES = "save-images"
     PARSE_IMAGES = "parse-images"
+
+    SAVE_ATTACHMENTS = "save-attachments"
+    SAVE_PREFIX = "save-prefix"
 
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
@@ -201,12 +203,6 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "5. Получение текущего времени\n"
             "6. Поиск по Интернету через Yandex Search API"
         ),
-        "page": ChatSettingsPage.EXTENDED,
-    },
-    ChatSettingsKey.SAVE_IMAGES: {
-        "type": ChatSettingsType.BOOL,
-        "short": "Сохранять изображения (Unimplemented)",
-        "long": "Не реализовано в данный момент",
         "page": ChatSettingsPage.EXTENDED,
     },
     ChatSettingsKey.PARSE_IMAGES: {
