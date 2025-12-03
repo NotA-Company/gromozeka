@@ -230,3 +230,50 @@ class ConfigManager:
             Dict with Yandex Search settings (api-key, cache settings, etc.)
         """
         return self.get("yandex-search", {})
+
+    def getStorageConfig(self) -> Dict[str, Any]:
+        """
+        Get storage service configuration.
+
+        Returns a dictionary containing storage backend configuration with the following structure:
+        - type: Backend type ("fs", "s3", or "null")
+        - fs: Filesystem backend configuration (if type is "fs")
+            - base-dir: Base directory path for storage
+        - s3: S3 backend configuration (if type is "s3")
+            - endpoint: S3 endpoint URL
+            - region: AWS region
+            - key-id: Access key ID
+            - key-secret: Secret access key
+            - bucket: S3 bucket name
+            - prefix: Optional prefix for all keys
+
+        Returns:
+            Dict[str, Any]: Storage configuration dictionary with backend-specific settings.
+                           Returns empty dict if storage section is not configured.
+
+        Example return values:
+            Filesystem backend:
+            {
+                "type": "fs",
+                "fs": {"base-dir": "./storage/objects"}
+            }
+
+            S3 backend:
+            {
+                "type": "s3",
+                "s3": {
+                    "endpoint": "https://s3.amazonaws.com",
+                    "region": "us-east-1",
+                    "key-id": "...",
+                    "key-secret": "...",
+                    "bucket": "my-bucket",
+                    "prefix": "objects/"
+                }
+            }
+
+            Null backend:
+            {
+                "type": "null"
+            }
+        """
+        return self.get("storage", {})
