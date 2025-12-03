@@ -164,14 +164,20 @@ class MaxBotClient:
         """
         await self.aclose()
 
-    def _getHttpClient(self) -> httpx.AsyncClient:
+    def _getHttpClient(self, getNew: bool = False) -> httpx.AsyncClient:
         """Get or create the HTTP client with proper configuration.
+
+        Args:
+            getNew: Whether to get a new HTTP client (default: False)
 
         Returns:
             Configured httpx.AsyncClient instance
         """
-        if self._httpClient is None or self._httpClient.is_closed:
-            self._httpClient = httpx.AsyncClient(
+
+        httpClient = self._httpClient
+
+        if getNew or httpClient is None or httpClient.is_closed:
+            httpClient = httpx.AsyncClient(
                 base_url=self.baseUrl,
                 timeout=httpx.Timeout(self.timeout),
                 headers={
@@ -181,7 +187,7 @@ class MaxBotClient:
             )
             logger.debug("Created new HTTP client")
 
-        self._httpClient.headers.update(
+        httpClient.headers.update(
             {
                 "Accept": CONTENT_TYPE_JSON,
                 "Content-Type": CONTENT_TYPE_JSON,
@@ -189,7 +195,10 @@ class MaxBotClient:
             }
         )
 
-        return self._httpClient
+        if not getNew:
+            self._httpClient = httpClient
+
+        return httpClient
 
     async def aclose(self) -> None:
         """Close the HTTP client and cleanup resources."""
@@ -1547,7 +1556,7 @@ class MaxBotClient:
 
         try:
             # Make direct HTTP request to upload URL (not through our API)
-            client = self._getHttpClient()
+            client = self._getHttpClient(getNew=True)
 
             # Remove content-type header for multipart uploads
             client.headers.pop("Content-Type", None)
@@ -1585,6 +1594,9 @@ class MaxBotClient:
             raise MaxBotError(f"Upload failed: {e}")
         except Exception as e:
             raise MaxBotError(f"Upload error: {e}")
+        finally:
+            if client is not None:
+                await client.aclose()
 
     async def downloadAttachmentPayload(self, attachmentPayload: AttachmentPayload | str) -> Optional[bytes]:
         """Download attachment payload data.
@@ -1612,7 +1624,7 @@ class MaxBotClient:
         url = attachmentPayload if isinstance(attachmentPayload, str) else attachmentPayload.url
 
         try:
-            client = self._getHttpClient()
+            client = self._getHttpClient(getNew=True)
 
             # Remove content-type header for multipart uploads
             client.headers.pop("Content-Type", None)
@@ -1632,6 +1644,9 @@ class MaxBotClient:
             logger.error(f"Failed to download attachment: {type(e).__name__}#{e}")
             logger.exception(e)
             return None
+        finally:
+            if client is not None:
+                await client.aclose()
 
     # Keyboard Helper Methods
     def createInlineKeyboard(self, buttons: List[List[Button]]) -> InlineKeyboardAttachment:
