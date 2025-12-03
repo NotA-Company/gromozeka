@@ -342,7 +342,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def sendMessage(
         self,
-        replyToMessage: EnsuredMessage,
+        replyToMessage: Optional[EnsuredMessage],
         messageText: Optional[str] = None,
         *,
         addMessagePrefix: str = "",
@@ -357,6 +357,8 @@ class BaseBotHandler(CommandHandlerMixin):
         inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
+        chatId: Optional[int] = None,
+        threadId: Optional[int] = None,
     ) -> List[EnsuredMessage]:
         if self._bot is None:
             raise ValueError("Bot is not initialized")
@@ -372,6 +374,8 @@ class BaseBotHandler(CommandHandlerMixin):
             inlineKeyboard=inlineKeyboard,
             typingManager=typingManager,
             splitIfTooLong=splitIfTooLong,
+            chatId=chatId,
+            threadId=threadId,
         )
 
         for ensuredReplyMessage in ret:
