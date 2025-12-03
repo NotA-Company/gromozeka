@@ -28,6 +28,7 @@ from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.cache import CacheService
 from internal.services.queue_service import QueueService
+from internal.services.storage import StorageService
 from lib import utils
 from lib.ai import LLMManager
 
@@ -40,6 +41,7 @@ from .llm_messages import LLMMessageHandler
 from .media import MediaHandler
 from .message_preprocessor import MessagePreprocessorHandler
 from .react_on_user import ReactOnUserMessageHandler
+from .resender import ResenderHandler
 from .spam import SpamHandler
 from .summarization import SummarizationHandler
 from .topic_manager import TopicManagerHandler
@@ -79,6 +81,9 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self.cache = CacheService.getInstance()
         self.cache.injectDatabase(self.db)
+
+        self.storage = StorageService.getInstance()
+        self.storage.injectConfig(self.configManager)
 
         self.queueService = QueueService.getInstance()
         # Initialize default Chat Settings
@@ -134,12 +139,12 @@ class HandlersManager(CommandHandlerGetterInterface):
             )
 
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
-        openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
-        if openWeatherMapConfig.get("enabled", False):
+        if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
             self.handlers.append(WeatherHandler(configManager, database, llmManager, botProvider))
-        yandexSearchConfig = self.configManager.getYandexSearchConfig()
-        if yandexSearchConfig.get("enabled", False):
+        if self.configManager.getYandexSearchConfig().get("enabled", False):
             self.handlers.append(YandexSearchHandler(configManager, database, llmManager, botProvider))
+        if self.configManager.get("resender", {}).get("enabled", False):
+            self.handlers.append(ResenderHandler(configManager, database, llmManager, botProvider))
 
         self.handlers.append(
             # Should be last messageHandler as it can handle any message

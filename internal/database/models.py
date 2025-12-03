@@ -44,6 +44,8 @@ class MessageCategory(StrEnum):
     """Bot returned some error"""
     BOT_SUMMARY = "bot-summary"
     """Summary message from bot"""
+    BOT_RESENDED = "bot-resended"
+    """Bot resended message"""
 
     BOT_SPAM_NOTIFICATION = "bot-spam-notification"
     """Spam notification message from bot"""

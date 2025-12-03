@@ -20,6 +20,7 @@ Key Features:
 
 import asyncio
 import datetime
+import hashlib
 import json
 import logging
 from enum import Enum
@@ -55,6 +56,7 @@ from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType
 from internal.services.cache import CacheService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
+from internal.services.storage import StorageService
 from lib.ai import (
     LLMManager,
     ModelImageMessage,
@@ -139,10 +141,9 @@ class BaseBotHandler(CommandHandlerMixin):
         self.llmManager = llmManager
         self.botProvider = botProvider
 
-        # Init cache
         self.cache = CacheService.getInstance()
-
         self.queueService = QueueService.getInstance()
+        self.storage = StorageService.getInstance()
 
         # self._tgBot: Optional[telegramExt.ExtBot] = None
         # self._maxBot: Optional[libMax.MaxBotClient] = None
@@ -342,7 +343,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def sendMessage(
         self,
-        replyToMessage: EnsuredMessage,
+        replyToMessage: Optional[EnsuredMessage],
         messageText: Optional[str] = None,
         *,
         addMessagePrefix: str = "",
@@ -357,6 +358,8 @@ class BaseBotHandler(CommandHandlerMixin):
         inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
         typingManager: Optional[TypingManager] = None,
         splitIfTooLong: bool = True,
+        chatId: Optional[int] = None,
+        threadId: Optional[int] = None,
     ) -> List[EnsuredMessage]:
         if self._bot is None:
             raise ValueError("Bot is not initialized")
@@ -372,6 +375,8 @@ class BaseBotHandler(CommandHandlerMixin):
             inlineKeyboard=inlineKeyboard,
             typingManager=typingManager,
             splitIfTooLong=splitIfTooLong,
+            chatId=chatId,
+            threadId=threadId,
         )
 
         for ensuredReplyMessage in ret:
@@ -1031,10 +1036,16 @@ class BaseBotHandler(CommandHandlerMixin):
 
         chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
         mediaData: Optional[bytes] = None
-
-        if chatSettings[ChatSettingsKey.SAVE_IMAGES].toBool():
-            # TODO do someday. Or not
-            pass
+        if chatSettings[ChatSettingsKey.SAVE_ATTACHMENTS].toBool():
+            if self._bot is None:
+                raise ValueError("Bot is not initialized")
+            mediaData = await self._bot.downloadAttachment(mediaId, fileId)
+            if mediaData is not None:
+                localUrl = await self.storeAttachment(
+                    data=mediaData,
+                    prefix=chatSettings[ChatSettingsKey.SAVE_PREFIX].toStr(),
+                    mediaType=mediaType,
+                )
 
         if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
             mediaStatus = MediaStatus.PENDING
@@ -1125,6 +1136,43 @@ class BaseBotHandler(CommandHandlerMixin):
             ret.task = makeEmptyAsyncTask()
 
         return ret
+
+    async def storeAttachment(self, data: bytes, prefix: str, mediaType: str) -> Optional[str]:
+        """
+        Store an attachment in the storage service with deduplication.
+
+        This method stores binary attachment data in the configured storage backend
+        (filesystem, S3, etc.) using a content-addressed key. It automatically
+        deduplicates attachments by using SHA512 hash of the content as part of the key.
+
+        The key format is: {prefix}{mediaType}-{sha512}.{mimeType}
+
+        Args:
+            data: The binary attachment data to store
+            prefix: A prefix for the storage key (e.g., "attachments/")
+            mediaType: The media type identifier (e.g., "image", "document")
+
+        Returns:
+            The storage key if successful, None if an error occurred
+
+        Note:
+            The method only stores the attachment if it doesn't already exist,
+            preventing duplicate storage based on content hash.
+        """
+        try:
+            mimeType = magic.from_buffer(data, mime=True).split("/")[-1]
+            sha512 = hashlib.sha512(data).hexdigest()
+            key = f"{prefix}{mediaType}-{sha512}.{mimeType}"
+            # Store the attachment in the storage only if it doesn't exist
+            # As we getting SHA512 hash of the attachment,
+            # we can check if it exists in the storage with hight probability
+            if not self.storage.exists(key):
+                self.storage.store(key, data)
+            return key
+        except Exception as e:
+            logger.error(f"Error storing attachment: {e}")
+            logger.exception(e)
+            return None
 
     ###
     # Base methods for processing Telegram events

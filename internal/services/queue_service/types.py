@@ -8,8 +8,15 @@ from typing import Any, Awaitable, Callable, Dict, TypeAlias
 
 class DelayedTaskFunction(StrEnum):
     SEND_MESSAGE = "sendMessage"
+    """Send delayed message"""
     DELETE_MESSAGE = "deleteMessage"
+    """Delayed message delete"""
+
+    CRON_JOB = "cronJob"
+    """Each-minute Cron job"""
+
     DO_EXIT = "doExit"
+    """Actully - it's onExit event"""
 
 
 class DelayedTask:

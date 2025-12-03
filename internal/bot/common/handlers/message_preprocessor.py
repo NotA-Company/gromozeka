@@ -89,6 +89,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
                 ensuredMessage.addMediaProcessingInfo(media)
 
             case _:
+                # TODO: add support for downloading other types of attachments
                 # For unsupported message types, just log a warning and process caption like text message
                 logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
                 # return

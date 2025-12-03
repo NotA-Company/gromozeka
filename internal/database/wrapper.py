@@ -9,6 +9,7 @@ import hashlib
 import logging
 import sqlite3
 import threading
+from collections.abc import Sequence
 from contextlib import contextmanager
 from types import UnionType
 from typing import Any, Dict, List, Optional, cast
@@ -251,7 +252,7 @@ class DatabaseWrapper:
                 )
                 sourceName = self._defaultSource
             else:
-                logger.debug(f"Using explicit dataSource '{dataSource}' (tier 1 routing), dood!")
+                # logger.debug(f"Using explicit dataSource '{dataSource}' (tier 1 routing), dood!")
                 sourceName = dataSource
 
         # Tier 2: ChatId mapping lookup (medium priority)
@@ -266,20 +267,21 @@ class DatabaseWrapper:
                     )
                     sourceName = self._defaultSource
                 else:
-                    logger.debug(f"Using chatId {chatId} mapping to source '{mappedSource}' (tier 2 routing), dood!")
+                    # logger.debug(f"Using chatId {chatId} mapping to source '{mappedSource}' (tier 2 routing), dood!")
                     sourceName = mappedSource
             else:
-                logger.debug(
-                    f"Chat {chatId} not in mapping, using default source "
-                    f"'{self._defaultSource}' (tier 3 fallback), dood!"
-                )
+                # logger.debug(
+                #     f"Chat {chatId} not in mapping, using default source "
+                #     f"'{self._defaultSource}' (tier 3 fallback), dood!"
+                # )
                 sourceName = self._defaultSource
 
         # Tier 3: Default source fallback (lowest priority)
         else:
-            logger.debug(
-                f"No routing parameters provided, using default source '{self._defaultSource}' (tier 3 fallback), dood!"
-            )
+            # logger.debug(
+            #     "No routing parameters provided, using default source "
+            #     f"'{self._defaultSource}' (tier 3 fallback), dood!"
+            # )
             sourceName = self._defaultSource
 
         # Readonly validation - check before returning connection
@@ -973,7 +975,7 @@ class DatabaseWrapper:
         tillDateTime: Optional[datetime.datetime] = None,
         threadId: Optional[int] = None,
         limit: Optional[int] = None,
-        messageCategory: Optional[List[MessageCategory]] = None,
+        messageCategory: Optional[Sequence[MessageCategory]] = None,
         *,
         dataSource: Optional[str] = None,
     ) -> List[ChatMessageDict]:
