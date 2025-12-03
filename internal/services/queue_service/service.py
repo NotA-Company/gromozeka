@@ -173,6 +173,17 @@ class QueueService:
         self.backgroundTasks.add(task)
         task.add_done_callback(self.backgroundTasks.discard)
 
+    async def _cronJobHandler(self, task: DelayedTask) -> None:
+        """
+        Handler for CRON_JOB delayed task type, dood!
+
+        Reschedule new cronjob task for +1 minute.
+
+        Args:
+            task (DelayedTask): The delayed task triggering this handler
+        """
+        await self.addDelayedTask(time.time() + 60, DelayedTaskFunction.CRON_JOB, kwargs={})
+
     async def _doExitHandler(self, task: DelayedTask) -> None:
         """
         Handler for DO_EXIT delayed task type during shutdown, dood!
@@ -261,6 +272,7 @@ class QueueService:
         self.db = db
 
         self.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
+        self.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._cronJobHandler)
 
         tasks = self.db.getPendingDelayedTasks()
         for task in tasks:
