@@ -43,7 +43,11 @@ class ExampleHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self,
+        configManager: ConfigManager,
+        database: DatabaseWrapper,
+        llmManager: LLMManager,
+        botProvider: BotProvider,
     ):
         """
         Initialize example handler with database and LLM model, dood!

@@ -167,7 +167,12 @@ class SummarizationHandler(BaseBotHandler):
             tillDateTime=tillDT if maxMessages is None else None,
             threadId=threadId,
             limit=maxMessages,
-            messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
+            messageCategory=[
+                MessageCategory.USER,
+                MessageCategory.BOT,
+                MessageCategory.CHANNEL,
+                MessageCategory.BOT_RESENDED,
+            ],
         )
 
         logger.debug(f"Messages: {messages}")
