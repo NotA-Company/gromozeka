@@ -273,6 +273,7 @@ class QueueService:
 
         self.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
         self.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._cronJobHandler)
+        await self.addDelayedTask(delayedUntil=time.time(), function=DelayedTaskFunction.CRON_JOB, kwargs={})
 
         tasks = self.db.getPendingDelayedTasks()
         for task in tasks:
