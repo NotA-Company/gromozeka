@@ -34,7 +34,7 @@ class MessageCategory(StrEnum):
     """Command from user"""
 
     CHANNEL = "channel"
-    """Message from channel\automatic forward"""
+    """Message from channel/automatic forward"""
 
     BOT = "bot"
     """Message from bot"""
