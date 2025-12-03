@@ -203,7 +203,7 @@ class MaxBotApplication:
         Args:
             exception: Exception that occurred during bot operation
         """
-        logger.error(f"Unhandler MAX exception {type(exception).__name__}")
+        logger.error(f"Unhandled MAX exception {type(exception).__name__}")
         logger.exception(exception)
 
     async def _runPolling(self):
