@@ -561,7 +561,7 @@ class BaseBotHandler(CommandHandlerMixin):
             logger.error(f"Unsupported message type: {message.messageType}")
             return False
 
-        messageText = message.messageText
+        messageText = message.getParsedMessageText()
 
         replyId = message.replyId
         rootMessageId = message.messageId
