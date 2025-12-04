@@ -1025,7 +1025,7 @@ class DatabaseWrapper:
                         AND (:tillDateTime    IS NULL OR c.date < :tillDateTime)
                         AND (:threadId        IS NULL OR c.thread_id = :threadId)
                         AND (:messageCategory IS NULL OR message_category IN ({", ".join(placeholders)}))
-                    ORDER BY c.date DESC
+                    ORDER BY c.date DESC, c.message_id DESC
                 """
                 if limit is not None:
                     query += f" LIMIT {int(limit)}"
