@@ -182,7 +182,7 @@ class QueueService:
         Args:
             task (DelayedTask): The delayed task triggering this handler
         """
-        await self.addDelayedTask(time.time() + 60, DelayedTaskFunction.CRON_JOB, kwargs={})
+        await self.addDelayedTask(time.time() + 60, DelayedTaskFunction.CRON_JOB, kwargs={}, skipDB=True)
 
     async def _doExitHandler(self, task: DelayedTask) -> None:
         """
@@ -273,7 +273,7 @@ class QueueService:
 
         self.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
         self.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._cronJobHandler)
-        await self.addDelayedTask(delayedUntil=time.time(), function=DelayedTaskFunction.CRON_JOB, kwargs={})
+        await self.addDelayedTask(delayedUntil=time.time(), function=DelayedTaskFunction.CRON_JOB, kwargs={}, skipDB=True)
 
         tasks = self.db.getPendingDelayedTasks()
         for task in tasks:
