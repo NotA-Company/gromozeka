@@ -363,6 +363,7 @@ class QueueService:
                             await handler(delayedTask)
                         except Exception as e:
                             logger.error(f"Error in handler {handler.__name__}: {e}")
+                            logger.exception(e)
 
                 if self.db is not None:
                     self.db.updateDelayedTask(delayedTask.taskId, True)
