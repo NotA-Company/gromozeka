@@ -36,6 +36,8 @@ class EmphasisType(Enum):
     BOLD = "bold"
     BOLD_ITALIC = "bold_italic"
     STRIKETHROUGH = "strikethrough"
+    UNDERLINE = "underline"
+    SPOILER = "spoiler"
 
 
 class ListType(Enum):

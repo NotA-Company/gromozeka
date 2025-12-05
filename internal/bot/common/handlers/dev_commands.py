@@ -557,7 +557,7 @@ class DevCommandsHandler(BaseBotHandler):
                         outputFormat = OutputFormat.MARKDOWN_TG
                     case BotProvider.MAX:
                         outputFormat = OutputFormat.MARKDOWN_MAX
-                
+
                 logger.debug(f"outputFormat: {outputFormat}")
 
                 await self.sendMessage(
