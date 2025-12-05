@@ -843,7 +843,7 @@ class EnsuredMessage:
         """
         await self.updateMediaContent(db)
 
-        messageText = self.messageText if replaceMessageText is None else replaceMessageText
+        messageText = self.formatMessageText(outputFormat) if replaceMessageText is None else replaceMessageText
         userName = self.sender.username
         if stripAtsign:
             userName = userName.lstrip("@")
@@ -858,7 +858,7 @@ class EnsuredMessage:
                         "date": self.date.isoformat(),
                         "messageId": self.messageId,
                         "type": str(self.messageType),
-                        "text": self.formatMessageText(outputFormat),
+                        "text": messageText,
                         "replyId": self.replyId,
                         "quote": self.quoteText if self.isQuote else None,
                         "mediaDescription": self.mediaContent,
@@ -871,7 +871,7 @@ class EnsuredMessage:
                 return utils.jsonDumps(ret, compact=False)
 
             case LLMMessageFormat.TEXT:
-                ret = self.formatMessageText(outputFormat)
+                ret = messageText
                 if self.mediaContent:
                     ret = f"<media-description>{self.mediaContent}</media-description>\n\n{ret}"
                 if self.isQuote and self.quoteText:

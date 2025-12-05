@@ -631,13 +631,12 @@ class MarkdownV2Renderer:
         elif node.emphasis_type == EmphasisType.BOLD:
             return f"*{content}*"
         elif node.emphasis_type == EmphasisType.BOLD_ITALIC:
-            # MarkdownV2 doesn't have bold+italic, use bold
-            return f"*{content}*"
+            return f"*_{content}_*"
         elif node.emphasis_type == EmphasisType.STRIKETHROUGH:
             return f"~{content}~"
         elif node.emphasis_type == EmphasisType.UNDERLINE:
             # Convert to _text_ for MarkdownV2 as requested
-            return f"_{content}_"
+            return f"__{content}__"
         elif node.emphasis_type == EmphasisType.SPOILER:
             # Leave as-is for MarkdownV2 as requested
             return f"||{content}||"

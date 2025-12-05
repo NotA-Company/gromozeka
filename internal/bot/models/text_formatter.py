@@ -293,15 +293,7 @@ class FormatEntity:
             case FormatType.STRIKETHROUGH:
                 return f"~~{text}~~"
             case FormatType.UNDERLINE:
-                formatStr = "__"
-                match outputFormat:
-                    case OutputFormat.MARKDOWN:
-                        formatStr = "__"
-                    case OutputFormat.MARKDOWN_TG:
-                        formatStr = "++"
-                    case OutputFormat.MARKDOWN_MAX:
-                        formatStr = "++"
-                return f"{formatStr}{text}{formatStr}"
+                return f"++{text}++"
             case FormatType.HEADING:
                 return "".join(map(lambda x: f"# {x}", text.splitlines(keepends=True)))
             case FormatType.QUOTE:
@@ -317,6 +309,7 @@ class FormatEntity:
                 if self.userId is None and self.userId is None:
                     return text
                 elif self.userName is not None:
+                    # Ensure it starts with @
                     return f"@{self.userName.lstrip('@')}"
                 elif self.userId is not None:
                     match outputFormat:
