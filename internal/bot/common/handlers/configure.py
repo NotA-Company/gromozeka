@@ -132,10 +132,12 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         user = ensuredMessage.sender
         userId = user.id
-        messageText = ensuredMessage.getParsedMessageText()
+
         activeConfigure = self.cache.getUserState(userId=userId, stateKey=UserActiveActionEnum.Configuration)
         if activeConfigure is None:
             return HandlerResultStatus.SKIPPED
+
+        messageText = ensuredMessage.formatMessageText()
 
         await self._handle_chat_configuration(
             data={

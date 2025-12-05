@@ -17,11 +17,12 @@ Constants:
 
 import asyncio
 import datetime
+import json
 import logging
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import telegram
 import telegram.constants
@@ -36,6 +37,7 @@ from lib.ai.models import ModelMessage
 
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
+from .text_formatter import FormatEntity, OutputFormat
 
 logger = logging.getLogger(__name__)
 
@@ -304,8 +306,9 @@ class EnsuredMessage:
         "mediaId",
         "_mediaProcessingInfo",
         "userData",
-        "_parsedMessageText",
         "_mentionCheckResult",
+        "formatEntities",
+        "metadata",
     )
 
     def __init__(
@@ -317,6 +320,8 @@ class EnsuredMessage:
         date: datetime.datetime,
         messageText: str = "",
         messageType: MessageType = MessageType.UNKNOWN,
+        formatEntities: Optional[Sequence[FormatEntity]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize an EnsuredMessage instance, dood!
@@ -337,7 +342,6 @@ class EnsuredMessage:
         self.messageId: MessageIdType = messageId
         self.date: datetime.datetime = date
         self.messageText: str = messageText
-        self._parsedMessageText: str = messageText  # Message text unparsed into Markdown\MarkdownV2
         self.messageType: MessageType = messageType
 
         # If this is reply, then set replyId and replyText
@@ -358,6 +362,9 @@ class EnsuredMessage:
         self.userData: Optional[Dict[str, Any]] = None
         self._mentionCheckResult: Optional[MentionCheckResult] = None
 
+        self.formatEntities: Sequence[FormatEntity] = formatEntities if formatEntities is not None else []
+        self.metadata: Dict[str, Any] = metadata if metadata is not None else {}
+
     @classmethod
     def fromMaxMessage(cls, message: maxModels.Message) -> "EnsuredMessage":
         """
@@ -376,17 +383,19 @@ class EnsuredMessage:
 
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
-        parsedMessageText: str = ""  # Message text parsed to Markdown
+        markupList: List[FormatEntity] = []
         if message.body.text:
             # TODO: think about parsing Entities to Markdown, but without escaping
             # messageText = message.text_markdown_v2
             messageText = message.body.text
-            parsedMessageText = message.body.text
+            if message.body.markup:
+                markupList = FormatEntity.fromList(message.body.markup)
         elif message.link and message.link.type == maxModels.MessageLinkType.FORWARD and message.link.message.text:
             # TODO: Add originalAuthor info
             messageText = message.link.message.text
-            parsedMessageText = message.link.message.text
             # It's forward, get text from forward
+            if message.link.message.markup:
+                markupList = FormatEntity.fromList(message.link.message.markup)
 
         if message.body.attachments:
             match message.body.attachments[0].type:
@@ -428,9 +437,9 @@ class EnsuredMessage:
             date=datetime.datetime.fromtimestamp(message.timestamp / 1000, datetime.timezone.utc),
             messageText=messageText,
             messageType=messageType,
+            formatEntities=markupList,
         )
         ensuredMessage.setBaseMessage(message)
-        ensuredMessage.setParsedMessageText(parsedMessageText)
 
         # If this is reply, then set replyId and replyText
         if message.link and message.link.type == maxModels.MessageLinkType.REPLY:
@@ -475,16 +484,18 @@ class EnsuredMessage:
 
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
-        parsedMessageText: str = ""  # Message text parsed to MarkdownV2
+        markupList: List[FormatEntity] = []
         if message.text:
             # TODO: think about parsing Entities to Markdown, but without escaping
             # messageText = message.text_markdown_v2
             messageText = message.text
-            parsedMessageText = message.text
+            if message.entities:
+                markupList = FormatEntity.fromList(message.entities)
         elif message.caption:
             # messageText = message.caption_markdown_v2
             messageText = message.caption
-            parsedMessageText = message.caption
+            if message.caption_entities:
+                markupList = FormatEntity.fromList(message.caption_entities)
 
         # If there are photo in message, set proper type + handle caption (if any) as messageText
         if message.photo:
@@ -571,9 +582,9 @@ class EnsuredMessage:
             date=message.date,
             messageText=messageText,
             messageType=messageType,
+            formatEntities=markupList,
         )
         ensuredMessage.setBaseMessage(message)
-        ensuredMessage.setParsedMessageText(parsedMessageText)
 
         # If this is reply, then set replyId and replyText
         if message.reply_to_message:
@@ -613,6 +624,18 @@ class EnsuredMessage:
         Returns:
             A fully initialized EnsuredMessage instance populated with database data
         """
+        markupList: List[FormatEntity] = []
+        if data["markup"]:
+            dataList = json.loads(data["markup"])
+            if not isinstance(dataList, list):
+                logger.error(f"data[markup] is not JSON-serialized list: {data['markup']}")
+            else:
+                markupList = FormatEntity.fromDictList(dataList)
+
+        metadata: Dict[str, Any] = {}
+        if data["metadata"]:
+            metadata = json.loads(data["metadata"])
+
         ensuredMessage = EnsuredMessage(
             sender=MessageSender(id=data["user_id"], name=data["full_name"], username=data["username"]),
             recipient=MessageRecipient(
@@ -628,6 +651,8 @@ class EnsuredMessage:
             date=data["date"],
             messageText=data["message_text"],
             messageType=MessageType(data["message_type"]),
+            formatEntities=markupList,
+            metadata=metadata,
         )
 
         ensuredMessage.replyId = data["reply_id"]
@@ -681,23 +706,20 @@ class EnsuredMessage:
         """
         self._message = message
 
-    def setParsedMessageText(self, rawMessageText: str):
+    def formatMessageText(self, outputFormat: OutputFormat = OutputFormat.MARKDOWN) -> str:
         """
-        Set the raw message text without any formatting, dood!
+        Parse the message to the specified output format, dood.
 
         Args:
-            rawMessageText: The unformatted message text
-        """
-        self._parsedMessageText = rawMessageText
-
-    def getParsedMessageText(self) -> str:
-        """
-        Get the raw message text without any formatting, dood!
+            outputFormat: Output format to parse the message to
 
         Returns:
-            The unformatted message text
+            The parsed message text in the specified format
         """
-        return self._parsedMessageText
+        if not self.formatEntities:
+            return self.messageText
+
+        return FormatEntity.parseText(self.messageText, self.formatEntities, outputFormat)
 
     def setMediaId(self, mediaId: str):
         """
@@ -798,6 +820,7 @@ class EnsuredMessage:
         format: LLMMessageFormat = LLMMessageFormat.JSON,
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
+        outputFormat: OutputFormat = OutputFormat.MARKDOWN,
     ) -> str:
         """
         Format the message for LLM consumption, dood!
@@ -835,7 +858,7 @@ class EnsuredMessage:
                         "date": self.date.isoformat(),
                         "messageId": self.messageId,
                         "type": str(self.messageType),
-                        "text": messageText,
+                        "text": self.formatMessageText(outputFormat),
                         "replyId": self.replyId,
                         "quote": self.quoteText if self.isQuote else None,
                         "mediaDescription": self.mediaContent,
@@ -848,7 +871,7 @@ class EnsuredMessage:
                 return utils.jsonDumps(ret, compact=False)
 
             case LLMMessageFormat.TEXT:
-                ret = messageText
+                ret = self.formatMessageText(outputFormat)
                 if self.mediaContent:
                     ret = f"<media-description>{self.mediaContent}</media-description>\n\n{ret}"
                 if self.isQuote and self.quoteText:
@@ -975,7 +998,7 @@ class EnsuredMessage:
         if not customMentions:
             logger.error("No custom mentions found")
 
-        messageText = self._parsedMessageText
+        messageText = self.messageText
         messageTextLower = messageText.lower()
         offset = 0
 
