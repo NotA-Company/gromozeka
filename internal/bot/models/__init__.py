@@ -34,6 +34,7 @@ from .enums import (
 
 # Media
 from .media import MediaProcessingInfo
+from .text_formatter import FormatEntity, FormatType, OutputFormat
 
 # User Metadata
 from .user_metadata import UserMetadataDict
@@ -71,4 +72,7 @@ __all__ = [
     "MessageSender",
     "MessageRecipient",
     "ChatType",
+    "FormatType",
+    "OutputFormat",
+    "FormatEntity",
 ]

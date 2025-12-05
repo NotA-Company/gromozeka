@@ -51,10 +51,8 @@ class TopicManagerHandler(BaseBotHandler):
         if topicManagement is None:
             return HandlerResultStatus.SKIPPED
 
-        messageText = ensuredMessage.getParsedMessageText()
-
         data = topicManagement["data"]
-        data[ButtonDataKey.Value] = messageText
+        data[ButtonDataKey.Value] = ensuredMessage.formatMessageText()
         await self._handle_topic_management(
             data=data,
             messageId=topicManagement["messageId"],

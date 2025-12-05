@@ -79,6 +79,8 @@ class ChatMessageDict(TypedDict):
     quote_text: Optional[str]
     media_id: Optional[str]
     created_at: datetime.datetime
+    metadata: str
+    markup: str
 
     # From User table
     username: str

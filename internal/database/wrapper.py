@@ -863,6 +863,8 @@ class DatabaseWrapper:
         rootMessageId: Optional[MessageIdType] = None,
         quoteText: Optional[str] = None,
         mediaId: Optional[str] = None,
+        markup: str = "",
+        metadata: str = "",
     ) -> bool:
         """
         Save a chat message with detailed information.
@@ -904,13 +906,13 @@ class DatabaseWrapper:
                     (date, chat_id, user_id, message_id,
                         reply_id, thread_id, message_text, message_type,
                         message_category, root_message_id, quote_text,
-                        media_id
+                        media_id, markup, metadata
                         )
                     VALUES
                     (:date, :chatId, :userId, :messageId,
                         :replyId, :threadId, :messageText, :messageType,
                         :messageCategory, :rootMessageId, :quoteText,
-                        :mediaId
+                        :mediaId, :markup, :metadata
                         )
                 """,
                     {
@@ -926,6 +928,8 @@ class DatabaseWrapper:
                         "rootMessageId": rootMessageId,
                         "quoteText": quoteText,
                         "mediaId": mediaId,
+                        "markup": markup,
+                        "metadata": metadata,
                     },
                 )
 

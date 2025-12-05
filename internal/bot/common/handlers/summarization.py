@@ -83,11 +83,12 @@ class SummarizationHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         user = ensuredMessage.sender
-        messageText = ensuredMessage.getParsedMessageText()
 
         activeSummarization = self.cache.getUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
         if activeSummarization is None:
             return HandlerResultStatus.SKIPPED
+
+        messageText = ensuredMessage.formatMessageText()
 
         data = activeSummarization["data"]
         # TODO: Make user action enum

@@ -157,7 +157,6 @@ class UserDataHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         user = ensuredMessage.sender
-        messageText = ensuredMessage.getParsedMessageText()
         userDataConfig = self.cache.getUserState(userId=user.id, stateKey=UserActiveActionEnum.UserDataConfig)
         if userDataConfig is None:
             return HandlerResultStatus.SKIPPED
@@ -165,7 +164,7 @@ class UserDataHandler(BaseBotHandler):
         await self._handleUserDataConfiguration(
             data={
                 **userDataConfig["data"],
-                ButtonDataKey.Value: messageText,
+                ButtonDataKey.Value: ensuredMessage.formatMessageText(),
             },
             messageId=userDataConfig["messageId"],
             messageChatId=userDataConfig["messageChatId"],
