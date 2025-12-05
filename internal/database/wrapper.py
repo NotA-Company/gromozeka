@@ -1001,7 +1001,7 @@ class DatabaseWrapper:
         logger.debug(
             f"Getting chat messages for chat {chatId}:{threadId} "
             f"date: [{sinceDateTime},{tillDateTime}], limit: {limit}, "
-            f"messageCategory: {messageCategory}"
+            f"messageCategory: {messageCategory}, dataSource: {dataSource}"
         )
         try:
             params = {
@@ -1038,6 +1038,7 @@ class DatabaseWrapper:
                     query,
                     params,
                 )
+                # logger.debug(f"Executed query: \n{query}\n with params: \n{params}")
                 rows = cursor.fetchall()
                 return [self._validateDictIsChatMessageDict(dict(row)) for row in rows]
         except Exception as e:

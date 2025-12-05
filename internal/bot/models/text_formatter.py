@@ -84,7 +84,7 @@ class FormatEntity:
         userName: Optional[str] = None,
         codeLanguage: Optional[str] = None,
     ):
-        self.type = type
+        self.type = FormatType(type)
         self.offset = offset
         self.length = length
         self.url = url
@@ -217,7 +217,7 @@ class FormatEntity:
     @classmethod
     def fromDict(cls, data: Dict[str, Any]) -> Self:
         return cls(
-            type=data.get("type", FormatType.UNSPECIFIED),
+            type=FormatType(data.get("type", FormatType.UNSPECIFIED)),
             offset=data.get("offset", 0),
             length=data.get("length", 0),
             url=data.get("url", None),
@@ -335,6 +335,8 @@ class FormatEntity:
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
         _initialOffset: int = 0,
     ) -> str:
+        # TODO: Somehow escape markup, which already present in text
+
         # Use negative length as we want to sort from longer to shorter in case of same offset
         entities = sorted(entities, key=lambda v: (v.offset, -v.length))
         # Use UTF-16 to get fixed-length characters
@@ -342,7 +344,7 @@ class FormatEntity:
         utf16Text = text.encode("utf-16-le") if isinstance(text, str) else text
         ret: str = ""
 
-        logger.debug(f"Parsing text: '{text}' -> '{utf16Text}' with ({entities})")
+        # logger.debug(f"Parsing text: '{text}' -> '{utf16Text}' with ({entities})")
 
         entitiesCount = len(entities)
         # We'll manipulate `i` so we have to use while cycle
@@ -359,7 +361,7 @@ class FormatEntity:
 
             utf16MatchedText = utf16Text[offset : offset + length]
 
-            logger.debug(f" entity: {entity}, o:{offset}, l:{length}, text:'{utf16MatchedText}'")
+            # logger.debug(f" entity: {entity}, o:{offset}, l:{length}, text:'{utf16MatchedText}'")
 
             # Find all nested entities
             _endPos = entity.offset + entity.length

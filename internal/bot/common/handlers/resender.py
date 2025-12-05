@@ -14,6 +14,7 @@ The resender can be configured to:
 
 import asyncio
 import datetime
+import json
 import logging
 from collections.abc import Sequence
 from typing import List, Optional
@@ -23,6 +24,7 @@ import magic
 from internal.bot.models import (
     BotProvider,
 )
+from internal.bot.models.text_formatter import FormatEntity, OutputFormat
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -266,6 +268,16 @@ class ResenderHandler(BaseBotHandler):
                             logger.debug(
                                 f"Skipping non-image media {message['media_local_url']} with mime type {mimeType}"
                             )
+                    messageText = message["message_text"]
+                    if message["markup"]:
+                        markupEntities = FormatEntity.fromDictList(json.loads(message["markup"]))
+                        outputFormat: OutputFormat = OutputFormat.MARKDOWN
+                        match self.botProvider:
+                            case BotProvider.TELEGRAM:
+                                outputFormat = OutputFormat.MARKDOWN_TG
+                            case BotProvider.MAX:
+                                outputFormat = OutputFormat.MARKDOWN_MAX
+                        messageText = FormatEntity.parseText(messageText, markupEntities, outputFormat=outputFormat)
 
                     if photoData is not None or message["message_text"]:
                         # Send message only if it has text or supported media
@@ -278,7 +290,7 @@ class ResenderHandler(BaseBotHandler):
 
                         await self.sendMessage(
                             None,
-                            messageText=messagePrefix + message["message_text"] + messageSuffix,
+                            messageText=messagePrefix + messageText + messageSuffix,
                             messageCategory=MessageCategory.BOT_RESENDED,
                             chatId=job.targetChatId,
                             photoData=photoData,
