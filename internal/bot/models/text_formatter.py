@@ -5,6 +5,7 @@ TODO: Need to write docstring for module, functions, classes, methods and class 
 import logging
 from collections.abc import Sequence
 from enum import StrEnum
+import re
 from typing import Any, Dict, List, Optional, Self
 
 import telegram
@@ -278,6 +279,17 @@ class FormatEntity:
         return [entity.toDict() for entity in entities]
 
     def formatText(self, text: str, outputFormat: OutputFormat = OutputFormat.MARKDOWN) -> str:
+        prefix=""
+        body=text
+        suffix=""
+        # If text starts\ends with whitespace, do not decorate it with inline markup
+        match = re.match(r"^(\s*)(.*?)(\s*)$", text)
+        if match:
+            prefix = match.group(1)
+            body = match.group(2)
+            suffix = match.group(3)
+
+        markupWith=""
         match self.type:
             case FormatType.UNSPECIFIED:
                 logger.error("Format type is UNSPECIFIED, no formatting possible")
@@ -285,15 +297,15 @@ class FormatEntity:
             case FormatType.NORMAL:
                 return text
             case FormatType.BOLD:
-                return f"**{text}**"
+                markupWith="**"
             case FormatType.ITALIC:
-                return f"_{text}_"
+                markupWith="_"
             case FormatType.INLINE_CODE:
-                return f"`{text}`"
+                markupWith="`"
             case FormatType.STRIKETHROUGH:
-                return f"~~{text}~~"
+                markupWith="~~"
             case FormatType.UNDERLINE:
-                return f"++{text}++"
+                markupWith="++"
             case FormatType.HEADING:
                 return "".join(map(lambda x: f"# {x}", text.splitlines(keepends=True)))
             case FormatType.QUOTE:
@@ -302,7 +314,7 @@ class FormatEntity:
                     ret = f"\n{ret}\n"
                 return ret
             case FormatType.SPOILER:
-                return f"||{text}||"
+                markupWith="||"
             case FormatType.CODE_BLOCK:
                 return f"```{self.codeLanguage if self.codeLanguage else ''}\n{text}\n```"
             case FormatType.LINK:
@@ -329,6 +341,7 @@ class FormatEntity:
                     raise ValueError("Invalid user mention")
             case _:
                 raise ValueError(f"Unsupported format type: {self.type}")
+        return f"{prefix}{markupWith}{body}{markupWith}{suffix}"
 
     @classmethod
     def parseText(
