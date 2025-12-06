@@ -194,6 +194,10 @@ class HTMLRenderer:
             return f"<strong><em>{content}</em></strong>"
         elif node.emphasis_type == EmphasisType.STRIKETHROUGH:
             return f"<del>{content}</del>"
+        elif node.emphasis_type == EmphasisType.UNDERLINE:
+            return f"<u>{content}</u>"
+        elif node.emphasis_type == EmphasisType.SPOILER:
+            return f'<span class="spoiler">{content}</span>'
         else:
             return content
 
@@ -360,6 +364,10 @@ class MarkdownRenderer:
                 return f"***{content}***"
             elif node.emphasis_type == EmphasisType.STRIKETHROUGH:
                 return f"~~{content}~~"
+            elif node.emphasis_type == EmphasisType.UNDERLINE:
+                return f"++{content}++"
+            elif node.emphasis_type == EmphasisType.SPOILER:
+                return f"||{content}||"
         elif isinstance(node, MDLink):
             content = self._render_children(node)
             if node.title:
@@ -623,10 +631,15 @@ class MarkdownV2Renderer:
         elif node.emphasis_type == EmphasisType.BOLD:
             return f"*{content}*"
         elif node.emphasis_type == EmphasisType.BOLD_ITALIC:
-            # MarkdownV2 doesn't have bold+italic, use bold
-            return f"*{content}*"
+            return f"*_{content}_*"
         elif node.emphasis_type == EmphasisType.STRIKETHROUGH:
             return f"~{content}~"
+        elif node.emphasis_type == EmphasisType.UNDERLINE:
+            # Convert to _text_ for MarkdownV2 as requested
+            return f"__{content}__"
+        elif node.emphasis_type == EmphasisType.SPOILER:
+            # Leave as-is for MarkdownV2 as requested
+            return f"||{content}||"
         else:
             return content
 

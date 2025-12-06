@@ -863,6 +863,8 @@ class DatabaseWrapper:
         rootMessageId: Optional[MessageIdType] = None,
         quoteText: Optional[str] = None,
         mediaId: Optional[str] = None,
+        markup: str = "",
+        metadata: str = "",
     ) -> bool:
         """
         Save a chat message with detailed information.
@@ -904,13 +906,13 @@ class DatabaseWrapper:
                     (date, chat_id, user_id, message_id,
                         reply_id, thread_id, message_text, message_type,
                         message_category, root_message_id, quote_text,
-                        media_id
+                        media_id, markup, metadata
                         )
                     VALUES
                     (:date, :chatId, :userId, :messageId,
                         :replyId, :threadId, :messageText, :messageType,
                         :messageCategory, :rootMessageId, :quoteText,
-                        :mediaId
+                        :mediaId, :markup, :metadata
                         )
                 """,
                     {
@@ -926,6 +928,8 @@ class DatabaseWrapper:
                         "rootMessageId": rootMessageId,
                         "quoteText": quoteText,
                         "mediaId": mediaId,
+                        "markup": markup,
+                        "metadata": metadata,
                     },
                 )
 
@@ -997,7 +1001,7 @@ class DatabaseWrapper:
         logger.debug(
             f"Getting chat messages for chat {chatId}:{threadId} "
             f"date: [{sinceDateTime},{tillDateTime}], limit: {limit}, "
-            f"messageCategory: {messageCategory}"
+            f"messageCategory: {messageCategory}, dataSource: {dataSource}"
         )
         try:
             params = {
@@ -1025,7 +1029,7 @@ class DatabaseWrapper:
                         AND (:tillDateTime    IS NULL OR c.date < :tillDateTime)
                         AND (:threadId        IS NULL OR c.thread_id = :threadId)
                         AND (:messageCategory IS NULL OR message_category IN ({", ".join(placeholders)}))
-                    ORDER BY c.date DESC
+                    ORDER BY c.date DESC, c.message_id DESC
                 """
                 if limit is not None:
                     query += f" LIMIT {int(limit)}"
@@ -1034,6 +1038,7 @@ class DatabaseWrapper:
                     query,
                     params,
                 )
+                # logger.debug(f"Executed query: \n{query}\n with params: \n{params}")
                 rows = cursor.fetchall()
                 return [self._validateDictIsChatMessageDict(dict(row)) for row in rows]
         except Exception as e:

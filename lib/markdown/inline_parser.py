@@ -58,6 +58,8 @@ class InlineParser:
                 "triple": EmphasisType.BOLD_ITALIC,
             },
             "~": {"double": EmphasisType.STRIKETHROUGH},
+            "+": {"double": EmphasisType.UNDERLINE},
+            "|": {"double": EmphasisType.SPOILER},
         }
 
     def parse_inline_content(self, content: str) -> List[MDNode]:
@@ -309,7 +311,7 @@ class InlineParser:
             return None, pos
 
         char = content[pos]
-        if char not in ["*", "_", "~"]:
+        if char not in ["*", "_", "~", "+", "|"]:
             return None, pos
 
         # Count consecutive delimiter characters
@@ -323,6 +325,14 @@ class InlineParser:
         if char == "~" and delim_count == 2:
             return self._parse_strikethrough(content, start_pos)
 
+        # Handle underline (requires exactly 2 plus signs)
+        if char == "+" and delim_count == 2:
+            return self._parse_double_delimiter_emphasis(content, start_pos, "++", EmphasisType.UNDERLINE)
+
+        # Handle spoiler (requires exactly 2 pipes)
+        if char == "|" and delim_count == 2:
+            return self._parse_double_delimiter_emphasis(content, start_pos, "||", EmphasisType.SPOILER)
+
         # Handle bold/italic emphasis
         if char in ["*", "_"] and delim_count in [1, 2, 3]:
             return self._parse_bold_italic_emphasis(content, start_pos, char, delim_count)
@@ -331,19 +341,26 @@ class InlineParser:
 
     def _parse_strikethrough(self, content: str, start_pos: int) -> Tuple[Optional[MDEmphasis], int]:
         """Parse strikethrough emphasis (~~text~~)."""
-        # Find closing ~~
-        pos = start_pos + 2
-        while pos < len(content) - 1:
-            if content[pos : pos + 2] == "~~":
+        return self._parse_double_delimiter_emphasis(content, start_pos, "~~", EmphasisType.STRIKETHROUGH)
+
+    def _parse_double_delimiter_emphasis(
+        self, content: str, start_pos: int, delimiter: str, emphasis_type: EmphasisType
+    ) -> Tuple[Optional[MDEmphasis], int]:
+        """Parse double-delimiter emphasis (~~text~~, ++text++, ||text||)."""
+        delim_len = len(delimiter)
+        # Find closing delimiter
+        pos = start_pos + delim_len
+        while pos < len(content) - delim_len + 1:
+            if content[pos : pos + delim_len] == delimiter:
                 # Found closing delimiter
-                emphasis_content = content[start_pos + 2 : pos]
+                emphasis_content = content[start_pos + delim_len : pos]
                 if emphasis_content.strip():  # Must have non-whitespace content
-                    emphasis = MDEmphasis(EmphasisType.STRIKETHROUGH)
+                    emphasis = MDEmphasis(emphasis_type)
                     # Parse content for nested inline elements
                     content_nodes = self._parse_inline_elements(emphasis_content)
                     for node in content_nodes:
                         emphasis.add_child(node)
-                    return emphasis, pos + 2
+                    return emphasis, pos + delim_len
                 break
             pos += 1
 
@@ -396,7 +413,7 @@ class InlineParser:
             return None, pos
 
         start_pos = pos
-        special_chars = set("*_~`[!<\\")
+        special_chars = set("*_~`[!<\\+|")
 
         while pos < len(content) and content[pos] not in special_chars:
             pos += 1

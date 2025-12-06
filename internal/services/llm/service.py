@@ -7,6 +7,7 @@ The service supports fallback models and provides a unified interface for LLM op
 
 import logging
 import uuid
+from collections.abc import MutableSequence
 from threading import RLock
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, TypeAlias
 
@@ -103,6 +104,11 @@ class LLMService:
         callId: Optional[str] = None,
         callback: Optional[Callable[[ModelRunResult, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
         extraData: Optional[Dict[str, Any]] = None,
+        keepFirstN: int = 0,
+        keepLastN: int = 1,
+        maxTokensCoeff: float = 0.8,
+        condensingPrompt: Optional[str] = None,
+        condensingModel: Optional[AbstractModel] = None,
     ) -> ModelRunResult:
         """Generate text using an LLM with automatic tool execution support, dood!
 
@@ -135,9 +141,28 @@ class LLMService:
         ret: Optional[ModelRunResult] = None
         toolsUsed = False
         tools: Sequence[LLMToolFunction] = list(self.toolsHandlers.values()) if useTools else []
+        _keepLastN = keepLastN
+
+        _messages: Sequence[ModelMessage] = messages
+
+        _condensingModel: Optional[AbstractModel] = None
         while True:
+            # First - condense context if needed
+            maxTokens = int(model.contextSize * maxTokensCoeff)
+            _messages = await self.condenseContext(
+                _messages,
+                model,
+                keepFirstN=keepFirstN,
+                keepLastN=_keepLastN,
+                maxTokens=maxTokens,
+                condensingModel=_condensingModel,
+                condensingPrompt=condensingPrompt,
+            )
+            # First iteration - just strip context, next - properly condense context via LLM
+            _condensingModel = condensingModel or model
+
             ret = await model.generateTextWithFallBack(
-                messages,
+                _messages,
                 fallbackModel=fallbackModel,
                 tools=tools,
             )
@@ -145,6 +170,10 @@ class LLMService:
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 if callback:
                     await callback(ret, extraData)
+
+                if ret.isFallback:
+                    # If fallback happened, use fallback model for the next iterations
+                    model = fallbackModel
 
                 toolsUsed = True
                 newMessages = [ret.toModelMessage()]
@@ -159,7 +188,12 @@ class LLMService:
                             toolCallId=toolCall.id,
                         )
                     )
-                messages = messages + newMessages
+
+                if not isinstance(_messages, MutableSequence):
+                    # If somehow _messages is not mutable, make it list (i.e. mutable)
+                    _messages = list(_messages)
+                _messages.extend(newMessages)
+                _keepLastN = keepLastN + len(newMessages)
                 logger.debug(f"Tools used: {newMessages} for callId #{callId}")
             else:
                 break
@@ -167,4 +201,144 @@ class LLMService:
         if toolsUsed:
             ret.setToolsUsed(True)
 
+        return ret
+
+    async def condenseContext(
+        self,
+        messages: Sequence[ModelMessage],
+        model: AbstractModel,
+        *,
+        keepFirstN: int = 0,
+        keepLastN: int = 1,
+        condensingModel: Optional[AbstractModel] = None,
+        condensingPrompt: Optional[str] = None,
+        maxTokens: Optional[int] = None,
+    ) -> Sequence[ModelMessage]:
+        """Condense a sequence of messages to fit within a token limit, dood!
+
+        This method reduces the length of a conversation history by either:
+        - Using a condensing model to summarize parts of the conversation
+        - Simply truncating messages from the middle of the conversation
+
+        The method preserves the first N messages and the last N messages,
+        condensing or removing only the middle portion of the conversation.
+
+        Args:
+            messages: The sequence of messages to condense
+            model: The model used for token counting and as fallback if no condensingModel provided
+            keepFirstN: Number of messages to keep from the beginning (in addition to system message)
+            keepLastN: Number of messages to keep from the end
+            condensingModel: Optional model to use for summarizing messages
+            condensingPrompt: Optional custom prompt for the condensing model
+            maxTokens: Maximum number of tokens allowed in the condensed result
+
+        Returns:
+            A new sequence of messages condensed to fit within the token limit
+        """
+        if not messages:
+            return messages
+
+        if maxTokens is None:
+            maxTokens = model.contextSize
+
+        # If first message is system prompt, we need to keep it
+        systemPrompt: Optional[ModelMessage] = None
+        if messages[0].role == "system":
+            keepFirstN += 1
+            systemPrompt = messages[0]
+
+        retHead = messages[:keepFirstN]
+        retTail = messages[-keepLastN:]
+        body = messages[keepFirstN:-keepLastN]
+
+        retHTokens = model.getEstimateTokensCount([v.toDict() for v in retHead])
+        retTTokens = model.getEstimateTokensCount([v.toDict() for v in retTail])
+        bodyTokens = model.getEstimateTokensCount([v.toDict() for v in body])
+
+        if retHTokens + retTTokens + bodyTokens < maxTokens:
+            return messages
+
+        logger.debug(
+            f"Condensing context for {messages} to {maxTokens} tokens "
+            f"(current: {retHTokens} + {bodyTokens} + {retTTokens} = "
+            f"{retHTokens + bodyTokens + retTTokens})"
+        )
+
+        if condensingModel is None:
+            # No condensing model provided, just truncate beginning of body
+            # TODO: should we truncate from middle instead?
+            while body and retHTokens + retTTokens + bodyTokens > maxTokens:
+                body = body[1:]
+                bodyTokens = model.getEstimateTokensCount([v.toDict() for v in body])
+
+            ret = []
+            ret.extend(retHead)
+            ret.extend(body)
+            ret.extend(retTail)
+
+            logger.debug(f"Condensed context: {ret}")
+            return ret
+
+        if condensingPrompt is None:
+            condensingPrompt = (
+                "Your task is to create a detailed summary of the conversation so far."
+                " Output only the summary of the conversation so far, without any"
+                " additional commentary or explanation."
+                " Answer using language of conversation, not language of this message."
+            )
+        newBody: List[ModelMessage] = []
+        summaryMaxTokens = condensingModel.contextSize
+        logger.debug(f"Condensing model: {condensingModel}, prompt: {condensingPrompt}")
+
+        systemMessage = ModelMessage(role="system", content=condensingPrompt) if systemPrompt is None else systemPrompt
+        condensingMessage = ModelMessage(role="user", content=condensingPrompt)
+
+        # -256 or *0.85 to ensure everything will be ok
+        tokensCount = condensingModel.getEstimateTokensCount([v.toDict() for v in body])
+        batchesCount = tokensCount // max(summaryMaxTokens - 256, summaryMaxTokens * 0.85) + 1
+        batchLength = len(body) // batchesCount
+
+        startPos = 0
+        while startPos < len(body):
+            currentBatchLen = int(min(batchLength, len(body) - startPos))
+
+            tryMessages = body[startPos : startPos + currentBatchLen]
+            reqMessages = [systemMessage]
+            reqMessages.extend(tryMessages)
+            reqMessages.append(condensingMessage)
+            tokensCount = model.getEstimateTokensCount([v.toDict() for v in reqMessages])
+            if tokensCount > summaryMaxTokens:
+                if currentBatchLen == 1:
+                    logger.error(f"Error while running LLM for message {body[startPos]}")
+                    startPos += 1
+                    continue
+                currentBatchLen = int(currentBatchLen // (tokensCount / maxTokens))
+                currentBatchLen -= 2
+                if currentBatchLen < 1:
+                    currentBatchLen = 1
+                continue
+
+            mlRet: Optional[ModelRunResult] = None
+            try:
+                logger.debug(f"LLM Request messages: {reqMessages}")
+                mlRet = await condensingModel.generateText(reqMessages)
+                logger.debug(f"LLM Response: {mlRet}")
+            except Exception as e:
+                logger.error(
+                    f"Error while running LLM for batch {startPos}:{startPos + currentBatchLen}: "
+                    f"{type(e).__name__}#{e}"
+                )
+                startPos += currentBatchLen
+                continue
+
+            respText = mlRet.resultText
+            # TODO: Should role be "user" or "assistant" or anything else?
+            newBody.append(ModelMessage(role="user", content=respText))
+            startPos += currentBatchLen
+
+        ret = []
+        ret.extend(retHead)
+        ret.extend(newBody)
+        ret.extend(retTail)
+        logger.debug(f"Condensed context: {ret}")
         return ret

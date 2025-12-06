@@ -27,6 +27,7 @@ import lib.utils as utils
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
+    BotProvider,
     ChatSettingsKey,
     ChatSettingsValue,
     ChatType,
@@ -34,6 +35,7 @@ from internal.bot.models import (
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    OutputFormat,
     commandHandlerV2,
 )
 from internal.bot.models.ensured_message import MessageRecipient
@@ -521,6 +523,61 @@ class DevCommandsHandler(BaseBotHandler):
                     await self.sendMessage(
                         ensuredMessage,
                         messageText="`dumpEntities` should be reply to message with entities",
+                        messageCategory=MessageCategory.BOT_ERROR,
+                    )
+                    return
+                repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
+                if repliedMessage is None:
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText="No replied message found",
+                        messageCategory=MessageCategory.BOT_ERROR,
+                    )
+                    return
+
+                entities = repliedMessage.formatEntities
+                messageText = repliedMessage.messageText
+                ret = ""
+                for entity in entities:
+                    ret += (
+                        f"{entity.type}: {entity.offset} {entity.length}:\n```\n"
+                        f"{messageText[entity.offset:entity.offset + entity.length]}\n```\n"
+                        f"```\n{entity}\n```\n"
+                    )
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=ret,
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+                await asyncio.sleep(0.5)
+
+                outputFormat: OutputFormat = OutputFormat.MARKDOWN
+                match self.botProvider:
+                    case BotProvider.TELEGRAM:
+                        outputFormat = OutputFormat.MARKDOWN_TG
+                    case BotProvider.MAX:
+                        outputFormat = OutputFormat.MARKDOWN_MAX
+
+                logger.debug(f"outputFormat: {outputFormat}")
+
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=f"```\n{repliedMessage.formatMessageText(outputFormat=outputFormat)}\n```",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+                await asyncio.sleep(0.5)
+
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=repliedMessage.formatMessageText(outputFormat=outputFormat),
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+
+            case "dumpNativeEntities":
+                if ensuredMessage.replyId is None:
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText="`dumpNativeEntities` should be reply to message with entities",
                         messageCategory=MessageCategory.BOT_ERROR,
                     )
                     return

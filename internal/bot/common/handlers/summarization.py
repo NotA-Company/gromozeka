@@ -83,11 +83,12 @@ class SummarizationHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         user = ensuredMessage.sender
-        messageText = ensuredMessage.getParsedMessageText()
 
         activeSummarization = self.cache.getUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
         if activeSummarization is None:
             return HandlerResultStatus.SKIPPED
+
+        messageText = ensuredMessage.formatMessageText()
 
         data = activeSummarization["data"]
         # TODO: Make user action enum
@@ -220,7 +221,7 @@ class SummarizationHandler(BaseBotHandler):
         reqMessages = [systemMessage] + parsedMessages
 
         llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel(self.llmManager)
-        maxTokens = llmModel.getInfo()["context_size"]
+        maxTokens = llmModel.contextSize
         tokensCount = llmModel.getEstimateTokensCount(reqMessages)
 
         # -256 or *0.9 to ensure everything will be ok
