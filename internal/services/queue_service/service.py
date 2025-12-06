@@ -182,7 +182,7 @@ class QueueService:
         Args:
             task (DelayedTask): The delayed task triggering this handler
         """
-        await self.addDelayedTask(time.time() + 60, DelayedTaskFunction.CRON_JOB, kwargs={}, skipDB=True)
+        await self.addDelayedTask(time.time() + 60, DelayedTaskFunction.CRON_JOB, kwargs={}, skipDB=True, skipLogs=True)
 
     async def _doExitHandler(self, task: DelayedTask) -> None:
         """
@@ -348,7 +348,9 @@ class QueueService:
                         # )
                     continue
 
-                logger.debug(f"Got {delayedTask}...")
+                if delayedTask.function != DelayedTaskFunction.CRON_JOB:
+                    # Do not log cronjobs
+                    logger.debug(f"Got {delayedTask}...")
 
                 if delayedTask.function == DelayedTaskFunction.DO_EXIT:
                     logger.info("got doExit, starting shutdown process...")
@@ -391,6 +393,7 @@ class QueueService:
         kwargs: Dict[str, Any],
         taskId: Optional[str] = None,
         skipDB: bool = False,
+        skipLogs: bool = False,
     ) -> None:
         """
         Add a delayed task to be executed at a specific time, dood!
@@ -439,4 +442,5 @@ class QueueService:
                 delayedTS=int(delayedUntil),
             )
 
-        logger.debug(f"Added delayed task: {task}, skipDB={skipDB}")
+        if not skipLogs:
+            logger.debug(f"Added delayed task: {task}, skipDB={skipDB}")
