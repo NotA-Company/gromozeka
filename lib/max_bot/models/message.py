@@ -348,7 +348,7 @@ class NewMessageBody(BaseMaxBotModel):
         text: Optional[str] = None,
         attachments: Optional[Sequence[Attachment]] = None,
         link: Optional[NewMessageLink] = None,
-        notify: bool = True,
+        notify: Optional[bool] = None,
         format: Optional[TextFormat] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
@@ -364,7 +364,7 @@ class NewMessageBody(BaseMaxBotModel):
             self.attachments = list(attachments)
         self.link: Optional[NewMessageLink] = link
         """Ссылка на сообщение"""
-        self.notify: bool = notify
+        self.notify: Optional[bool] = notify
         """Если false, участники чата не будут уведомлены (по умолчанию `true`)"""
         self.format: Optional[TextFormat] = format
         """
@@ -402,7 +402,7 @@ class NewMessageBody(BaseMaxBotModel):
             text=data.get("text", None),
             attachments=attachments,
             link=link,
-            notify=data.get("notify", True),
+            notify=data.get("notify"),
             format=format_enum,
             api_kwargs=cls._getExtraKwargs(data),
         )

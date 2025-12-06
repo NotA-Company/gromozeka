@@ -281,6 +281,7 @@ class TheBot:
         splitIfTooLong: bool = True,
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
+        notify: Optional[bool] = None,
     ) -> List[EnsuredMessage]:
         """Send message as reply with text and/or photo.
 
@@ -324,6 +325,7 @@ class TheBot:
                     splitIfTooLong=splitIfTooLong,
                     chatId=chatId,
                     threadId=threadId,
+                    notify=notify,
                 )
 
             case BotProvider.MAX:
@@ -343,6 +345,7 @@ class TheBot:
                     splitIfTooLong=splitIfTooLong,
                     chatId=chatId,
                     threadId=threadId,
+                    notify=notify,
                 )
             case _:
                 raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
@@ -363,6 +366,7 @@ class TheBot:
         splitIfTooLong: bool = True,
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
+        notify: Optional[bool] = None,
     ) -> List[EnsuredMessage]:
         if self.maxBot is None:
             raise RuntimeError("Max bot is Undefined")
@@ -402,6 +406,7 @@ class TheBot:
                 "chatId": chatId,
                 "replyTo": replyToMessageId,
                 "format": maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
+                "notify": notify,
             }
         )
         attachments: Optional[List[maxModels.AttachmentRequest]] = []
@@ -502,6 +507,7 @@ class TheBot:
         splitIfTooLong: bool = True,
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
+        notify: Optional[bool] = None,
     ) -> List[EnsuredMessage]:
         """Send message via Telegram platform.
 
@@ -569,6 +575,8 @@ class TheBot:
                 "chat_id": chatId,
             }
         )
+        if notify is not None:
+            replyKwargs["disable_notification"] = not notify
 
         try:
             if photoData is not None:
@@ -596,7 +604,10 @@ class TheBot:
 
                 if replyMessage is None:
                     _messageText = messageText if messageText is not None else ""
-                    replyMessage = await self.tgBot.send_photo(caption=addMessagePrefix + _messageText, **replyKwargs)
+                    replyMessage = await self.tgBot.send_photo(
+                        caption=addMessagePrefix + _messageText,
+                        **replyKwargs,
+                    )
                 if replyMessage is not None:
                     replyMessageList.append(replyMessage)
 
