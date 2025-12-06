@@ -55,6 +55,7 @@ class ResendJob:
         "messagePrefix",
         "messageSuffix",
         "lastMessageDate",
+        "notification",
         "_lock",
     )
 
@@ -70,6 +71,7 @@ class ResendJob:
         messagePrefix: str = "",
         messageSuffix: str = "",
         lastMessageDate: Optional[datetime.datetime | str] = None,
+        notification: Optional[bool] = None,
     ):
         """
         Initialize a resend job with the specified configuration.
@@ -103,6 +105,13 @@ class ResendJob:
         """message prefix for resend messages"""
         self.messageSuffix = messageSuffix
         """message suffix for resend messages"""
+        self.notification = notification
+        """
+        notification flag for resend messages.
+        True to enable notifications,
+        False to disable,
+        None to use system defaults.
+        """
         self.lastMessageDate: Optional[datetime.datetime] = None
         """last message timestamp processed"""
         if lastMessageDate:
@@ -294,6 +303,7 @@ class ResenderHandler(BaseBotHandler):
                             messageCategory=MessageCategory.BOT_RESENDED,
                             chatId=job.targetChatId,
                             photoData=photoData,
+                            notify=job.notification,
                         )
 
                     if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
