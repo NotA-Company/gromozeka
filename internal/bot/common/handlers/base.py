@@ -395,7 +395,8 @@ class BaseBotHandler(CommandHandlerMixin):
             elif isinstance(replyMessage, maxModels.Message) and replyMessage.body.attachments:
                 # TODO: Process whole list
                 mediaList = await self.processMaxMedia(ensuredReplyMessage, mediaPrompt)
-                ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
+                if mediaList:
+                    ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
 
             await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
 
