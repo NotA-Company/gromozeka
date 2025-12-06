@@ -297,7 +297,10 @@ class FormatEntity:
             case FormatType.HEADING:
                 return "".join(map(lambda x: f"# {x}", text.splitlines(keepends=True)))
             case FormatType.QUOTE:
-                return "".join(map(lambda x: f"> {x}", text.splitlines(keepends=True)))
+                ret = "".join(map(lambda x: f"> {x}", text.splitlines(keepends=True)))
+                if outputFormat == OutputFormat.MARKDOWN_MAX:
+                    ret = f"\n{ret}\n"
+                return ret
             case FormatType.SPOILER:
                 return f"||{text}||"
             case FormatType.CODE_BLOCK:
