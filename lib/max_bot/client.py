@@ -810,7 +810,7 @@ class MaxBotClient:
         attachments: Optional[Sequence[AttachmentRequest]] = None,
         replyTo: Optional[str] = None,
         forwardFrom: Optional[str] = None,
-        notify: bool = True,
+        notify: Optional[bool] = None,
         format: Optional[TextFormat] = None,
         inlineKeyboard: Optional[InlineKeyboardAttachmentRequest] = None,
         disableLinkPreview: Optional[bool] = None,
@@ -871,10 +871,11 @@ class MaxBotClient:
             message_body.link = NewMessageLink(type=link_type, mid=link_mid)
 
         # Convert to dict for API
-        body_data = {
+        body_data: Dict[str, Any] = {
             "text": message_body.text,
-            "notify": message_body.notify,
         }
+        if message_body.notify is not None:
+            body_data["notify"] = message_body.notify
 
         if message_body.format:
             body_data["format"] = message_body.format.value

@@ -55,6 +55,7 @@ class ResendJob:
         "messagePrefix",
         "messageSuffix",
         "lastMessageDate",
+        "notification",
         "_lock",
     )
 
@@ -70,6 +71,7 @@ class ResendJob:
         messagePrefix: str = "",
         messageSuffix: str = "",
         lastMessageDate: Optional[datetime.datetime | str] = None,
+        notification: Optional[bool] = None,
     ):
         """
         Initialize a resend job with the specified configuration.
@@ -103,6 +105,13 @@ class ResendJob:
         """message prefix for resend messages"""
         self.messageSuffix = messageSuffix
         """message suffix for resend messages"""
+        self.notification = notification
+        """
+        notification flag for resend messages.
+        True to enable notifications,
+        False to disable,
+        None to use system defaults.
+        """
         self.lastMessageDate: Optional[datetime.datetime] = None
         """last message timestamp processed"""
         if lastMessageDate:
@@ -256,47 +265,60 @@ class ResenderHandler(BaseBotHandler):
                 if not newData:
                     continue
                 for message in reversed(newData):
-                    photoData: Optional[bytes] = None
-                    if message["media_local_url"]:
-                        photoData = self.storage.get(message["media_local_url"])
+                    try:
+                        photoData: Optional[bytes] = None
+                        if message["media_local_url"]:
+                            photoData = self.storage.get(message["media_local_url"])
 
-                    if photoData is not None:
-                        mimeType = magic.from_buffer(photoData, mime=True).split("/")
-                        if mimeType[0] != "image":
-                            # TODO: some day support other attachment types
-                            photoData = None
-                            logger.debug(
-                                f"Skipping non-image media {message['media_local_url']} with mime type {mimeType}"
+                        if photoData is not None:
+                            mimeType = magic.from_buffer(photoData, mime=True).split("/")
+                            if mimeType[0] != "image":
+                                # TODO: some day support other attachment types
+                                photoData = None
+                                logger.debug(
+                                    f"Skipping non-image media {message['media_local_url']} with mime type {mimeType}"
+                                )
+                        messageText = message["message_text"]
+                        if message["markup"]:
+                            markupEntities = FormatEntity.fromDictList(json.loads(message["markup"]))
+                            outputFormat: OutputFormat = OutputFormat.MARKDOWN
+                            match self.botProvider:
+                                case BotProvider.TELEGRAM:
+                                    outputFormat = OutputFormat.MARKDOWN_TG
+                                case BotProvider.MAX:
+                                    outputFormat = OutputFormat.MARKDOWN_MAX
+                            messageText = FormatEntity.parseText(messageText, markupEntities, outputFormat=outputFormat)
+
+                        if photoData is not None or message["message_text"]:
+                            # Send message only if it has text or supported media
+                            messagePrefix = job.messagePrefix
+                            messageSuffix = job.messageSuffix
+                            for k, v in message.items():
+                                # logger.debug("Replacing {{" + k + "}} with " + str(v))
+                                messagePrefix = messagePrefix.replace("{{" + k + "}}", str(v))
+                                messageSuffix = messageSuffix.replace("{{" + k + "}}", str(v))
+
+                            await self.sendMessage(
+                                None,
+                                messageText=messagePrefix + messageText + messageSuffix,
+                                messageCategory=MessageCategory.BOT_RESENDED,
+                                chatId=job.targetChatId,
+                                photoData=photoData,
+                                notify=job.notification,
                             )
-                    messageText = message["message_text"]
-                    if message["markup"]:
-                        markupEntities = FormatEntity.fromDictList(json.loads(message["markup"]))
-                        outputFormat: OutputFormat = OutputFormat.MARKDOWN
-                        match self.botProvider:
-                            case BotProvider.TELEGRAM:
-                                outputFormat = OutputFormat.MARKDOWN_TG
-                            case BotProvider.MAX:
-                                outputFormat = OutputFormat.MARKDOWN_MAX
-                        messageText = FormatEntity.parseText(messageText, markupEntities, outputFormat=outputFormat)
 
-                    if photoData is not None or message["message_text"]:
-                        # Send message only if it has text or supported media
-                        messagePrefix = job.messagePrefix
-                        messageSuffix = job.messageSuffix
-                        for k, v in message.items():
-                            # logger.debug("Replacing {{" + k + "}} with " + str(v))
-                            messagePrefix = messagePrefix.replace("{{" + k + "}}", str(v))
-                            messageSuffix = messageSuffix.replace("{{" + k + "}}", str(v))
-
+                        if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
+                            job.lastMessageDate = message["date"]
+                        self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
+                        await asyncio.sleep(0.25)
+                    except Exception as e:
+                        logger.error(f"Error processing job {job}: {e}")
+                        logger.exception(e)
                         await self.sendMessage(
                             None,
-                            messageText=messagePrefix + messageText + messageSuffix,
-                            messageCategory=MessageCategory.BOT_RESENDED,
+                            messageText=f"Error while resending message: {e}",
+                            messageCategory=MessageCategory.BOT_ERROR,
                             chatId=job.targetChatId,
                             photoData=photoData,
+                            notify=job.notification,
                         )
-
-                    if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
-                        job.lastMessageDate = message["date"]
-                    self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
-                    await asyncio.sleep(0.25)

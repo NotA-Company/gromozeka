@@ -361,6 +361,7 @@ class BaseBotHandler(CommandHandlerMixin):
         splitIfTooLong: bool = True,
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
+        notify: Optional[bool] = None,
     ) -> List[EnsuredMessage]:
         if self._bot is None:
             raise ValueError("Bot is not initialized")
@@ -378,6 +379,7 @@ class BaseBotHandler(CommandHandlerMixin):
             splitIfTooLong=splitIfTooLong,
             chatId=chatId,
             threadId=threadId,
+            notify=notify,
         )
 
         for ensuredReplyMessage in ret:
@@ -393,7 +395,8 @@ class BaseBotHandler(CommandHandlerMixin):
             elif isinstance(replyMessage, maxModels.Message) and replyMessage.body.attachments:
                 # TODO: Process whole list
                 mediaList = await self.processMaxMedia(ensuredReplyMessage, mediaPrompt)
-                ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
+                if mediaList:
+                    ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
 
             await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
 
