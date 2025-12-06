@@ -96,6 +96,9 @@ class LLMMessageHandler(BaseBotHandler):
         typingManager: TypingManager,
         useTools: bool = False,
         sendIntermediateMessages: bool = True,
+        keepFirstN: int = 0,
+        keepLastN: int = 1,
+        maxTokensCoeff: float = 0.8,
     ) -> ModelRunResult:
         """
         Generate text response using LLM with fallback support, dood!
@@ -141,6 +144,9 @@ class LLMMessageHandler(BaseBotHandler):
                 "ensuredMessage": ensuredMessage,
                 "typingManager": typingManager,
             },
+            keepFirstN=keepFirstN,
+            keepLastN=keepLastN,
+            maxTokensCoeff=maxTokensCoeff,
         )
         return ret
 
@@ -151,6 +157,9 @@ class LLMMessageHandler(BaseBotHandler):
         *,
         typingManager: TypingManager,
         stopTypingOnSend: bool = True,
+        keepFirstN: int = 0,
+        keepLastN: int = 1,
+        maxTokensCoeff: float = 0.8,
     ) -> bool:
         """
         Send a chat message to the LLM and handle the response, dood!
@@ -195,6 +204,9 @@ class LLMMessageHandler(BaseBotHandler):
                 ensuredMessage=ensuredMessage,
                 useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
                 typingManager=typingManager,
+                keepFirstN=keepFirstN,
+                keepLastN=keepLastN,
+                maxTokensCoeff=maxTokensCoeff,
             )
             # logger.debug(f"LLM Response: {mlRet}")
         except Exception as e:
@@ -487,7 +499,14 @@ class LLMMessageHandler(BaseBotHandler):
                 ),
             ] + storedMessages
 
-            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager):
+            if not await self._sendLLMChatMessage(
+                ensuredMessage,
+                reqMessages,
+                typingManager=typingManager,
+                keepFirstN=1,
+                keepLastN=1,
+                maxTokensCoeff=0.8,
+            ):
                 logger.error("Failed to send LLM reply")
 
         return True
@@ -581,6 +600,7 @@ class LLMMessageHandler(BaseBotHandler):
 
             # Add Parent message if any
             if ensuredMessage.isReply:
+                # TODO: Shoiuld we add whole discussion?
                 ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
                 if ensuredReply is not None:
                     self._updateEMessageUserData(ensuredReply)
@@ -593,7 +613,7 @@ class LLMMessageHandler(BaseBotHandler):
                             ),
                         )
                     else:
-                        # Not text message, try to get it content from DB
+                        # Not text message, try to get it's content from DB
                         storedReply = self.db.getChatMessageByMessageId(
                             chatId=ensuredReply.recipient.id,
                             messageId=ensuredReply.messageId,
@@ -694,10 +714,13 @@ class LLMMessageHandler(BaseBotHandler):
             storedMessages: List[ModelMessage] = []
             _storedMessages: List[ChatMessageDict] = []
 
+            keepFirstMessagesN: int = 0
+            keepLastMessagesN: int = 1
+            maxTokensCoeff: float = 0.8
+
             # TODO: Add method for getting whole discussion
             if parentId is not None:
                 # It's some thread, get whole thread into context
-                # TODO: If thread is too long, compress it somehow
                 storedMsg = self.db.getChatMessageByMessageId(
                     chatId=chatId,
                     messageId=parentId,
@@ -711,6 +734,8 @@ class LLMMessageHandler(BaseBotHandler):
                     rootMessageId=storedMsg["root_message_id"],
                     threadId=ensuredMessage.threadId,
                 )
+                # In case of condensing, keep thread-start message
+                keepFirstMessagesN = 1
 
             else:  # replyId is None, getting last X messages for context
                 _storedMessages = list(
@@ -723,6 +748,8 @@ class LLMMessageHandler(BaseBotHandler):
                         )
                     )
                 )
+                # In case of getting last allow less context
+                maxTokensCoeff = 0.4
 
             for storedMsg in _storedMessages:
                 eMsg = EnsuredMessage.fromDBChatMessage(storedMsg)
@@ -751,7 +778,16 @@ class LLMMessageHandler(BaseBotHandler):
                 ),
             ] + storedMessages
 
-            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager):
+            # maxTokens = int(
+
+            if not await self._sendLLMChatMessage(
+                ensuredMessage,
+                reqMessages,
+                typingManager=typingManager,
+                keepFirstN=keepFirstMessagesN,
+                keepLastN=keepLastMessagesN,
+                maxTokensCoeff=maxTokensCoeff,
+            ):
                 logger.error("Failed to send LLM reply")
                 return False
 
