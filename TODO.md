@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] Add support for cache condenced context + reuse it
 - [ ] ensuredMessage: support miltiple media
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Save info about used tools to put it into context
