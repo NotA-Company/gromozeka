@@ -14,6 +14,7 @@ The resender can be configured to:
 
 import asyncio
 import datetime
+import json
 import logging
 from collections.abc import Sequence
 from typing import List, Optional
@@ -23,6 +24,7 @@ import magic
 from internal.bot.models import (
     BotProvider,
 )
+from internal.bot.models.text_formatter import FormatEntity, OutputFormat
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -53,6 +55,7 @@ class ResendJob:
         "messagePrefix",
         "messageSuffix",
         "lastMessageDate",
+        "_lock",
     )
 
     def __init__(
@@ -104,6 +107,8 @@ class ResendJob:
         """last message timestamp processed"""
         if lastMessageDate:
             self.setLastMessageDate(lastMessageDate)
+        self._lock = asyncio.Lock()
+        """internal async lock for synchronization"""
 
     def setLastMessageDate(self, lastMessageDate: datetime.datetime | str) -> None:
         """
@@ -122,6 +127,32 @@ class ResendJob:
         else:
             raise ValueError(f"lastMessageDate must be a datetime or a string, but got {type(lastMessageDate)}")
 
+    def getLock(self) -> asyncio.Lock:
+        """
+        Get the async lock for this resend job as a context manager.
+
+        This method returns the internal lock that can be used with async context
+        manager syntax to ensure exclusive access to the job during critical operations.
+
+        Returns:
+            asyncio.Lock: The async lock object that can be used with 'async with'
+
+        Example:
+            async with job.getLock():
+                # Critical section - only one coroutine can execute this at a time
+                await process_job(job)
+        """
+        return self._lock
+
+    def isLocked(self) -> bool:
+        """
+        Check if the lock is currently acquired by someone.
+
+        Returns:
+            bool: True if the lock is currently held by a coroutine, False otherwise
+        """
+        return self._lock.locked()
+
     def __str__(self) -> str:
         """
         Return a string representation of the resend job.
@@ -131,6 +162,8 @@ class ResendJob:
         """
         retList = []
         for slot in self.__slots__:
+            if slot == "_lock":
+                continue
             retList.append(f"{slot}={getattr(self, slot)}")
 
         return self.__class__.__name__ + "(" + ", ".join(retList) + ")"
@@ -206,46 +239,64 @@ class ResenderHandler(BaseBotHandler):
         """
         logger.debug("Cron job started")
         for job in self.jobs:
-            logger.debug(f"Processing job {job}")
-            newData = self.db.getChatMessagesSince(
-                chatId=job.sourceChatId,
-                sinceDateTime=job.lastMessageDate,
-                messageCategory=job.messageTypes,
-                threadId=job.sourceTheadId,
-                limit=10,  # Do not resend too many messages an once
-                dataSource=job.dataSource,
-            )
-            if not newData:
+            if job.isLocked():
+                # If someone alreadu processing this job, skip it
+                # Will retry next time if needed
                 continue
-            for message in newData:
-                photoData: Optional[bytes] = None
-                if message["media_local_url"]:
-                    photoData = self.storage.get(message["media_local_url"])
 
-                if photoData is not None:
-                    mimeType = magic.from_buffer(photoData, mime=True).split("/")
-                    if mimeType[0] != "image":
-                        # TODO: some day support other attachment types
-                        photoData = None
-                        logger.debug(f"Skipping non-image media {message['media_local_url']} with mime type {mimeType}")
+            async with job.getLock():
+                logger.debug(f"Processing job {job}")
+                newData = self.db.getChatMessagesSince(
+                    chatId=job.sourceChatId,
+                    sinceDateTime=job.lastMessageDate,
+                    messageCategory=job.messageTypes,
+                    threadId=job.sourceTheadId,
+                    dataSource=job.dataSource,
+                )
+                if not newData:
+                    continue
+                for message in reversed(newData):
+                    photoData: Optional[bytes] = None
+                    if message["media_local_url"]:
+                        photoData = self.storage.get(message["media_local_url"])
 
-                if photoData is not None or message["message_text"]:
-                    # Send message only if it has text or supported media
-                    messagePrefix = job.messagePrefix
-                    messageSuffix = job.messageSuffix
-                    for k, v in message.items():
-                        # logger.debug("Replacing {{" + k + "}} with " + str(v))
-                        messagePrefix = messagePrefix.replace("{{" + k + "}}", str(v))
-                        messageSuffix = messageSuffix.replace("{{" + k + "}}", str(v))
+                    if photoData is not None:
+                        mimeType = magic.from_buffer(photoData, mime=True).split("/")
+                        if mimeType[0] != "image":
+                            # TODO: some day support other attachment types
+                            photoData = None
+                            logger.debug(
+                                f"Skipping non-image media {message['media_local_url']} with mime type {mimeType}"
+                            )
+                    messageText = message["message_text"]
+                    if message["markup"]:
+                        markupEntities = FormatEntity.fromDictList(json.loads(message["markup"]))
+                        outputFormat: OutputFormat = OutputFormat.MARKDOWN
+                        match self.botProvider:
+                            case BotProvider.TELEGRAM:
+                                outputFormat = OutputFormat.MARKDOWN_TG
+                            case BotProvider.MAX:
+                                outputFormat = OutputFormat.MARKDOWN_MAX
+                        messageText = FormatEntity.parseText(messageText, markupEntities, outputFormat=outputFormat)
 
-                    await self.sendMessage(
-                        None,
-                        messageText=messagePrefix + message["message_text"] + messageSuffix,
-                        messageCategory=MessageCategory.BOT_RESENDED,
-                        chatId=job.targetChatId,
-                        photoData=photoData,
-                    )
+                    if photoData is not None or message["message_text"]:
+                        # Send message only if it has text or supported media
+                        messagePrefix = job.messagePrefix
+                        messageSuffix = job.messageSuffix
+                        for k, v in message.items():
+                            # logger.debug("Replacing {{" + k + "}} with " + str(v))
+                            messagePrefix = messagePrefix.replace("{{" + k + "}}", str(v))
+                            messageSuffix = messageSuffix.replace("{{" + k + "}}", str(v))
 
-                job.lastMessageDate = message["date"]
-                self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
-                await asyncio.sleep(0.25)
+                        await self.sendMessage(
+                            None,
+                            messageText=messagePrefix + messageText + messageSuffix,
+                            messageCategory=MessageCategory.BOT_RESENDED,
+                            chatId=job.targetChatId,
+                            photoData=photoData,
+                        )
+
+                    if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
+                        job.lastMessageDate = message["date"]
+                    self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
+                    await asyncio.sleep(0.25)

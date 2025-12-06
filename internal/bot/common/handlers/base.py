@@ -50,6 +50,7 @@ from internal.bot.models import (
     MessageType,
     UserMetadataDict,
 )
+from internal.bot.models.text_formatter import FormatEntity
 from internal.config.manager import ConfigManager
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -561,8 +562,6 @@ class BaseBotHandler(CommandHandlerMixin):
             logger.error(f"Unsupported message type: {message.messageType}")
             return False
 
-        messageText = message.messageText
-
         replyId = message.replyId
         rootMessageId = message.messageId
         if message.isReply and replyId:
@@ -589,12 +588,14 @@ class BaseBotHandler(CommandHandlerMixin):
             messageId=message.messageId,
             replyId=replyId,
             threadId=message.threadId,
-            messageText=messageText,
+            messageText=message.messageText,
             messageType=message.messageType,
             messageCategory=messageCategory,
             rootMessageId=rootMessageId,
             quoteText=message.quoteText,
             mediaId=message.mediaId,
+            markup=utils.jsonDumps(FormatEntity.toDictList(message.formatEntities)),
+            metadata=utils.jsonDumps(message.metadata),
         )
 
         return True
