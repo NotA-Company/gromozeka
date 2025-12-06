@@ -22,7 +22,7 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TypedDict
 
 import telegram
 import telegram.constants
@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 MAX_MEDIA_AWAIT_SECS = 300  # 5 minutes
 MEDIA_AWAIT_DELAY = 2.5
 WORD_BREAKERS = ' \t\n\r\f\v.,;:?!…()[]{}<>«»„“”‘’"-–—+=×*÷=<>=≠≤≥%&|\\/@#$№©™®_.'  # Provided By Alice
+
+
+class CondensingDict(TypedDict):
+    text: str
+    tillMessageId: MessageIdType
+    tillTS: float
+
+
+class MetadataDict(TypedDict, total=False):
+    condensedThread: List[CondensingDict]
 
 
 class ChatType(StrEnum):
@@ -321,7 +331,7 @@ class EnsuredMessage:
         messageText: str = "",
         messageType: MessageType = MessageType.UNKNOWN,
         formatEntities: Optional[Sequence[FormatEntity]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[MetadataDict] = None,
     ):
         """
         Initialize an EnsuredMessage instance, dood!
@@ -363,7 +373,7 @@ class EnsuredMessage:
         self._mentionCheckResult: Optional[MentionCheckResult] = None
 
         self.formatEntities: Sequence[FormatEntity] = formatEntities if formatEntities is not None else []
-        self.metadata: Dict[str, Any] = metadata if metadata is not None else {}
+        self.metadata: MetadataDict = metadata if metadata is not None else {}
 
     @classmethod
     def fromMaxMessage(cls, message: maxModels.Message) -> "EnsuredMessage":
@@ -632,7 +642,7 @@ class EnsuredMessage:
             else:
                 markupList = FormatEntity.fromDictList(dataList)
 
-        metadata: Dict[str, Any] = {}
+        metadata: MetadataDict = {}
         if data["metadata"]:
             metadata = json.loads(data["metadata"])
 
@@ -890,6 +900,7 @@ class EnsuredMessage:
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
         role: str = "user",
+        outputFormat: OutputFormat = OutputFormat.MARKDOWN,
     ) -> ModelMessage:
         """
         Convert the message to a ModelMessage for AI model interactions, dood!
@@ -920,7 +931,11 @@ class EnsuredMessage:
         return ModelMessage(
             role=role,
             content=await self.formatForLLM(
-                db=db, format=format, replaceMessageText=replaceMessageText, stripAtsign=stripAtsign
+                db=db,
+                format=format,
+                replaceMessageText=replaceMessageText,
+                stripAtsign=stripAtsign,
+                outputFormat=outputFormat,
             ),
         )
 

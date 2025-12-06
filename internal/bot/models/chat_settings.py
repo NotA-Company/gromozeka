@@ -52,12 +52,14 @@ class ChatSettingsKey(StrEnum):
     IMAGE_PARSING_FALLBACK_MODEL = "image-parsing-fallback-model"
     IMAGE_GENERATION_MODEL = "image-generation-model"
     IMAGE_GENERATION_FALLBACK_MODEL = "image-generation-fallback-model"
+    CONDENSING_MODEL = "condensing-model"
 
     # # Prompts for different actions
     SUMMARY_PROMPT = "summary-prompt"
     PARSE_IMAGE_PROMPT = "parse-image-prompt"
     CHAT_PROMPT = "chat-prompt"
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
+    CONDENSING_PROMPT = "condensing-prompt"
 
     # # Some system settings
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"

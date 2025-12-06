@@ -70,9 +70,9 @@ class ChatMessageDict(TypedDict):
     message_id: MessageIdType
     date: datetime.datetime
     user_id: int
-    reply_id: Optional[int]
+    reply_id: Optional[MessageIdType]
     thread_id: int
-    root_message_id: Optional[int]
+    root_message_id: Optional[MessageIdType]
     message_text: str
     message_type: str
     message_category: Union[str, MessageCategory]

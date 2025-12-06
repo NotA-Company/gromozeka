@@ -43,19 +43,22 @@ from internal.bot.models import (
     CommandHandlerInfoV2,
     CommandHandlerMixin,
     EnsuredMessage,
+    FormatEntity,
+    LLMMessageFormat,
     MediaProcessingInfo,
     MentionCheckResult,
     MessageRecipient,
     MessageSender,
     MessageType,
+    OutputFormat,
     UserMetadataDict,
 )
-from internal.bot.models.text_formatter import FormatEntity
 from internal.config.manager import ConfigManager
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType
 from internal.services.cache import CacheService
+from internal.services.llm import LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from internal.services.storage import StorageService
 from lib.ai import (
@@ -145,6 +148,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self.cache = CacheService.getInstance()
         self.queueService = QueueService.getInstance()
         self.storage = StorageService.getInstance()
+        self.llmService = LLMService.getInstance()
 
         # self._tgBot: Optional[telegramExt.ExtBot] = None
         # self._maxBot: Optional[libMax.MaxBotClient] = None
@@ -429,6 +433,178 @@ class BaseBotHandler(CommandHandlerMixin):
         if self._bot is None:
             raise ValueError("Bot is not initialized")
         return await self._bot.deleteMessagesById(chatId=chatId, messageIds=messageIds)
+
+    ###
+    # Chat Management
+    ###
+
+    async def getThreadByMessageForLLM(
+        self,
+        ensuredMessage: EnsuredMessage,
+        condenseThread: bool = True,
+    ) -> Sequence[ModelMessage]:
+
+        dbMessage = self.db.getChatMessageByMessageId(ensuredMessage.recipient.id, ensuredMessage.messageId)
+        if dbMessage is None:
+            return []
+
+        chatId = dbMessage["chat_id"]
+        chatSettings = self.getChatSettings(chatId, chatType=ensuredMessage.recipient.chatType)
+        llmMFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+
+        outputFormat = OutputFormat.MARKDOWN
+        match self.botProvider:
+            case BotProvider.TELEGRAM:
+                outputFormat = OutputFormat.MARKDOWN_TG
+            case BotProvider.MAX:
+                outputFormat = OutputFormat.MARKDOWN_MAX
+
+        # TODO: Think, should we add system prompt or not? Dunno
+        ret: List[ModelMessage] = [
+            ModelMessage(
+                role="system",
+                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                + "\n"
+                + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+            ),
+        ]
+
+        if dbMessage["root_message_id"] is None:
+            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage)
+            self._updateEMessageUserData(eMessage)
+            return ret + [
+                await eMessage.toModelMessage(
+                    self.db,
+                    format=llmMFormat,
+                    outputFormat=outputFormat,
+                    role="user" if dbMessage["message_category"] == "user" else "assistant",
+                )
+            ]
+
+        dbMessageList = self.db.getChatMessagesByRootId(
+            dbMessage["chat_id"],
+            rootMessageId=dbMessage["root_message_id"],
+            threadId=dbMessage["thread_id"],
+        )
+
+        if not dbMessageList:
+            logger.error(f"No messages found for root message ID {dbMessage['root_message_id']}")
+            return []
+
+        # While condensing, keep the first and last message
+        keepFirstN = 1
+        keepLastN = 1
+
+        eRootMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[0])
+        self._updateEMessageUserData(eRootMessage)
+        condenseCache = eRootMessage.metadata.get("condensedThread", [])
+        if condenseCache and condenseThread:
+            # First - add skipped messages to result.
+            # It should be ony starting message
+            for i in range(min(keepFirstN, len(dbMessageList))):
+                eMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[i])
+                self._updateEMessageUserData(eMessage)
+                ret.append(
+                    await eMessage.toModelMessage(
+                        self.db,
+                        format=llmMFormat,
+                        outputFormat=outputFormat,
+                        role="user" if dbMessageList[i]["message_category"] == "user" else "assistant",
+                    )
+                )
+
+            # For each summary:
+            # Add summary message to result
+            # And skip summaried messages
+            for condensedMessage in condenseCache:
+                # If we'll decide to condenseContext, skip summary message from condensing
+                keepFirstN += 1
+                ret.append(ModelMessage(role="user", content=condensedMessage["text"]))
+                lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"])
+                skippedMessages = 0
+                for dbMessage in dbMessageList:
+                    skippedMessages += 1
+                    if dbMessage["message_id"] == condensedMessage["tillMessageId"] or dbMessage["date"] > lastDT:
+                        break
+                dbMessageList = dbMessageList[skippedMessages:]
+
+        for dbMessage in dbMessageList:
+            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage)
+            self._updateEMessageUserData(eMessage)
+            ret.append(
+                await eMessage.toModelMessage(
+                    self.db,
+                    format=llmMFormat,
+                    outputFormat=outputFormat,
+                    role="user" if dbMessage["message_category"] == "user" else "assistant",
+                )
+            )
+
+        if not condenseThread:
+            return ret
+
+        # Condense thread if needed
+        llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
+        # If we need condencind, assume that we sould use no more than 50% of the context size
+        maxTokens = int(llmModel.contextSize * 0.5)
+
+        currentTokens = llmModel.getEstimateTokensCount([v.toDict() for v in ret])
+        if currentTokens < maxTokens:
+            return ret
+
+        condensedRet = await self.llmService.condenseContext(
+            ret,
+            model=llmModel,
+            keepFirstN=keepFirstN,
+            keepLastN=keepLastN,
+            maxTokens=maxTokens,
+            condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
+            condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+        )
+
+        # -1 is last element, so -keepLastN to skip skipped elements to get last condensed message
+        lastCondensedMessage = dbMessageList[-1 - keepLastN]
+        # +1 because of system prompt
+
+        # logger.debug("CONDENSING DEBUG")
+        # logger.debug(f"ret   = {condensedRet}")
+        # logger.debug(f"cache = {condenseCache}")
+        # logger.debug(f"lastM = {lastCondensedMessage}")
+
+        currentTokens = llmModel.getEstimateTokensCount([v.toDict() for v in condensedRet])
+        if currentTokens > maxTokens:
+            # If there are too many condensed entries in cache, condense them as well
+            keepFirstN = 1
+            condensedRet = await self.llmService.condenseContext(
+                condensedRet,
+                model=llmModel,
+                keepFirstN=keepFirstN,
+                keepLastN=keepLastN,
+                maxTokens=maxTokens,
+                condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
+                condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+            )
+            # We'll need to rewrite cache, so empty it here
+            condenseCache = []
+
+        for i in range(keepFirstN + 1, len(condensedRet) - keepLastN):
+            condenseCache.append(
+                {
+                    "text": condensedRet[i].content,
+                    "tillMessageId": lastCondensedMessage["message_id"],
+                    "tillTS": lastCondensedMessage["date"].timestamp(),
+                }
+            )
+
+        # logger.debug(f"cache2 = {condenseCache}")
+        eRootMessage.metadata["condensedThread"] = condenseCache
+        self.db.updateChatMessageMetadata(
+            chatId=eRootMessage.recipient.id,
+            messageId=eRootMessage.messageId,
+            metadata=eRootMessage.metadata,
+        )
+
+        return condensedRet
 
     def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """
