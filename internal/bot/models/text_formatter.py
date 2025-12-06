@@ -470,7 +470,7 @@ class FormatEntity:
                     raise ValueError("Invalid user mention")
             case _:
                 raise ValueError(f"Unsupported format type: {self.type}")
-        
+
         # Do not add format to empty body
         if body:
             return f"{prefix}{markupWith}{body}{markupWith}{suffix}"
@@ -506,7 +506,7 @@ class FormatEntity:
         ret: str = ""
 
         # logger.debug(f"Parsing text: '{text}' -> '{utf16Text}' with ({entities})")
-        logger.debug(f"Parsing text: '{text}' with ({entities})")
+        # logger.debug(f"Parsing text: '{text}' with ({entities})")
 
         entitiesCount = len(entities)
         # We'll manipulate `i` so we have to use while cycle

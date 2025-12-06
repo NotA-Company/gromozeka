@@ -19,6 +19,7 @@ from telegram import Chat
 
 # Import from shared_enums to avoid circular dependency
 from internal.models import MessageIdType, MessageType
+from lib import utils
 
 from .models import (
     CacheDict,
@@ -1086,7 +1087,7 @@ class DatabaseWrapper:
     def getChatMessagesByRootId(
         self,
         chatId: int,
-        rootMessageId: int,
+        rootMessageId: MessageIdType,
         threadId: Optional[int] = None,
         *,
         dataSource: Optional[str] = None,
@@ -1197,6 +1198,36 @@ class DatabaseWrapper:
                 return True
         except Exception as e:
             logger.error(f"Failed to update category for message {messageId} in chat {chatId}: {e}")
+            return False
+
+    def updateChatMessageMetadata(
+        self,
+        chatId: int,
+        messageId: MessageIdType,
+        metadata: str | Any,
+    ) -> bool:
+        """Update the metadata of a chat message."""
+        if not isinstance(metadata, str):
+            metadata = utils.jsonDumps(metadata)
+        try:
+            with self.getCursor(chatId=chatId, readonly=False) as cursor:
+                cursor.execute(
+                    """
+                    UPDATE chat_messages
+                    SET metadata = :metadata
+                    WHERE
+                        chat_id = :chatId
+                        AND message_id = :messageId
+                """,
+                    {
+                        "chatId": chatId,
+                        "messageId": messageId,
+                        "metadata": metadata,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update metadata for message {messageId} in chat {chatId}: {e}")
             return False
 
     ###

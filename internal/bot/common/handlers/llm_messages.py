@@ -21,7 +21,8 @@ import json
 import logging
 import random
 import re
-from typing import Any, Dict, List, Optional
+from collections.abc import Sequence
+from typing import Any, Dict, Optional
 
 import telegram
 
@@ -38,7 +39,7 @@ from internal.bot.models import (
     MessageType,
 )
 from internal.config.manager import ConfigManager
-from internal.database.models import ChatMessageDict, MessageCategory
+from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
@@ -89,7 +90,7 @@ class LLMMessageHandler(BaseBotHandler):
     async def _generateTextViaLLM(
         self,
         model: AbstractModel,
-        messages: List[ModelMessage],
+        messages: Sequence[ModelMessage],
         fallbackModel: AbstractModel,
         ensuredMessage: EnsuredMessage,
         *,
@@ -153,7 +154,7 @@ class LLMMessageHandler(BaseBotHandler):
     async def _sendLLMChatMessage(
         self,
         ensuredMessage: EnsuredMessage,
-        messagesHistory: List[ModelMessage],
+        messagesHistory: Sequence[ModelMessage],
         *,
         typingManager: TypingManager,
         stopTypingOnSend: bool = True,
@@ -437,16 +438,9 @@ class LLMMessageHandler(BaseBotHandler):
 
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
-            parentId = ensuredMessage.replyId
-            chat = ensuredMessage.recipient
+            reqMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
 
-            storedMessages: List[ModelMessage] = []
-
-            storedMsg = self.db.getChatMessageByMessageId(
-                chatId=chat.id,
-                messageId=parentId,
-            )
-            if storedMsg is None:
+            if not reqMessages:
                 logger.error("Failed to get parent message")
                 ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
 
@@ -454,50 +448,16 @@ class LLMMessageHandler(BaseBotHandler):
                     logger.error("ensuredReply is None, but should be EnsuredMessage()")
                     return False
 
-                storedMessages.append(
-                    await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant")
-                )
-                storedMessages.append(
-                    await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user")
-                )
-
-            else:
-                if storedMsg["user_id"] != await self.getBotId():
-                    logger.error(f"Parent message is not from us: {storedMsg}")
-                    return False
-
-                if storedMsg["root_message_id"] is None:
-                    logger.error(f"No root_message_id in {storedMsg}")
-                    return False
-
-                _storedMessages = self.db.getChatMessagesByRootId(
-                    chatId=chat.id,
-                    rootMessageId=storedMsg["root_message_id"],
-                    threadId=ensuredMessage.threadId,
-                )
-                storedMessages = []
-                # lastMessageId = len(_storedMessages) - 1
-
-                for storedMsg in _storedMessages:
-                    eMsg = EnsuredMessage.fromDBChatMessage(storedMsg)
-                    self._updateEMessageUserData(eMsg)
-
-                    storedMessages.append(
-                        await eMsg.toModelMessage(
-                            self.db,
-                            format=llmMessageFormat,
-                            role="user" if storedMsg["message_category"] == "user" else "assistant",
-                        )
-                    )
-
-            reqMessages = [
-                ModelMessage(
-                    role="system",
-                    content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
-                    + "\n"
-                    + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
-                ),
-            ] + storedMessages
+                reqMessages = [
+                    ModelMessage(
+                        role="system",
+                        content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                        + "\n"
+                        + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+                    ),
+                    await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant"),
+                    await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
+                ]
 
             if not await self._sendLLMChatMessage(
                 ensuredMessage,
@@ -711,8 +671,7 @@ class LLMMessageHandler(BaseBotHandler):
             parentId = ensuredMessage.replyId
             chatId = ensuredMessage.recipient.id
 
-            storedMessages: List[ModelMessage] = []
-            _storedMessages: List[ChatMessageDict] = []
+            storedMessages: Sequence[ModelMessage] = []
 
             keepFirstMessagesN: int = 0
             keepLastMessagesN: int = 1
@@ -720,69 +679,43 @@ class LLMMessageHandler(BaseBotHandler):
 
             # TODO: Add method for getting whole discussion
             if parentId is not None:
-                # It's some thread, get whole thread into context
-                storedMsg = self.db.getChatMessageByMessageId(
-                    chatId=chatId,
-                    messageId=parentId,
-                )
-                if storedMsg is None or storedMsg["root_message_id"] is None:
-                    logger.error(f"Failed to get parent message by id#{parentId}")
-                    return False
-
-                _storedMessages = self.db.getChatMessagesByRootId(
-                    chatId=chatId,
-                    rootMessageId=storedMsg["root_message_id"],
-                    threadId=ensuredMessage.threadId,
-                )
+                storedMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
                 # In case of condensing, keep thread-start message
                 keepFirstMessagesN = 1
 
-            else:  # replyId is None, getting last X messages for context
-                _storedMessages = list(
-                    reversed(
-                        self.db.getChatMessagesSince(
-                            chatId=chatId,
-                            threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
-                            limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
-                            # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
+            if not storedMessages:
+                storedMessages = [
+                    ModelMessage(
+                        role="system",
+                        content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                        + "\n"
+                        + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+                    ),
+                ]
+                for storedMsg in reversed(
+                    self.db.getChatMessagesSince(
+                        chatId=chatId,
+                        threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
+                        limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
+                        # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
+                    )
+                ):
+                    eMsg = EnsuredMessage.fromDBChatMessage(storedMsg)
+                    self._updateEMessageUserData(eMsg)
+
+                    storedMessages.append(
+                        await eMsg.toModelMessage(
+                            self.db,
+                            format=llmMessageFormat,
+                            role="user" if storedMsg["message_category"] == "user" else "assistant",
                         )
                     )
-                )
                 # In case of getting last allow less context
                 maxTokensCoeff = 0.4
 
-            for storedMsg in _storedMessages:
-                eMsg = EnsuredMessage.fromDBChatMessage(storedMsg)
-                self._updateEMessageUserData(eMsg)
-
-                storedMessages.append(
-                    await eMsg.toModelMessage(
-                        self.db,
-                        format=llmMessageFormat,
-                        role="user" if storedMsg["message_category"] == "user" else "assistant",
-                    )
-                )
-
-            if not storedMessages:
-                logger.error("Somehow storedMessages are empty, fallback to single message")
-                storedMessages.append(
-                    await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user")
-                )
-
-            reqMessages = [
-                ModelMessage(
-                    role="system",
-                    content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
-                    + "\n"
-                    + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
-                ),
-            ] + storedMessages
-
-            # maxTokens = int(
-
             if not await self._sendLLMChatMessage(
                 ensuredMessage,
-                reqMessages,
+                storedMessages,
                 typingManager=typingManager,
                 keepFirstN=keepFirstMessagesN,
                 keepLastN=keepLastMessagesN,
