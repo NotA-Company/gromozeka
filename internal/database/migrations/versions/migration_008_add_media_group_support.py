@@ -44,7 +44,6 @@ class Migration008AddMediaGroupSupport(BaseMigration):
                 media_group_id TEXT NOT NULL,
                 media_id TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (media_group_id, media_id)
             )
         """
