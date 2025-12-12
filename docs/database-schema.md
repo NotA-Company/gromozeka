@@ -142,6 +142,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 5 | [`migration_005_add_yandex_cache.py`](../internal/database/migrations/versions/migration_005_add_yandex_cache.py:1) | Adds Yandex Search cache table |
 | 6 | [`migration_006_new_cache_tables.py`](../internal/database/migrations/versions/migration_006_new_cache_tables.py:1) | Adds Geocode Maps cache tables |
 | 7 | [`migration_007_messages_metadata.py`](../internal/database/migrations/versions/migration_007_messages_metadata.py:1) | Adds `markup` and `metadata` columns to [`chat_messages`](#chat_messages) |
+| 8 | [`migration_008_add_media_group_support.py`](../internal/database/migrations/versions/migration_008_add_media_group_support.py:1) | Adds `media_group_id` column to [`chat_messages`](#chat_messages) and creates [`media_group`](#media_group) table |
 
 ### Creating New Migrations
 
@@ -202,6 +203,7 @@ Stores all chat messages with detailed metadata.
 | `message_category` | TEXT | No | 'user' | Message category (see [`MessageCategory`](#messagecategory)) |
 | `quote_text` | TEXT | Yes | NULL | Quoted text from replied message |
 | `media_id` | TEXT | Yes | NULL | Foreign key to [`media_attachments.file_unique_id`](#media_attachments) |
+| `media_group_id` | TEXT | Yes | NULL | Media group identifier for grouped media messages |
 | `markup` | TEXT | No | "" | JSON-serialized keyboard markup |
 | `metadata` | TEXT | No | "" | JSON-serialized additional metadata |
 | `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
@@ -209,6 +211,7 @@ Stores all chat messages with detailed metadata.
 **Relationships**:
 - References [`chat_users`](#chat_users) via `(chat_id, user_id)`
 - References [`media_attachments`](#media_attachments) via `media_id`
+- References [`media_group`](#media_group) via `media_group_id`
 - Self-references via `reply_id` and `root_message_id`
 
 **TypedDict**: [`ChatMessageDict`](../internal/database/models.py:67)
@@ -385,6 +388,27 @@ Aggregated daily statistics per user per chat.
 ---
 
 ## Media Tables
+
+### media_group
+
+Stores media group relationships for messages with multiple media items sent together.
+
+**Primary Key**: `(media_group_id, media_id)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `media_group_id` | TEXT | No | - | Telegram media group identifier |
+| `media_id` | TEXT | No | - | Foreign key to [`media_attachments.file_unique_id`](#media_attachments) |
+| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
+| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+
+**Relationships**:
+- References [`media_attachments`](#media_attachments) via `media_id`
+- Referenced by [`chat_messages`](#chat_messages) via `media_group_id`
+
+**Note**: Media groups allow tracking multiple media items (photos, videos, documents) sent together in a single message or album.
+
+---
 
 ### media_attachments
 
