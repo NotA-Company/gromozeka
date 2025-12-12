@@ -28,6 +28,7 @@ CREATE TABLE chat_messages (
     message_category TEXT NOT NULL DEFAULT 'user',
     quote_text TEXT,
     media_id TEXT,
+    media_group_id TEXT,
     markup TEXT NOT NULL DEFAULT '',
     metadata TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -38,7 +39,9 @@ CREATE TABLE chat_messages (
 ```
 
 **TypedDict**: [`ChatMessageDict`](../internal/database/models.py:67)
-**Relationships**: References [`chat_users`](#chat_users), [`media_attachments`](#media_attachments)
+**Relationships**: References [`chat_users`](#chat_users), [`media_attachments`](#media_attachments), [`media_group`](#media_group)
+
+**Note**: The `media_group_id` column links messages that are part of a media group (album of photos/videos sent together).
 
 ---
 
@@ -124,6 +127,27 @@ CREATE TABLE chat_settings (
 ```
 
 **Available Keys**: See [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41) enum
+
+---
+
+### media_group
+**Purpose**: Media group relationships for grouped media messages
+**Primary Key**: `(media_group_id, media_id)`
+
+```sql
+CREATE TABLE media_group (
+    media_group_id TEXT NOT NULL,
+    media_id TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (media_group_id, media_id),
+    FOREIGN KEY (media_id) REFERENCES media_attachments(file_unique_id)
+)
+```
+
+**Relationships**: References [`media_attachments`](#media_attachments), referenced by [`chat_messages`](#chat_messages)
+
+**Note**: This table tracks which media items belong to the same media group (album). Multiple messages can share the same `media_group_id` when media is sent as an album.
 
 ---
 
