@@ -1233,7 +1233,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     mediaType=mediaType,
                 )
 
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool() and mediaType in [
+        if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool() and mediaType in [
             MessageType.IMAGE,
             MessageType.STICKER,
         ]:
@@ -1268,7 +1268,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self.db.ensureMediaInGroup(mediaId=ret.id, mediaGroupId=ensuredMessage.mediaGroupId)
 
         # Need to parse image content with LLM
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+        if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool():
             # Do not redownload file if it was downloaded already
             if mediaData is None:
                 if self._bot is None:

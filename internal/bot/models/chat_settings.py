@@ -66,7 +66,7 @@ class ChatSettingsKey(StrEnum):
     BOT_NICKNAMES = "bot-nicknames"
     LLM_MESSAGE_FORMAT = "llm-message-format"
     USE_TOOLS = "use-tools"
-    PARSE_IMAGES = "parse-images"
+    PARSE_ATTACHMENTS = "parse-attachments"
 
     SAVE_ATTACHMENTS = "save-attachments"
     SAVE_PREFIX = "save-prefix"
@@ -207,7 +207,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         ),
         "page": ChatSettingsPage.EXTENDED,
     },
-    ChatSettingsKey.PARSE_IMAGES: {
+    ChatSettingsKey.PARSE_ATTACHMENTS: {
         "type": ChatSettingsType.BOOL,
         "short": "Обрабатывать изображения",
         "long": "Должен ли бот анализировать изображения используя LLM для дальнейшего использования в разговоре",
