@@ -866,6 +866,7 @@ class DatabaseWrapper:
         mediaId: Optional[str] = None,
         markup: str = "",
         metadata: str = "",
+        mediaGroupId: Optional[str] = None,
     ) -> bool:
         """
         Save a chat message with detailed information.
@@ -889,6 +890,7 @@ class DatabaseWrapper:
 
         Note:
             Writes are routed based on chatId mapping. Cannot write to readonly sources.
+            TODO: Update docstrings
         """
         messageId = str(messageId)
         if replyId is not None:
@@ -907,13 +909,13 @@ class DatabaseWrapper:
                     (date, chat_id, user_id, message_id,
                         reply_id, thread_id, message_text, message_type,
                         message_category, root_message_id, quote_text,
-                        media_id, markup, metadata
+                        media_id, markup, metadata, media_group_id
                         )
                     VALUES
                     (:date, :chatId, :userId, :messageId,
                         :replyId, :threadId, :messageText, :messageType,
                         :messageCategory, :rootMessageId, :quoteText,
-                        :mediaId, :markup, :metadata
+                        :mediaId, :markup, :metadata, :mediaGroupId
                         )
                 """,
                     {
@@ -931,6 +933,7 @@ class DatabaseWrapper:
                         "mediaId": mediaId,
                         "markup": markup,
                         "metadata": metadata,
+                        "mediaGroupId": mediaGroupId,
                     },
                 )
 
@@ -2108,6 +2111,40 @@ class DatabaseWrapper:
     ###
     # Media Attachments manipulation functions
     ###
+
+    def ensureMediaInGroup(self, *, mediaId: str, mediaGroupId: str) -> bool:
+        """
+        Ensure that a media attachment is in a group.
+
+        Args:
+            mediaId: Media attachment ID
+            mediaGroupId: Media group ID
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
+        try:
+            with self.getCursor(readonly=False) as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO media_attachments_groups
+                        (media_group_id, media_id)
+                    VALUES
+                        (:mediaGroupId, :mediaId)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    {
+                        "mediaGroupId": mediaGroupId,
+                        "mediaId": mediaId,
+                    },
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to ensure media in group: {e}")
+            return False
 
     def addMediaAttachment(
         self,

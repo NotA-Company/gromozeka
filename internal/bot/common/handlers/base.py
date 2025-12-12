@@ -1132,6 +1132,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def _processMediaV2(
         self,
+        *,
         ensuredMessage: EnsuredMessage,
         mediaType: MessageType,
         mediaId: str,
@@ -1154,6 +1155,11 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             MediaProcessingInfo: Object containing media processing status and async task
         """
+
+        if ensuredMessage.mediaGroupId is None:
+            logger.error(f"MediaGroupId is None for message {ensuredMessage}")
+            raise ValueError("MediaGroupId is None")
+
         ret = MediaProcessingInfo(
             id=mediaId,
             task=None,
@@ -1227,7 +1233,11 @@ class BaseBotHandler(CommandHandlerMixin):
                     mediaType=mediaType,
                 )
 
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool() and mediaType in [
+            MessageType.IMAGE,
+            MessageType.STICKER,
+        ]:
+            # Currently we can process only images
             mediaStatus = MediaStatus.PENDING
         else:
             mediaStatus = MediaStatus.DONE
@@ -1254,6 +1264,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 fileSize=None,
                 description=None,
             )
+
+        self.db.ensureMediaInGroup(mediaId=ret.id, mediaGroupId=ensuredMessage.mediaGroupId)
 
         # Need to parse image content with LLM
         if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
