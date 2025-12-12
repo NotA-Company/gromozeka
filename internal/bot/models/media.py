@@ -19,3 +19,6 @@ class MediaProcessingInfo:
             return await self.task
         else:
             raise ValueError("Task is not set")
+
+    def __str__(self) -> str:
+        return f"MediaProcessingInfo(id={self.id}, type={self.type}, task={self.task})"

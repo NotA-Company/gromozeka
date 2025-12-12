@@ -266,6 +266,56 @@ class MentionCheckResult:
     restText: Optional[str] = None
 
 
+class MediaContent:
+    """
+    Represents media content associated with a message, dood!
+
+    Encapsulates media information including its unique identifier, LLM-parsed content
+    description, and processing status information. Uses __slots__ for memory efficiency.
+
+    Attributes:
+        id (str): Unique identifier for the media attachment
+        content (Optional[str]): LLM-parsed description of the media content, if available
+        processingInfo (Optional[MediaProcessingInfo]): Media processing status and details, if available
+    """
+
+    __slots__ = ("id", "content", "processingInfo")
+
+    def __init__(self, id: str, content: Optional[str], processingInfo: Optional[MediaProcessingInfo]):
+        """
+        Initialize a MediaContent instance, dood!
+
+        Args:
+            id: Unique identifier for the media attachment
+            content: LLM-parsed description of the media content, or None if not yet processed
+            processingInfo: Media processing status and details, or None if not available
+        """
+        self.id = id
+        """Media Id"""
+        self.content = content
+        """Media LLM-parsed content if any"""
+        self.processingInfo = processingInfo
+        """Processing info if any"""
+
+    def __str__(self) -> str:
+        """
+        Return a concise string representation of the media content, dood!
+
+        Returns:
+            Formatted string: "MediaContent(id={id}, content={content})"
+        """
+        return f"MediaContent(id={self.id}, content={self.content})"
+
+    def __repr__(self) -> str:
+        """
+        Return a detailed string representation of the media content, dood!
+
+        Returns:
+            Formatted string including id, content, and processingInfo
+        """
+        return f"MediaContent(id={self.id}, content={self.content}, processingInfo={self.processingInfo})"
+
+
 class EnsuredMessage:
     """
     Wrapper class that ensures presence of essential Telegram message attributes, dood!
@@ -292,9 +342,13 @@ class EnsuredMessage:
         quoteText (Optional[str]): The quoted text content, if applicable
         isTopicMessage (bool): Indicates if the message is part of a forum topic
         threadId (Optional[int]): The thread ID if the message is in a topic
-        mediaId (Optional[str]): Unique identifier for media attachments
-        mediaContent (Optional[str]): Description of media content, if applicable
+        mediaId (Optional[str]): Unique identifier for media attachments (deprecated, use mediaList)
+        mediaContent (Optional[str]): Description of media content (deprecated, use mediaList)
+        mediaGroupId (Optional[str]): Identifier for media group if message contains grouped media
+        mediaList (List[MediaContent]): List of media content objects associated with the message
         userData (Optional[Dict[str, Any]]): Additional user data associated with the message
+        formatEntities (Sequence[FormatEntity]): Text formatting entities for the message
+        metadata (MetadataDict): Additional metadata including condensed thread information
     """
 
     __slots__ = (
@@ -319,6 +373,8 @@ class EnsuredMessage:
         "_mentionCheckResult",
         "formatEntities",
         "metadata",
+        "mediaGroupId",
+        "mediaList",
     )
 
     def __init__(
@@ -332,6 +388,7 @@ class EnsuredMessage:
         messageType: MessageType = MessageType.UNKNOWN,
         formatEntities: Optional[Sequence[FormatEntity]] = None,
         metadata: Optional[MetadataDict] = None,
+        mediaGroupId: Optional[str] = None,
     ):
         """
         Initialize an EnsuredMessage instance, dood!
@@ -343,37 +400,63 @@ class EnsuredMessage:
             date: Timestamp when the message was sent
             messageText: The text content of the message (default: empty string)
             messageType: The type of message (default: MessageType.UNKNOWN)
+            formatEntities: Sequence of text formatting entities (default: None)
+            metadata: Additional metadata dictionary (default: None)
+            mediaGroupId: Identifier for media group if applicable (default: None)
         """
         self._message: Optional[telegram.Message | maxModels.Message] = None
+        """Base message"""
 
         self.sender: MessageSender = sender
+        """Message sender"""
         self.recipient: MessageRecipient = recipient
+        """Message recipient"""
 
         self.messageId: MessageIdType = messageId
+        """Message Id (int for Telegram, str for Max)"""
         self.date: datetime.datetime = date
+        """Message date"""
         self.messageText: str = messageText
+        """Message text if any"""
         self.messageType: MessageType = messageType
+        """Message Type"""
 
         # If this is reply, then set replyId and replyText
         self.replyId: Optional[MessageIdType] = None
+        """Id of message this message is reply to (If Any)"""
         self.replyText: Optional[str] = None
+        """Text of message this message is reply to (If Any)"""
         self.isReply: bool = False
+        """If this message is reply to another message"""
         self.isQuote: bool = False
+        """If this message is quote of another message"""
         self.quoteText: Optional[str] = None
+        """Quoted text if any"""
 
         # If this is topic message, then set threadId
         self.threadId: Optional[int] = None
+        """Thread Id if any (only for Telegram threaded supergroups)"""
         self.isTopicMessage: bool = False
+        """If this message is topic message"""
 
+        # TODO: Deprecated, use megiaGroupId logic
         self.mediaContent: Optional[str] = None
         self.mediaId: Optional[str] = None
         self._mediaProcessingInfo: Optional[MediaProcessingInfo] = None
 
+        self.mediaGroupId: Optional[str] = mediaGroupId
+        """Id of Media group if any"""
+        self.mediaList: List[MediaContent] = []
+        """List of Media content if any"""
+
         self.userData: Optional[Dict[str, Any]] = None
+        """User data if any"""
         self._mentionCheckResult: Optional[MentionCheckResult] = None
 
         self.formatEntities: Sequence[FormatEntity] = formatEntities if formatEntities is not None else []
+        """Format entities if any"""
         self.metadata: MetadataDict = metadata if metadata is not None else {}
+        """Metadata if any"""
 
     @classmethod
     def fromMaxMessage(cls, message: maxModels.Message) -> "EnsuredMessage":
@@ -394,6 +477,7 @@ class EnsuredMessage:
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
         markupList: List[FormatEntity] = []
+        mediaGroupId: Optional[str] = None
         if message.body.text:
             # TODO: think about parsing Entities to Markdown, but without escaping
             # messageText = message.text_markdown_v2
@@ -408,6 +492,8 @@ class EnsuredMessage:
                 markupList = FormatEntity.fromList(message.link.message.markup)
 
         if message.body.attachments:
+            # Max Is able to store miltiple attachments, so we use message id as mediaGroupId
+            mediaGroupId = message.body.mid
             match message.body.attachments[0].type:
                 case maxModels.AttachmentType.IMAGE:
                     messageType = MessageType.IMAGE
@@ -448,6 +534,7 @@ class EnsuredMessage:
             messageText=messageText,
             messageType=messageType,
             formatEntities=markupList,
+            mediaGroupId=mediaGroupId,
         )
         ensuredMessage.setBaseMessage(message)
 
@@ -495,6 +582,7 @@ class EnsuredMessage:
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
         markupList: List[FormatEntity] = []
+        mediaGroupId: Optional[str] = message.media_group_id
         if message.text:
             # TODO: think about parsing Entities to Markdown, but without escaping
             # messageText = message.text_markdown_v2
@@ -578,6 +666,9 @@ class EnsuredMessage:
                 # Probably not a text message, just log it for now
                 logger.error(f"Message text undefined: {message}")
                 messageType = MessageType.UNKNOWN
+        elif mediaGroupId is None:
+            # We have media but have no media goup id, so use message chat id + message_id as mediaGroupId
+            mediaGroupId = f"{message.chat.id}:{message.message_id}"
 
         sender: Optional[MessageSender] = None
         if message.sender_chat:
@@ -593,6 +684,7 @@ class EnsuredMessage:
             messageText=messageText,
             messageType=messageType,
             formatEntities=markupList,
+            mediaGroupId=mediaGroupId,
         )
         ensuredMessage.setBaseMessage(message)
 
@@ -663,6 +755,7 @@ class EnsuredMessage:
             messageType=MessageType(data["message_type"]),
             formatEntities=markupList,
             metadata=metadata,
+            mediaGroupId=data["media_group_id"],
         )
 
         ensuredMessage.replyId = data["reply_id"]
@@ -731,7 +824,7 @@ class EnsuredMessage:
 
         return FormatEntity.parseText(self.messageText, self.formatEntities, outputFormat)
 
-    def setMediaId(self, mediaId: str):
+    def addMediaId(self, mediaId: str):
         """
         Set the media identifier for this message, dood!
 
@@ -739,6 +832,7 @@ class EnsuredMessage:
             mediaId: Unique identifier for the media attachment
         """
         self.mediaId = mediaId
+        self.mediaList.append(MediaContent(id=mediaId, content=None, processingInfo=None))
 
     def addMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
         """
@@ -749,6 +843,13 @@ class EnsuredMessage:
         """
         self._mediaProcessingInfo = mediaProcessingInfo
         self.mediaId = mediaProcessingInfo.id
+        self.mediaList.append(
+            MediaContent(
+                id=mediaProcessingInfo.id,
+                content=None,
+                processingInfo=mediaProcessingInfo,
+            )
+        )
 
     async def updateMediaContent(self, db: DatabaseWrapper) -> None:
         """
@@ -761,6 +862,14 @@ class EnsuredMessage:
         Args:
             db: Database wrapper instance for accessing media attachments
         """
+        for media in self.mediaList:
+            if media.processingInfo:
+                await media.processingInfo.awaitResult()
+
+            mediaAttachment = await self.__class__._awaitMedia(db, media.id)
+            if mediaAttachment and mediaAttachment.get("description", None) is not None:
+                media.content = mediaAttachment["description"]
+
         if self._mediaProcessingInfo:
             await self._mediaProcessingInfo.awaitResult()
 
@@ -831,6 +940,7 @@ class EnsuredMessage:
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
+        useSingleMedia: bool = False,
     ) -> str:
         """
         Format the message for LLM consumption, dood!
@@ -844,6 +954,8 @@ class EnsuredMessage:
             format: Output format (JSON or TEXT), default is JSON
             replaceMessageText: Optional replacement text instead of original message text
             stripAtsign: Whether to strip @ from usernames, default is False
+            outputFormat: Output format for message text parsing (default: MARKDOWN)
+            useSingleMedia: Whether to use single media content or media list (default: False)
 
         Returns:
             Formatted string representation of the message for LLM processing
@@ -852,6 +964,9 @@ class EnsuredMessage:
             ValueError: If an invalid format is specified, dood.
         """
         await self.updateMediaContent(db)
+        mediaContent = self.mediaContent
+        if not useSingleMedia or self.mediaContent is None:
+            mediaContent = [v.content for v in self.mediaList]
 
         messageText = self.formatMessageText(outputFormat) if replaceMessageText is None else replaceMessageText
         userName = self.sender.username
@@ -871,7 +986,7 @@ class EnsuredMessage:
                         "text": messageText,
                         "replyId": self.replyId,
                         "quote": self.quoteText if self.isQuote else None,
-                        "mediaDescription": self.mediaContent,
+                        "mediaDescription": mediaContent,
                         "userData": self.userData,
                     }.items()
                     if v
@@ -901,6 +1016,7 @@ class EnsuredMessage:
         stripAtsign: bool = False,
         role: str = "user",
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
+        useSingleMedia: bool = False,
     ) -> ModelMessage:
         """
         Convert the message to a ModelMessage for AI model interactions, dood!
@@ -916,6 +1032,8 @@ class EnsuredMessage:
             replaceMessageText: Optional replacement text instead of original message text
             stripAtsign: Whether to strip @ from usernames, default is False
             role: The role for the model message (e.g., "user", "assistant"), default is "user"
+            outputFormat: Output format for message text parsing (default: MARKDOWN)
+            useSingleMedia: Whether to use single media content or media list (default: False)
 
         Returns:
             ModelMessage object ready for AI model consumption, dood.
@@ -936,6 +1054,7 @@ class EnsuredMessage:
                 replaceMessageText=replaceMessageText,
                 stripAtsign=stripAtsign,
                 outputFormat=outputFormat,
+                useSingleMedia=useSingleMedia,
             ),
         )
 
@@ -972,6 +1091,7 @@ class EnsuredMessage:
             "threadId": self.threadId,
             "mediaId": self.mediaId,
             "mediaContent": self.mediaContent,
+            "mediaList": self.mediaList,
             "userData": "{...}" if self.userData else None,
         }
         for key in list(ret.keys()):
