@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import magic
 import telegram
+import telegram._files._basemedium as telegramBasemedium
 
 import lib.max_bot.models as maxModels
 import lib.utils as utils
@@ -395,14 +396,14 @@ class BaseBotHandler(CommandHandlerMixin):
                     replyText = replyText[len(addMessagePrefix) :]
                     ensuredReplyMessage.messageText = replyText
             replyMessage = ensuredReplyMessage.getBaseMessage()
-            if isinstance(replyMessage, telegram.Message) and replyMessage.photo:
-                media = await self.processTelegramImage(ensuredReplyMessage, mediaPrompt)
-                ensuredReplyMessage.addMediaProcessingInfo(media)
+            if isinstance(replyMessage, telegram.Message):
+                media = await self.processTelegramMedia(ensuredReplyMessage, mediaPrompt)
+                if media is not None:
+                    ensuredReplyMessage.addMediaProcessingInfo(media)
             elif isinstance(replyMessage, maxModels.Message) and replyMessage.body.attachments:
-                # TODO: Process whole list
                 mediaList = await self.processMaxMedia(ensuredReplyMessage, mediaPrompt)
-                if mediaList:
-                    ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
+                for media in mediaList:
+                    ensuredReplyMessage.addMediaProcessingInfo(media)
 
             await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
 
@@ -973,7 +974,9 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # ret['content'] = llmRet.resultText
 
-    async def processTelegramSticker(self, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
+    async def processTelegramSticker(
+        self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
+    ) -> MediaProcessingInfo:
         """
         Process a sticker attachment from message, dood!
 
@@ -1021,6 +1024,7 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaId=sticker.file_unique_id,
             fileId=sticker.file_id,
             metadata=metadata,
+            prompt=prompt,
         )
 
     async def processTelegramImage(
@@ -1063,6 +1067,129 @@ class BaseBotHandler(CommandHandlerMixin):
             prompt=prompt,
         )
 
+    async def _processTelegramMedia(
+        self,
+        ensuredMessage: EnsuredMessage,
+        *,
+        mediaType: MessageType,
+        media: telegramBasemedium._BaseMedium,
+        prompt: Optional[str] = None,
+    ) -> MediaProcessingInfo:
+        """
+        Process Telegram media attachments (images, videos, stickers, etc.), dood!
+
+        Extracts media information from Telegram's _BaseMedium objects and initiates
+        asynchronous processing through the internal media pipeline. This method is
+        specifically designed for Telegram bot provider and will raise an error if
+        called from other providers.
+
+        Args:
+            ensuredMessage: Wrapped message containing the base Telegram message
+            mediaType: Type of media being processed (IMAGE, VIDEO, STICKER, etc.)
+            media: Telegram media object (_BaseMedium) containing file information
+            prompt: Optional text prompt/caption associated with the media
+
+        Returns:
+            MediaProcessingInfo: Object containing media ID, type, and async processing task
+
+        Raises:
+            RuntimeError: If bot provider is not Telegram or base message is invalid
+        """
+        if self.botProvider != BotProvider.TELEGRAM:
+            raise RuntimeError("Stickers are supported in Telegram only")
+        baseMessage = ensuredMessage.getBaseMessage()
+        if not isinstance(baseMessage, telegram.Message):
+            raise RuntimeError(f"Base message is not Message, but {type(baseMessage)}")
+
+        return await self._processMediaV2(
+            ensuredMessage=ensuredMessage,
+            mediaType=mediaType,
+            mediaId=media.file_unique_id,
+            fileId=media.file_id,
+            metadata=media.to_dict(recursive=True),
+            prompt=prompt,
+        )
+
+    async def processTelegramMedia(
+        self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
+    ) -> Optional[MediaProcessingInfo]:
+        baseMessage = ensuredMessage.getBaseMessage()
+        if not isinstance(baseMessage, telegram.Message):
+            raise RuntimeError(f"Base message is not Message, but {type(baseMessage)}")
+        match ensuredMessage.messageType:
+            case MessageType.TEXT:
+                # No Media
+                return None
+            case MessageType.IMAGE:
+                return await self.processTelegramImage(ensuredMessage, prompt=prompt)
+            case MessageType.STICKER:
+                return await self.processTelegramSticker(ensuredMessage, prompt=prompt)
+            case MessageType.ANIMATION:
+                if baseMessage.animation is None:
+                    logger.error(f"Animation mising in Telegram message {baseMessage}")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.animation,
+                    prompt=prompt,
+                )
+            case MessageType.VIDEO:
+                if baseMessage.video is None:
+                    logger.error(f"Video mising in Telegram message {baseMessage}")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.video,
+                    prompt=prompt,
+                )
+            case MessageType.VIDEO_NOTE:
+                if baseMessage.video_note is None:
+                    logger.error(f"VideoNote mising in Telegram message {baseMessage}")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.video_note,
+                    prompt=prompt,
+                )
+            case MessageType.AUDIO:
+                if baseMessage.audio is None:
+                    logger.error("Audio mising in Telegram message")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.audio,
+                    prompt=prompt,
+                )
+            case MessageType.VOICE:
+                if baseMessage.voice is None:
+                    logger.error("Voice mising in Telegram message")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.voice,
+                    prompt=prompt,
+                )
+            case MessageType.DOCUMENT:
+                if baseMessage.document is None:
+                    logger.error("Document mising in Telegram message")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.document,
+                    prompt=prompt,
+                )
+            case _:
+                # TODO: add support for downloading other types of attachments
+                # For unsupported message types, just log a warning and process caption like text message
+                logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
+                return None
+
     async def processMaxMedia(
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> List[MediaProcessingInfo]:
@@ -1087,9 +1214,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         mediaId=mediaId,
                         fileId=url,
                         prompt=prompt,
-                        metadata={
-                            "token": attachment.payload.token,
-                        },
+                        metadata=attachment.to_dict(recursive=True),
                     )
                 )
 
@@ -1122,10 +1247,50 @@ class BaseBotHandler(CommandHandlerMixin):
                         mediaId=mediaId,
                         fileId=url,
                         prompt=prompt,
-                        metadata={
-                            "wifth": attachment.width,
-                            "height": attachment.height,
-                        },
+                        metadata=attachment.to_dict(recursive=True),
+                    )
+                )
+            elif attachment.type == maxModels.AttachmentType.VIDEO and isinstance(
+                attachment, maxModels.VideoAttachment
+            ):
+                url = attachment.payload.url
+                mediaId = f"{attachment.type}:{attachment.payload.token}"
+                ret.append(
+                    await self._processMediaV2(
+                        ensuredMessage=ensuredMessage,
+                        mediaType=MessageType.VIDEO,
+                        mediaId=mediaId,
+                        fileId=url,
+                        prompt=prompt,
+                        metadata=attachment.to_dict(recursive=True),
+                    )
+                )
+            elif attachment.type == maxModels.AttachmentType.AUDIO and isinstance(
+                attachment, maxModels.AudioAttachment
+            ):
+                url = attachment.payload.url
+                mediaId = f"{attachment.type}:{attachment.payload.token}"
+                ret.append(
+                    await self._processMediaV2(
+                        ensuredMessage=ensuredMessage,
+                        mediaType=MessageType.AUDIO,
+                        mediaId=mediaId,
+                        fileId=url,
+                        prompt=prompt,
+                        metadata=attachment.to_dict(recursive=True),
+                    )
+                )
+            elif attachment.type == maxModels.AttachmentType.FILE and isinstance(attachment, maxModels.FileAttachment):
+                url = attachment.payload.url
+                mediaId = f"{attachment.type}:{attachment.payload.token}"
+                ret.append(
+                    await self._processMediaV2(
+                        ensuredMessage=ensuredMessage,
+                        mediaType=MessageType.DOCUMENT,
+                        mediaId=mediaId,
+                        fileId=url,
+                        prompt=prompt,
+                        metadata=attachment.to_dict(recursive=True),
                     )
                 )
             else:

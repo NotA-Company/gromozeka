@@ -12,7 +12,7 @@ import logging
 import telegram
 
 from internal.bot.common.models import UpdateObjectType
-from internal.bot.models import BotProvider, EnsuredMessage, MessageType
+from internal.bot.models import BotProvider, EnsuredMessage
 from internal.database.models import MessageCategory
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -50,7 +50,9 @@ class MessagePreprocessorHandler(BaseBotHandler):
         # While Each Max Message can contain multiple attachments of different types
         match self.botProvider:
             case BotProvider.TELEGRAM:
-                await self._processTelegramMedia(ensuredMessage)
+                media = await self.processTelegramMedia(ensuredMessage)
+                if media is not None:
+                    ensuredMessage.addMediaProcessingInfo(media, setMediaId=True)
                 baseMessage = ensuredMessage.getBaseMessage()
                 # If it's an automatic forward from linked channel,
                 #  then mark message as channel message, so we can do something in future
@@ -68,26 +70,3 @@ class MessagePreprocessorHandler(BaseBotHandler):
             return HandlerResultStatus.ERROR
 
         return HandlerResultStatus.NEXT
-
-    async def _processTelegramMedia(self, ensuredMessage: EnsuredMessage) -> None:
-        """Process Telegram-specific media content (images and stickers).
-
-        Args:
-            ensuredMessage: Message containing media to process
-        """
-        match ensuredMessage.messageType:
-            case MessageType.TEXT:
-                # No special handling for text messages needed
-                pass
-            case MessageType.IMAGE:
-                media = await self.processTelegramImage(ensuredMessage)
-                ensuredMessage.addMediaProcessingInfo(media)
-            case MessageType.STICKER:
-                media = await self.processTelegramSticker(ensuredMessage)
-                ensuredMessage.addMediaProcessingInfo(media)
-
-            case _:
-                # TODO: add support for downloading other types of attachments
-                # For unsupported message types, just log a warning and process caption like text message
-                logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
-                # return
