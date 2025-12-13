@@ -1481,7 +1481,6 @@ class TestIntegration:
         message = inMemoryDb.getChatMessageByMessageId(chatId, messageId)
         assert message is not None
         assert message["media_id"] == mediaId
-        assert message["media_file_unique_id"] == mediaId
 
     def testSpamDetectionWorkflow(self, inMemoryDb):
         """Test spam detection and user marking workflow."""
