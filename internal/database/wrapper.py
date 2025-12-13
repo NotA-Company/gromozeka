@@ -42,23 +42,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_THREAD_ID: int = 0
 
-MEDIA_TABLE_TABLE_ALIAS = "ma"
-MEDIA_TABLE_PREFIX = "media_"
-MEDIA_FIELDS_WITH_PREFIX = f"""
-{MEDIA_TABLE_TABLE_ALIAS}.file_unique_id as {MEDIA_TABLE_PREFIX}file_unique_id,
-{MEDIA_TABLE_TABLE_ALIAS}.file_id        as {MEDIA_TABLE_PREFIX}file_id,
-{MEDIA_TABLE_TABLE_ALIAS}.file_size      as {MEDIA_TABLE_PREFIX}file_size,
-{MEDIA_TABLE_TABLE_ALIAS}.media_type     as {MEDIA_TABLE_PREFIX}media_type,
-{MEDIA_TABLE_TABLE_ALIAS}.metadata       as {MEDIA_TABLE_PREFIX}metadata,
-{MEDIA_TABLE_TABLE_ALIAS}.status         as {MEDIA_TABLE_PREFIX}status,
-{MEDIA_TABLE_TABLE_ALIAS}.mime_type      as {MEDIA_TABLE_PREFIX}mime_type,
-{MEDIA_TABLE_TABLE_ALIAS}.local_url      as {MEDIA_TABLE_PREFIX}local_url,
-{MEDIA_TABLE_TABLE_ALIAS}.prompt         as {MEDIA_TABLE_PREFIX}prompt,
-{MEDIA_TABLE_TABLE_ALIAS}.description    as {MEDIA_TABLE_PREFIX}description,
-{MEDIA_TABLE_TABLE_ALIAS}.created_at     as {MEDIA_TABLE_PREFIX}created_at,
-{MEDIA_TABLE_TABLE_ALIAS}.updated_at     as {MEDIA_TABLE_PREFIX}updated_at
-""".strip()
-
 
 def convert_timestamp(val: bytes) -> datetime.datetime:
     valStr = val.decode("utf-8")
@@ -1024,9 +1007,8 @@ class DatabaseWrapper:
 
             with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 query = f"""
-                    SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX}  FROM chat_messages c
+                    SELECT c.*, u.username, u.full_name  FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
-                    LEFT JOIN media_attachments ma ON c.media_id IS NOT NULL AND c.media_id = ma.file_unique_id
                     WHERE
                         c.chat_id = :chatId
                         AND (:sinceDateTime   IS NULL OR c.date > :sinceDateTime)
@@ -1070,10 +1052,9 @@ class DatabaseWrapper:
         try:
             with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
-                    f"""
-                    SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
+                    """
+                    SELECT c.*, u.username, u.full_name FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
-                    LEFT JOIN media_attachments ma ON c.media_id IS NOT NULL AND c.media_id = ma.file_unique_id
                     WHERE
                         c.chat_id = :chatId
                         AND c.message_id = :messageId
@@ -1110,10 +1091,9 @@ class DatabaseWrapper:
         try:
             with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
-                    f"""
-                    SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
+                    """
+                    SELECT c.*, u.username, u.full_name FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
-                    LEFT JOIN media_attachments ma ON c.media_id IS NOT NULL AND c.media_id = ma.file_unique_id
                     WHERE
                         c.chat_id = :chatId
                         AND c.root_message_id = :rootMessageId
@@ -1154,10 +1134,9 @@ class DatabaseWrapper:
         try:
             with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
-                    f"""
-                    SELECT c.*, u.username, u.full_name, {MEDIA_FIELDS_WITH_PREFIX} FROM chat_messages c
+                    """
+                    SELECT c.*, u.username, u.full_name FROM chat_messages c
                     JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
-                    LEFT JOIN media_attachments ma ON c.media_id IS NOT NULL AND c.media_id = ma.file_unique_id
                     WHERE
                         c.chat_id = :chatId
                         AND c.user_id = :userId
@@ -2130,7 +2109,7 @@ class DatabaseWrapper:
             with self.getCursor(readonly=False) as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO media_attachments_groups
+                    INSERT INTO media_groups
                         (media_group_id, media_id)
                     VALUES
                         (:mediaGroupId, :mediaId)
@@ -2309,6 +2288,27 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get media attachment: {e}")
             return None
+
+    def getMediaAttachmentsByGroupId(
+        self, mediaGroupId: str, *, dataSource: Optional[str] = None
+    ) -> List[MediaAttachmentDict]:
+        """Get media attachments by group ID from the database."""
+        try:
+            with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
+                cursor.execute(
+                    """
+                    SELECT ma.* FROM media_groups mg
+                    JOIN media_attachments ma ON mg.media_id = ma.file_unique_id
+                    WHERE mg.media_group_id = ?
+                """,
+                    (mediaGroupId,),
+                )
+
+                rows = cursor.fetchall()
+                return [self._validateDictIsMediaAttachmentDict(dict(row)) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get media attachments by group ID: {e}")
+            return []
 
     ###
     # Delayed Tasks manipulation (see bot/models.py)

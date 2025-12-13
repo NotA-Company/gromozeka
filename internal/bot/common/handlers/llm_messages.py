@@ -584,7 +584,7 @@ class LLMMessageHandler(BaseBotHandler):
                                 f"MessageId: {ensuredReply.messageId})"
                             )
                         else:
-                            eStoredReply = EnsuredMessage.fromDBChatMessage(storedReply)
+                            eStoredReply = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
                             self._updateEMessageUserData(eStoredReply)
                             reqMessages.append(
                                 await eStoredReply.toModelMessage(
@@ -700,7 +700,7 @@ class LLMMessageHandler(BaseBotHandler):
                         # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
                     )
                 ):
-                    eMsg = EnsuredMessage.fromDBChatMessage(storedMsg)
+                    eMsg = EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
                     self._updateEMessageUserData(eMsg)
 
                     storedMessages.append(

@@ -4,6 +4,8 @@ Shared Enums: Enums that are used across multiple modules to avoid circular depe
 
 from enum import StrEnum
 
+import lib.max_bot.models as maxModels
+
 
 class MessageType(StrEnum):
     """Message type enum - shared between database and bot modules"""
@@ -27,3 +29,15 @@ class MessageType(StrEnum):
     DOCUMENT = "document"
     # CHAT_PHOTO - https://docs.python-telegram-bot.org/en/stable/telegram.chatphoto.html#telegram.ChatPhoto
     UNKNOWN = "unknown"
+
+    def toMaxUploadType(self) -> maxModels.UploadType:
+        """Convert MessageType to maxModels.UploadType"""
+        match self:
+            case MessageType.IMAGE | MessageType.STICKER:
+                return maxModels.UploadType.IMAGE
+            case MessageType.ANIMATION | MessageType.VIDEO | MessageType.VIDEO_NOTE:
+                return maxModels.UploadType.VIDEO
+            case MessageType.AUDIO | MessageType.VOICE:
+                return maxModels.UploadType.AUDIO
+            case _:
+                return maxModels.UploadType.FILE
