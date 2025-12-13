@@ -31,6 +31,7 @@ from .constants import (
     VERSION,
 )
 from .exceptions import (
+    AttachmentNotReadyError,
     AuthenticationError,
     MaxBotError,
     NetworkError,
@@ -284,6 +285,9 @@ class MaxBotClient:
                 logger.exception(e)
                 raise e
 
+            except AttachmentNotReadyError as e:
+                logger.info(f"Attachment not ready yet, waiting: {e}")
+                
             except MaxBotError as e:
                 last_exception = e
                 logger.warning(f"API error on attempt {attempt + 1}: {type(e).__name__}#{e}, {e.response}")
@@ -1583,6 +1587,7 @@ class MaxBotClient:
                     result = {"data": response.text}
                 else:
                     result = response.json()
+                logger.debug(f"{uploadType} upload result: {result}")
                 # {"error_msg":"...","error_code":"4","error_data":"BAD_REQUEST"}'
                 if "error_msg" in result:
                     logger.error(result)

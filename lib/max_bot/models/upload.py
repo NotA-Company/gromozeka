@@ -404,7 +404,10 @@ class UploadedPhoto(UploadedAttachment):
 
 
 class FileAttachmentRequest(AttachmentRequest):
-    """TODO: write docstring"""
+    """Request for sending a file attachment in Max Bot API.
+
+    Extends AttachmentRequest specifically for file attachments with uploaded file information.
+    """
 
     __slots__ = ("payload",)
 
@@ -414,7 +417,14 @@ class FileAttachmentRequest(AttachmentRequest):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Self:
-        """TODO: write docstring"""
+        """Create FileAttachmentRequest instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            FileAttachmentRequest: New FileAttachmentRequest instance
+        """
         return cls(
             payload=UploadedInfo.from_dict(data.get("payload", {})),
             api_kwargs=cls._getExtraKwargs(data),
@@ -446,7 +456,14 @@ class FileUploadResult(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Self:
-        """TODO: write docstring"""
+        """Create FileUploadResult instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            FileUploadResult: New FileUploadResult instance
+        """
         return cls(
             fileId=int(data.get("fileId", 0)),
             token=data.get("token", ""),
@@ -477,15 +494,19 @@ class UploadedFile(UploadedAttachment):
         self.payload: FileUploadResult = payload
 
     def toAttachmentRequest(self) -> FileAttachmentRequest:
-        """TODO: write docstring"""
-        if self.uploadEndpoint.token is None:
-            raise ValueError("Upload endpoint token is None")
+        """Convert uploaded file to file attachment request.
 
-        return FileAttachmentRequest(payload=UploadedInfo(token=self.uploadEndpoint.token))
+        Returns:
+            FileAttachmentRequest: File attachment request object for sending the uploaded file
+        """
+        return FileAttachmentRequest(payload=UploadedInfo(token=self.payload.token))
 
 
 class VideoAttachmentRequest(AttachmentRequest):
-    """TODO: write docstring"""
+    """Request for sending a video attachment in Max Bot API.
+
+    Extends AttachmentRequest specifically for video attachments with uploaded video information.
+    """
 
     __slots__ = ("payload",)
 
@@ -495,7 +516,14 @@ class VideoAttachmentRequest(AttachmentRequest):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Self:
-        """TODO: write docstring"""
+        """Create VideoAttachmentRequest instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            VideoAttachmentRequest: New VideoAttachmentRequest instance
+        """
         return cls(
             payload=UploadedInfo.from_dict(data.get("payload", {})),
             api_kwargs=cls._getExtraKwargs(data),
@@ -525,7 +553,14 @@ class UploadedVideo(UploadedAttachment):
         self.payload: Dict[str, Any] = payload
 
     def toAttachmentRequest(self) -> VideoAttachmentRequest:
-        """TODO: write docstring"""
+        """Convert uploaded video to video attachment request.
+
+        Returns:
+            VideoAttachmentRequest: Video attachment request object for sending the uploaded video
+
+        Raises:
+            ValueError: If upload endpoint token is None
+        """
         if self.uploadEndpoint.token is None:
             raise ValueError("Upload endpoint token is None")
 
@@ -533,7 +568,10 @@ class UploadedVideo(UploadedAttachment):
 
 
 class AudioAttachmentRequest(AttachmentRequest):
-    """TODO: write docstring"""
+    """Request for sending an audio attachment in Max Bot API.
+
+    Extends AttachmentRequest specifically for audio attachments with uploaded audio information.
+    """
 
     __slots__ = ("payload",)
 
@@ -543,7 +581,14 @@ class AudioAttachmentRequest(AttachmentRequest):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Self:
-        """TODO: write docstring"""
+        """Create AudioAttachmentRequest instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            AudioAttachmentRequest: New AudioAttachmentRequest instance
+        """
         return cls(
             payload=UploadedInfo.from_dict(data.get("payload", {})),
             api_kwargs=cls._getExtraKwargs(data),
@@ -573,7 +618,14 @@ class UploadedAudio(UploadedAttachment):
         self.payload: Dict[str, Any] = payload
 
     def toAttachmentRequest(self) -> AudioAttachmentRequest:
-        """TODO: write docstring"""
+        """Convert uploaded audio to audio attachment request.
+
+        Returns:
+            AudioAttachmentRequest: Audio attachment request object for sending the uploaded audio
+
+        Raises:
+            ValueError: If upload endpoint token is None
+        """
         if self.uploadEndpoint.token is None:
             raise ValueError("Upload endpoint token is None")
 

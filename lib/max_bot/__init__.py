@@ -37,6 +37,7 @@ from .exceptions import (
     RateLimitError,
     ServiceUnavailableError,
     ValidationError,
+    AttachmentNotReadyError,
 )
 from .utils import MessageLinkToMessage
 
@@ -63,6 +64,7 @@ __all__ = [
     "ServiceUnavailableError",
     "NetworkError",
     "ConfigurationError",
+    "AttachmentNotReadyError",
     # Utils
     "MessageLinkToMessage",
 ]
