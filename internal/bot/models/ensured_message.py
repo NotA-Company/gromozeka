@@ -368,7 +368,6 @@ class EnsuredMessage:
         "isTopicMessage",
         "mediaContent",
         "mediaId",
-        "_mediaProcessingInfo",
         "userData",
         "_mentionCheckResult",
         "formatEntities",
@@ -439,10 +438,9 @@ class EnsuredMessage:
         self.isTopicMessage: bool = False
         """If this message is topic message"""
 
-        # TODO: Deprecated, use megiaGroupId logic
+        # TODO: should we deprecate it in favor of mediaList?
         self.mediaContent: Optional[str] = None
         self.mediaId: Optional[str] = None
-        self._mediaProcessingInfo: Optional[MediaProcessingInfo] = None
 
         self.mediaGroupId: Optional[str] = mediaGroupId
         """Id of Media group if any"""
@@ -712,7 +710,9 @@ class EnsuredMessage:
         return ensuredMessage
 
     @classmethod
-    def fromDBChatMessage(cls, data: ChatMessageDict) -> "EnsuredMessage":
+    def fromDBChatMessage(
+        cls, data: ChatMessageDict, db: DatabaseWrapper, forceGetAllMedia: bool = False
+    ) -> "EnsuredMessage":
         """
         Create an EnsuredMessage from a database ChatMessageDict, dood!
 
@@ -769,8 +769,20 @@ class EnsuredMessage:
         ensuredMessage.threadId = data["thread_id"]
         ensuredMessage.isTopicMessage = data["thread_id"] != 0
 
-        ensuredMessage.mediaContent = data["media_description"]
         ensuredMessage.mediaId = data["media_id"]
+
+        if data["media_group_id"] is not None and (not data["media_id"] or forceGetAllMedia):
+            for media in db.getMediaAttachmentsByGroupId(data["media_group_id"]):
+                ensuredMessage.addMedia(
+                    mediaId=media["file_unique_id"],
+                    mediaContent=media["description"],
+                    setMediaId=False,
+                )
+                if ensuredMessage.mediaId == media["file_unique_id"]:
+                    ensuredMessage.mediaContent = media["description"]
+        elif data["media_id"] is not None:
+            # If we aren't getting list of attachments, add media_it to list
+            ensuredMessage.addMedia(mediaId=data["media_id"], setMediaId=True)
 
         # logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
         return ensuredMessage
@@ -824,25 +836,26 @@ class EnsuredMessage:
 
         return FormatEntity.parseText(self.messageText, self.formatEntities, outputFormat)
 
-    def addMediaId(self, mediaId: str):
+    def addMedia(self, mediaId: str, mediaContent: Optional[str] = None, setMediaId: bool = True):
         """
         Set the media identifier for this message, dood!
 
         Args:
             mediaId: Unique identifier for the media attachment
         """
-        self.mediaId = mediaId
-        self.mediaList.append(MediaContent(id=mediaId, content=None, processingInfo=None))
+        self.mediaList.append(MediaContent(id=mediaId, content=mediaContent, processingInfo=None))
 
-    def addMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo):
+        if setMediaId:
+            self.mediaId = mediaId
+            self.mediaContent = mediaContent
+
+    def addMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo, setMediaId: bool = True):
         """
         Set media processing information and extract media ID, dood!
 
         Args:
             mediaProcessingInfo: Object containing media processing details and ID
         """
-        self._mediaProcessingInfo = mediaProcessingInfo
-        self.mediaId = mediaProcessingInfo.id
         self.mediaList.append(
             MediaContent(
                 id=mediaProcessingInfo.id,
@@ -850,6 +863,9 @@ class EnsuredMessage:
                 processingInfo=mediaProcessingInfo,
             )
         )
+
+        if setMediaId:
+            self.mediaId = mediaProcessingInfo.id
 
     async def updateMediaContent(self, db: DatabaseWrapper) -> None:
         """
@@ -869,9 +885,6 @@ class EnsuredMessage:
             mediaAttachment = await self.__class__._awaitMedia(db, media.id)
             if mediaAttachment and mediaAttachment.get("description", None) is not None:
                 media.content = mediaAttachment["description"]
-
-        if self._mediaProcessingInfo:
-            await self._mediaProcessingInfo.awaitResult()
 
         if self.mediaId is None:
             return
@@ -940,7 +953,7 @@ class EnsuredMessage:
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
-        useSingleMedia: bool = False,
+        useSingleMedia: bool = True,
     ) -> str:
         """
         Format the message for LLM consumption, dood!
@@ -955,7 +968,7 @@ class EnsuredMessage:
             replaceMessageText: Optional replacement text instead of original message text
             stripAtsign: Whether to strip @ from usernames, default is False
             outputFormat: Output format for message text parsing (default: MARKDOWN)
-            useSingleMedia: Whether to use single media content or media list (default: False)
+            useSingleMedia: Whether to use single media content or media list (default: True)
 
         Returns:
             Formatted string representation of the message for LLM processing
@@ -966,7 +979,7 @@ class EnsuredMessage:
         await self.updateMediaContent(db)
         mediaContent = self.mediaContent
         if not useSingleMedia or self.mediaContent is None:
-            mediaContent = [v.content for v in self.mediaList]
+            mediaContent = [v.content for v in self.mediaList if v.content]
 
         messageText = self.formatMessageText(outputFormat) if replaceMessageText is None else replaceMessageText
         userName = self.sender.username
@@ -1016,7 +1029,7 @@ class EnsuredMessage:
         stripAtsign: bool = False,
         role: str = "user",
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
-        useSingleMedia: bool = False,
+        useSingleMedia: bool = True,
     ) -> ModelMessage:
         """
         Convert the message to a ModelMessage for AI model interactions, dood!
@@ -1033,7 +1046,7 @@ class EnsuredMessage:
             stripAtsign: Whether to strip @ from usernames, default is False
             role: The role for the model message (e.g., "user", "assistant"), default is "user"
             outputFormat: Output format for message text parsing (default: MARKDOWN)
-            useSingleMedia: Whether to use single media content or media list (default: False)
+            useSingleMedia: Whether to use single media content or media list (default: True)
 
         Returns:
             ModelMessage object ready for AI model consumption, dood.

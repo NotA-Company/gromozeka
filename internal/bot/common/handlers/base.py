@@ -24,7 +24,7 @@ import hashlib
 import json
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import magic
 import telegram
@@ -366,6 +366,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
     ) -> List[EnsuredMessage]:
         if self._bot is None:
             raise ValueError("Bot is not initialized")
@@ -384,6 +385,7 @@ class BaseBotHandler(CommandHandlerMixin):
             chatId=chatId,
             threadId=threadId,
             notify=notify,
+            attachmentList=attachmentList,
         )
 
         for ensuredReplyMessage in ret:
@@ -470,7 +472,7 @@ class BaseBotHandler(CommandHandlerMixin):
         ]
 
         if dbMessage["root_message_id"] is None:
-            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage)
+            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
             self._updateEMessageUserData(eMessage)
             return ret + [
                 await eMessage.toModelMessage(
@@ -495,14 +497,14 @@ class BaseBotHandler(CommandHandlerMixin):
         keepFirstN = 1
         keepLastN = 1
 
-        eRootMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[0])
+        eRootMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[0], self.db)
         self._updateEMessageUserData(eRootMessage)
         condenseCache = eRootMessage.metadata.get("condensedThread", [])
         if condenseCache and condenseThread:
             # First - add skipped messages to result.
             # It should be ony starting message
             for i in range(min(keepFirstN, len(dbMessageList))):
-                eMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[i])
+                eMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
                 self._updateEMessageUserData(eMessage)
                 ret.append(
                     await eMessage.toModelMessage(
@@ -529,7 +531,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 dbMessageList = dbMessageList[skippedMessages:]
 
         for dbMessage in dbMessageList:
-            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage)
+            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
             self._updateEMessageUserData(eMessage)
             ret.append(
                 await eMessage.toModelMessage(
@@ -775,6 +777,7 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaId=message.mediaId,
             markup=utils.jsonDumps(FormatEntity.toDictList(message.formatEntities)),
             metadata=utils.jsonDumps(message.metadata),
+            mediaGroupId=message.mediaGroupId,
         )
 
         return True
@@ -1169,6 +1172,11 @@ class BaseBotHandler(CommandHandlerMixin):
         mimeType: Optional[str] = None  # To be filled with downloaded media MIME type
 
         logger.debug(f"Processing media {ret.type}#{ret.id} with fileId:{fileId}...")
+
+        # We are ensuring it here to properly handle case, when this media already in database
+        # But for different message
+        self.db.ensureMediaInGroup(mediaId=ret.id, mediaGroupId=ensuredMessage.mediaGroupId)
+
         # First check if we have the photo in the database already
         mediaAttachment = self.db.getMediaAttachment(ret.id)
         hasMediaAttachment = mediaAttachment is not None
@@ -1264,8 +1272,6 @@ class BaseBotHandler(CommandHandlerMixin):
                 fileSize=None,
                 description=None,
             )
-
-        self.db.ensureMediaInGroup(mediaId=ret.id, mediaGroupId=ensuredMessage.mediaGroupId)
 
         # Need to parse image content with LLM
         if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool():

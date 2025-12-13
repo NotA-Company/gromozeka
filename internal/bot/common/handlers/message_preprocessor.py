@@ -58,10 +58,8 @@ class MessagePreprocessorHandler(BaseBotHandler):
                 if isinstance(baseMessage, telegram.Message) and baseMessage.is_automatic_forward:
                     messageCategory = MessageCategory.CHANNEL
             case BotProvider.MAX:
-                mediaList = await self.processMaxMedia(ensuredMessage)
-                if mediaList:
-                    # TODO: Allow use all media
-                    ensuredMessage.addMediaProcessingInfo(mediaList[0])
+                for media in await self.processMaxMedia(ensuredMessage):
+                    ensuredMessage.addMediaProcessingInfo(media, setMediaId=False)
             case _:
                 logger.error(f"Unsupported bot provider: {self.botProvider}")
 

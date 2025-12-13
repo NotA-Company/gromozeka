@@ -87,20 +87,6 @@ class ChatMessageDict(TypedDict):
     username: str
     full_name: str
 
-    # From Media Info Table
-    media_file_unique_id: Optional[str]
-    media_file_id: Optional[str]
-    media_file_size: Optional[int]
-    media_media_type: Optional[str]
-    media_metadata: Optional[str]
-    media_status: Optional[Union[str, MediaStatus]]
-    media_mime_type: Optional[str]
-    media_local_url: Optional[str]
-    media_prompt: Optional[str]
-    media_description: Optional[str]
-    media_created_at: Optional[datetime.datetime]
-    media_updated_at: Optional[datetime.datetime]
-
 
 class ChatUserDict(TypedDict):
     # From chat_user table

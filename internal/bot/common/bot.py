@@ -5,9 +5,10 @@ with message handling, media processing, and administrative operations.
 """
 
 import datetime
+import hashlib
 import logging
 from collections.abc import Sequence
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import magic
 import telegram
@@ -19,7 +20,7 @@ from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import BotProvider, ChatType, EnsuredMessage, MessageRecipient, MessageSender
 from internal.database.models import ChatInfoDict
-from internal.models import MessageIdType
+from internal.models import MessageIdType, MessageType
 from internal.services.cache import CacheService
 from lib import utils
 from lib.markdown.parser import markdownToMarkdownV2
@@ -282,6 +283,7 @@ class TheBot:
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
     ) -> List[EnsuredMessage]:
         """Send message as reply with text and/or photo.
 
@@ -326,6 +328,7 @@ class TheBot:
                     chatId=chatId,
                     threadId=threadId,
                     notify=notify,
+                    attachmentList=attachmentList,
                 )
 
             case BotProvider.MAX:
@@ -346,6 +349,7 @@ class TheBot:
                     chatId=chatId,
                     threadId=threadId,
                     notify=notify,
+                    attachmentList=attachmentList,
                 )
             case _:
                 raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
@@ -367,9 +371,17 @@ class TheBot:
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
     ) -> List[EnsuredMessage]:
         if self.maxBot is None:
             raise RuntimeError("Max bot is Undefined")
+
+        if photoData is not None:
+            if attachmentList is None:
+                attachmentList = []
+            else:
+                attachmentList = list(attachmentList)
+            attachmentList.append((photoData, MessageType.IMAGE))
 
         replyToMessageId: Optional[MessageIdType] = None
         chatType: ChatType = ChatType.PRIVATE
@@ -412,23 +424,18 @@ class TheBot:
         attachments: Optional[List[maxModels.AttachmentRequest]] = []
 
         try:
-            if photoData is not None:
-                mimeType = magic.from_buffer(photoData, mime=True)
-                ext = mimeType.split("/")[1]
-                ret = await self.maxBot.uploadFile(
-                    filename=f"generated_image.{ext}",
-                    data=photoData,
-                    mimeType=mimeType,
-                    uploadType=maxModels.UploadType.IMAGE,
-                )
-                if isinstance(ret, maxModels.UploadedPhoto):
-                    attachments.append(
-                        maxModels.PhotoAttachmentRequest(
-                            payload=maxModels.PhotoAttachmentRequestPayload(
-                                photos=ret.payload.photos,
-                            )
-                        )
+            if attachmentList:
+                for mediaData, mediaType in attachmentList:
+                    mimeType = magic.from_buffer(mediaData, mime=True)
+                    digest = hashlib.sha256(mediaData).hexdigest()
+                    ext = mimeType.split("/")[1]
+                    ret = await self.maxBot.uploadFile(
+                        filename=f"{mediaType}-{digest}.{ext}",
+                        data=mediaData,
+                        mimeType=mimeType,
+                        uploadType=mediaType.toMaxUploadType(),
                     )
+                    attachments.append(ret.toAttachmentRequest())
 
             if messageText is not None or attachments:
                 # Send Message
@@ -508,6 +515,7 @@ class TheBot:
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
     ) -> List[EnsuredMessage]:
         """Send message via Telegram platform.
 
@@ -532,9 +540,14 @@ class TheBot:
             RuntimeError: If Telegram bot client is not configured
         """
 
-        if photoData is None and messageText is None:
-            logger.error("No message text or photo data provided")
-            raise ValueError("No message text or photo data provided")
+        if photoData is None and messageText is None and attachmentList is None:
+            logger.error("No message text or media data provided")
+            raise ValueError("No message text or media data provided")
+
+        if photoData is not None and attachmentList is not None:
+            attachmentList = list(attachmentList)
+            attachmentList.append((photoData, MessageType.IMAGE))
+            photoData = None
 
         replyMessageList: List[telegram.Message] = []
         ensuredReplyList: List[EnsuredMessage] = []
@@ -610,6 +623,53 @@ class TheBot:
                     )
                 if replyMessage is not None:
                     replyMessageList.append(replyMessage)
+
+            elif attachmentList is not None:
+                # Send attachments
+                media: List[
+                    Union[
+                        telegram.InputMediaAudio,
+                        telegram.InputMediaDocument,
+                        telegram.InputMediaPhoto,
+                        telegram.InputMediaVideo,
+                    ]
+                ] = []
+                for mediaData, mediaType in attachmentList:
+                    match mediaType:
+                        case MessageType.IMAGE | MessageType.STICKER:
+                            media.append(telegram.InputMediaPhoto(mediaData))
+                        case MessageType.ANIMATION | MessageType.VIDEO | MessageType.VIDEO_NOTE:
+                            media.append(telegram.InputMediaVideo(mediaData))
+                        case MessageType.AUDIO | MessageType.VOICE:
+                            media.append(telegram.InputMediaAudio(mediaData))
+                        case _:
+                            media.append(telegram.InputMediaDocument(mediaData))
+
+                replyMessages: Optional[Sequence[telegram.Message]] = None
+                if tryMarkdownV2 and messageText is not None:
+                    try:
+                        messageTextParsed = markdownToMarkdownV2(addMessagePrefix + messageText)
+                        # logger.debug(f"Sending MarkdownV2: {replyText}")
+                        # TODO: One day start using self.tgBot
+                        replyMessages = await self.tgBot.send_media_group(
+                            media=media,
+                            caption=messageTextParsed,
+                            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
+                            **replyKwargs,
+                        )
+                    except Exception as e:
+                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
+                        # Probably error in markdown formatting, fallback to raw text
+
+                if replyMessages is None:
+                    _messageText = messageText if messageText is not None else ""
+                    replyMessages = await self.tgBot.send_media_group(
+                        media=media,
+                        caption=addMessagePrefix + _messageText,
+                        **replyKwargs,
+                    )
+                if replyMessages is not None:
+                    replyMessageList.extend(replyMessages)
 
             elif messageText is not None:
                 # Send text

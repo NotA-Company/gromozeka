@@ -40,7 +40,7 @@ class Migration008AddMediaGroupSupport(BaseMigration):
         # Create media_group table
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS media_group (
+            CREATE TABLE IF NOT EXISTS media_groups (
                 media_group_id TEXT NOT NULL,
                 media_id TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -61,7 +61,7 @@ class Migration008AddMediaGroupSupport(BaseMigration):
             cursor: SQLite cursor to execute SQL commands
         """
         # Drop media_group table
-        cursor.execute("DROP TABLE IF EXISTS media_group")
+        cursor.execute("DROP TABLE IF EXISTS media_groups")
 
         # Remove media_group_id column from chat_messages table
         cursor.execute(
