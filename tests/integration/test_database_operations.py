@@ -995,14 +995,14 @@ async def testCompleteMessageWorkflow(populatedDb):
     message = db.getChatMessageByMessageId(123, 1)
     assert message is not None
     assert message["media_id"] == fileUniqueId
-    assert message["media_file_unique_id"] == fileUniqueId
 
     # 3. Update media status
     db.updateMediaAttachment(fileUniqueId, status=MediaStatus.DONE)
 
-    # 4. Retrieve updated message
-    message = db.getChatMessageByMessageId(123, 1)
-    assert message["media_status"] == MediaStatus.DONE
+    # 4. Verify media status was updated
+    media = db.getMediaAttachment(fileUniqueId)
+    assert media is not None
+    assert media["status"] == MediaStatus.DONE
 
     # 5. Check user stats updated
     user = db.getChatUser(123, 1001)

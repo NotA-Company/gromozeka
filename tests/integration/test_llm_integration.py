@@ -42,6 +42,7 @@ def mockModel():
     model.modelVersion = "1.0"
     model.temperature = 0.7
     model.contextSize = 4096
+    model.getEstimateTokensCount = Mock(return_value=100)
     return model
 
 
@@ -53,6 +54,7 @@ def mockFallbackModel():
     model.modelVersion = "1.0"
     model.temperature = 0.7
     model.contextSize = 4096
+    model.getEstimateTokensCount = Mock(return_value=100)
     return model
 
 
