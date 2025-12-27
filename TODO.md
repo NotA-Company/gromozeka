@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] Add support for deleteing join message
 - [x] Add support for cache condenced context + reuse it
 - [ ] Think, how to add summarization of chat to context of random answers
 - [ ] ensuredMessage: support miltiple media
