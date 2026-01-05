@@ -1,5 +1,24 @@
 # Our TODO list
+- [ ] Fix spam message
+- [ ] Add spammer mark
 - [ ] Add support for deleteing join message
+2025-12-27 15:26:52,074 - lib.ai.providers.basic_openai_provider:155 - ERROR - Error running OpenAI-compatible model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}
+2025-12-27 15:26:52,074 - lib.ai.abstract:114 - ERROR - Error running model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}
+
+Error running OpenAI-compatible model deepseek/deepseek-chat-v3.1: Error code: 400
+- {'error': {'message': 'This endpoint\'s maximum context length is 163840 tokens. However, you requested about 221324 tokens (220500 of text input, 824 of tool i
+nput). Please reduce the length of either one, or use the "middle-out" transform to compress your prompt automatically.', 'code': 400, 'metadata': {'provider_name
+': None}}}
+
+
+{
+  "image_prompt": "...",
+  "image_description": "..."
+}
+
+2025-12-27 15:53:36,875 - internal.bot.telegram.application:181 - ERROR - Media#zzzz already present in database and it is not an image but sticker
+Traceback (most recent call last):
+
 - [x] Add support for cache condenced context + reuse it
 - [ ] Think, how to add summarization of chat to context of random answers
 - [ ] ensuredMessage: support miltiple media
