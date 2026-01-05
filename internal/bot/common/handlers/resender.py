@@ -251,7 +251,22 @@ class ResenderHandler(BaseBotHandler):
         self.queueService = QueueService.getInstance()
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
 
+        self.isExiting = False
+        self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
         logger.debug(f"ResenderHandler initialized with {len(self.jobs)} jobs")
+
+    async def _dtOnExit(self, task: DelayedTask) -> None:
+        """
+        Handle the exit event for the resender handler.
+
+        This method is called when the application is shutting down to clean up
+        resources and stop any active tasks.
+
+        Args:
+            task: Delayed task object containing job execution context
+        """
+        self.isExiting = True
+        logger.debug("Exiting resender handler")
 
     async def _dtCronJob(self, task: DelayedTask) -> None:
         """
@@ -395,11 +410,16 @@ class ResenderHandler(BaseBotHandler):
                                 attachmentList=attachmentList,
                             )
 
+                            await asyncio.sleep(messageSendDelay)
+                            messageSendDelay = min(messageSendDelay * 2, messageSendDelay + 1, 10)
+
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
                             job.lastMessageDate = message["date"]
                         self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
-                        await asyncio.sleep(messageSendDelay)
-                        messageSendDelay = min(messageSendDelay * 2, messageSendDelay + 1, 10)
+
+                        if self.isExiting:
+                            logger.info("Exiting resender loop as bot is exiting...")
+                            break
                     except Exception as e:
                         logger.error(f"Error processing job {job}: {e}")
                         logger.exception(e)
