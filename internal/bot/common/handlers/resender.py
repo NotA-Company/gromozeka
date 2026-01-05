@@ -279,6 +279,18 @@ class ResenderHandler(BaseBotHandler):
         Args:
             task: Delayed task object containing job execution context
         """
+
+        # Run it in background to not block Queue Service delayed tasks processing
+        await self.queueService.addBackgroundTask(asyncio.create_task(self.resendCronJob()))
+    
+    async def resendCronJob(self) -> None:
+        """
+        Execute the periodic resend job check and processing.
+
+        This method is called by the queue service on a schedule to check for new
+        messages that match any configured resend job criteria and resend them
+        to their target chats.
+        """
         logger.debug("Cron job started")
         for job in self.jobs:
             if job.isLocked():
