@@ -310,7 +310,7 @@ class MediaHandler(BaseBotHandler):
             if storedReply is None:
                 logger.error(f"Failed to get parent message #{ensuredReply.recipient.id}:{ensuredReply.messageId}")
             else:
-                eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply)
+                eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
                 await eStoredMsg.updateMediaContent(self.db)
                 response = eStoredMsg.mediaContent
                 if response is None or response == "":
@@ -618,7 +618,7 @@ class MediaHandler(BaseBotHandler):
                     limit=10,
                 )
             ):
-                eMsg = EnsuredMessage.fromDBChatMessage(msg)
+                eMsg = EnsuredMessage.fromDBChatMessage(msg, self.db)
                 self._updateEMessageUserData(eMsg)
                 latestMessages.append(
                     await eMsg.toModelMessage(

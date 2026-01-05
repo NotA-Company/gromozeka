@@ -318,15 +318,24 @@ class TelegramBotApplication:
 
         random.seed()
 
-        # Create application
-        self.application = (
+        botConfig = self.configManager.getBotConfig()
+
+        appBuilder = (
             Application.builder()
             .token(self.botToken)
             .concurrent_updates(PerTopicUpdateProcessor(128))
             .post_init(self.postInit)
             .post_stop(self.postStop)
-            .build()
+            .local_mode(botConfig.get("localMode", False))
         )
+
+        baseUrl = botConfig.get("baseUrl", None)
+        if baseUrl is not None:
+            appBuilder = appBuilder.base_url(baseUrl)
+            logger.info(f"Base URL set to {baseUrl}")
+
+        # Create application
+        self.application = appBuilder.build()
 
         # Setup handlers
         self.setupHandlers()

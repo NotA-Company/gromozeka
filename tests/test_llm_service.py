@@ -47,6 +47,7 @@ def mockModel():
     model.temperature = 0.7
     model.contextSize = 4096
     model.generateTextWithFallBack = createAsyncMock()
+    model.getEstimateTokensCount = Mock(return_value=100)
     return model
 
 
@@ -59,6 +60,7 @@ def mockFallbackModel():
     model.temperature = 0.7
     model.contextSize = 4096
     model.generateText = createAsyncMock()
+    model.getEstimateTokensCount = Mock(return_value=100)
     return model
 
 
@@ -758,6 +760,8 @@ async def testToolCallMessageConstruction(llmService, mockModel, mockFallbackMod
 
     mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
 
+    originalMessageCount = len(sampleMessages)
+
     await llmService.generateTextViaLLM(
         model=mockModel,
         fallbackModel=mockFallbackModel,
@@ -770,7 +774,7 @@ async def testToolCallMessageConstruction(llmService, mockModel, mockFallbackMod
     messagesArg = secondCallArgs.args[0]
 
     # Should have: original messages + assistant message + tool result
-    assert len(messagesArg) > len(sampleMessages)
+    assert len(messagesArg) > originalMessageCount
 
     # Find assistant message with tool calls
     assistantMsg = [m for m in messagesArg if m.role == "assistant" and m.toolCalls]

@@ -15,6 +15,7 @@ import httpx
 
 from lib import utils
 from lib.max_bot.models import AttachmentRequest, Button, Keyboard
+from lib.max_bot.models.upload import FileUploadResult, UploadedAudio, UploadedFile, UploadedVideo
 
 from .constants import (
     API_BASE_URL,
@@ -30,6 +31,7 @@ from .constants import (
     VERSION,
 )
 from .exceptions import (
+    AttachmentNotReadyError,
     AuthenticationError,
     MaxBotError,
     NetworkError,
@@ -282,6 +284,9 @@ class MaxBotClient:
                 logger.error(f"Validation error: {e}")
                 logger.exception(e)
                 raise e
+
+            except AttachmentNotReadyError as e:
+                logger.info(f"Attachment not ready yet, waiting: {e}")
 
             except MaxBotError as e:
                 last_exception = e
@@ -1578,15 +1583,27 @@ class MaxBotClient:
                 # logger.debug(response.request)
                 # logger.debug(response.request.headers)
 
-                result = response.json()
+                if uploadType in [UploadType.VIDEO, UploadType.AUDIO]:
+                    result = {"data": response.text}
+                else:
+                    result = response.json()
+                logger.debug(f"{uploadType} upload result: {result}")
                 # {"error_msg":"...","error_code":"4","error_data":"BAD_REQUEST"}'
                 if "error_msg" in result:
                     logger.error(result)
-                    raise MaxBotError(message=result.get["error_msg"], code=result.get("error_code"), response=result)
+                    raise MaxBotError(
+                        message=str(result.get("error_msg")), code=result.get("error_code"), response=result
+                    )
 
                 match uploadType:
                     case UploadType.IMAGE:
                         return UploadedPhoto(uploadEndpoint=uploadInfo, payload=PhotoUploadResult.from_dict(result))
+                    case UploadType.FILE:
+                        return UploadedFile(uploadEndpoint=uploadInfo, payload=FileUploadResult.from_dict(result))
+                    case UploadType.AUDIO:
+                        return UploadedAudio(uploadEndpoint=uploadInfo, payload=result)
+                    case UploadType.VIDEO:
+                        return UploadedVideo(uploadEndpoint=uploadInfo, payload=result)
                     case _:
                         logger.error(f"Unsupported UploadType {uploadType}, result: {result}")
                         return UploadedAttachment(uploadEndpoint=uploadInfo, api_kwargs=result)

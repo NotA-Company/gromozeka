@@ -24,10 +24,11 @@ import hashlib
 import json
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import magic
 import telegram
+import telegram._files._basemedium as telegramBasemedium
 
 import lib.max_bot.models as maxModels
 import lib.utils as utils
@@ -43,19 +44,22 @@ from internal.bot.models import (
     CommandHandlerInfoV2,
     CommandHandlerMixin,
     EnsuredMessage,
+    FormatEntity,
+    LLMMessageFormat,
     MediaProcessingInfo,
     MentionCheckResult,
     MessageRecipient,
     MessageSender,
     MessageType,
+    OutputFormat,
     UserMetadataDict,
 )
-from internal.bot.models.text_formatter import FormatEntity
 from internal.config.manager import ConfigManager
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType
 from internal.services.cache import CacheService
+from internal.services.llm import LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from internal.services.storage import StorageService
 from lib.ai import (
@@ -145,6 +149,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self.cache = CacheService.getInstance()
         self.queueService = QueueService.getInstance()
         self.storage = StorageService.getInstance()
+        self.llmService = LLMService.getInstance()
 
         # self._tgBot: Optional[telegramExt.ExtBot] = None
         # self._maxBot: Optional[libMax.MaxBotClient] = None
@@ -362,6 +367,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
     ) -> List[EnsuredMessage]:
         if self._bot is None:
             raise ValueError("Bot is not initialized")
@@ -380,6 +386,7 @@ class BaseBotHandler(CommandHandlerMixin):
             chatId=chatId,
             threadId=threadId,
             notify=notify,
+            attachmentList=attachmentList,
         )
 
         for ensuredReplyMessage in ret:
@@ -389,14 +396,14 @@ class BaseBotHandler(CommandHandlerMixin):
                     replyText = replyText[len(addMessagePrefix) :]
                     ensuredReplyMessage.messageText = replyText
             replyMessage = ensuredReplyMessage.getBaseMessage()
-            if isinstance(replyMessage, telegram.Message) and replyMessage.photo:
-                media = await self.processTelegramImage(ensuredReplyMessage, mediaPrompt)
-                ensuredReplyMessage.addMediaProcessingInfo(media)
+            if isinstance(replyMessage, telegram.Message):
+                media = await self.processTelegramMedia(ensuredReplyMessage, mediaPrompt)
+                if media is not None:
+                    ensuredReplyMessage.addMediaProcessingInfo(media)
             elif isinstance(replyMessage, maxModels.Message) and replyMessage.body.attachments:
-                # TODO: Process whole list
                 mediaList = await self.processMaxMedia(ensuredReplyMessage, mediaPrompt)
-                if mediaList:
-                    ensuredReplyMessage.addMediaProcessingInfo(mediaList[-1])
+                for media in mediaList:
+                    ensuredReplyMessage.addMediaProcessingInfo(media)
 
             await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
 
@@ -429,6 +436,178 @@ class BaseBotHandler(CommandHandlerMixin):
         if self._bot is None:
             raise ValueError("Bot is not initialized")
         return await self._bot.deleteMessagesById(chatId=chatId, messageIds=messageIds)
+
+    ###
+    # Chat Management
+    ###
+
+    async def getThreadByMessageForLLM(
+        self,
+        ensuredMessage: EnsuredMessage,
+        condenseThread: bool = True,
+    ) -> Sequence[ModelMessage]:
+
+        dbMessage = self.db.getChatMessageByMessageId(ensuredMessage.recipient.id, ensuredMessage.messageId)
+        if dbMessage is None:
+            return []
+
+        chatId = dbMessage["chat_id"]
+        chatSettings = self.getChatSettings(chatId, chatType=ensuredMessage.recipient.chatType)
+        llmMFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+
+        outputFormat = OutputFormat.MARKDOWN
+        match self.botProvider:
+            case BotProvider.TELEGRAM:
+                outputFormat = OutputFormat.MARKDOWN_TG
+            case BotProvider.MAX:
+                outputFormat = OutputFormat.MARKDOWN_MAX
+
+        # TODO: Think, should we add system prompt or not? Dunno
+        ret: List[ModelMessage] = [
+            ModelMessage(
+                role="system",
+                content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
+                + "\n"
+                + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+            ),
+        ]
+
+        if dbMessage["root_message_id"] is None:
+            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
+            self._updateEMessageUserData(eMessage)
+            return ret + [
+                await eMessage.toModelMessage(
+                    self.db,
+                    format=llmMFormat,
+                    outputFormat=outputFormat,
+                    role="user" if dbMessage["message_category"] == "user" else "assistant",
+                )
+            ]
+
+        dbMessageList = self.db.getChatMessagesByRootId(
+            dbMessage["chat_id"],
+            rootMessageId=dbMessage["root_message_id"],
+            threadId=dbMessage["thread_id"],
+        )
+
+        if not dbMessageList:
+            logger.error(f"No messages found for root message ID {dbMessage['root_message_id']}")
+            return []
+
+        # While condensing, keep the first and last message
+        keepFirstN = 1
+        keepLastN = 1
+
+        eRootMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[0], self.db)
+        self._updateEMessageUserData(eRootMessage)
+        condenseCache = eRootMessage.metadata.get("condensedThread", [])
+        if condenseCache and condenseThread:
+            # First - add skipped messages to result.
+            # It should be ony starting message
+            for i in range(min(keepFirstN, len(dbMessageList))):
+                eMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
+                self._updateEMessageUserData(eMessage)
+                ret.append(
+                    await eMessage.toModelMessage(
+                        self.db,
+                        format=llmMFormat,
+                        outputFormat=outputFormat,
+                        role="user" if dbMessageList[i]["message_category"] == "user" else "assistant",
+                    )
+                )
+
+            # For each summary:
+            # Add summary message to result
+            # And skip summaried messages
+            for condensedMessage in condenseCache:
+                # If we'll decide to condenseContext, skip summary message from condensing
+                keepFirstN += 1
+                ret.append(ModelMessage(role="user", content=condensedMessage["text"]))
+                lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"])
+                skippedMessages = 0
+                for dbMessage in dbMessageList:
+                    skippedMessages += 1
+                    if dbMessage["message_id"] == condensedMessage["tillMessageId"] or dbMessage["date"] > lastDT:
+                        break
+                dbMessageList = dbMessageList[skippedMessages:]
+
+        for dbMessage in dbMessageList:
+            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
+            self._updateEMessageUserData(eMessage)
+            ret.append(
+                await eMessage.toModelMessage(
+                    self.db,
+                    format=llmMFormat,
+                    outputFormat=outputFormat,
+                    role="user" if dbMessage["message_category"] == "user" else "assistant",
+                )
+            )
+
+        if not condenseThread:
+            return ret
+
+        # Condense thread if needed
+        llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
+        # If we need condencind, assume that we sould use no more than 50% of the context size
+        maxTokens = int(llmModel.contextSize * 0.5)
+
+        currentTokens = llmModel.getEstimateTokensCount([v.toDict() for v in ret])
+        if currentTokens < maxTokens:
+            return ret
+
+        condensedRet = await self.llmService.condenseContext(
+            ret,
+            model=llmModel,
+            keepFirstN=keepFirstN,
+            keepLastN=keepLastN,
+            maxTokens=maxTokens,
+            condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
+            condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+        )
+
+        # -1 is last element, so -keepLastN to skip skipped elements to get last condensed message
+        lastCondensedMessage = dbMessageList[-1 - keepLastN]
+        # +1 because of system prompt
+
+        # logger.debug("CONDENSING DEBUG")
+        # logger.debug(f"ret   = {condensedRet}")
+        # logger.debug(f"cache = {condenseCache}")
+        # logger.debug(f"lastM = {lastCondensedMessage}")
+
+        currentTokens = llmModel.getEstimateTokensCount([v.toDict() for v in condensedRet])
+        if currentTokens > maxTokens:
+            # If there are too many condensed entries in cache, condense them as well
+            keepFirstN = 1
+            condensedRet = await self.llmService.condenseContext(
+                condensedRet,
+                model=llmModel,
+                keepFirstN=keepFirstN,
+                keepLastN=keepLastN,
+                maxTokens=maxTokens,
+                condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
+                condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+            )
+            # We'll need to rewrite cache, so empty it here
+            condenseCache = []
+
+        for i in range(keepFirstN + 1, len(condensedRet) - keepLastN):
+            condenseCache.append(
+                {
+                    "text": condensedRet[i].content,
+                    "tillMessageId": lastCondensedMessage["message_id"],
+                    "tillTS": lastCondensedMessage["date"].timestamp(),
+                }
+            )
+
+        # logger.debug(f"cache2 = {condenseCache}")
+        eRootMessage.metadata["condensedThread"] = condenseCache
+        self.db.updateChatMessageMetadata(
+            chatId=eRootMessage.recipient.id,
+            messageId=eRootMessage.messageId,
+            metadata=eRootMessage.metadata,
+        )
+
+        return condensedRet
 
     def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """
@@ -599,6 +778,7 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaId=message.mediaId,
             markup=utils.jsonDumps(FormatEntity.toDictList(message.formatEntities)),
             metadata=utils.jsonDumps(message.metadata),
+            mediaGroupId=message.mediaGroupId,
         )
 
         return True
@@ -794,7 +974,9 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # ret['content'] = llmRet.resultText
 
-    async def processTelegramSticker(self, ensuredMessage: EnsuredMessage) -> MediaProcessingInfo:
+    async def processTelegramSticker(
+        self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
+    ) -> MediaProcessingInfo:
         """
         Process a sticker attachment from message, dood!
 
@@ -838,10 +1020,11 @@ class BaseBotHandler(CommandHandlerMixin):
 
         return await self._processMediaV2(
             ensuredMessage=ensuredMessage,
-            mediaType=MessageType.IMAGE,
+            mediaType=MessageType.STICKER,
             mediaId=sticker.file_unique_id,
             fileId=sticker.file_id,
             metadata=metadata,
+            prompt=prompt,
         )
 
     async def processTelegramImage(
@@ -884,6 +1067,129 @@ class BaseBotHandler(CommandHandlerMixin):
             prompt=prompt,
         )
 
+    async def _processTelegramMedia(
+        self,
+        ensuredMessage: EnsuredMessage,
+        *,
+        mediaType: MessageType,
+        media: telegramBasemedium._BaseMedium,
+        prompt: Optional[str] = None,
+    ) -> MediaProcessingInfo:
+        """
+        Process Telegram media attachments (images, videos, stickers, etc.), dood!
+
+        Extracts media information from Telegram's _BaseMedium objects and initiates
+        asynchronous processing through the internal media pipeline. This method is
+        specifically designed for Telegram bot provider and will raise an error if
+        called from other providers.
+
+        Args:
+            ensuredMessage: Wrapped message containing the base Telegram message
+            mediaType: Type of media being processed (IMAGE, VIDEO, STICKER, etc.)
+            media: Telegram media object (_BaseMedium) containing file information
+            prompt: Optional text prompt/caption associated with the media
+
+        Returns:
+            MediaProcessingInfo: Object containing media ID, type, and async processing task
+
+        Raises:
+            RuntimeError: If bot provider is not Telegram or base message is invalid
+        """
+        if self.botProvider != BotProvider.TELEGRAM:
+            raise RuntimeError("Stickers are supported in Telegram only")
+        baseMessage = ensuredMessage.getBaseMessage()
+        if not isinstance(baseMessage, telegram.Message):
+            raise RuntimeError(f"Base message is not Message, but {type(baseMessage)}")
+
+        return await self._processMediaV2(
+            ensuredMessage=ensuredMessage,
+            mediaType=mediaType,
+            mediaId=media.file_unique_id,
+            fileId=media.file_id,
+            metadata=media.to_dict(recursive=True),
+            prompt=prompt,
+        )
+
+    async def processTelegramMedia(
+        self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
+    ) -> Optional[MediaProcessingInfo]:
+        baseMessage = ensuredMessage.getBaseMessage()
+        if not isinstance(baseMessage, telegram.Message):
+            raise RuntimeError(f"Base message is not Message, but {type(baseMessage)}")
+        match ensuredMessage.messageType:
+            case MessageType.TEXT:
+                # No Media
+                return None
+            case MessageType.IMAGE:
+                return await self.processTelegramImage(ensuredMessage, prompt=prompt)
+            case MessageType.STICKER:
+                return await self.processTelegramSticker(ensuredMessage, prompt=prompt)
+            case MessageType.ANIMATION:
+                if baseMessage.animation is None:
+                    logger.error(f"Animation mising in Telegram message {baseMessage}")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.animation,
+                    prompt=prompt,
+                )
+            case MessageType.VIDEO:
+                if baseMessage.video is None:
+                    logger.error(f"Video mising in Telegram message {baseMessage}")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.video,
+                    prompt=prompt,
+                )
+            case MessageType.VIDEO_NOTE:
+                if baseMessage.video_note is None:
+                    logger.error(f"VideoNote mising in Telegram message {baseMessage}")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.video_note,
+                    prompt=prompt,
+                )
+            case MessageType.AUDIO:
+                if baseMessage.audio is None:
+                    logger.error("Audio mising in Telegram message")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.audio,
+                    prompt=prompt,
+                )
+            case MessageType.VOICE:
+                if baseMessage.voice is None:
+                    logger.error("Voice mising in Telegram message")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.voice,
+                    prompt=prompt,
+                )
+            case MessageType.DOCUMENT:
+                if baseMessage.document is None:
+                    logger.error("Document mising in Telegram message")
+                    return None
+                return await self._processTelegramMedia(
+                    ensuredMessage,
+                    mediaType=ensuredMessage.messageType,
+                    media=baseMessage.document,
+                    prompt=prompt,
+                )
+            case _:
+                # TODO: add support for downloading other types of attachments
+                # For unsupported message types, just log a warning and process caption like text message
+                logger.warning(f"Unsupported message type: {ensuredMessage.messageType}")
+                return None
+
     async def processMaxMedia(
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> List[MediaProcessingInfo]:
@@ -908,9 +1214,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         mediaId=mediaId,
                         fileId=url,
                         prompt=prompt,
-                        metadata={
-                            "token": attachment.payload.token,
-                        },
+                        metadata=attachment.to_dict(recursive=True),
                     )
                 )
 
@@ -943,10 +1247,50 @@ class BaseBotHandler(CommandHandlerMixin):
                         mediaId=mediaId,
                         fileId=url,
                         prompt=prompt,
-                        metadata={
-                            "wifth": attachment.width,
-                            "height": attachment.height,
-                        },
+                        metadata=attachment.to_dict(recursive=True),
+                    )
+                )
+            elif attachment.type == maxModels.AttachmentType.VIDEO and isinstance(
+                attachment, maxModels.VideoAttachment
+            ):
+                url = attachment.payload.url
+                mediaId = f"{attachment.type}:{attachment.payload.token}"
+                ret.append(
+                    await self._processMediaV2(
+                        ensuredMessage=ensuredMessage,
+                        mediaType=MessageType.VIDEO,
+                        mediaId=mediaId,
+                        fileId=url,
+                        prompt=prompt,
+                        metadata=attachment.to_dict(recursive=True),
+                    )
+                )
+            elif attachment.type == maxModels.AttachmentType.AUDIO and isinstance(
+                attachment, maxModels.AudioAttachment
+            ):
+                url = attachment.payload.url
+                mediaId = f"{attachment.type}:{attachment.payload.token}"
+                ret.append(
+                    await self._processMediaV2(
+                        ensuredMessage=ensuredMessage,
+                        mediaType=MessageType.AUDIO,
+                        mediaId=mediaId,
+                        fileId=url,
+                        prompt=prompt,
+                        metadata=attachment.to_dict(recursive=True),
+                    )
+                )
+            elif attachment.type == maxModels.AttachmentType.FILE and isinstance(attachment, maxModels.FileAttachment):
+                url = attachment.payload.url
+                mediaId = f"{attachment.type}:{attachment.payload.token}"
+                ret.append(
+                    await self._processMediaV2(
+                        ensuredMessage=ensuredMessage,
+                        mediaType=MessageType.DOCUMENT,
+                        mediaId=mediaId,
+                        fileId=url,
+                        prompt=prompt,
+                        metadata=attachment.to_dict(recursive=True),
                     )
                 )
             else:
@@ -956,6 +1300,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def _processMediaV2(
         self,
+        *,
         ensuredMessage: EnsuredMessage,
         mediaType: MessageType,
         mediaId: str,
@@ -978,6 +1323,11 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             MediaProcessingInfo: Object containing media processing status and async task
         """
+
+        if ensuredMessage.mediaGroupId is None:
+            logger.error(f"MediaGroupId is None for message {ensuredMessage}")
+            raise ValueError("MediaGroupId is None")
+
         ret = MediaProcessingInfo(
             id=mediaId,
             task=None,
@@ -987,6 +1337,11 @@ class BaseBotHandler(CommandHandlerMixin):
         mimeType: Optional[str] = None  # To be filled with downloaded media MIME type
 
         logger.debug(f"Processing media {ret.type}#{ret.id} with fileId:{fileId}...")
+
+        # We are ensuring it here to properly handle case, when this media already in database
+        # But for different message
+        self.db.ensureMediaInGroup(mediaId=ret.id, mediaGroupId=ensuredMessage.mediaGroupId)
+
         # First check if we have the photo in the database already
         mediaAttachment = self.db.getMediaAttachment(ret.id)
         hasMediaAttachment = mediaAttachment is not None
@@ -1051,7 +1406,11 @@ class BaseBotHandler(CommandHandlerMixin):
                     mediaType=mediaType,
                 )
 
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+        if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool() and mediaType in [
+            MessageType.IMAGE,
+            MessageType.STICKER,
+        ]:
+            # Currently we can process only images
             mediaStatus = MediaStatus.PENDING
         else:
             mediaStatus = MediaStatus.DONE
@@ -1080,7 +1439,7 @@ class BaseBotHandler(CommandHandlerMixin):
             )
 
         # Need to parse image content with LLM
-        if chatSettings[ChatSettingsKey.PARSE_IMAGES].toBool():
+        if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool():
             # Do not redownload file if it was downloaded already
             if mediaData is None:
                 if self._bot is None:

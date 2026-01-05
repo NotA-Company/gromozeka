@@ -143,6 +143,9 @@ from .update import (
 )
 from .upload import (
     AttachmentRequest,
+    AudioAttachmentRequest,
+    FileAttachmentRequest,
+    FileUploadResult,
     InlineKeyboardAttachmentRequest,
     PhotoAttachmentRequest,
     PhotoAttachmentRequestPayload,
@@ -150,9 +153,14 @@ from .upload import (
     PhotoTokens,
     PhotoUploadResult,
     UploadedAttachment,
+    UploadedAudio,
+    UploadedFile,
+    UploadedInfo,
     UploadedPhoto,
+    UploadedVideo,
     UploadEndpoint,
     UploadType,
+    VideoAttachmentRequest,
 )
 
 # User models
@@ -270,6 +278,14 @@ __all__ = [
     "UploadedPhoto",
     "UploadType",
     "UploadEndpoint",
+    "FileAttachmentRequest",
+    "FileUploadResult",
+    "UploadedFile",
+    "VideoAttachmentRequest",
+    "UploadedVideo",
+    "UploadedInfo",
+    "AudioAttachmentRequest",
+    "UploadedAudio",
     # Enums
     "ButtonType",
     # Buttons

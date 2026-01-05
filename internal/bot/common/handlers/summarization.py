@@ -212,7 +212,7 @@ class SummarizationHandler(BaseBotHandler):
             parsedMessages.append(
                 {
                     "role": "user",
-                    "content": await EnsuredMessage.fromDBChatMessage(msg).formatForLLM(
+                    "content": await EnsuredMessage.fromDBChatMessage(msg, self.db).formatForLLM(
                         self.db, LLMMessageFormat.JSON, stripAtsign=True
                     ),
                 }
@@ -666,10 +666,10 @@ class SummarizationHandler(BaseBotHandler):
         if dbMessage["reply_id"]:
             dbRepliedMessage = self.db.getChatMessageByMessageId(chatId=messageChatId, messageId=dbMessage["reply_id"])
             if dbRepliedMessage is not None:
-                ensuredMessage = EnsuredMessage.fromDBChatMessage(dbRepliedMessage)
+                ensuredMessage = EnsuredMessage.fromDBChatMessage(dbRepliedMessage, self.db)
 
         if ensuredMessage is None:
-            ensuredMessage = EnsuredMessage.fromDBChatMessage(dbMessage)
+            ensuredMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
 
         await self._doSummarization(
             ensuredMessage=ensuredMessage,

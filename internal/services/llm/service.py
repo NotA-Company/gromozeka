@@ -99,7 +99,7 @@ class LLMService:
         self,
         model: AbstractModel,
         fallbackModel: AbstractModel,
-        messages: List[ModelMessage],
+        messages: Sequence[ModelMessage],
         useTools: bool = False,
         callId: Optional[str] = None,
         callback: Optional[Callable[[ModelRunResult, Optional[Dict[str, Any]]], Awaitable[None]]] = None,

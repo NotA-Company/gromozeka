@@ -28,6 +28,7 @@ from .constants import (
 )
 from .exceptions import (
     APIError,
+    AttachmentNotReadyError,
     AuthenticationError,
     ConfigurationError,
     MaxBotError,
@@ -63,6 +64,7 @@ __all__ = [
     "ServiceUnavailableError",
     "NetworkError",
     "ConfigurationError",
+    "AttachmentNotReadyError",
     # Utils
     "MessageLinkToMessage",
 ]
