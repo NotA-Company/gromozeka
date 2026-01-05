@@ -16,9 +16,6 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
   "image_description": "..."
 }
 
-2025-12-27 15:53:36,875 - internal.bot.telegram.application:181 - ERROR - Media#zzzz already present in database and it is not an image but sticker
-Traceback (most recent call last):
-
 - [x] Add support for cache condenced context + reuse it
 - [ ] Think, how to add summarization of chat to context of random answers
 - [ ] ensuredMessage: support miltiple media
