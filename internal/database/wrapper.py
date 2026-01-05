@@ -1154,6 +1154,57 @@ class DatabaseWrapper:
             logger.error(f"Failed to get chat messages for chat {chatId}, user {userId}: {e}")
             return []
 
+    def getFirstChatMessageByMediaGroupId(
+        self,
+        chatId: int,
+        mediaGroupId: str,
+        threadId: Optional[int] = None,
+        *,
+        dataSource: Optional[str] = None,
+    ) -> Optional[ChatMessageDict]:
+        """
+        Get the first (earliest) chat message with given media group ID.
+
+        Args:
+            chatId: Chat identifier
+            mediaGroupId: Media group identifier
+            threadId: Optional thread identifier for filtering
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            ChatMessageDict or None if not found
+        """
+        # logger.debug(
+        #     f"Getting first chat message for chat {chatId}, thread {threadId}, media_group_id {mediaGroupId}"
+        # )
+        try:
+            with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
+                cursor.execute(
+                    """
+                    SELECT c.*, u.username, u.full_name FROM chat_messages c
+                    JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
+                    WHERE
+                        c.chat_id = :chatId
+                        AND (:threadId IS NULL OR c.thread_id = :threadId)
+                        AND c.media_group_id = :mediaGroupId
+                    ORDER BY c.date ASC
+                    LIMIT 1
+                """,
+                    {
+                        "chatId": chatId,
+                        "threadId": threadId,
+                        "mediaGroupId": mediaGroupId,
+                    },
+                )
+                row = cursor.fetchone()
+                return self._validateDictIsChatMessageDict(dict(row)) if row else None
+        except Exception as e:
+            logger.error(
+                f"Failed to get first chat message for chat {chatId}, "
+                f"thread {threadId}, media_group_id {mediaGroupId}: {e}"
+            )
+            return None
+
     def updateChatMessageCategory(
         self,
         chatId: int,
@@ -2309,6 +2360,41 @@ class DatabaseWrapper:
         except Exception as e:
             logger.error(f"Failed to get media attachments by group ID: {e}")
             return []
+
+    def getMediaGroupLastUpdatedAt(
+        self, mediaGroupId: str, *, dataSource: Optional[str] = None
+    ) -> Optional[datetime.datetime]:
+        """
+        Get the timestamp of the most recently added media in a group.
+
+        This method is useful for determining when a media group is complete
+        by checking if enough time has passed since the last media was added.
+
+        Args:
+            mediaGroupId: Media group ID to query
+            dataSource: Optional data source name for multi-source routing
+
+        Returns:
+            datetime of the most recent media addition, or None if group not found
+        """
+        try:
+            with self.getCursor(readonly=True, dataSource=dataSource) as cursor:
+                cursor.execute(
+                    """
+                    SELECT MAX(created_at) as last_updated
+                    FROM media_groups
+                    WHERE media_group_id = ?
+                    """,
+                    (mediaGroupId,),
+                )
+                row = cursor.fetchone()
+                if row and row["last_updated"]:
+                    return row["last_updated"]
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get media group last updated timestamp: {e}")
+            logger.exception(e)
+            return None
 
     ###
     # Delayed Tasks manipulation (see bot/models.py)
