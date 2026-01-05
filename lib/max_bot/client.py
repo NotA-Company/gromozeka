@@ -287,7 +287,7 @@ class MaxBotClient:
 
             except AttachmentNotReadyError as e:
                 logger.info(f"Attachment not ready yet, waiting: {e}")
-                
+
             except MaxBotError as e:
                 last_exception = e
                 logger.warning(f"API error on attempt {attempt + 1}: {type(e).__name__}#{e}, {e.response}")
