@@ -316,6 +316,8 @@ class ResenderHandler(BaseBotHandler):
                 if not newData:
                     continue
 
+                messageSendDelay = 0.25
+
                 for message in reversed(newData):
                     try:
                         if message["media_group_id"] is not None:
@@ -396,7 +398,8 @@ class ResenderHandler(BaseBotHandler):
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
                             job.lastMessageDate = message["date"]
                         self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
-                        await asyncio.sleep(0.25)
+                        await asyncio.sleep(messageSendDelay)
+                        messageSendDelay = min(messageSendDelay * 2, messageSendDelay + 1, 10)
                     except Exception as e:
                         logger.error(f"Error processing job {job}: {e}")
                         logger.exception(e)
