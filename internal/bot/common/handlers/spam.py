@@ -911,7 +911,7 @@ class SpamHandler(BaseBotHandler):
                 self.setUserMetadata(chatId=hamUserDB["chat_id"], userId=hamUserDB["user_id"], metadata=userMetadata)
 
         # We need to fallback somewhere, let's fallback to called user
-        reportedUser = ensuredMessage.sender
+        reportedUser = eRepliedMessage.sender
         await self.editMessage(
             messageId=ensuredMessage.messageId,
             chatId=chat.id,
