@@ -125,3 +125,57 @@
 * **Resilience**: Partial failures don't break entire operations
 * **Maintainability**: Clear deduplication strategy documented for future reference
 * **Performance**: Efficient algorithms ensure minimal overhead for multi-source operations
+
+[2026-01-05 23:32:00] - Media Group Completion Detection Implementation
+
+### Decision: Time-Based Completion Detection for Telegram Media Groups
+
+* **Problem**: Telegram sends media groups (albums) as separate messages with the same media_group_id, but doesn't indicate when all items have arrived
+* **Solution**: Wait a configurable delay after the last media item is received before considering a media group complete
+
+### Architecture Choice
+
+* **Per-Job Configuration**: Each ResendJob has its own `mediaGroupDelaySecs` parameter (default: 5.0 seconds)
+* **Database Method**: New `getMediaGroupLastUpdatedAt()` returns MAX(created_at) from media_groups table
+* **Processing Logic**: _dtCronJob checks media group age before processing using utils.getAgeInSecs()
+
+### Implementation Details
+
+* **Files Modified**:
+  - `internal/database/wrapper.py`: Added getMediaGroupLastUpdatedAt() method
+  - `internal/bot/common/handlers/resender.py`: Added mediaGroupDelaySecs to ResendJob, updated _dtCronJob logic
+
+* **Processing Flow**:
+  1. For each message with media_group_id, check if already processed
+  2. Get last updated timestamp using getMediaGroupLastUpdatedAt()
+  3. If age < job.mediaGroupDelaySecs, mark as pending and skip
+  4. If age >= job.mediaGroupDelaySecs, mark as processed and resend all media together
+
+* **Configuration Example**:
+  ```toml
+  [[resender.jobs]]
+  id = "telegram-to-max"
+  sourceChatId = -1001234567890
+  targetChatId = 9876543210
+  mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
+  ```
+
+### Rationale
+
+* **Flexibility**: Per-job configuration allows different delays for different source chats
+* **Reliability**: Time-based approach handles both fast album uploads and slow sequential uploads
+* **Simplicity**: Uses existing media_groups.created_at timestamps, no new tables needed
+* **Backward Compatible**: Default delay preserves existing behavior for single-media messages
+
+### Edge Cases Handled
+
+* **Slow uploads**: Each new media item updates the timestamp, extending the wait time
+* **Fast uploads**: All media arrive quickly, processed together after delay
+* **Network delays**: Late-arriving media updates timestamp, group waits appropriately
+* **Single media**: Processed immediately if no media_group_id
+
+### Testing Results
+
+* All 1185 tests pass
+* Code quality checks: make format lint passed (0 errors, 0 warnings)
+* No breaking changes to existing functionality

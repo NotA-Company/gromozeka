@@ -19,6 +19,7 @@ import logging
 from collections.abc import MutableSet, Sequence
 from typing import List, Optional, Tuple
 
+import lib.utils as utils
 from internal.bot.models import (
     BotProvider,
 )
@@ -55,6 +56,8 @@ class ResendJob:
         "messageSuffix",
         "lastMessageDate",
         "notification",
+        "mediaGroupDelaySecs",
+        "pendingMediaGroups",
         "_lock",
     )
 
@@ -71,6 +74,7 @@ class ResendJob:
         messageSuffix: str = "",
         lastMessageDate: Optional[datetime.datetime | str] = None,
         notification: Optional[bool] = None,
+        mediaGroupDelaySecs: float = 10.0,
     ):
         """
         Initialize a resend job with the specified configuration.
@@ -85,6 +89,8 @@ class ResendJob:
             messagePrefix: Optional prefix to add to resent messages
             messageSuffix: Optional suffix to add to resent messages
             lastMessageDate: Optional last message timestamp processed (datetime or ISO string)
+            notification: Optional notification flag (True/False/None for system default)
+            mediaGroupDelaySecs: Delay in seconds to wait for media group completion (default: 5.0)
         """
         self.id = id
         """id of the resend job, used for persisting the job state"""
@@ -111,12 +117,20 @@ class ResendJob:
         False to disable,
         None to use system defaults.
         """
+        self.mediaGroupDelaySecs = mediaGroupDelaySecs
+        """
+        delay in seconds to wait for media group completion before resending.
+        Telegram sends media groups as separate messages, this delay ensures
+        all media items have arrived before resending them together.
+        """
         self.lastMessageDate: Optional[datetime.datetime] = None
         """last message timestamp processed"""
         if lastMessageDate:
             self.setLastMessageDate(lastMessageDate)
         self._lock = asyncio.Lock()
         """internal async lock for synchronization"""
+        self.pendingMediaGroups: MutableSet[str] = set[str]()
+        """set of media group ids that are pending completion"""
 
     def setLastMessageDate(self, lastMessageDate: datetime.datetime | str) -> None:
         """
@@ -227,6 +241,11 @@ class ResenderHandler(BaseBotHandler):
             if storedData:
                 newJob.setLastMessageDate(storedData)
             logger.info(f"Loaded resender job {newJob}")
+            pendingMediaGroups = self.db.getSetting(f"resender:{newJob.id}:pendingMediaGroups")
+            if pendingMediaGroups:
+                pendingMediaGroupsList = json.loads(pendingMediaGroups)
+                for mediaGroup in pendingMediaGroupsList:
+                    newJob.pendingMediaGroups.add(mediaGroup)
             self.jobs.append(newJob)
 
         self.queueService = QueueService.getInstance()
@@ -248,12 +267,14 @@ class ResenderHandler(BaseBotHandler):
         logger.debug("Cron job started")
         for job in self.jobs:
             if job.isLocked():
-                # If someone alreadu processing this job, skip it
+                # If someone already processing this job, skip it
                 # Will retry next time if needed
                 continue
 
             async with job.getLock():
+                processedMediaGroups: MutableSet[str] = set[str]()
                 logger.debug(f"Processing job {job}")
+                # Get new messages if any
                 newData = self.db.getChatMessagesSince(
                     chatId=job.sourceChatId,
                     sinceDateTime=job.lastMessageDate,
@@ -261,16 +282,70 @@ class ResenderHandler(BaseBotHandler):
                     threadId=job.sourceTheadId,
                     dataSource=job.dataSource,
                 )
+                # Then add pending media groups if any of them are ready
+                # we use list() here to make copy of set to be able to modify it
+                for mediaGroupId in list(job.pendingMediaGroups):
+                    # Get the last updated timestamp for this media group
+                    lastUpdated = self.db.getMediaGroupLastUpdatedAt(
+                        mediaGroupId,
+                        dataSource=job.dataSource,
+                    )
+
+                    if lastUpdated is not None:
+                        age = utils.getAgeInSecs(lastUpdated)
+                        if age < job.mediaGroupDelaySecs:
+                            # Media group may be incomplete, skip for now
+                            logger.debug(
+                                f"Media group {mediaGroupId} "
+                                f"too recent ({age:.1f}s < {job.mediaGroupDelaySecs}s), waiting..."
+                            )
+                            continue
+
+                    job.pendingMediaGroups.discard(mediaGroupId)
+                    # Get first message with given media group id and put it into begining of newData
+                    firstMessage = self.db.getFirstChatMessageByMediaGroupId(
+                        chatId=job.sourceChatId,
+                        mediaGroupId=mediaGroupId,
+                        threadId=job.sourceTheadId,
+                        dataSource=job.dataSource,
+                    )
+                    if firstMessage:
+                        # We add it to the end of list as we'll reverse it later
+                        newData.append(firstMessage)
+
                 if not newData:
                     continue
-                processedMediaGroups: MutableSet[str] = set[str]()
+
                 for message in reversed(newData):
                     try:
                         if message["media_group_id"] is not None:
                             if message["media_group_id"] in processedMediaGroups:
                                 continue
-                            else:
-                                processedMediaGroups.add(message["media_group_id"])
+
+                            # Check if media group is too recent (may be incomplete)
+                            if message["media_group_id"] in job.pendingMediaGroups:
+                                # Already determined this group is not ready
+                                continue
+
+                            # Get the last updated timestamp for this media group
+                            lastUpdated = self.db.getMediaGroupLastUpdatedAt(
+                                message["media_group_id"],
+                                dataSource=job.dataSource,
+                            )
+
+                            if lastUpdated is not None:
+                                age = utils.getAgeInSecs(lastUpdated)
+                                if age < job.mediaGroupDelaySecs:
+                                    # Media group may be incomplete, skip for now
+                                    logger.debug(
+                                        f"Media group {message['media_group_id']} "
+                                        f"too recent ({age:.1f}s < {job.mediaGroupDelaySecs}s), waiting..."
+                                    )
+                                    job.pendingMediaGroups.add(message["media_group_id"])
+                                    continue
+
+                            # Media group is ready, mark as processed
+                            processedMediaGroups.add(message["media_group_id"])
 
                         attachmentList: List[Tuple[bytes, MessageType]] = []
                         if message["media_group_id"]:
@@ -332,3 +407,5 @@ class ResenderHandler(BaseBotHandler):
                             chatId=job.targetChatId,
                             notify=job.notification,
                         )
+                    # for message in reversed(newData):
+                self.db.setSetting(f"resender:{job.id}:pendingMediaGroups", json.dumps(list(job.pendingMediaGroups)))
