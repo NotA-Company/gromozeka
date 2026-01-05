@@ -17,7 +17,7 @@ import datetime
 import json
 import logging
 from collections.abc import MutableSet, Sequence
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import lib.utils as utils
 from internal.bot.models import (
@@ -282,7 +282,7 @@ class ResenderHandler(BaseBotHandler):
 
         # Run it in background to not block Queue Service delayed tasks processing
         await self.queueService.addBackgroundTask(asyncio.create_task(self.resendCronJob()))
-    
+
     async def resendCronJob(self) -> None:
         """
         Execute the periodic resend job check and processing.
@@ -408,10 +408,23 @@ class ResenderHandler(BaseBotHandler):
                             # Send message only if it has text or supported media
                             messagePrefix = job.messagePrefix
                             messageSuffix = job.messageSuffix
+                            replaceDict: Dict[str, str] = {}
+
                             for k, v in message.items():
+                                replaceDict[k] = str(v)
+
+                            if message["metadata"]:
+                                metadataDict = json.loads(message["metadata"])
+                                for k, v in metadataDict.items():
+                                    replaceDict[f"metadata.{k}"] = str(v)
+                                    if isinstance(v, dict):
+                                        # TODO: Add support for nested dictionaries
+                                        replaceDict.update({f"metadata.{k}.{k2}": str(v2) for k2, v2 in v.items()})
+
+                            for k, v in replaceDict.items():
                                 # logger.debug("Replacing {{" + k + "}} with " + str(v))
-                                messagePrefix = messagePrefix.replace("{{" + k + "}}", str(v))
-                                messageSuffix = messageSuffix.replace("{{" + k + "}}", str(v))
+                                messagePrefix = messagePrefix.replace("{{" + k + "}}", v)
+                                messageSuffix = messageSuffix.replace("{{" + k + "}}", v)
 
                             await self.sendMessage(
                                 None,
@@ -423,7 +436,7 @@ class ResenderHandler(BaseBotHandler):
                             )
 
                             await asyncio.sleep(messageSendDelay)
-                            messageSendDelay = min(messageSendDelay * 2, messageSendDelay + 1, 10)
+                            messageSendDelay = min(messageSendDelay * 2, 10)
 
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
                             job.lastMessageDate = message["date"]
