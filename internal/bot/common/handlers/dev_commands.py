@@ -15,9 +15,9 @@ All commands in this module require elevated permissions and are not available
 to regular users, dood!
 """
 
-import sys
 import asyncio
 import logging
+import sys
 import time
 from typing import Optional
 
@@ -716,7 +716,7 @@ class DevCommandsHandler(BaseBotHandler):
         visibility={CommandPermission.BOT_OWNER},
         availableFor={CommandPermission.BOT_OWNER},
         helpOrder=CommandHandlerOrder.TECHNICAL,
-        category=CommandCategory.PRIVATE,   
+        category=CommandCategory.PRIVATE,
     )
     async def shutdown_command(
         self,
@@ -736,5 +736,5 @@ class DevCommandsHandler(BaseBotHandler):
 
         if self._bot and self._bot.tgBot:
             await self._bot.tgBot.logOut()
-        
+
         sys.exit(0)

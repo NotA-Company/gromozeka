@@ -8,13 +8,13 @@ import logging
 from typing import Any, Dict, Optional
 
 from .constants import (
+    ERROR_CODE_ATTACHMENT_NOT_READY,
     ERROR_CODE_INVALID_REQUEST,
     ERROR_CODE_INVALID_TOKEN,
     ERROR_CODE_METHOD_NOT_ALLOWED,
     ERROR_CODE_RATE_LIMIT_EXCEEDED,
     ERROR_CODE_RESOURCE_NOT_FOUND,
     ERROR_CODE_SERVICE_UNAVAILABLE,
-    ERROR_CODE_ATTACHMENT_NOT_READY,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ class RateLimitError(MaxBotError):
     ) -> None:
         super().__init__(message, code, response)
 
+
 class AttachmentNotReadyError(MaxBotError):
     """Raised when an attachment is not ready yet.
 
@@ -110,6 +111,7 @@ class AttachmentNotReadyError(MaxBotError):
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message, code, response)
+
 
 class ValidationError(MaxBotError):
     """Raised when request validation fails.

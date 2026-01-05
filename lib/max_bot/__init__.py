@@ -28,6 +28,7 @@ from .constants import (
 )
 from .exceptions import (
     APIError,
+    AttachmentNotReadyError,
     AuthenticationError,
     ConfigurationError,
     MaxBotError,
@@ -37,7 +38,6 @@ from .exceptions import (
     RateLimitError,
     ServiceUnavailableError,
     ValidationError,
-    AttachmentNotReadyError,
 )
 from .utils import MessageLinkToMessage
 
