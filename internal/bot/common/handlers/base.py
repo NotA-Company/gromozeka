@@ -1020,7 +1020,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
         return await self._processMediaV2(
             ensuredMessage=ensuredMessage,
-            mediaType=MessageType.IMAGE,
+            mediaType=MessageType.STICKER,
             mediaId=sticker.file_unique_id,
             fileId=sticker.file_id,
             metadata=metadata,
