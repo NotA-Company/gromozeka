@@ -43,8 +43,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_THREAD_ID: int = 0
 
 
-def convert_timestamp(val: bytes) -> datetime.datetime:
-    valStr = val.decode("utf-8")
+def convert_timestamp(val: bytes|str) -> datetime.datetime:
+    if isinstance(val, bytes):
+        valStr = val.decode("utf-8")
+    else:
+        valStr = val
     ret = dateutil.parser.parse(valStr)
     # logger.debug(f"Converted {valStr} to {repr(ret)}")
     return ret
@@ -2389,7 +2392,7 @@ class DatabaseWrapper:
                 )
                 row = cursor.fetchone()
                 if row and row["last_updated"]:
-                    return row["last_updated"]
+                    return convert_timestamp(row["last_updated"])
                 return None
         except Exception as e:
             logger.error(f"Failed to get media group last updated timestamp: {e}")
