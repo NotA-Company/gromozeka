@@ -15,6 +15,7 @@ All commands in this module require elevated permissions and are not available
 to regular users, dood!
 """
 
+import sys
 import asyncio
 import logging
 import time
@@ -685,7 +686,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Clear cache"""
+        """Get list of admins of given chat"""
         targetChatId: Optional[int] = None
         if args:
             argList = args.split()
@@ -707,3 +708,33 @@ class DevCommandsHandler(BaseBotHandler):
             messageText=f"```json\n{utils.jsonDumps(admins, indent=2)}\n```",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
+
+    @commandHandlerV2(
+        commands=("shutdown",),
+        shortDescription="Shutdown the bot",
+        helpMessage=": Разлогиниться и остановить бота",
+        visibility={CommandPermission.BOT_OWNER},
+        availableFor={CommandPermission.BOT_OWNER},
+        helpOrder=CommandHandlerOrder.TECHNICAL,
+        category=CommandCategory.PRIVATE,   
+    )
+    async def shutdown_command(
+        self,
+        ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """Shutdown bot"""
+
+        await self.sendMessage(
+            ensuredMessage,
+            messageText=f"Bye-bye, {ensuredMessage.sender.name}",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+        if self._bot and self._bot.tgBot:
+            await self._bot.tgBot.logOut()
+        
+        sys.exit(0)
