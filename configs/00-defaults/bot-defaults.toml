@@ -47,8 +47,8 @@ bot-nicknames = "Громозека, Gro"
 llm-message-format = "smart"
 # Can we use tools
 use-tools = true
-# Should we parse images via LLM
-parse-images = true
+# Should we parse attachments via LLM
+parse-attachments = true
 
 # Should we save attachments to S3 for future using? (currently usefull for ResenderHandler only)
 save-attachments = false
@@ -103,6 +103,7 @@ image-parsing-model             = "openrouter/gemma-3-27b-it:free"
 image-parsing-fallback-model    = "openrouter/qwen3-vl-235b-a22b-instruct"
 image-generation-model          = "yandex-art"
 image-generation-fallback-model = "openrouter/gemini-2.5-flash-image"
+condensing-model                = "openrouter/gemma-3-27b-it:free"
 
 summary-prompt     = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
 parse-image-prompt = "Подробно опиши, что изображено на картинке"
@@ -126,4 +127,10 @@ chat-prompt-suffix = """
 
 Отвечай так же в JSON-формате, но заполняй только поле `text` (и `quote`, если нужно процитировать часть сообщения).
 В Тексте сообщения можно использовать Markdown форматирование.
+"""
+condensing-prompt = """
+Your task is to create a detailed summary of the conversation so far.
+Output only the summary of the conversation so far, without any
+additional commentary or explanation.
+Answer using language of conversation, not language of this message."
 """

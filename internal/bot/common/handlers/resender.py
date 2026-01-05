@@ -16,10 +16,8 @@ import asyncio
 import datetime
 import json
 import logging
-from collections.abc import Sequence
-from typing import List, Optional
-
-import magic
+from collections.abc import MutableSet, Sequence
+from typing import List, Optional, Tuple
 
 from internal.bot.models import (
     BotProvider,
@@ -28,6 +26,7 @@ from internal.bot.models.text_formatter import FormatEntity, OutputFormat
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
+from internal.models import MessageType
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from lib.ai import LLMManager
 
@@ -264,20 +263,32 @@ class ResenderHandler(BaseBotHandler):
                 )
                 if not newData:
                     continue
+                processedMediaGroups: MutableSet[str] = set[str]()
                 for message in reversed(newData):
                     try:
-                        photoData: Optional[bytes] = None
-                        if message["media_local_url"]:
-                            photoData = self.storage.get(message["media_local_url"])
+                        if message["media_group_id"] is not None:
+                            if message["media_group_id"] in processedMediaGroups:
+                                continue
+                            else:
+                                processedMediaGroups.add(message["media_group_id"])
 
-                        if photoData is not None:
-                            mimeType = magic.from_buffer(photoData, mime=True).split("/")
-                            if mimeType[0] != "image":
-                                # TODO: some day support other attachment types
-                                photoData = None
-                                logger.debug(
-                                    f"Skipping non-image media {message['media_local_url']} with mime type {mimeType}"
-                                )
+                        attachmentList: List[Tuple[bytes, MessageType]] = []
+                        if message["media_group_id"]:
+                            logger.debug(f"Processing media group {message['media_group_id']}")
+                            for media in self.db.getMediaAttachmentsByGroupId(
+                                message["media_group_id"],
+                                dataSource=job.dataSource,
+                            ):
+                                logger.debug(f"Processing media {media}")
+                                if not media["local_url"]:
+                                    continue
+                                mediaData = self.storage.get(media["local_url"])
+                                if mediaData is None:
+                                    continue
+
+                                mediaType = MessageType(media["media_type"])
+                                attachmentList.append((mediaData, mediaType))
+
                         messageText = message["message_text"]
                         if message["markup"]:
                             markupEntities = FormatEntity.fromDictList(json.loads(message["markup"]))
@@ -289,7 +300,7 @@ class ResenderHandler(BaseBotHandler):
                                     outputFormat = OutputFormat.MARKDOWN_MAX
                             messageText = FormatEntity.parseText(messageText, markupEntities, outputFormat=outputFormat)
 
-                        if photoData is not None or message["message_text"]:
+                        if attachmentList or message["message_text"]:
                             # Send message only if it has text or supported media
                             messagePrefix = job.messagePrefix
                             messageSuffix = job.messageSuffix
@@ -303,8 +314,8 @@ class ResenderHandler(BaseBotHandler):
                                 messageText=messagePrefix + messageText + messageSuffix,
                                 messageCategory=MessageCategory.BOT_RESENDED,
                                 chatId=job.targetChatId,
-                                photoData=photoData,
                                 notify=job.notification,
+                                attachmentList=attachmentList,
                             )
 
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
@@ -319,6 +330,5 @@ class ResenderHandler(BaseBotHandler):
                             messageText=f"Error while resending message: {e}",
                             messageCategory=MessageCategory.BOT_ERROR,
                             chatId=job.targetChatId,
-                            photoData=photoData,
                             notify=job.notification,
                         )

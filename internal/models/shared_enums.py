@@ -2,7 +2,12 @@
 Shared Enums: Enums that are used across multiple modules to avoid circular dependencies
 """
 
+import logging
 from enum import StrEnum
+
+import lib.max_bot.models as maxModels
+
+logger = logging.getLogger(__name__)
 
 
 class MessageType(StrEnum):
@@ -27,3 +32,18 @@ class MessageType(StrEnum):
     DOCUMENT = "document"
     # CHAT_PHOTO - https://docs.python-telegram-bot.org/en/stable/telegram.chatphoto.html#telegram.ChatPhoto
     UNKNOWN = "unknown"
+
+    def toMaxUploadType(self) -> maxModels.UploadType:
+        """Convert MessageType to maxModels.UploadType"""
+        match self:
+            case MessageType.IMAGE | MessageType.STICKER:
+                return maxModels.UploadType.IMAGE
+            case MessageType.ANIMATION | MessageType.VIDEO | MessageType.VIDEO_NOTE:
+                return maxModels.UploadType.VIDEO
+            case MessageType.AUDIO | MessageType.VOICE:
+                return maxModels.UploadType.AUDIO
+            case MessageType.DOCUMENT:
+                return maxModels.UploadType.FILE
+            case _:
+                logger.warning(f"Unsupported MessageType for MAX: {self}, fallback to FILE")
+                return maxModels.UploadType.FILE

@@ -8,6 +8,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from .constants import (
+    ERROR_CODE_ATTACHMENT_NOT_READY,
     ERROR_CODE_INVALID_REQUEST,
     ERROR_CODE_INVALID_TOKEN,
     ERROR_CODE_METHOD_NOT_ALLOWED,
@@ -91,6 +92,22 @@ class RateLimitError(MaxBotError):
         self,
         message: str = "Rate limit exceeded. Please try again later.",
         code: Optional[str] = ERROR_CODE_RATE_LIMIT_EXCEEDED,
+        response: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message, code, response)
+
+
+class AttachmentNotReadyError(MaxBotError):
+    """Raised when an attachment is not ready yet.
+
+    This occurs when an attachment is still being processed by the API.
+    The client should wait for the attachment to be ready before sending it.
+    """
+
+    def __init__(
+        self,
+        message: str = "Attachment not ready.",
+        code: Optional[str] = ERROR_CODE_ATTACHMENT_NOT_READY,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message, code, response)
@@ -220,6 +237,8 @@ def parseApiError(statusCode: int, responseData: Dict[str, Any]) -> MaxBotError:
         return ServiceUnavailableError(error_message, error_code, responseData)
     elif error_code == ERROR_CODE_INVALID_REQUEST:
         return ValidationError(error_message, error_code, responseData)
+    elif error_code == ERROR_CODE_ATTACHMENT_NOT_READY:
+        return AttachmentNotReadyError(error_message, error_code, responseData)
 
     # Fallback to status code mapping
     if statusCode == 401:

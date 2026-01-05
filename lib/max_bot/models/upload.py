@@ -5,7 +5,7 @@ including photo uploads, upload endpoints, and attachment requests.
 """
 
 from enum import StrEnum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Self
 
 from lib.max_bot.models.keyboard import Keyboard
 
@@ -17,18 +17,26 @@ class UploadType(StrEnum):
     """Тип загружаемого файла"""
 
     IMAGE = "image"
+    """Image file type."""
     VIDEO = "video"
+    """Video file type."""
     AUDIO = "audio"
+    """Audio file type."""
     FILE = "file"
+    """Generic file type."""
 
 
 class AttachmentRequest(Attachment):
-    """The same as Attachment"""
+    """Attachment request model for Max Bot API.
+
+    Represents an attachment that can be sent in a message request.
+    Inherits all functionality from the base Attachment class.
+    """
 
     __slots__ = ()
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "AttachmentRequest":
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
         """Create AttachmentRequest instance from API response dictionary.
 
         Args:
@@ -43,14 +51,128 @@ class AttachmentRequest(Attachment):
         )
 
 
+class UploadEndpoint(BaseMaxBotModel):
+    """Точка доступа, куда следует загружать ваши бинарные файлы"""
+
+    __slots__ = ("url", "token")
+
+    def __init__(self, *, url: str, token: Optional[str], api_kwargs: Dict[str, Any] | None = None):
+        """Initialize UploadEndpoint with URL and token.
+
+        Args:
+            url: URL endpoint for file upload
+            token: Optional video or audio token for sending messages
+            api_kwargs: Additional API keyword arguments
+        """
+        super().__init__(api_kwargs=api_kwargs)
+        self.url: str = url
+        """URL для загрузки файла"""
+        self.token: Optional[str] = token
+        """Видео- или аудио-токен для отправки сообщения"""
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
+        """Create UploadEndpoint instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            UploadEndpoint: New UploadEndpoint instance
+        """
+        return cls(
+            url=data.get("url", ""),
+            token=data.get("token", None),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
+
+
+class UploadedAttachment(BaseMaxBotModel):
+    """Base class for uploaded attachments in Max Bot API.
+
+    Contains the upload endpoint information for files that have been uploaded
+    and can be referenced in messages.
+    """
+
+    __slots__ = ("uploadEndpoint",)
+
+    def __init__(self, *, uploadEndpoint: UploadEndpoint, api_kwargs: Dict[str, Any] | None = None):
+        """Initialize UploadedAttachment with upload endpoint.
+
+        Args:
+            uploadEndpoint: The endpoint information for the uploaded file
+            api_kwargs: Additional API keyword arguments
+        """
+        super().__init__(api_kwargs=api_kwargs)
+        self.uploadEndpoint: UploadEndpoint = uploadEndpoint
+        """Upload endpoint information for the uploaded file."""
+
+    def toAttachmentRequest(self) -> AttachmentRequest:
+        """Convert uploaded attachment to attachment request.
+
+        Returns:
+            AttachmentRequest object for sending the uploaded attachment
+
+        Raises:
+            RuntimeError: Always raised as base class cannot be converted
+        """
+        raise RuntimeError("Base class UploadedAttachment cannot be converted to Attachment request")
+
+
+class UploadedInfo(BaseMaxBotModel):
+    """Information about an uploaded file in Max Bot API.
+
+    Contains the token identifier for referencing the uploaded file.
+    """
+
+    __slots__ = ("token",)
+
+    def __init__(self, *, token: str, api_kwargs: Dict[str, Any] | None = None):
+        """Initialize UploadedInfo with token.
+
+        Args:
+            token: Token identifier for the uploaded file
+            api_kwargs: Additional API keyword arguments
+        """
+        super().__init__(api_kwargs=api_kwargs)
+        self.token: str = token
+        """Token identifier for the uploaded file."""
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
+        """Create UploadedInfo instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            UploadedInfo: New UploadedInfo instance
+        """
+        return cls(
+            token=data.get("token", ""),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
+
+
 class InlineKeyboardAttachmentRequest(InlineKeyboardAttachment, AttachmentRequest):
+    """Request for sending an inline keyboard attachment in Max Bot API.
+
+    Combines InlineKeyboardAttachment and AttachmentRequest functionality.
+    """
+
     __slots__ = ()
 
     def __init__(self, *, payload: Keyboard, api_kwargs: Dict[str, Any] | None = None):
+        """Initialize InlineKeyboardAttachmentRequest with keyboard payload.
+
+        Args:
+            payload: Keyboard object containing button layout
+            api_kwargs: Additional API keyword arguments
+        """
         InlineKeyboardAttachment.__init__(self, payload=payload, api_kwargs=api_kwargs)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "InlineKeyboardAttachmentRequest":
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
         """Create InlineKeyboardAttachmentRequest instance from API response dictionary.
 
         Args:
@@ -76,11 +198,18 @@ class PhotoToken(BaseMaxBotModel):
     __slots__ = ("token",)
 
     def __init__(self, *, token: str, api_kwargs: Dict[str, Any] | None = None):
+        """Initialize PhotoToken with token.
+
+        Args:
+            token: Token identifier for the uploaded photo
+            api_kwargs: Additional API keyword arguments
+        """
         super().__init__(api_kwargs=api_kwargs)
-        self.token = token
+        self.token: str = token
+        """Token identifier for the uploaded photo."""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PhotoToken":
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
         """Create PhotoToken instance from API response dictionary.
 
         Args:
@@ -102,7 +231,7 @@ class PhotoTokens(Dict[str, PhotoToken]):
     """
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PhotoTokens":
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
         """Create PhotoTokens instance from API response dictionary.
 
         Args:
@@ -161,7 +290,7 @@ class PhotoAttachmentRequestPayload(BaseMaxBotModel):
         self.photos: Optional[PhotoTokens] = photos
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PhotoAttachmentRequestPayload":
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
         """Create PhotoAttachmentRequestPayload instance from API response dictionary.
 
         Args:
@@ -202,7 +331,7 @@ class PhotoUploadResult(BaseMaxBotModel):
         self.photos: PhotoTokens = photos
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PhotoUploadResult":
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
         """Create PhotoUploadResult instance from API response dictionary.
 
         Args:
@@ -239,67 +368,8 @@ class PhotoAttachmentRequest(AttachmentRequest):
         Returns:
             Attachment: New Attachment instance
         """
+        # TODO: dunno
         return super().from_dict(data)
-
-
-class UploadEndpoint(BaseMaxBotModel):
-    """Точка доступа, куда следует загружать ваши бинарные файлы"""
-
-    __slots__ = ("url", "token")
-
-    def __init__(self, *, url: str, token: Optional[str], api_kwargs: Dict[str, Any] | None = None):
-        super().__init__(api_kwargs=api_kwargs)
-        self.url: str = url
-        """URL для загрузки файла"""
-        self.token: Optional[str] = token
-        """Видео- или аудио-токен для отправки сообщения"""
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "UploadEndpoint":
-        """Create UploadEndpoint instance from API response dictionary.
-
-        Args:
-            data: Dictionary containing API response data
-
-        Returns:
-            UploadEndpoint: New UploadEndpoint instance
-        """
-        return cls(
-            url=data.get("url", ""),
-            token=data.get("token", None),
-            api_kwargs=cls._getExtraKwargs(data),
-        )
-
-
-class UploadedAttachment(BaseMaxBotModel):
-    """Base class for uploaded attachments in Max Bot API.
-
-    Contains the upload endpoint information for files that have been uploaded
-    and can be referenced in messages.
-    """
-
-    __slots__ = ("uploadEndpoint",)
-
-    def __init__(self, *, uploadEndpoint: UploadEndpoint, api_kwargs: Dict[str, Any] | None = None):
-        """Initialize UploadedAttachment with upload endpoint.
-
-        Args:
-            uploadEndpoint: The endpoint information for the uploaded file
-            api_kwargs: Additional API keyword arguments
-        """
-        super().__init__(api_kwargs=api_kwargs)
-        self.uploadEndpoint: UploadEndpoint = uploadEndpoint
-
-    def toAttachmentRequest(self) -> AttachmentRequest:
-        """Convert uploaded attachment to attachment request.
-
-        Returns:
-            AttachmentRequest object for sending the uploaded attachment
-
-        Raises:
-            RuntimeError: Always raised as base class cannot be converted
-        """
-        raise RuntimeError("Base class UploadedAttachment cannot be converted to Attachment request")
 
 
 class UploadedPhoto(UploadedAttachment):
@@ -331,3 +401,232 @@ class UploadedPhoto(UploadedAttachment):
             PhotoAttachmentRequest object for sending the uploaded photo
         """
         return PhotoAttachmentRequest(payload=PhotoAttachmentRequestPayload(photos=self.payload.photos))
+
+
+class FileAttachmentRequest(AttachmentRequest):
+    """Request for sending a file attachment in Max Bot API.
+
+    Extends AttachmentRequest specifically for file attachments with uploaded file information.
+    """
+
+    __slots__ = ("payload",)
+
+    def __init__(self, *, payload: UploadedInfo, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=AttachmentType.FILE, api_kwargs=api_kwargs)
+        self.payload: UploadedInfo = payload
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
+        """Create FileAttachmentRequest instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            FileAttachmentRequest: New FileAttachmentRequest instance
+        """
+        return cls(
+            payload=UploadedInfo.from_dict(data.get("payload", {})),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
+
+
+class FileUploadResult(BaseMaxBotModel):
+    """Result of a file upload operation in Max Bot API.
+
+    Contains the uploaded file with its corresponding token for later reference.
+    """
+
+    __slots__ = (
+        "fileId",
+        "token",
+    )
+
+    def __init__(
+        self,
+        *,
+        fileId: int,
+        token: str,
+        api_kwargs: Dict[str, Any] | None = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+
+        self.fileId: int = fileId
+        self.token: str = token
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
+        """Create FileUploadResult instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            FileUploadResult: New FileUploadResult instance
+        """
+        return cls(
+            fileId=int(data.get("fileId", 0)),
+            token=data.get("token", ""),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
+
+
+class UploadedFile(UploadedAttachment):
+    """Result of uploading a file attachment in Max Bot API.
+
+    Contains both the upload endpoint and the file upload result with token.
+    """
+
+    __slots__ = ("uploadEndpoint", "payload")
+
+    def __init__(
+        self, *, uploadEndpoint: UploadEndpoint, payload: FileUploadResult, api_kwargs: Optional[Dict[str, Any]] = None
+    ):
+        """Initialize UploadedFile with endpoint and payload.
+
+        Args:
+            uploadEndpoint: The endpoint information for the uploaded file
+            payload: The file upload result containing token
+            api_kwargs: Additional API keyword arguments
+        """
+        super().__init__(uploadEndpoint=uploadEndpoint, api_kwargs=api_kwargs)
+
+        self.payload: FileUploadResult = payload
+
+    def toAttachmentRequest(self) -> FileAttachmentRequest:
+        """Convert uploaded file to file attachment request.
+
+        Returns:
+            FileAttachmentRequest: File attachment request object for sending the uploaded file
+        """
+        return FileAttachmentRequest(payload=UploadedInfo(token=self.payload.token))
+
+
+class VideoAttachmentRequest(AttachmentRequest):
+    """Request for sending a video attachment in Max Bot API.
+
+    Extends AttachmentRequest specifically for video attachments with uploaded video information.
+    """
+
+    __slots__ = ("payload",)
+
+    def __init__(self, *, payload: UploadedInfo, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=AttachmentType.VIDEO, api_kwargs=api_kwargs)
+        self.payload: UploadedInfo = payload
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
+        """Create VideoAttachmentRequest instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            VideoAttachmentRequest: New VideoAttachmentRequest instance
+        """
+        return cls(
+            payload=UploadedInfo.from_dict(data.get("payload", {})),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
+
+
+class UploadedVideo(UploadedAttachment):
+    """Result of uploading a video attachment in Max Bot API.
+
+    Contains both the upload endpoint and the video upload result with token.
+    """
+
+    __slots__ = ("uploadEndpoint", "payload")
+
+    def __init__(
+        self, *, uploadEndpoint: UploadEndpoint, payload: Dict[str, Any], api_kwargs: Optional[Dict[str, Any]] = None
+    ):
+        """Initialize UploadedVideo with endpoint and payload.
+
+        Args:
+            uploadEndpoint: The endpoint information for the uploaded video
+            payload: The video upload result containing token
+            api_kwargs: Additional API keyword arguments
+        """
+        super().__init__(uploadEndpoint=uploadEndpoint, api_kwargs=api_kwargs)
+
+        self.payload: Dict[str, Any] = payload
+
+    def toAttachmentRequest(self) -> VideoAttachmentRequest:
+        """Convert uploaded video to video attachment request.
+
+        Returns:
+            VideoAttachmentRequest: Video attachment request object for sending the uploaded video
+
+        Raises:
+            ValueError: If upload endpoint token is None
+        """
+        if self.uploadEndpoint.token is None:
+            raise ValueError("Upload endpoint token is None")
+
+        return VideoAttachmentRequest(payload=UploadedInfo(token=self.uploadEndpoint.token))
+
+
+class AudioAttachmentRequest(AttachmentRequest):
+    """Request for sending an audio attachment in Max Bot API.
+
+    Extends AttachmentRequest specifically for audio attachments with uploaded audio information.
+    """
+
+    __slots__ = ("payload",)
+
+    def __init__(self, *, payload: UploadedInfo, api_kwargs: Dict[str, Any] | None = None):
+        super().__init__(type=AttachmentType.AUDIO, api_kwargs=api_kwargs)
+        self.payload: UploadedInfo = payload
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Self:
+        """Create AudioAttachmentRequest instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing API response data
+
+        Returns:
+            AudioAttachmentRequest: New AudioAttachmentRequest instance
+        """
+        return cls(
+            payload=UploadedInfo.from_dict(data.get("payload", {})),
+            api_kwargs=cls._getExtraKwargs(data),
+        )
+
+
+class UploadedAudio(UploadedAttachment):
+    """Result of uploading an audio attachment in Max Bot API.
+
+    Contains both the upload endpoint and the audio upload result with token.
+    """
+
+    __slots__ = ("uploadEndpoint", "payload")
+
+    def __init__(
+        self, *, uploadEndpoint: UploadEndpoint, payload: Dict[str, Any], api_kwargs: Optional[Dict[str, Any]] = None
+    ):
+        """Initialize UploadedAudio with endpoint and payload.
+
+        Args:
+            uploadEndpoint: The endpoint information for the uploaded audio
+            payload: The audio upload result containing token
+            api_kwargs: Additional API keyword arguments
+        """
+        super().__init__(uploadEndpoint=uploadEndpoint, api_kwargs=api_kwargs)
+
+        self.payload: Dict[str, Any] = payload
+
+    def toAttachmentRequest(self) -> AudioAttachmentRequest:
+        """Convert uploaded audio to audio attachment request.
+
+        Returns:
+            AudioAttachmentRequest: Audio attachment request object for sending the uploaded audio
+
+        Raises:
+            ValueError: If upload endpoint token is None
+        """
+        if self.uploadEndpoint.token is None:
+            raise ValueError("Upload endpoint token is None")
+
+        return AudioAttachmentRequest(payload=UploadedInfo(token=self.uploadEndpoint.token))

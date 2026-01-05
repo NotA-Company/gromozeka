@@ -70,9 +70,9 @@ class ChatMessageDict(TypedDict):
     message_id: MessageIdType
     date: datetime.datetime
     user_id: int
-    reply_id: Optional[int]
+    reply_id: Optional[MessageIdType]
     thread_id: int
-    root_message_id: Optional[int]
+    root_message_id: Optional[MessageIdType]
     message_text: str
     message_type: str
     message_category: Union[str, MessageCategory]
@@ -81,24 +81,11 @@ class ChatMessageDict(TypedDict):
     created_at: datetime.datetime
     metadata: str
     markup: str
+    media_group_id: Optional[str]
 
     # From User table
     username: str
     full_name: str
-
-    # From Media Info Table
-    media_file_unique_id: Optional[str]
-    media_file_id: Optional[str]
-    media_file_size: Optional[int]
-    media_media_type: Optional[str]
-    media_metadata: Optional[str]
-    media_status: Optional[Union[str, MediaStatus]]
-    media_mime_type: Optional[str]
-    media_local_url: Optional[str]
-    media_prompt: Optional[str]
-    media_description: Optional[str]
-    media_created_at: Optional[datetime.datetime]
-    media_updated_at: Optional[datetime.datetime]
 
 
 class ChatUserDict(TypedDict):
