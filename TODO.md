@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] Add command for condensing context of given discussion
 - [ ] Add test\dev decorator support
 - [x] Fix spam message
 - [ ] Add spammer mark
