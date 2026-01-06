@@ -4,7 +4,7 @@ Telegram bot chat settings.
 
 import logging
 from enum import IntEnum, StrEnum, auto
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Self, TypedDict
 
 from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager
@@ -12,11 +12,57 @@ from lib.ai.manager import LLMManager
 logger = logging.getLogger(__name__)
 
 
+class ChatTier(StrEnum):
+
+    BANNED = "banned"
+    FREE = "free"
+
+    PAID = "paid"
+
+    FRIEND = "friend"
+    BOT_OWNER = "bot_owner"
+
+    def getId(self) -> int:
+        """Return some unique id
+        WARNING: Do not store it anywhere, it can be changed on app reload
+        """
+        # Use element index
+        return list(self.__class__).index(self) + 1
+
+    @classmethod
+    def fromId(cls, value: int) -> Self:
+        """Get value by it's int id"""
+        try:
+            return list(cls)[value - 1]
+        except IndexError:
+            raise ValueError(f"No {cls.__name__} with numeric value {value}")
+
+    def isBetterOrEqualThan(self, other: Self) -> bool:
+        return self.getId() >= other.getId()
+
+    @classmethod
+    def best(cls, *args: Self) -> Self:
+        """Return the element with the highest ID from the provided arguments."""
+        if not args:
+            raise ValueError("At least one argument is required")
+
+        return max(args, key=lambda x: x.getId())
+
+
 class ChatSettingsPage(IntEnum):
     """Page, where Setting is located"""
 
     STANDART = auto()
     EXTENDED = auto()
+    SPAM = auto()
+
+    LLM_BASE = auto()
+    LLM_PAID = auto()
+
+    PAID = auto()
+    FRIEND = auto()
+    BOT_OWNER = auto()
+    BOT_OWNER_SYSTEM = auto()
 
     def getName(self) -> str:
         match self:
@@ -24,8 +70,45 @@ class ChatSettingsPage(IntEnum):
                 return "Стандартные настройки"
             case ChatSettingsPage.EXTENDED:
                 return "Расширенные настройки"
+            case ChatSettingsPage.SPAM:
+                return "Настройки работы со СПАМом"
+            case ChatSettingsPage.LLM_BASE:
+                return "Базовые настройки LLM"
+            case ChatSettingsPage.LLM_PAID:
+                return "Премиум настройки LLM"
+            case ChatSettingsPage.PAID:
+                return "Премиум настройки"
+            case ChatSettingsPage.FRIEND:
+                return "Настройки для самых важных"
+            case ChatSettingsPage.BOT_OWNER:
+                return "Только для владельцев"
+            case ChatSettingsPage.BOT_OWNER_SYSTEM:
+                return "Системные настройки (не трогать)"
             case _:
                 return f"{self.name}"
+
+    def minTier(self) -> ChatTier:
+        match self:
+            case ChatSettingsPage.STANDART:
+                return ChatTier.FREE
+            case ChatSettingsPage.EXTENDED:
+                return ChatTier.FREE
+            case ChatSettingsPage.SPAM:
+                return ChatTier.FREE
+            case ChatSettingsPage.LLM_BASE:
+                return ChatTier.FREE
+            case ChatSettingsPage.LLM_PAID:
+                return ChatTier.PAID
+            case ChatSettingsPage.PAID:
+                return ChatTier.PAID
+            case ChatSettingsPage.FRIEND:
+                return ChatTier.FRIEND
+            case ChatSettingsPage.BOT_OWNER:
+                return ChatTier.BOT_OWNER
+            case ChatSettingsPage.BOT_OWNER_SYSTEM:
+                return ChatTier.BOT_OWNER
+            case _:
+                raise NotImplementedError(f"Page {self} has no minTier configured")
 
 
 class ChatSettingsType(StrEnum):
@@ -35,7 +118,10 @@ class ChatSettingsType(StrEnum):
     INT = "int"
     FLOAT = "float"
     BOOL = "bool"
-    MODEL = "model"  # Model Name, can be choosen from list of choosable models
+    MODEL = "model"
+    """Model Name, can be choosen from list of choosable models"""
+    IMAGE_MODEL = "image-model"
+    """Image-generation model name, can be choosen from list of choosable models"""
 
 
 class ChatSettingsKey(StrEnum):
@@ -108,6 +194,11 @@ class ChatSettingsKey(StrEnum):
     DELETE_JOIN_MESSAGES = "delete-join-messages"
     DELETE_LEFT_MESSAGES = "delete-left-messages"
 
+    # Tier-related
+    BASE_TIER = "base-tier"
+    PAID_TIER = "paid-tier"
+    PAID_TIER_UNTILL_TS = "paid-tier-untill-ts"
+
     def getId(self) -> int:
         """Return some unique id
         WARNING: Do not store it anywhere, it can be changed on app reload
@@ -172,29 +263,111 @@ class ChatSettingsInfoValue(TypedDict):
 
 
 _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
-    ChatSettingsKey.CHAT_PROMPT: {
-        "type": ChatSettingsType.STRING,
-        "short": "Системный промпт для чата",
-        "long": 'Влияет на "личность" бота.',
-        "page": ChatSettingsPage.STANDART,
-    },
+    # # LLM Models
     ChatSettingsKey.CHAT_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "LLM-Модель для общения в чате",
         "long": "Какую LLM модель использовать для общения в чате",
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.FALLBACK_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "Запасная LLM-Модель для общения в чате",
+        "long": "Какую LLM модель использовать для общения в чат если основная не справилась",
+        "page": ChatSettingsPage.LLM_PAID,
     },
     ChatSettingsKey.SUMMARY_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "LLM-Модель для суммаризации",
         "long": "Какую LLM модель использовать для суммаризации сообщений",
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.SUMMARY_FALLBACK_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "Запасная LLM-Модель для суммаризации",
+        "long": "Какую LLM модель использовать для суммаризации сообщений если основная не справилась",
+        "page": ChatSettingsPage.LLM_PAID,
+    },
+    ChatSettingsKey.IMAGE_PARSING_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "LLM-Модель для обработки изображений",
+        "long": "Какую LLM модель использовать для обработки изображений",
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "Запасная LLM-Модель для обработки изображений",
+        "long": "Какую LLM модель использовать для обработки изображений если основная не справилась",
+        "page": ChatSettingsPage.LLM_PAID,
+    },
+    ChatSettingsKey.IMAGE_GENERATION_MODEL: {
+        "type": ChatSettingsType.IMAGE_MODEL,
+        "short": "LLM-Модель для создания изображений",
+        "long": "Какую LLM модель использовать для создания изображений",
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: {
+        "type": ChatSettingsType.IMAGE_MODEL,
+        "short": "Запасная LLM-Модель для создания изображений",
+        "long": "Какую LLM модель использовать для обработки создания если основная не справилась",
+        "page": ChatSettingsPage.LLM_PAID,
+    },
+    ChatSettingsKey.CONDENSING_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "LLM-Модель для сжатия контекста",
+        "long": "Какую LLM модель использовать для сжатия слишком большого контекста",
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    # # Prompts for different actions
+    ChatSettingsKey.SUMMARY_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Промпт для суммаризации",
+        "long": "Промпт по умолчанию для скммаризации сообщений \n" "(можно изменить во время суммаризации)).",
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.PARSE_IMAGE_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Промпт для анализа изображений",
+        "long": "Промпт, используемый для анализа изображений.",
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.CHAT_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный промпт для чата",
+        "long": 'Влияет на "личность" бота.',
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.CHAT_PROMPT_SUFFIX: {
+        "type": ChatSettingsType.STRING,
+        "short": "Суффикс системного промпт для чата",
+        "long": "Не стоит это изменять кроме как для тестовых целей.",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.CONDENSING_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Промпт для сжатия контекста",
+        "long": "Промпт, используемый для сжатия контекста.",
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    # # Some system settings
+    ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS: {
+        "type": ChatSettingsType.STRING,
+        "short": "Могут ли админы менять настройки чата",
+        "long": "Разрешить ли администраторам чата менять его настройки",
+        "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.BOT_NICKNAMES: {
         "type": ChatSettingsType.STRING,
         "short": "Список никнеймов бота",
         "long": "Бот будет отзываться на эти имена, если оно стоит первым в сообщении пользователя",
         "page": ChatSettingsPage.EXTENDED,
+    },
+    ChatSettingsKey.LLM_MESSAGE_FORMAT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Формат сообщений для LLM",
+        "long": "В каком формате передавать сообщениы в LLM, возможные значения: text, json, smart.\n"
+        "Не меняйте это значение кроме как в тестовых целях",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
     ChatSettingsKey.USE_TOOLS: {
         "type": ChatSettingsType.BOOL,
@@ -209,13 +382,45 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "5. Получение текущего времени\n"
             "6. Поиск по Интернету через Yandex Search API"
         ),
-        "page": ChatSettingsPage.EXTENDED,
+        "page": ChatSettingsPage.PAID,
     },
     ChatSettingsKey.PARSE_ATTACHMENTS: {
         "type": ChatSettingsType.BOOL,
-        "short": "Обрабатывать изображения",
-        "long": "Должен ли бот анализировать изображения используя LLM для дальнейшего использования в разговоре",
-        "page": ChatSettingsPage.STANDART,
+        "short": "Обрабатывать вложения",
+        "long": "Должен ли бот анализировать вложения используя LLM для дальнейшего использования в разговоре.\n"
+        "В данный момент поддержана только обработка изображений и статичных стикеров.",
+        "page": ChatSettingsPage.PAID,
+    },
+    ChatSettingsKey.SAVE_ATTACHMENTS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Сохранять вложения",
+        "long": "Должен ли бот созранять вложения для дальнейшего использования.\n"
+        "На данный момент полезно только для использования совместно с Resender-модулем.",
+        "page": ChatSettingsPage.BOT_OWNER,
+    },
+    ChatSettingsKey.SAVE_PREFIX: {
+        "type": ChatSettingsType.STRING,
+        "short": "Префикс сохраненных файлов",
+        "long": "Префикс для сохранённых файлов. Тебе оно не надо.",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.TOOLS_USED_PREFIX: {
+        "type": ChatSettingsType.STRING,
+        "short": "Префикс для инструментов",
+        "long": "Префикс у сообщения, если были использованы какие-либо инструменты",
+        "page": ChatSettingsPage.EXTENDED,
+    },
+    ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: {
+        "type": ChatSettingsType.STRING,
+        "short": "Префикс для ошибок",
+        "long": "Префикс у сообщения если по каким либо причинам была использована запасная модель генерации текста",
+        "page": ChatSettingsPage.EXTENDED,
+    },
+    ChatSettingsKey.ALLOW_TOOLS_COMMANDS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Разрешить команды использования инструментов (`/draw`, ...)",
+        "long": "Разрешить команды использования различных инструментов (Например `/draw`, `/analyze` и т.д.)",
+        "page": ChatSettingsPage.PAID,
     },
     ChatSettingsKey.DELETE_DENIED_COMMANDS: {
         "type": ChatSettingsType.BOOL,
@@ -224,12 +429,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "(полезно для предотвращения флуда нечайными кликами на команду)",
         "page": ChatSettingsPage.STANDART,
     },
-    ChatSettingsKey.ALLOW_TOOLS_COMMANDS: {
-        "type": ChatSettingsType.BOOL,
-        "short": "Разрешить команды использования инструментов (`/draw`, ...)",
-        "long": "Разрешить команды использования различных инструментов (Например `/draw`, `/analyze` и т.д.)",
-        "page": ChatSettingsPage.STANDART,
-    },
+    # # Allowing different reactions in chat (to mention/reply/random)
     ChatSettingsKey.ALLOW_MENTION: {
         "type": ChatSettingsType.BOOL,
         "short": "Реагировать на упоминания",
@@ -254,18 +454,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "long": "Отвечать ли при этом на сообщения администраторов чата",
         "page": ChatSettingsPage.EXTENDED,
     },
-    ChatSettingsKey.TOOLS_USED_PREFIX: {
-        "type": ChatSettingsType.STRING,
-        "short": "Префикс для инструментов",
-        "long": "Префикс у сообщения, если были использованы какие-либо инструменты",
-        "page": ChatSettingsPage.EXTENDED,
-    },
-    ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: {
-        "type": ChatSettingsType.STRING,
-        "short": "Префикс для ошибок",
-        "long": "Префикс у сообщения если по каким либо причинам была использована запасная модель генерации текста",
-        "page": ChatSettingsPage.EXTENDED,
-    },
+    # # Spam-related settings
     ChatSettingsKey.ALLOW_USER_SPAM_COMMAND: {
         "type": ChatSettingsType.BOOL,
         "short": "Разрешить не админам использовать команду spam",
@@ -273,22 +462,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Разрешить не админам использовать команду `/spam` "
             "для удаления всех сообщений пользователя и его блокировки"
         ),
-        "page": ChatSettingsPage.STANDART,
-    },
-    ChatSettingsKey.DETECT_SPAM: {
-        "type": ChatSettingsType.BOOL,
-        "short": "Автоматически проверять на спам",
-        "long": "Автоматически проверять сообщения новых пользователей на спам",
-        "page": ChatSettingsPage.STANDART,
-    },
-    ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES: {
-        "type": ChatSettingsType.INT,
-        "short": "Максимальное количество сообщений для спам-проверки",
-        "long": (
-            "Пользователи, у которых в чате больше указанного количества "
-            "сообщений не будут проверяться на спам (0 - всегда проверять)"
-        ),
-        "page": ChatSettingsPage.EXTENDED,
+        "page": ChatSettingsPage.SPAM,
     },
     ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES: {
         "type": ChatSettingsType.BOOL,
@@ -297,7 +471,22 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Удалять все сообщения пользователя, когда пользователь признан "
             "спаммером (автоматически или при помощи команды `/spam`)"
         ),
-        "page": ChatSettingsPage.EXTENDED,
+        "page": ChatSettingsPage.SPAM,
+    },
+    ChatSettingsKey.DETECT_SPAM: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Автоматически проверять на спам",
+        "long": "Автоматически проверять сообщения новых пользователей на спам",
+        "page": ChatSettingsPage.SPAM,
+    },
+    ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES: {
+        "type": ChatSettingsType.INT,
+        "short": "Максимальное количество сообщений для спам-проверки",
+        "long": (
+            "Пользователи, у которых в чате больше указанного количества "
+            "сообщений не будут проверяться на спам (0 - всегда проверять)"
+        ),
+        "page": ChatSettingsPage.SPAM,
     },
     ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS: {
         "type": ChatSettingsType.BOOL,
@@ -307,21 +496,21 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "сообщений в чате), как спаммеров при помощи команды `/spam` \n"
             "(Используется для того, что бы исклюить ошибки и очепятки)"
         ),
-        "page": ChatSettingsPage.EXTENDED,
+        "page": ChatSettingsPage.SPAM,
     },
     ChatSettingsKey.SPAM_WARN_TRESHOLD: {
         "type": ChatSettingsType.FLOAT,
         "short": "SPAM-Порог для предупреждения пользователя",
         "long": ("Порог для предупреждения пользователя при автоматической проверке на спам" "(0-100)"),
-        "page": ChatSettingsPage.EXTENDED,
+        "page": ChatSettingsPage.SPAM,
     },
     ChatSettingsKey.SPAM_BAN_TRESHOLD: {
         "type": ChatSettingsType.FLOAT,
         "short": "SPAM-Порог для блокировки пользователя",
         "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),
-        "page": ChatSettingsPage.EXTENDED,
+        "page": ChatSettingsPage.SPAM,
     },
-    # Bayes filter settings, dood!
+    # # Bayes filter settings, dood!
     ChatSettingsKey.BAYES_ENABLED: {
         "type": ChatSettingsType.BOOL,
         "short": "Включить Bayes фильтр спама",
@@ -329,7 +518,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Включить использование Bayes фильтра для более точного определения спама. "
             "Фильтр обучается на основе помеченных спам сообщений и обычных сообщений пользователей."
         ),
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.SPAM,
     },
     ChatSettingsKey.BAYES_MIN_CONFIDENCE: {
         "type": ChatSettingsType.FLOAT,
@@ -338,7 +527,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Минимальная уверенность Bayes фильтра для принятия решения (0.0-1.0). "
             "Если уверенность ниже, результат Bayes фильтра игнорируется."
         ),
-        "page": ChatSettingsPage.EXTENDED,
+        "page": ChatSettingsPage.SPAM,
     },
     ChatSettingsKey.BAYES_AUTO_LEARN: {
         "type": ChatSettingsType.BOOL,
@@ -349,8 +538,25 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Рекомендуется включить для улучшения точности "
             "определения спама со временем."
         ),
-        "page": ChatSettingsPage.EXTENDED,
+        "page": ChatSettingsPage.SPAM,
     },
+    ChatSettingsKey.BAYES_USE_TRIGRAMS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Использовать триграммы в Bayes фильтре",
+        "long": (
+            "Использование триграмм в Bayes фильтре для более точного определения спама. "
+            "Наиболее полезны только когда достаточно много сообщений в баазе данных. "
+        ),
+        "page": ChatSettingsPage.SPAM,
+    },
+    # # Reaction settings
+    ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP: {
+        "type": ChatSettingsType.STRING,
+        "short": "JSON-маппинг автора сообщения к реакции",
+        "long": ("Используй команды `/set_reaction`|`/unset_reaction` для управления этой настройкой."),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    #
     ChatSettingsKey.DELETE_JOIN_MESSAGES: {
         "type": ChatSettingsType.BOOL,
         "short": "Удалять сообщение о присоединении пользователя",
@@ -362,6 +568,25 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Удалять сообщение о выходе пользователя",
         "long": "Удалять сообщение о выходе пользователя из чата.",
         "page": ChatSettingsPage.STANDART,
+    },
+    # Tier-related
+    ChatSettingsKey.BASE_TIER: {
+        "type": ChatSettingsType.STRING,
+        "short": "Tier чата",
+        "long": "Tier чата, смотри ChatTier для списка возможных значений.",
+        "page": ChatSettingsPage.BOT_OWNER,
+    },
+    ChatSettingsKey.PAID_TIER: {
+        "type": ChatSettingsType.STRING,
+        "short": "Оплаченный Tier чата",
+        "long": "Tier чата на время наличия оплаты. Скорее всего не стоит менять это значение",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.PAID_TIER_UNTILL_TS: {
+        "type": ChatSettingsType.INT,
+        "short": "Время действия платного Tier чата",
+        "long": "Таймштамп, до которого оплачен Tier чата. Скорее всего не стоит менять это значение",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
 }
 
