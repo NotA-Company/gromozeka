@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_THREAD_ID: int = 0
 
 
-def convert_timestamp(val: bytes|str) -> datetime.datetime:
+def convert_timestamp(val: bytes | str) -> datetime.datetime:
     if isinstance(val, bytes):
         valStr = val.decode("utf-8")
     else:
