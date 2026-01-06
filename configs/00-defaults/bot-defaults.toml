@@ -75,6 +75,11 @@ spam-warn-treshold = 60
 # Allow to block old (with more, than `auto-spam-max-messages` messages) users with /spam command
 allow-mark-spam-old-users = false
 
+# DEleteing join\left messages - default False
+
+delete-join-messages = false
+delete-left-messages = false
+
 # Bayes filter settings
 bayes-enabled = true
 bayes-min-confidence = 0.5
