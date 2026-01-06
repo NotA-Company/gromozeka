@@ -81,7 +81,7 @@ class MaxBotApplication:
             **kwargs: Additional keyword arguments
         """
         await self.queueService.beginShutdown()
-        logger.info("Application stopping, Awaiting for all taskt to complete")
+        logger.info("Application stopping, Awaiting for all tasks to complete")
         logger.info(f"Currently there are {len(self._tasks)} tasks active...")
         while len(self._tasks) > 0:
             await asyncio.sleep(1)

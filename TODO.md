@@ -1,5 +1,5 @@
 # Our TODO list
-- [ ] Fix spam message
+- [x] Fix spam message
 - [ ] Add spammer mark
 - [ ] Add support for deleteing join message
 2025-12-27 15:26:52,074 - lib.ai.providers.basic_openai_provider:155 - ERROR - Error running OpenAI-compatible model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}

@@ -759,6 +759,34 @@ class SpamHandler(BaseBotHandler):
             stats["failed"] += 1
             return stats
 
+    async def trainBayesFromSpamDB(self, chatId: int, limit: int = 1000) -> Dict[str, int]:
+        """
+        Train Bayes filter from existing spam messages
+
+        TODO: Write docstring
+        """
+        stats = {"spam_learned": 0, "ham_learned": 0, "failed": 0}
+
+        try:
+            # Learn from existing spam messages
+            spam_messages = self.db.getSpamMessages(limit=limit)  # Get all spam messages
+            logger.debug(f"Got {len(spam_messages)} spam messages")
+            for spamMsg in spam_messages:
+                if spamMsg["text"]:
+                    success = await self.bayesFilter.learnSpam(messageText=spamMsg["text"], chatId=chatId)
+                    if success:
+                        stats["spam_learned"] += 1
+                    else:
+                        stats["failed"] += 1
+
+            logger.info(f"Bayes SPAM training completed for chat {chatId}: {stats}, dood!")
+            return stats
+
+        except Exception as e:
+            logger.error(f"Failed to train Bayes filter from SpamDB: {e}, dood!")
+            stats["failed"] += 1
+            return stats
+
     ###
     # Handling messages
     ###
@@ -911,7 +939,7 @@ class SpamHandler(BaseBotHandler):
                 self.setUserMetadata(chatId=hamUserDB["chat_id"], userId=hamUserDB["user_id"], metadata=userMetadata)
 
         # We need to fallback somewhere, let's fallback to called user
-        reportedUser = ensuredMessage.sender
+        reportedUser = eRepliedMessage.sender
         await self.editMessage(
             messageId=ensuredMessage.messageId,
             chatId=chat.id,
@@ -1096,12 +1124,76 @@ class SpamHandler(BaseBotHandler):
             )
             return
 
-        await self.trainBayesFromHistory(chatId=targetChatId)
+        learnStats = await self.trainBayesFromHistory(chatId=targetChatId)
         stats = await self.getBayesFilterStats(chatId=targetChatId)
 
         await self.sendMessage(
             ensuredMessage,
-            messageText=f"Готово:\n```json\n{utils.jsonDumps(stats, indent=2)}\n```\n",
+            messageText="Готово:\n```json\n"
+            + utils.jsonDumps(learnStats, indent=2)
+            + "\n\n"
+            + utils.jsonDumps(stats, indent=2)
+            + "\n```\n",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+    @commandHandlerV2(
+        commands=("pretrain_bayes_spam",),
+        shortDescription="[<chatId>] [<N>] - train bayes filter with up to N (default 1000) last spam messages",
+        helpMessage=" [`<chatId>`] [`<N>`]: Предобучить Баесовский антиспам фильтр на последних"
+        " N (по умолчанию 1000) сообщениях из СПАМ-базы.",
+        visibility={CommandPermission.PRIVATE},
+        availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
+        helpOrder=CommandHandlerOrder.SPAM,
+        category=CommandCategory.SPAM_ADMIN,
+    )
+    async def pretrain_bayes_spam_command(
+        self,
+        ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """
+        Handle /pretrain_bayes_spam [<chatId>] [<N>] command for initial filter training, dood!
+
+        TODO: Write docstring
+        """
+
+        argList = args.split()
+        targetChatId = utils.extractInt(argList)
+        if targetChatId is None:
+            targetChatId = ensuredMessage.recipient.id
+        else:
+            argList = argList[1:]
+
+        maxMessagesToLearn = utils.extractInt(argList)
+        if maxMessagesToLearn is None:
+            maxMessagesToLearn = 1000
+
+        targetChat = MessageRecipient(
+            id=targetChatId, chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP
+        )
+
+        if not await self.isAdmin(user=ensuredMessage.sender, chat=targetChat):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="У Вас нет прав для выполнения данной команды.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        learnStats = await self.trainBayesFromSpamDB(chatId=targetChatId, limit=maxMessagesToLearn)
+        stats = await self.getBayesFilterStats(chatId=targetChatId)
+
+        await self.sendMessage(
+            ensuredMessage,
+            messageText="Готово:\n```json\n"
+            + utils.jsonDumps(learnStats, indent=2)
+            + "\n\n"
+            + utils.jsonDumps(stats, indent=2)
+            + "\n```\n",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
 

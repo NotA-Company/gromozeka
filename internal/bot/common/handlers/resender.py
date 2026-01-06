@@ -17,7 +17,7 @@ import datetime
 import json
 import logging
 from collections.abc import MutableSet, Sequence
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import lib.utils as utils
 from internal.bot.models import (
@@ -57,7 +57,6 @@ class ResendJob:
         "lastMessageDate",
         "notification",
         "mediaGroupDelaySecs",
-        "pendingMediaGroups",
         "_lock",
     )
 
@@ -129,8 +128,6 @@ class ResendJob:
             self.setLastMessageDate(lastMessageDate)
         self._lock = asyncio.Lock()
         """internal async lock for synchronization"""
-        self.pendingMediaGroups: MutableSet[str] = set[str]()
-        """set of media group ids that are pending completion"""
 
     def setLastMessageDate(self, lastMessageDate: datetime.datetime | str) -> None:
         """
@@ -241,17 +238,27 @@ class ResenderHandler(BaseBotHandler):
             if storedData:
                 newJob.setLastMessageDate(storedData)
             logger.info(f"Loaded resender job {newJob}")
-            pendingMediaGroups = self.db.getSetting(f"resender:{newJob.id}:pendingMediaGroups")
-            if pendingMediaGroups:
-                pendingMediaGroupsList = json.loads(pendingMediaGroups)
-                for mediaGroup in pendingMediaGroupsList:
-                    newJob.pendingMediaGroups.add(mediaGroup)
             self.jobs.append(newJob)
 
         self.queueService = QueueService.getInstance()
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
 
+        self.isExiting = False
+        self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
         logger.debug(f"ResenderHandler initialized with {len(self.jobs)} jobs")
+
+    async def _dtOnExit(self, task: DelayedTask) -> None:
+        """
+        Handle the exit event for the resender handler.
+
+        This method is called when the application is shutting down to clean up
+        resources and stop any active tasks.
+
+        Args:
+            task: Delayed task object containing job execution context
+        """
+        self.isExiting = True
+        logger.debug("Exiting resender handler")
 
     async def _dtCronJob(self, task: DelayedTask) -> None:
         """
@@ -264,6 +271,18 @@ class ResenderHandler(BaseBotHandler):
         Args:
             task: Delayed task object containing job execution context
         """
+
+        # Run it in background to not block Queue Service delayed tasks processing
+        await self.queueService.addBackgroundTask(asyncio.create_task(self.resendCronJob()))
+
+    async def resendCronJob(self) -> None:
+        """
+        Execute the periodic resend job check and processing.
+
+        This method is called by the queue service on a schedule to check for new
+        messages that match any configured resend job criteria and resend them
+        to their target chats.
+        """
         logger.debug("Cron job started")
         for job in self.jobs:
             if job.isLocked():
@@ -274,6 +293,7 @@ class ResenderHandler(BaseBotHandler):
             async with job.getLock():
                 processedMediaGroups: MutableSet[str] = set[str]()
                 logger.debug(f"Processing job {job}")
+
                 # Get new messages if any
                 newData = self.db.getChatMessagesSince(
                     chatId=job.sourceChatId,
@@ -282,49 +302,16 @@ class ResenderHandler(BaseBotHandler):
                     threadId=job.sourceTheadId,
                     dataSource=job.dataSource,
                 )
-                # Then add pending media groups if any of them are ready
-                # we use list() here to make copy of set to be able to modify it
-                for mediaGroupId in list(job.pendingMediaGroups):
-                    # Get the last updated timestamp for this media group
-                    lastUpdated = self.db.getMediaGroupLastUpdatedAt(
-                        mediaGroupId,
-                        dataSource=job.dataSource,
-                    )
-
-                    if lastUpdated is not None:
-                        age = utils.getAgeInSecs(lastUpdated)
-                        if age < job.mediaGroupDelaySecs:
-                            # Media group may be incomplete, skip for now
-                            logger.debug(
-                                f"Media group {mediaGroupId} "
-                                f"too recent ({age:.1f}s < {job.mediaGroupDelaySecs}s), waiting..."
-                            )
-                            continue
-
-                    job.pendingMediaGroups.discard(mediaGroupId)
-                    # Get first message with given media group id and put it into begining of newData
-                    firstMessage = self.db.getFirstChatMessageByMediaGroupId(
-                        chatId=job.sourceChatId,
-                        mediaGroupId=mediaGroupId,
-                        threadId=job.sourceTheadId,
-                        dataSource=job.dataSource,
-                    )
-                    if firstMessage:
-                        # We add it to the end of list as we'll reverse it later
-                        newData.append(firstMessage)
 
                 if not newData:
                     continue
+
+                messageSendDelay = 0.25
 
                 for message in reversed(newData):
                     try:
                         if message["media_group_id"] is not None:
                             if message["media_group_id"] in processedMediaGroups:
-                                continue
-
-                            # Check if media group is too recent (may be incomplete)
-                            if message["media_group_id"] in job.pendingMediaGroups:
-                                # Already determined this group is not ready
                                 continue
 
                             # Get the last updated timestamp for this media group
@@ -335,14 +322,15 @@ class ResenderHandler(BaseBotHandler):
 
                             if lastUpdated is not None:
                                 age = utils.getAgeInSecs(lastUpdated)
-                                if age < job.mediaGroupDelaySecs:
-                                    # Media group may be incomplete, skip for now
+                                while age < job.mediaGroupDelaySecs:
                                     logger.debug(
                                         f"Media group {message['media_group_id']} "
                                         f"too recent ({age:.1f}s < {job.mediaGroupDelaySecs}s), waiting..."
                                     )
-                                    job.pendingMediaGroups.add(message["media_group_id"])
-                                    continue
+
+                                    await asyncio.sleep(job.mediaGroupDelaySecs - age)
+                                    age = utils.getAgeInSecs(lastUpdated)
+                                    # Media group may be incomplete, skip for now
 
                             # Media group is ready, mark as processed
                             processedMediaGroups.add(message["media_group_id"])
@@ -379,10 +367,23 @@ class ResenderHandler(BaseBotHandler):
                             # Send message only if it has text or supported media
                             messagePrefix = job.messagePrefix
                             messageSuffix = job.messageSuffix
+                            replaceDict: Dict[str, str] = {}
+
                             for k, v in message.items():
+                                replaceDict[k] = str(v)
+
+                            if message["metadata"]:
+                                metadataDict = json.loads(message["metadata"])
+                                for k, v in metadataDict.items():
+                                    replaceDict[f"metadata.{k}"] = str(v)
+                                    if isinstance(v, dict):
+                                        # TODO: Add support for nested dictionaries
+                                        replaceDict.update({f"metadata.{k}.{k2}": str(v2) for k2, v2 in v.items()})
+
+                            for k, v in replaceDict.items():
                                 # logger.debug("Replacing {{" + k + "}} with " + str(v))
-                                messagePrefix = messagePrefix.replace("{{" + k + "}}", str(v))
-                                messageSuffix = messageSuffix.replace("{{" + k + "}}", str(v))
+                                messagePrefix = messagePrefix.replace("{{" + k + "}}", v)
+                                messageSuffix = messageSuffix.replace("{{" + k + "}}", v)
 
                             await self.sendMessage(
                                 None,
@@ -393,10 +394,16 @@ class ResenderHandler(BaseBotHandler):
                                 attachmentList=attachmentList,
                             )
 
+                            await asyncio.sleep(messageSendDelay)
+                            messageSendDelay = min(messageSendDelay * 2, 10)
+
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
                             job.lastMessageDate = message["date"]
                         self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
-                        await asyncio.sleep(0.25)
+
+                        if self.isExiting:
+                            logger.info("Exiting resender loop as bot is exiting...")
+                            break
                     except Exception as e:
                         logger.error(f"Error processing job {job}: {e}")
                         logger.exception(e)
@@ -408,4 +415,3 @@ class ResenderHandler(BaseBotHandler):
                             notify=job.notification,
                         )
                     # for message in reversed(newData):
-                self.db.setSetting(f"resender:{job.id}:pendingMediaGroups", json.dumps(list(job.pendingMediaGroups)))
