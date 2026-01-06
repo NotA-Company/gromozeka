@@ -106,6 +106,7 @@ class ChatSettingsKey(StrEnum):
 
     #
     DELETE_JOIN_MESSAGES = "delete-join-messages"
+    DELETE_LEFT_MESSAGES = "delete-left-messages"
 
     def getId(self) -> int:
         """Return some unique id
@@ -354,6 +355,12 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.BOOL,
         "short": "Удалять сообщение о присоединении пользователя",
         "long": "Удалять сообщение о присоединении пользователя к чату.",
+        "page": ChatSettingsPage.STANDART,
+    },
+    ChatSettingsKey.DELETE_LEFT_MESSAGES: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Удалять сообщение о выходе пользователя",
+        "long": "Удалять сообщение о выходе пользователя из чата.",
         "page": ChatSettingsPage.STANDART,
     },
 }

@@ -121,6 +121,18 @@ class TelegramBotApplication:
                         updateObj=update,
                     )
                 return
+            elif message.left_chat_member is not None:
+                logger.debug(f"Left chat member: {update}")
+                targetChat = MessageRecipient.fromTelegramChat(message.chat)
+                messageId = message.message_id
+                leftMember = MessageSender.fromTelegramUser(message.left_chat_member)
+
+                return await self.handlerManager.handleLeftChatMember(
+                    targetChat=targetChat,
+                    messageId=messageId,
+                    leftMember=leftMember,
+                    updateObj=update,
+                )
 
             # It's new message
             logger.debug(f"Message: {utils.dumpTelegramMessage(message)}")

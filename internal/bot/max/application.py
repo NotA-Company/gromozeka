@@ -200,6 +200,22 @@ class MaxBotApplication:
                 ),
             )
 
+        elif isinstance(update, maxModels.UserRemovedFromChatUpdate):
+            logger.debug("It's removed chat member, processing...")
+
+            return await self.runAsynced(
+                None,
+                self.handlerManager.handleLeftChatMember(
+                    targetChat=MessageRecipient(
+                        id=update.chat_id,
+                        chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
+                    ),
+                    messageId=None,
+                    leftMember=MessageSender.fromMaxUser(update.user),
+                    updateObj=update,
+                ),
+            )
+
         elif isinstance(update, maxModels.MessageCallbackUpdate):
             logger.debug("It's callback, processing...")
             if update.message is None:
