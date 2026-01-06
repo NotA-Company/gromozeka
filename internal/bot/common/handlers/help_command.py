@@ -24,7 +24,6 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
-from lib import utils
 from lib.ai import LLMManager
 
 from .base import BaseBotHandler
