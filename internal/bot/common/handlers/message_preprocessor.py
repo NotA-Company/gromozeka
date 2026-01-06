@@ -81,7 +81,8 @@ class MessagePreprocessorHandler(BaseBotHandler):
         newMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
-        """Handle new chat member events and optionally delete join messages.
+        """
+        Handle new chat member events and optionally delete join messages.
 
         Args:
             targetChat: Chat where the new member joined
@@ -98,6 +99,35 @@ class MessagePreprocessorHandler(BaseBotHandler):
         chatSettings = self.getChatSettings(targetChat.id)
         if messageId is not None and chatSettings[ChatSettingsKey.DELETE_JOIN_MESSAGES].toBool():
             logger.info(f"Deleting join message#{messageId} of {newMember} in chat {targetChat.id}")
+            await self.deleteMessagesById(targetChat.id, [messageId])
+            return HandlerResultStatus.FINAL
+
+        return HandlerResultStatus.NEXT
+
+    async def leftChatMemberHandler(
+        self,
+        targetChat: MessageRecipient,
+        messageId: Optional[MessageIdType],
+        leftMember: MessageSender,
+        updateObj: UpdateObjectType,
+    ) -> HandlerResultStatus:
+        """
+        Handle left chat member events and optionally delete left messages.
+
+        Args:
+            targetChat: The chat where the member joined
+            messageId: Optional message ID associated with the join event
+            leftMember: The member who left the chat
+            updateObj: The raw update object from the bot platform
+
+        Returns:
+            HandlerResultStatus.FINAL if left message deleted, NEXT otherwise
+        """
+        # Someday add adding of user into database
+
+        chatSettings = self.getChatSettings(targetChat.id)
+        if messageId is not None and chatSettings[ChatSettingsKey.DELETE_LEFT_MESSAGES].toBool():
+            logger.info(f"Deleting left message#{messageId} of {leftMember} in chat {targetChat.id}")
             await self.deleteMessagesById(targetChat.id, [messageId])
             return HandlerResultStatus.FINAL
 

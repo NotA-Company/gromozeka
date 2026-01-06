@@ -95,6 +95,12 @@ class HandlerResultStatus(Enum):
     ERROR = "error"  # Processing error (can be processed further)
     FATAL = "fatal"  # Fatal error, need to stop processing
 
+    def isFinalState(self) -> bool:
+        return self in (HandlerResultStatus.FINAL, HandlerResultStatus.FATAL)
+
+    def needLogs(self) -> bool:
+        return self not in (HandlerResultStatus.SKIPPED,)
+
 
 class BaseBotHandler(CommandHandlerMixin):
     """
@@ -1566,6 +1572,31 @@ class BaseBotHandler(CommandHandlerMixin):
             targetChat: The chat where the member joined
             messageId: Optional message ID associated with the join event
             newMember: The new member who joined the chat
+            updateObj: The raw update object from the bot platform
+
+        Returns:
+            HandlerResultStatus indicating processing result (default: SKIPPED)
+        """
+        # By default, skip processing
+        return HandlerResultStatus.SKIPPED
+
+    async def leftChatMemberHandler(
+        self,
+        targetChat: MessageRecipient,
+        messageId: Optional[MessageIdType],
+        leftMember: MessageSender,
+        updateObj: UpdateObjectType,
+    ) -> HandlerResultStatus:
+        """
+        Handle left chat member event, dood!
+
+        Base implementation that returns SKIPPED. Subclasses can override
+        to implement custom behavior when a new member joins a chat.
+
+        Args:
+            targetChat: The chat where the member joined
+            messageId: Optional message ID associated with the join event
+            leftMember: The member who left the chat
             updateObj: The raw update object from the bot platform
 
         Returns:
