@@ -46,7 +46,7 @@ add-date-suffix = true
 [logging]
 # Logging configuration
 level = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 console = true
 # Optional: log to file (uncomment to enable)
 file = "logs/gromozeka.log"
@@ -55,7 +55,7 @@ rotate = true
 
 [logging.logger."openai._base_client"]
 propagate = false
-format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 console = true
 console-level = "INFO"
 file = "logs/openai.log"
