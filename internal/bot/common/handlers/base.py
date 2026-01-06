@@ -1549,6 +1549,31 @@ class BaseBotHandler(CommandHandlerMixin):
         # By default, skip processing
         return HandlerResultStatus.SKIPPED
 
+    async def newChatMemberHandler(
+        self,
+        targetChat: MessageRecipient,
+        messageId: Optional[MessageIdType],
+        newMember: MessageSender,
+        updateObj: UpdateObjectType,
+    ) -> HandlerResultStatus:
+        """
+        Handle new chat member event, dood!
+
+        Base implementation that returns SKIPPED. Subclasses can override
+        to implement custom behavior when a new member joins a chat.
+
+        Args:
+            targetChat: The chat where the member joined
+            messageId: Optional message ID associated with the join event
+            newMember: The new member who joined the chat
+            updateObj: The raw update object from the bot platform
+
+        Returns:
+            HandlerResultStatus indicating processing result (default: SKIPPED)
+        """
+        # By default, skip processing
+        return HandlerResultStatus.SKIPPED
+
     async def callbackHandler(
         self,
         ensuredMessage: EnsuredMessage,
