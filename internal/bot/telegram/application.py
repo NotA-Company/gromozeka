@@ -108,7 +108,7 @@ class TelegramBotApplication:
 
         if update.message is not None:
             message = update.message
-            if message.new_chat_members is not None:
+            if message.new_chat_members:
                 logger.debug(f"New chat members: {update}")
                 targetChat = MessageRecipient.fromTelegramChat(message.chat)
                 messageId = message.message_id
@@ -121,7 +121,7 @@ class TelegramBotApplication:
                         updateObj=update,
                     )
                 return
-            elif message.left_chat_member is not None:
+            elif message.left_chat_member:
                 logger.debug(f"Left chat member: {update}")
                 targetChat = MessageRecipient.fromTelegramChat(message.chat)
                 messageId = message.message_id
