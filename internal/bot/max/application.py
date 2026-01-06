@@ -13,7 +13,7 @@ import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 from internal.bot.common.handlers.manager import HandlersManager
 from internal.bot.models import BotProvider, EnsuredMessage
-from internal.bot.models.ensured_message import MessageSender
+from internal.bot.models.ensured_message import ChatType, MessageRecipient, MessageSender
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.queue_service.service import QueueService
@@ -116,18 +116,25 @@ class MaxBotApplication:
         # Start the bot
         asyncio.run(self._runPolling())
 
-    async def runAsynced(self, ensuredMessage: EnsuredMessage, coroutine: Awaitable) -> None:
+    async def runAsynced(self, ensuredMessage: Optional[EnsuredMessage], coroutine: Awaitable) -> None:
         # if there are too many tasks, wait for some to discard itself
         while len(self._tasks) > self.maxTasks:
             logger.warning(f"There are {len(self._tasks)} active tasks, awaiting fo someone to be done...")
             await asyncio.sleep(1)
 
-        task = asyncio.create_task(
-            self.runWithSemaphore(
-                ensuredMessage,
-                coroutine,
+        if ensuredMessage is None:
+            task = asyncio.create_task(
+                self.runWOSemaphore(
+                    coroutine,
+                )
             )
-        )
+        else:
+            task = asyncio.create_task(
+                self.runWithSemaphore(
+                    ensuredMessage,
+                    coroutine,
+                )
+            )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -148,6 +155,16 @@ class MaxBotApplication:
                 logger.error(f"Error during awaiting coroutine for {ensuredMessage}:{coroutine}")
                 logger.exception(e)
 
+    async def runWOSemaphore(self, coroutine: Awaitable) -> None:
+        # logger.debug(f"awaiting corutine for chatId: {key}")
+        try:
+            # Each request should be processed for at most 30 minutes
+            # Just to workaround diffetent stucks in externat services\libs
+            await asyncio.wait_for(coroutine, 60 * 30)
+        except Exception as e:
+            logger.error(f"Error during awaiting coroutine for {coroutine}")
+            logger.exception(e)
+
     async def maxHandler(self, update: maxModels.Update) -> None:
         """Handle incoming Max Messenger updates.
 
@@ -165,6 +182,38 @@ class MaxBotApplication:
             return await self.runAsynced(
                 ensuredMessage,
                 self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update),
+            )
+
+        elif isinstance(update, maxModels.UserAddedToChatUpdate):
+            logger.debug("It's new chat member, processing...")
+
+            return await self.runAsynced(
+                None,
+                self.handlerManager.handleNewChatMember(
+                    targetChat=MessageRecipient(
+                        id=update.chat_id,
+                        chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
+                    ),
+                    messageId=None,
+                    newMember=MessageSender.fromMaxUser(update.user),
+                    updateObj=update,
+                ),
+            )
+
+        elif isinstance(update, maxModels.UserRemovedFromChatUpdate):
+            logger.debug("It's removed chat member, processing...")
+
+            return await self.runAsynced(
+                None,
+                self.handlerManager.handleLeftChatMember(
+                    targetChat=MessageRecipient(
+                        id=update.chat_id,
+                        chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
+                    ),
+                    messageId=None,
+                    leftMember=MessageSender.fromMaxUser(update.user),
+                    updateObj=update,
+                ),
             )
 
         elif isinstance(update, maxModels.MessageCallbackUpdate):

@@ -22,10 +22,11 @@ from internal.bot.models import (
     EnsuredMessage,
 )
 from internal.bot.models.chat_settings import ChatSettingsValue
-from internal.bot.models.ensured_message import MessageSender
+from internal.bot.models.ensured_message import MessageRecipient, MessageSender
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
+from internal.models import MessageIdType
 from internal.services.cache import CacheService
 from internal.services.queue_service import QueueService
 from internal.services.storage import StorageService
@@ -384,24 +385,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         for handler in self.handlers:
             ret = await handler.newMessageHandler(ensuredMessage, updateObj)
             resultSet.add(ret)
-            match ret:
-                case HandlerResultStatus.FINAL:
-                    logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
-                    break
-                case HandlerResultStatus.SKIPPED:
-                    # logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
-                    continue
-                case HandlerResultStatus.NEXT:
-                    logger.debug(f"Handler {type(handler).__name__} returned NEXT")
-                    continue
-                case HandlerResultStatus.ERROR:
-                    logger.error(f"Handler {type(handler).__name__} returned ERROR")
-                    continue
-                case HandlerResultStatus.FATAL:
-                    logger.error(f"Handler {type(handler).__name__} returned FATAL, stop processing")
-                    break
-                case _:
-                    logger.error(f"Unknown handler result: {ret}")
+            if ret.needLogs():
+                logger.debug(f"Handler {type(handler).__name__} returned {ret.value}")
+            if ret.isFinalState():
+                break
 
         logger.debug(
             f"Handled message from {ensuredMessage.sender}: {ensuredMessage.messageText[:50]}... "
@@ -426,30 +413,73 @@ class HandlersManager(CommandHandlerGetterInterface):
                 ensuredMessage=ensuredMessage, data=data, user=user, updateObj=updateObj
             )
             retSet.add(ret)
-            match ret:
-                case HandlerResultStatus.FINAL:
-                    logger.debug(f"Handler {type(handler).__name__} returned FINAL, stop processing")
-                    break
-                case HandlerResultStatus.SKIPPED:
-                    # logger.debug(f"Handler {type(handler).__name__} returned SKIPPED")
-                    continue
-                case HandlerResultStatus.NEXT:
-                    logger.debug(f"Handler {type(handler).__name__} returned NEXT")
-                    continue
-                case HandlerResultStatus.ERROR:
-                    logger.error(f"Handler {type(handler).__name__} returned ERROR")
-                    continue
-                case HandlerResultStatus.FATAL:
-                    logger.error(f"Handler {type(handler).__name__} returned FATAL")
-                    break
-                case _:
-                    logger.error(f"Unknown handler result: {ret}")
-                    continue
+            if ret.needLogs():
+                logger.debug(f"Handler {type(handler).__name__} returned {ret.value}")
+            if ret.isFinalState():
+                break
 
-        expectedFinalResults: Set[HandlerResultStatus] = set([HandlerResultStatus.FINAL, HandlerResultStatus.NEXT])
         logger.debug(f"Handled CallbackQuery, resultsSet: {retSet}")
-        if not expectedFinalResults.intersection(retSet):
-            logger.error(
-                f"No handler returned any of ({expectedFinalResults}), but only ({retSet}), something went wrong"
+
+    async def handleNewChatMember(
+        self,
+        targetChat: MessageRecipient,
+        messageId: Optional[MessageIdType],
+        newMember: MessageSender,
+        updateObj: UpdateObjectType,
+    ) -> None:
+        """Handle new chat member events.
+
+        Args:
+            targetChat: Chat where the new member joined
+            messageId: Message ID associated with the join event, if available
+            newMember: User who joined the chat
+            updateObj: Original update object from the platform
+        """
+
+        retSet: Set[HandlerResultStatus] = set()
+        for handler in self.handlers:
+            ret = await handler.newChatMemberHandler(
+                targetChat=targetChat,
+                messageId=messageId,
+                newMember=newMember,
+                updateObj=updateObj,
             )
-            return
+            retSet.add(ret)
+            if ret.needLogs():
+                logger.debug(f"Handler {type(handler).__name__} returned {ret.value}")
+            if ret.isFinalState():
+                break
+
+        logger.debug(f"Handled New Chat Member {newMember} -> {targetChat}, resultsSet: {retSet}")
+
+    async def handleLeftChatMember(
+        self,
+        targetChat: MessageRecipient,
+        messageId: Optional[MessageIdType],
+        leftMember: MessageSender,
+        updateObj: UpdateObjectType,
+    ) -> None:
+        """Handle left chat member events.
+
+        Args:
+            targetChat: Chat where the new member joined
+            messageId: Message ID associated with the join event, if available
+            leftMember: User who left the chat
+            updateObj: Original update object from the platform
+        """
+
+        retSet: Set[HandlerResultStatus] = set()
+        for handler in self.handlers:
+            ret = await handler.leftChatMemberHandler(
+                targetChat=targetChat,
+                messageId=messageId,
+                leftMember=leftMember,
+                updateObj=updateObj,
+            )
+            retSet.add(ret)
+            if ret.needLogs():
+                logger.debug(f"Handler {type(handler).__name__} returned {ret.value}")
+            if ret.isFinalState():
+                break
+
+        logger.debug(f"Handled Left Chat Member {leftMember} -> {targetChat}, resultsSet: {retSet}")

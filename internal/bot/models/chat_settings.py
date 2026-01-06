@@ -104,6 +104,10 @@ class ChatSettingsKey(StrEnum):
     # JSON-serialized Dict(userID|"username" -> "emoji")
     REACTION_AUTHOR_TO_EMOJI_MAP = "reaction-author-to-emoji-map"
 
+    #
+    DELETE_JOIN_MESSAGES = "delete-join-messages"
+    DELETE_LEFT_MESSAGES = "delete-left-messages"
+
     def getId(self) -> int:
         """Return some unique id
         WARNING: Do not store it anywhere, it can be changed on app reload
@@ -323,7 +327,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Включить Bayes фильтр спама",
         "long": (
             "Включить использование Bayes фильтра для более точного определения спама. "
-            "Фильтр обучается на основе помеченных спам сообщений и обычных сообщений пользователей, dood!"
+            "Фильтр обучается на основе помеченных спам сообщений и обычных сообщений пользователей."
         ),
         "page": ChatSettingsPage.STANDART,
     },
@@ -332,7 +336,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Минимальная уверенность Bayes фильтра",
         "long": (
             "Минимальная уверенность Bayes фильтра для принятия решения (0.0-1.0). "
-            "Если уверенность ниже, результат Bayes фильтра игнорируется, dood!"
+            "Если уверенность ниже, результат Bayes фильтра игнорируется."
         ),
         "page": ChatSettingsPage.EXTENDED,
     },
@@ -340,10 +344,24 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.BOOL,
         "short": "Автоматическое обучение Bayes фильтра",
         "long": (
-            "Автоматически обучать Bayes фильтр на помеченных спам сообщениях и обычных сообщениях пользователей. "
-            "Рекомендуется включить для улучшения точности со временем, dood!"
+            "Автоматически обучать Bayes фильтр на помеченных спам "
+            "сообщениях и обычных сообщениях пользователей. "
+            "Рекомендуется включить для улучшения точности "
+            "определения спама со временем."
         ),
         "page": ChatSettingsPage.EXTENDED,
+    },
+    ChatSettingsKey.DELETE_JOIN_MESSAGES: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Удалять сообщение о присоединении пользователя",
+        "long": "Удалять сообщение о присоединении пользователя к чату.",
+        "page": ChatSettingsPage.STANDART,
+    },
+    ChatSettingsKey.DELETE_LEFT_MESSAGES: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Удалять сообщение о выходе пользователя",
+        "long": "Удалять сообщение о выходе пользователя из чата.",
+        "page": ChatSettingsPage.STANDART,
     },
 }
 

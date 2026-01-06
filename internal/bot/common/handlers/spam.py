@@ -1156,9 +1156,20 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /pretrain_bayes_spam [<chatId>] [<N>] command for initial filter training, dood!
+        Handle /pretrain_bayes_spam command to train Bayes filter from spam database, dood!
 
-        TODO: Write docstring
+        Extracts chatId and max message count from args, validates admin permissions,
+        trains the Bayes filter on spam messages from database, and reports statistics.
+
+        Args:
+            ensuredMessage: Message object with sender and recipient info
+            command: Command string that triggered this handler
+            args: Arguments string: "[<chatId>] [<N>]" where N is max messages to learn
+            UpdateObj: Platform-specific update object
+            typingManager: Optional typing indicator manager
+
+        Returns:
+            None: Sends training statistics as bot response
         """
 
         argList = args.split()

@@ -20,6 +20,7 @@ from telegram.ext import (
 
 from internal.bot.common.handlers import HandlersManager
 from internal.bot.models import BotProvider, CommandPermission, EnsuredMessage, MessageSender
+from internal.bot.models.ensured_message import MessageRecipient
 from internal.config.manager import ConfigManager
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.queue_service.service import QueueService
@@ -106,8 +107,34 @@ class TelegramBotApplication:
         logger.debug(f"Handling Update#{update.update_id}")
 
         if update.message is not None:
-            # It's new message
             message = update.message
+            if message.new_chat_members:
+                logger.debug(f"New chat members: {update}")
+                targetChat = MessageRecipient.fromTelegramChat(message.chat)
+                messageId = message.message_id
+                for newMember in message.new_chat_members:
+
+                    await self.handlerManager.handleNewChatMember(
+                        targetChat=targetChat,
+                        messageId=messageId,
+                        newMember=MessageSender.fromTelegramUser(newMember),
+                        updateObj=update,
+                    )
+                return
+            elif message.left_chat_member:
+                logger.debug(f"Left chat member: {update}")
+                targetChat = MessageRecipient.fromTelegramChat(message.chat)
+                messageId = message.message_id
+                leftMember = MessageSender.fromTelegramUser(message.left_chat_member)
+
+                return await self.handlerManager.handleLeftChatMember(
+                    targetChat=targetChat,
+                    messageId=messageId,
+                    leftMember=leftMember,
+                    updateObj=update,
+                )
+
+            # It's new message
             logger.debug(f"Message: {utils.dumpTelegramMessage(message)}")
 
             ensuredMessage: Optional[EnsuredMessage] = None

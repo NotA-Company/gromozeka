@@ -8,12 +8,15 @@ saves messages to the database, dood!
 """
 
 import logging
+from typing import Optional
 
 import telegram
 
 from internal.bot.common.models import UpdateObjectType
-from internal.bot.models import BotProvider, EnsuredMessage
+from internal.bot.models import BotProvider, EnsuredMessage, MessageRecipient, MessageSender
+from internal.bot.models.chat_settings import ChatSettingsKey
 from internal.database.models import MessageCategory
+from internal.models import MessageIdType
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -68,5 +71,64 @@ class MessagePreprocessorHandler(BaseBotHandler):
         if not await self.saveChatMessage(ensuredMessage, messageCategory=messageCategory):
             logger.error("Failed to save chat message")
             return HandlerResultStatus.ERROR
+
+        return HandlerResultStatus.NEXT
+
+    async def newChatMemberHandler(
+        self,
+        targetChat: MessageRecipient,
+        messageId: Optional[MessageIdType],
+        newMember: MessageSender,
+        updateObj: UpdateObjectType,
+    ) -> HandlerResultStatus:
+        """
+        Handle new chat member events and optionally delete join messages.
+
+        Args:
+            targetChat: Chat where the new member joined
+            messageId: Optional message ID of the join notification
+            newMember: User who joined the chat
+            updateObj: Original update object from the platform
+
+        Returns:
+            HandlerResultStatus.FINAL if join message deleted, NEXT otherwise
+        """
+
+        # Someday add adding of user into database
+
+        chatSettings = self.getChatSettings(targetChat.id)
+        if messageId is not None and chatSettings[ChatSettingsKey.DELETE_JOIN_MESSAGES].toBool():
+            logger.info(f"Deleting join message#{messageId} of {newMember} in chat {targetChat.id}")
+            await self.deleteMessagesById(targetChat.id, [messageId])
+            return HandlerResultStatus.FINAL
+
+        return HandlerResultStatus.NEXT
+
+    async def leftChatMemberHandler(
+        self,
+        targetChat: MessageRecipient,
+        messageId: Optional[MessageIdType],
+        leftMember: MessageSender,
+        updateObj: UpdateObjectType,
+    ) -> HandlerResultStatus:
+        """
+        Handle left chat member events and optionally delete left messages.
+
+        Args:
+            targetChat: The chat where the member joined
+            messageId: Optional message ID associated with the join event
+            leftMember: The member who left the chat
+            updateObj: The raw update object from the bot platform
+
+        Returns:
+            HandlerResultStatus.FINAL if left message deleted, NEXT otherwise
+        """
+        # Someday add adding of user into database
+
+        chatSettings = self.getChatSettings(targetChat.id)
+        if messageId is not None and chatSettings[ChatSettingsKey.DELETE_LEFT_MESSAGES].toBool():
+            logger.info(f"Deleting left message#{messageId} of {leftMember} in chat {targetChat.id}")
+            await self.deleteMessagesById(targetChat.id, [messageId])
+            return HandlerResultStatus.FINAL
 
         return HandlerResultStatus.NEXT
