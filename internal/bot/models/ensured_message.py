@@ -54,6 +54,7 @@ class CondensingDict(TypedDict):
 
 class MetadataDict(TypedDict, total=False):
     condensedThread: List[CondensingDict]
+    forwardedFrom: Dict[str, Any]
 
 
 class ChatType(StrEnum):
@@ -577,6 +578,7 @@ class EnsuredMessage:
         if not message.chat:
             raise ValueError("Message Chat undefined")
 
+        messageMetadata: MetadataDict = {}
         messageText: str = ""
         messageType: MessageType = MessageType.TEXT
         markupList: List[FormatEntity] = []
@@ -674,6 +676,68 @@ class EnsuredMessage:
         else:
             sender = MessageSender.fromTelegramUser(message.from_user)
 
+        if message.forward_origin:
+            # forward_origin=MessageOriginChannel(
+            #   chat=Chat(
+            #       id=-1,
+            #       title='TITLE',
+            #       type=<ChatType.CHANNEL>,
+            #       username='USERNAME'),
+            #   date=datetime.datetime(...),
+            #   message_id=1,
+            #   type=<MessageOriginType.CHANNEL>)
+            forwardedFrom = message.forward_origin
+            forwardedFromDict: Dict[str, Any] = {
+                "date": forwardedFrom.date.isoformat(),
+                "type": forwardedFrom.type,
+                "message_id": None,
+                "from_id": None,
+                "from_name": None,
+                "from_username": None,
+                "author_signature": None,
+                "from_title": None,
+            }
+            if isinstance(forwardedFrom, telegram.MessageOriginChannel):
+                forwardedFromDict.update(
+                    {
+                        "message_id": forwardedFrom.message_id,
+                        "from_id": forwardedFrom.chat.id,
+                        "from_name": forwardedFrom.chat.title,
+                        "from_username": forwardedFrom.chat.username,
+                        "from_title": forwardedFrom.chat.title,
+                    }
+                )
+            elif isinstance(forwardedFrom, telegram.MessageOriginChat):
+                forwardedFromDict.update(
+                    {
+                        "author_signature": forwardedFrom.author_signature,
+                        "from_id": forwardedFrom.sender_chat.id,
+                        "from_name": forwardedFrom.sender_chat.title,
+                        "from_username": forwardedFrom.sender_chat.username,
+                        "from_title": forwardedFrom.sender_chat.title,
+                    }
+                )
+            elif isinstance(forwardedFrom, telegram.MessageOriginUser):
+                forwardedFromDict.update(
+                    {
+                        "from_id": forwardedFrom.sender_user.id,
+                        "from_name": forwardedFrom.sender_user.name,
+                        "from_username": forwardedFrom.sender_user.username,
+                        "from_title": forwardedFrom.sender_user.name,
+                    }
+                )
+            elif isinstance(forwardedFrom, telegram.MessageOriginHiddenUser):
+                forwardedFromDict.update(
+                    {
+                        "from_name": forwardedFrom.sender_user_name,
+                        "from_title": forwardedFrom.sender_user_name,
+                    }
+                )
+            else:
+                logger.error(f"Unknown forwardedFrom type: {type(forwardedFrom)}")
+
+            messageMetadata["forwardedFrom"] = forwardedFromDict
+
         ensuredMessage = EnsuredMessage(
             sender=sender,
             recipient=MessageRecipient.fromTelegramChat(message.chat),
@@ -683,6 +747,7 @@ class EnsuredMessage:
             messageType=messageType,
             formatEntities=markupList,
             mediaGroupId=mediaGroupId,
+            metadata=messageMetadata,
         )
         ensuredMessage.setBaseMessage(message)
 

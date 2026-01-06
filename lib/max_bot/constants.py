@@ -14,7 +14,7 @@ API_BASE_URL: Final[str] = "https://platform-api.max.ru"
 # API_BASE_URL: Final[str] = "https://botapi.max.ru"
 API_VERSION: Final[str] = "0.0.1"
 DEFAULT_TIMEOUT: Final[int] = 30
-MAX_RETRIES: Final[int] = 3
+MAX_RETRIES: Final[int] = 5
 RETRY_BACKOFF_FACTOR: Final[float] = 1.0
 
 # HTTP Methods

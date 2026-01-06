@@ -35,6 +35,7 @@ from .exceptions import (
     AuthenticationError,
     MaxBotError,
     NetworkError,
+    RateLimitError,
     ValidationError,
     parseApiError,
 )
@@ -252,6 +253,7 @@ class MaxBotClient:
 
         last_exception = None
         attempt = 0
+        rateLimiterSleep = 10
         while attempt < self.maxRetries + 1:
             try:
                 response = await client.request(method, url, **kwargs)
@@ -287,6 +289,12 @@ class MaxBotClient:
 
             except AttachmentNotReadyError as e:
                 logger.info(f"Attachment not ready yet, waiting: {e}")
+
+            except RateLimitError as e:
+                logger.warning(f"{type(e).__name__}#{e}, {e.response}, wait for {rateLimiterSleep} seconds...")
+                await asyncio.sleep(rateLimiterSleep)
+                rateLimiterSleep *= 2
+                attempt = max(0, attempt - 1)
 
             except MaxBotError as e:
                 last_exception = e
