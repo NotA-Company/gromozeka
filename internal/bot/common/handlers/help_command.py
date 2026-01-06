@@ -24,6 +24,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
+from lib import utils
 from lib.ai import LLMManager
 
 from .base import BaseBotHandler
@@ -113,10 +114,12 @@ class HelpHandler(BaseBotHandler):
             commands[commandOrder] = []
         botOwnerCommands: List[str] = []
 
-        # Sort command handlers by order, then by command name
-        sortedHandlers = sorted(
-            self.commandsGetter.getCommandHandlersDict().values(), key=lambda h: (h.helpOrder, h.commands[0])
-        )
+        # Dedup + Sort command handlers by order, then by command name
+        commandHandlersDedupDict = {
+            "|".join(v.commands): v for v in self.commandsGetter.getCommandHandlersDict().values()
+        }
+        # logger.debug(f"Handlers: {utils.jsonDumps(commandHandlersDedupDict, indent=2)}")
+        sortedHandlers = sorted(commandHandlersDedupDict.values(), key=lambda h: (h.helpOrder, h.commands[0]))
 
         for commandInfo in sortedHandlers:
             helpText = "* `/" + "`|`/".join(commandInfo.commands) + "`" + commandInfo.helpMessage
@@ -150,9 +153,9 @@ class HelpHandler(BaseBotHandler):
             "* Поддерживать беседу, если она затрагивает бота "
             "(ответ на сообщение бота, указание логина бота в любом месте сообщения "
             "или начало сообщения с имени бота или личный чат с ботом)\n"
-            '* Специально отвечать на запросы "`Кто сегодня ...`" и "`Что там?`" '
+            '* Отвечать на запросы "`Кто сегодня ...`" и "`Что там?`" '
             "(должно быть ответом на сообщение с медиа)\n"
-            "* Что-нибудь еше: Мы открыты к фич-реквестам\n"
+            "* Что-нибудь ещё: Мы открыты к фич-реквестам\n"
         )
 
         if isBotOwner:
