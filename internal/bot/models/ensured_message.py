@@ -695,6 +695,7 @@ class EnsuredMessage:
                 "from_name": None,
                 "from_username": None,
                 "author_signature": None,
+                "from_title": None,
             }
             if isinstance(forwardedFrom, telegram.MessageOriginChannel):
                 forwardedFromDict.update(
@@ -703,6 +704,7 @@ class EnsuredMessage:
                         "from_id": forwardedFrom.chat.id,
                         "from_name": forwardedFrom.chat.title,
                         "from_username": forwardedFrom.chat.username,
+                        "from_title": forwardedFrom.chat.title,
                     }
                 )
             elif isinstance(forwardedFrom, telegram.MessageOriginChat):
@@ -712,6 +714,7 @@ class EnsuredMessage:
                         "from_id": forwardedFrom.sender_chat.id,
                         "from_name": forwardedFrom.sender_chat.title,
                         "from_username": forwardedFrom.sender_chat.username,
+                        "from_title": forwardedFrom.sender_chat.title,
                     }
                 )
             elif isinstance(forwardedFrom, telegram.MessageOriginUser):
@@ -720,12 +723,14 @@ class EnsuredMessage:
                         "from_id": forwardedFrom.sender_user.id,
                         "from_name": forwardedFrom.sender_user.name,
                         "from_username": forwardedFrom.sender_user.username,
+                        "from_title": forwardedFrom.sender_user.name,
                     }
                 )
             elif isinstance(forwardedFrom, telegram.MessageOriginHiddenUser):
                 forwardedFromDict.update(
                     {
                         "from_name": forwardedFrom.sender_user_name,
+                        "from_title": forwardedFrom.sender_user_name,
                     }
                 )
             else:
