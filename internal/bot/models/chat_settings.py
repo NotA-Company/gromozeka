@@ -609,19 +609,19 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     ChatSettingsKey.BASE_TIER: {
         "type": ChatSettingsType.STRING,
         "short": "Tier чата",
-        "long": "Tier чата, смотри ChatTier для списка возможных значений.",
+        "long": f"Tier чата, Возможные значения: {['`' + v.value + '`' for v in ChatTier]}.",
         "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.PAID_TIER: {
         "type": ChatSettingsType.STRING,
         "short": "Оплаченный Tier чата",
-        "long": "Tier чата на время наличия оплаты. Скорее всего не стоит менять это значение",
+        "long": "Tier чата на время наличия оплаты. Скорее всего не стоит менять это значение.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
     ChatSettingsKey.PAID_TIER_UNTILL_TS: {
         "type": ChatSettingsType.FLOAT,
         "short": "Время действия платного Tier чата",
-        "long": "Таймштамп, до которого оплачен Tier чата. Скорее всего не стоит менять это значение",
+        "long": "Таймштамп, до которого оплачен Tier чата. Скорее всего не стоит менять это значение.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
 }
