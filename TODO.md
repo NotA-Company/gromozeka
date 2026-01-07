@@ -22,7 +22,7 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 
 - [x] Add support for cache condenced context + reuse it
 - [ ] Think, how to add summarization of chat to context of random answers
-- [ ] ensuredMessage: support miltiple media
+- [x] ensuredMessage: support miltiple media
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Save info about used tools to put it into context
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
@@ -30,9 +30,9 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 - [ ] Think about channels support
 - [ ] Fix found tool-calling bugs
 - [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
-- [ ] use `httpx` instead of `request` in [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py) + add redirection handling + headers 
-- [ ] Add some cache into [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py)
-- [ ] Add optional condensing of page content via LLM into [`internal/bot/handlers/yandex_search.py:_llmToolGetUrlContent`](internal/bot/handlers/yandex_search.py)
+- [ ] use `httpx` instead of `request` in [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py) + add redirection handling + headers 
+- [ ] Add some cache into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
+- [ ] Add optional condensing of page content via LLM into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
