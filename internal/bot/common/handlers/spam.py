@@ -242,6 +242,12 @@ class SpamHandler(BaseBotHandler):
                 "metadata": "",
             }
 
+        userMetadata = self.parseUserMetadata(userInfo=userInfo)
+        if userMetadata.get("dropMessages", False):
+            logger.info(f"User marked for deleteing all messages, deleteing message {ensuredMessage}")
+            await self.deleteMessage(ensuredMessage)
+            return True
+
         userMessages = userInfo["messages_count"]
         maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
         if maxCheckMessages != 0 and userMessages >= maxCheckMessages:
@@ -249,8 +255,6 @@ class SpamHandler(BaseBotHandler):
             if not userInfo["is_spammer"]:
                 await self.markAsHam(message=ensuredMessage)
             return False
-
-        userMetadata = self.parseUserMetadata(userInfo=userInfo)
 
         if userMetadata.get("notSpammer", False):
             logger.info(f"SPAM: User {sender} explicitely marked as not spammer, skipping spam check")
@@ -268,7 +272,7 @@ class SpamHandler(BaseBotHandler):
         if userInfo["is_spammer"]:
             logger.info(f"SPAM: User {sender} is marked as spammer, banning it again")
             logger.info(f"SPAM: {userInfo}")
-            spamScore = spamScore + 100
+            spamScore = 100.0
 
         # Check if for last 10 messages there are more same messages than different ones:
         userMessages = self.db.getChatMessagesByUser(chatId=chatId, userId=sender.id, limit=10)
@@ -306,7 +310,7 @@ class SpamHandler(BaseBotHandler):
                 entities = message.caption_entities
             else:
                 logger.error(
-                    f"SPAM: {chatId}#{ensuredMessage.messageId}: " "text and caption are empty while messageText isn't/"
+                    f"SPAM: {chatId}#{ensuredMessage.messageId}: text and caption are empty while messageText isn't"
                 )
 
             if messageText and entities:
@@ -794,7 +798,7 @@ class SpamHandler(BaseBotHandler):
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
-        """TODO
+        """TODO rewrite docstring
         Main message handler for automatic spam detection, dood!
 
         This handler is called for every message and performs spam checking
@@ -999,7 +1003,7 @@ class SpamHandler(BaseBotHandler):
     @commandHandlerV2(
         commands=("spam", "спам"),
         shortDescription="Mark answered message as spam",
-        helpMessage="|`/спам`: Указать боту на сообщение со спамом (должно быть ответом на спам-сообщение).",
+        helpMessage=": Указать боту на сообщение со спамом (должно быть ответом на спам-сообщение).",
         visibility={CommandPermission.ADMIN},
         availableFor={CommandPermission.GROUP},
         helpOrder=CommandHandlerOrder.SPAM,
@@ -1524,6 +1528,7 @@ class SpamHandler(BaseBotHandler):
         # Set user metadata[notSpammer] = True to skip spam-check for this user in this chat
         userMetadata = self.parseUserMetadata(user)
         userMetadata["notSpammer"] = True
+        userMetadata["dropMessages"] = False
         self.setUserMetadata(chatId=user["chat_id"], userId=user["user_id"], metadata=userMetadata)
 
         userName = user["full_name"] if user["full_name"] else user["username"]
@@ -1532,3 +1537,52 @@ class SpamHandler(BaseBotHandler):
             f"Пользователь [{userName}](tg://user?id={user['user_id']}) разбанен",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
+
+    @commandHandlerV2(
+        commands=("mark_for_delete", "unmark_for_delete"),
+        shortDescription="Ask bot to [not] delete all new message from answered author",
+        helpMessage=": Указать боту на (отсутствие) необходимость удаления "
+        "всех новых сообщений указанного пользователя.",
+        visibility={CommandPermission.HIDDEN},
+        availableFor={CommandPermission.ADMIN},
+        helpOrder=CommandHandlerOrder.SPAM,
+        category=CommandCategory.SPAM,
+    )
+    async def mark_for_delete_command(
+        self,
+        ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """
+        TODO: write docstring
+        """
+
+        repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
+        isAdmin = await self.isAdmin(user=ensuredMessage.sender, chat=ensuredMessage.recipient)
+        isMark = command.lower() == "mark_for_delete"
+
+        logger.debug(
+            f"Got /{command} command \n"
+            f"from User({ensuredMessage.sender}) "
+            f"in Chat({ensuredMessage.recipient}) \n"
+            f"to Message({repliedMessage}) \n"
+            f"isAdmin: {isAdmin}"
+        )
+
+        if repliedMessage is not None:
+            user = self.db.getChatUser(chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id)
+            if user is None:
+                logger.error(f"User {repliedMessage.sender} not found in chat {ensuredMessage.recipient}")
+            else:
+                userMetadata = self.parseUserMetadata(user)
+                userMetadata["dropMessages"] = isMark
+                self.setUserMetadata(chatId=user["chat_id"], userId=user["user_id"], metadata=userMetadata)
+                logger.info(
+                    f"User {repliedMessage.sender}#{repliedMessage.recipient} mark for delete messages is: {isMark}"
+                )
+
+        # Delete command message to reduce flood
+        await self.deleteMessage(ensuredMessage)
