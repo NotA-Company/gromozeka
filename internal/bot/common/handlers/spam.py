@@ -235,7 +235,6 @@ class SpamHandler(BaseBotHandler):
                 "username": sender.username,
                 "full_name": sender.name,
                 "messages_count": 1,
-                "is_spammer": False,
                 "created_at": datetime.datetime.now(),
                 "updated_at": datetime.datetime.now(),
                 "timezone": "",
@@ -252,7 +251,7 @@ class SpamHandler(BaseBotHandler):
         maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
         if maxCheckMessages != 0 and userMessages >= maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
-            if not userInfo["is_spammer"]:
+            if not userMetadata.get("isSpammer", False):
                 await self.markAsHam(message=ensuredMessage)
             return False
 
@@ -269,7 +268,7 @@ class SpamHandler(BaseBotHandler):
         # TODO: Check user full_name for spam
 
         # If user marked as spammer, ban it again
-        if userInfo["is_spammer"]:
+        if userMetadata.get("isSpammer", False):
             logger.info(f"SPAM: User {sender} is marked as spammer, banning it again")
             logger.info(f"SPAM: {userInfo}")
             spamScore = 100.0
@@ -553,7 +552,15 @@ class SpamHandler(BaseBotHandler):
             raise ValueError("Bot is not initialized")
         await self._bot.banUserInChat(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
 
-        self.db.markUserIsSpammer(chatId=chatId, userId=userId, isSpammer=True)
+        self.setUserMetadata(
+            chatId=chatId,
+            userId=userId,
+            metadata={
+                "isSpammer": True,
+                "notSpammer": False,
+            },
+            isUpdate=True,
+        )
         logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.recipient}")
         if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
             maxMessagesToDelete = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
@@ -936,9 +943,15 @@ class SpamHandler(BaseBotHandler):
 
             hamUserDB: Optional[ChatUserDict] = self.db.getChatUser(chatId=chat.id, userId=hamUserId)
             if hamUserDB is not None:
-                userMetadata = self.parseUserMetadata(hamUserDB)
-                userMetadata["notSpammer"] = True
-                self.setUserMetadata(chatId=hamUserDB["chat_id"], userId=hamUserDB["user_id"], metadata=userMetadata)
+                self.setUserMetadata(
+                    chatId=hamUserDB["chat_id"],
+                    userId=hamUserDB["user_id"],
+                    metadata={
+                        "isSpammer": False,
+                        "notSpammer": True,
+                    },
+                    isUpdate=True,
+                )
 
         # We need to fallback somewhere, let's fallback to called user
         reportedUser = eRepliedMessage.sender
@@ -1507,9 +1520,6 @@ class SpamHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
-        # Mark user as not spammer
-        self.db.markUserIsSpammer(chatId=user["chat_id"], userId=user["user_id"], isSpammer=False)
-
         # Get user messages, remembered as spam, delete them from spam base and add them to ham base
         userMessages = self.db.getSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
         self.db.deleteSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
@@ -1524,10 +1534,16 @@ class SpamHandler(BaseBotHandler):
             )
 
         # Set user metadata[notSpammer] = True to skip spam-check for this user in this chat
-        userMetadata = self.parseUserMetadata(user)
-        userMetadata["notSpammer"] = True
-        userMetadata["dropMessages"] = False
-        self.setUserMetadata(chatId=user["chat_id"], userId=user["user_id"], metadata=userMetadata)
+        self.setUserMetadata(
+            chatId=user["chat_id"],
+            userId=user["user_id"],
+            metadata={
+                "isSpammer": False,
+                "notSpammer": True,
+                "dropMessages": False,
+            },
+            isUpdate=True,
+        )
 
         userName = user["full_name"] if user["full_name"] else user["username"]
         await self.sendMessage(
@@ -1590,9 +1606,12 @@ class SpamHandler(BaseBotHandler):
             if user is None:
                 logger.error(f"User {repliedMessage.sender} not found in chat {ensuredMessage.recipient}")
             else:
-                userMetadata = self.parseUserMetadata(user)
-                userMetadata["dropMessages"] = isMark
-                self.setUserMetadata(chatId=user["chat_id"], userId=user["user_id"], metadata=userMetadata)
+                self.setUserMetadata(
+                    chatId=user["chat_id"],
+                    userId=user["user_id"],
+                    metadata={"dropMessages": isMark},
+                    isUpdate=True,
+                )
                 logger.info(
                     f"User {repliedMessage.sender}#{repliedMessage.recipient} mark for delete messages is: {isMark}"
                 )

@@ -1346,42 +1346,6 @@ class DatabaseWrapper:
             logger.error(f"Failed to get user {userId} in chat {chatId}: {e}")
             return None
 
-    def markUserIsSpammer(self, chatId: int, userId: int, isSpammer: bool) -> bool:
-        """
-        Mark a user as spammer.
-
-        Args:
-            chatId: Chat identifier (used for source routing)
-            userId: User identifier
-            isSpammer: Whether user is a spammer
-
-        Returns:
-            bool: True if successful, False otherwise
-
-        Note:
-            Writes are routed based on chatId mapping. Cannot write to readonly sources.
-        """
-        try:
-            with self.getCursor(chatId=chatId, readonly=False) as cursor:
-                cursor.execute(
-                    """
-                    UPDATE chat_users
-                    SET is_spammer = :isSpammer
-                    WHERE
-                        chat_id = :chatId
-                        AND user_id = :userId
-                """,
-                    {
-                        "chatId": chatId,
-                        "userId": userId,
-                        "isSpammer": isSpammer,
-                    },
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Failed to mark user {userId} as spammer in chat {chatId}: {e}")
-            return False
-
     def updateUserMetadata(self, chatId: int, userId: int, metadata: str) -> bool:
         """
         Update metadata for a chat user.
