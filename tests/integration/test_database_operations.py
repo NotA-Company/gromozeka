@@ -484,7 +484,7 @@ async def testSchemaUpdates(inMemoryDb):
         cursor.execute("PRAGMA table_info(chat_users)")
         columns = [row[1] for row in cursor.fetchall()]
         assert "metadata" in columns, "chat_users should have metadata column (migration 003)"
-        assert "is_spammer" in columns, "chat_users should have is_spammer column (migration 002)"
+        # Note: is_spammer column was removed in migration 009
 
 
 @pytest.mark.asyncio
@@ -700,12 +700,7 @@ async def testChatUsersCrud(inMemoryDb):
     user = db.getChatUser(123, 1001)
     assert user["metadata"] == metadata
 
-    # UPDATE spammer status
-    success = db.markUserIsSpammer(123, 1001, True)
-    assert success is True
-
-    user = db.getChatUser(123, 1001)
-    assert user["is_spammer"] is True
+    # Note: is_spammer functionality removed in migration 009
 
 
 # ============================================================================

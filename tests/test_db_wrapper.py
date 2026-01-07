@@ -538,27 +538,6 @@ class TestChatUserOperations:
         users = inMemoryDb.getChatUsers(sampleChatId, seenSince=futureTime)
         assert len(users) == 0
 
-    def testMarkUserIsSpammer(self, inMemoryDb, sampleChatId, sampleUserId):
-        """Test marking user as spammer."""
-        inMemoryDb.updateChatUser(sampleChatId, sampleUserId, "spammer", "Spam User")
-
-        result = inMemoryDb.markUserIsSpammer(sampleChatId, sampleUserId, True)
-        assert result is True
-
-        user = inMemoryDb.getChatUser(sampleChatId, sampleUserId)
-        assert user["is_spammer"] is True
-
-    def testUnmarkUserIsSpammer(self, inMemoryDb, sampleChatId, sampleUserId):
-        """Test unmarking user as spammer."""
-        inMemoryDb.updateChatUser(sampleChatId, sampleUserId, "user", "Normal User")
-        inMemoryDb.markUserIsSpammer(sampleChatId, sampleUserId, True)
-
-        result = inMemoryDb.markUserIsSpammer(sampleChatId, sampleUserId, False)
-        assert result is True
-
-        user = inMemoryDb.getChatUser(sampleChatId, sampleUserId)
-        assert user["is_spammer"] is False
-
     def testUpdateUserMetadata(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test updating user metadata."""
         inMemoryDb.updateChatUser(sampleChatId, sampleUserId, "user", "User")
@@ -1501,13 +1480,7 @@ class TestIntegration:
                 0.95,
             )
 
-        # 3. Mark user as spammer
-        inMemoryDb.markUserIsSpammer(chatId, userId, True)
-
-        # 4. Verify
-        user = inMemoryDb.getChatUser(chatId, userId)
-        assert user["is_spammer"] is True
-
+        # 3. Verify spam messages (is_spammer functionality removed in migration 009)
         spamMessages = inMemoryDb.getSpamMessagesByUserId(chatId, userId)
         assert len(spamMessages) == 3
 
