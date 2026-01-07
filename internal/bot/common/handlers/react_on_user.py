@@ -206,6 +206,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             targetChatId,
             ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP,
             ChatSettingsValue(utils.jsonDumps(authorToEmojiMap, sort_keys=False)),
+            user=ensuredMessage.sender,
         )
 
         try:
@@ -293,6 +294,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             targetChatId,
             ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP,
             ChatSettingsValue(utils.jsonDumps(authorToEmojiMap, sort_keys=False)),
+            user=ensuredMessage.sender,
         )
 
         resp = ""

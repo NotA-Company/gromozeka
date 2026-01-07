@@ -285,6 +285,9 @@ class CacheService:
         Note:
             Settings are stored as strings in the database using the value's toStr() method.
         """
+
+        self.clearCachedChatSettings(chatId)
+
         # Populate chat settings from db if any
         self.getChatSettings(chatId)
         chatCache = self.chats.get(chatId, {})
@@ -303,6 +306,9 @@ class CacheService:
 
     def unsetChatSetting(self, chatId: int, key: "ChatSettingsKey") -> None:
         """Unset specified chat setting for a specific chat, dood!"""
+
+        self.clearCachedChatSettings(chatId)
+
         # Populate chat settings from db if any
         self.getChatSettings(chatId)
         chatCache = self.chats.get(chatId, {})
@@ -314,7 +320,52 @@ class CacheService:
                 self.dbWrapper.unsetChatSetting(chatId, key)
             else:
                 logger.error(f"No dbWrapper found, can't unset chatSettings for {chatId}")
+
         logger.debug(f"Unset chat setting {key} for {chatId}, dood!")
+
+    # Cached chat settings
+    def getCachedChatSettings(
+        self, chatId: int, ttl: Optional[int] = 600
+    ) -> Optional[Dict["ChatSettingsKey", "ChatSettingsValue"]]:
+        """Get chat info from cache or database"""
+        # Preventing circullar dependencies TODO: Do something with it
+        from internal.bot.models.chat_settings import ChatSettingsKey
+
+        chatCache = self.chats.get(chatId, {})
+        cachedSettings = chatCache.get("cachedSettings", None)
+
+        # If not in cache, try loading from database
+        if cachedSettings is None:
+            return None
+
+        if ttl is not None:
+            if time.time() > cachedSettings[ChatSettingsKey.CACHED_TS].toFloat() + ttl:
+                # Should we drop cache? No, do not want to
+                return None
+        return cachedSettings
+
+    def cacheChatSettings(self, chatId: int, settings: Dict["ChatSettingsKey", "ChatSettingsValue"]) -> None:
+        """
+        TODO: write docstring
+        """
+        # Preventing circullar dependencies TODO: Do something with it
+        from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
+
+        settings[ChatSettingsKey.CACHED_TS] = ChatSettingsValue(time.time())
+
+        chatCache = self.chats.get(chatId, {})
+        chatCache["cachedSettings"] = settings
+        self.chats.set(chatId, chatCache)
+
+        logger.debug(f"cache chat settings for {chatId}, dood!")
+
+    def clearCachedChatSettings(self, chatId: int) -> None:
+        """Clear cached chat settings for a specific chat, dood!"""
+        chatCache = self.chats.get(chatId, {})
+        if "cachedSettings" in chatCache:
+            del chatCache["cachedSettings"]
+            self.chats.set(chatId, chatCache)
+        logger.debug(f"Cleared cached chat settings for {chatId}, dood!")
 
     # # Chat Info
 

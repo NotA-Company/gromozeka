@@ -1511,7 +1511,7 @@ class MaxBotClient:
             {
                 "type": "video",
                 "payload": {
-                    "token": "_3Rarhcf1PtlMXy8jpgie8Ai_KARnVFYNQTtmIRWNh4"
+                    "token": "_3R..."
                 }
             }
             ]
