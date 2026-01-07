@@ -42,6 +42,7 @@ class HCChatCacheDict(TypedDict):
     """Complete chat cache including settings, info, topics, and admins, dood."""
 
     settings: NotRequired[Dict["ChatSettingsKey", "ChatSettingsValue"]]
+    cachedSettings: NotRequired[Dict["ChatSettingsKey", "ChatSettingsValue"]]
     info: NotRequired[ChatInfoDict]
     topicInfo: NotRequired[Dict[int, ChatTopicInfoDict]]
     admins: NotRequired[HCChatAdminsDict]

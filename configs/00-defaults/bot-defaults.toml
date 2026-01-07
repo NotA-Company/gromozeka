@@ -1,3 +1,5 @@
+[bot.tier-defaults.free]
+# allow-tools-commands = false
 [bot.private-defaults]
 # Allow configure by default (Turn it of if you'll want to disable private)
 # admin-can-change-settings = true
@@ -14,6 +16,8 @@ random-answer-to-admin = true
 
 # No spam possible in private chats
 detect-spam = false
+
+base-tier = "free-personal"
 
 [bot.chat-defaults]
 # Can chat admins change channel-specific bot settings?
@@ -99,6 +103,11 @@ random-answer-to-admin = true
 
 tools-used-prefix        = "🛠"
 fallback-happened-prefix = "🤖"
+
+# Default to free tier, also fill paid-tier with free tier as well
+base-tier = "free"
+paid-tier = "free"
+paid-tier-untill-ts = 0
 
 chat-model                      = "openrouter/mistral-7b-instruct:free"
 fallback-model                  = "openrouter/gemma-3-12b-it:free"
