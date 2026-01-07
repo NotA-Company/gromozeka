@@ -1,3 +1,5 @@
+[bot.tier-defaults.free]
+# allow-tools-commands = false
 [bot.private-defaults]
 # Allow configure by default (Turn it of if you'll want to disable private)
 # admin-can-change-settings = true
@@ -14,6 +16,8 @@ random-answer-to-admin = true
 
 # No spam possible in private chats
 detect-spam = false
+
+base-tier = "free-personal"
 
 [bot.chat-defaults]
 # Can chat admins change channel-specific bot settings?

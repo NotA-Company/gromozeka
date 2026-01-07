@@ -4,7 +4,7 @@ Telegram bot chat settings.
 
 import logging
 from enum import IntEnum, StrEnum, auto
-from typing import Any, Dict, List, Self, TypedDict
+from typing import Any, Dict, List, Optional, Self, TypedDict
 
 from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager
@@ -15,12 +15,19 @@ logger = logging.getLogger(__name__)
 class ChatTier(StrEnum):
 
     BANNED = "banned"
+    """Tier for banned users"""
     FREE = "free"
+    """Tier for free chats"""
+    FREE_PERSONAL = "free-personal"
+    """Tier for free private chats, allow a bit more"""
 
     PAID = "paid"
+    """Paid chats of users"""
 
     FRIEND = "friend"
+    """Friends with maximum abilities"""
     BOT_OWNER = "bot_owner"
+    """Bot owners - can do anything"""
 
     def getId(self) -> int:
         """Return some unique id
@@ -47,6 +54,14 @@ class ChatTier(StrEnum):
             raise ValueError("At least one argument is required")
 
         return max(args, key=lambda x: x.getId())
+
+    @classmethod
+    def fromStr(cls, v: str) -> Optional[Self]:
+        """Return chat tier from string. Or none if wrong sting passed"""
+        try:
+            return cls(v)
+        except ValueError:
+            return None
 
 
 class ChatSettingsPage(IntEnum):
@@ -199,6 +214,10 @@ class ChatSettingsKey(StrEnum):
     PAID_TIER = "paid-tier"
     PAID_TIER_UNTILL_TS = "paid-tier-untill-ts"
 
+    # System settings. Not to be used\configured
+    CACHED_TS = "cached-ts"
+    """TS when chat settings were cached, to be used in Cache Service only"""
+
     def getId(self) -> int:
         """Return some unique id
         WARNING: Do not store it anywhere, it can be changed on app reload
@@ -217,6 +236,8 @@ class ChatSettingsKey(StrEnum):
 
 class ChatSettingsValue:
     """Value of chat settings."""
+
+    __slots__ = ("value",)
 
     def __init__(self, value: Any):
         self.value = str(value).strip()

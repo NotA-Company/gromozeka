@@ -15,14 +15,16 @@ from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
+    ChatSettingsValue,
+    ChatTier,
     ChatType,
     CommandCategory,
     CommandHandlerInfoV2,
     CommandPermission,
     EnsuredMessage,
+    MessageRecipient,
+    MessageSender,
 )
-from internal.bot.models.chat_settings import ChatSettingsValue
-from internal.bot.models.ensured_message import MessageRecipient, MessageSender
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
@@ -98,18 +100,35 @@ class HandlersManager(CommandHandlerGetterInterface):
             }
         )
         self.cache.setDefaultChatSettings(None, defaultSettings)
-        privateDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            ChatSettingsKey(k): ChatSettingsValue(v)
-            for k, v in botConfig.get("private-defaults", {}).items()
-            if k in ChatSettingsKey
-        }
-        self.cache.setDefaultChatSettings(ChatType.PRIVATE, privateDefaultSettings)
-        chatDefaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {
-            ChatSettingsKey(k): ChatSettingsValue(v)
-            for k, v in botConfig.get("chat-defaults", {}).items()
-            if k in ChatSettingsKey
-        }
-        self.cache.setDefaultChatSettings(ChatType.GROUP, chatDefaultSettings)
+
+        self.cache.setDefaultChatSettings(
+            ChatType.PRIVATE,
+            {
+                ChatSettingsKey(k): ChatSettingsValue(v)
+                for k, v in botConfig.get("private-defaults", {}).items()
+                if k in ChatSettingsKey
+            },
+        )
+
+        self.cache.setDefaultChatSettings(
+            ChatType.GROUP,
+            {
+                ChatSettingsKey(k): ChatSettingsValue(v)
+                for k, v in botConfig.get("chat-defaults", {}).items()
+                if k in ChatSettingsKey
+            },
+        )
+
+        tierDefaultsDict = botConfig.get("tier-defaults", {})
+        for chatTier in ChatTier:
+            self.cache.setDefaultChatSettings(
+                f"tier-{chatTier}",
+                {
+                    ChatSettingsKey(k): ChatSettingsValue(v)
+                    for k, v in tierDefaultsDict.get(chatTier, {}).items()
+                    if k in ChatSettingsKey
+                },
+            )
 
         # Initialize handlers
         self.handlers: List[BaseBotHandler] = [
