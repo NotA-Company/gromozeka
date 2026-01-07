@@ -125,6 +125,21 @@ class ChatSettingsPage(IntEnum):
             case _:
                 raise NotImplementedError(f"Page {self} has no minTier configured")
 
+    def next(self) -> Optional[Self]:
+        """
+        Return next page in enum order.
+
+        Returns:
+            Next ChatSettingsPage if it exists, None if current page is the last one.
+        """
+        allPages = list(self.__class__)
+        currentIndex = allPages.index(self)
+        nextIndex = currentIndex + 1
+
+        if nextIndex < len(allPages):
+            return allPages[nextIndex]
+        return None
+
 
 class ChatSettingsType(StrEnum):
     """Enum for chat settings."""
@@ -325,13 +340,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.IMAGE_MODEL,
         "short": "LLM-Модель для создания изображений",
         "long": "Какую LLM модель использовать для создания изображений",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.FRIEND,
     },
     ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: {
         "type": ChatSettingsType.IMAGE_MODEL,
         "short": "Запасная LLM-Модель для создания изображений",
         "long": "Какую LLM модель использовать для обработки создания если основная не справилась",
-        "page": ChatSettingsPage.LLM_PAID,
+        "page": ChatSettingsPage.FRIEND,
     },
     ChatSettingsKey.CONDENSING_MODEL: {
         "type": ChatSettingsType.MODEL,
@@ -372,7 +387,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     },
     # # Some system settings
     ChatSettingsKey.ADMIN_CAN_CHANGE_SETTINGS: {
-        "type": ChatSettingsType.STRING,
+        "type": ChatSettingsType.BOOL,
         "short": "Могут ли админы менять настройки чата",
         "long": "Разрешить ли администраторам чата менять его настройки",
         "page": ChatSettingsPage.BOT_OWNER,
@@ -604,7 +619,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
     ChatSettingsKey.PAID_TIER_UNTILL_TS: {
-        "type": ChatSettingsType.INT,
+        "type": ChatSettingsType.FLOAT,
         "short": "Время действия платного Tier чата",
         "long": "Таймштамп, до которого оплачен Tier чата. Скорее всего не стоит менять это значение",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,

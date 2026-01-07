@@ -26,6 +26,7 @@ from internal.bot.models import (
     ChatSettingsPage,
     ChatSettingsType,
     ChatSettingsValue,
+    ChatTier,
     ChatType,
     CommandCategory,
     CommandHandlerOrder,
@@ -275,8 +276,6 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
             return
 
-        page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
-
         chatInfo = self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ConfigureChat: chatInfo is None in {chatId}")
@@ -288,9 +287,27 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
         logger.debug(f"ConfigureChat: chatInfo: {chatInfo}")
-        resp = f"Настраиваем чат {self.getChatTitle(chatInfo)}:\n" "\n" f"**{page.getName()}**\n" "\n"
         chatSettings = self.getChatSettings(chatId)
-        defaultChatSettings = self.getChatSettings(None, chatType=ChatType(chatInfo["type"]))
+        chatTier = self.getChatTier(chatSettings)
+        if await self.isAdmin(user, chat=None, allowBotOwners=True):
+            chatTier = ChatTier.BOT_OWNER
+        if chatTier is None:
+            chatTier = ChatTier.FREE  # By default treat user as free user
+        defaultChatSettings = self.getChatSettings(None, chatType=ChatType(chatInfo["type"]), chatTier=chatTier)
+
+        page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
+        while not chatTier.isBetterOrEqualThan(page.minTier()):
+            page = page.next()
+            if page is None:
+                logger.warning(f"No pages found for Chat #{chatId}, tier: {chatTier}")
+                await self.editMessage(
+                    messageId=messageId,
+                    chatId=messageChatId,
+                    text="Произошла ошибка во время настройки чата, попробуйте позднее",
+                )
+                return
+
+        resp = f"Настраиваем чат {self.getChatTitle(chatInfo)}:\n" "\n" f"**{page.getName()}**\n" "\n"
 
         chatOptions = {k: v for k, v in getChatSettingsInfo().items() if v["page"] == page}
         keyboard: List[List[CallbackButton]] = []
@@ -324,6 +341,9 @@ class ConfigureCommandHandler(BaseBotHandler):
         for pageElem in ChatSettingsPage:
             if pageElem == page:
                 continue
+            if not chatTier.isBetterOrEqualThan(pageElem.minTier()):
+                continue
+
             keyboard.append(
                 [
                     CallbackButton(
@@ -633,6 +653,10 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
         chatOptions = getChatSettingsInfo()
+        chatSettings = self.getChatSettings(chatId)
+        chatTier = self.getChatTier(chatSettings)
+        if await self.isAdmin(user, chat=None, allowBotOwners=True):
+            chatTier = ChatTier.BOT_OWNER
 
         try:
             key = ChatSettingsKey.fromId(keyId)
@@ -645,7 +669,11 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
             return
 
-        if key not in chatOptions:
+        if (
+            key not in chatOptions
+            or chatTier is None
+            or not chatTier.isBetterOrEqualThan(chatOptions[key]["page"].minTier())
+        ):
             logger.error(f"[Re]SetValue: wrong key: {key}")
             await self.editMessage(
                 messageId=messageId,
@@ -659,14 +687,13 @@ class ConfigureCommandHandler(BaseBotHandler):
         resp = ""
 
         if action == ButtonConfigureAction.SetTrue:
-            self.setChatSetting(chatId, key, ChatSettingsValue(True))
+            self.setChatSetting(chatId, key, ChatSettingsValue(True), user=user)
         elif action == ButtonConfigureAction.SetFalse:
-            self.setChatSetting(chatId, key, ChatSettingsValue(False))
+            self.setChatSetting(chatId, key, ChatSettingsValue(False), user=user)
         elif action == ButtonConfigureAction.ResetValue:
             self.unsetChatSetting(chatId, key)
         elif action == ButtonConfigureAction.SetValue:
             value = data.get(ButtonDataKey.Value, None)
-            chatSettings = self.getChatSettings(chatId)
             currentValue = chatSettings[key].toStr()
             if chatOptions[key]["type"] == ChatSettingsType.MODEL:
                 # Validate And get ModelName bu index from selectable models list
@@ -680,7 +707,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                     value = currentValue
             # TODO: Validate other ChatSettingsType as well
 
-            self.setChatSetting(chatId, key, ChatSettingsValue(value))
+            self.setChatSetting(chatId, key, ChatSettingsValue(value), user=user)
         else:
             logger.error(f"[Re]SetValue: wrong action: {action}")
             raise RuntimeError(f"[Re]SetValue: wrong action: {action}")

@@ -213,14 +213,14 @@ class BaseBotHandler(CommandHandlerMixin):
             Dictionary mapping [`ChatSettingsKey`](internal/bot/models/chat_settings.py)
                             to [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
         """
-        if chatId is not None:
+        if chatId is not None and returnDefault:
             chatSettings = self.cache.getCachedChatSettings(chatId)
             if chatSettings is not None:
                 return chatSettings
 
         defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {}
         if chatId is None and chatType is None:
-            raise ValueError("Either chatId or chatType shoul be not None")
+            raise ValueError("Either chatId or chatType should be not None")
 
         # TODO: Currently we support only Private and Groups
         # In case of Channels support, we need to think something
@@ -239,13 +239,9 @@ class BaseBotHandler(CommandHandlerMixin):
             chatSettings = self.cache.getChatSettings(chatId)
 
         if chatTier is None:
-            paidUntil = chatSettings[ChatSettingsKey.PAID_TIER_UNTILL_TS].toFloat()
-            if paidUntil >= time.time():
-                chatTier = ChatTier.fromStr(chatSettings[ChatSettingsKey.PAID_TIER].toStr())
-            else:
-                chatTier = ChatTier.fromStr(chatSettings[ChatSettingsKey.BASE_TIER].toStr())
+            chatTier = self.getChatTier(chatSettings)
 
-        if chatTier is None:
+        if chatTier is None and ChatSettingsKey.BASE_TIER in defaultSettings:
             chatTier = ChatTier.fromStr(defaultSettings[ChatSettingsKey.BASE_TIER].toStr())
 
         tierSettings = self.cache.getDefaultChatSettings(f"tier-{chatTier}")
@@ -259,10 +255,14 @@ class BaseBotHandler(CommandHandlerMixin):
         #  if they are not allowed to be changed on given tier
         chatSettings = {**defaultSettings, **chatSettings}
 
-        self.cache.cacheChatSettings(chatId, chatSettings)
+        if returnDefault:
+            # Update cached settings only if we added defaults as well
+            self.cache.cacheChatSettings(chatId, chatSettings)
         return chatSettings
 
-    def setChatSetting(self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue) -> None:
+    def setChatSetting(
+        self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue, *, user: MessageSender
+    ) -> None:
         """
         Set a specific chat setting, dood!
 
@@ -288,6 +288,26 @@ class BaseBotHandler(CommandHandlerMixin):
             key: Setting key from [`ChatSettingsKey`](internal/bot/models/chat_settings.py) enum to remove
         """
         self.cache.unsetChatSetting(chatId=chatId, key=key)
+
+    def getChatTier(self, chatSettings: Dict[ChatSettingsKey, ChatSettingsValue]) -> Optional[ChatTier]:
+        """
+        Determine chat tier based on settings, checking paid tier first.
+
+        Args:
+            chatSettings: Dictionary containing chat settings with tier configuration.
+
+        Returns:
+            ChatTier if paid tier is active or base tier is set, None otherwise.
+        """
+        if ChatSettingsKey.PAID_TIER in chatSettings and ChatSettingsKey.PAID_TIER_UNTILL_TS in chatSettings:
+            paidUntil = chatSettings[ChatSettingsKey.PAID_TIER_UNTILL_TS].toFloat()
+            if paidUntil >= time.time():
+                return ChatTier.fromStr(chatSettings[ChatSettingsKey.PAID_TIER].toStr())
+
+        if ChatSettingsKey.BASE_TIER in chatSettings:
+            return ChatTier.fromStr(chatSettings[ChatSettingsKey.BASE_TIER].toStr())
+
+        return None
 
     ###
     # User Data Management
