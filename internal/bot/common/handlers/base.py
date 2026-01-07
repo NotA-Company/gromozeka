@@ -277,7 +277,7 @@ class BaseBotHandler(CommandHandlerMixin):
             This method directly updates the cache. Consider whether this setting
             should be validated before being applied.
         """
-        self.cache.setChatSetting(chatId, key, value)
+        self.cache.setChatSetting(chatId, key, value, userId=user.id)
 
     def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:
         """

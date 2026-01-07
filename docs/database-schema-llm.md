@@ -119,6 +119,7 @@ CREATE TABLE chat_settings (
     chat_id INTEGER NOT NULL,
     key TEXT NOT NULL,
     value TEXT,
+    updated_by INTEGER NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (chat_id, key)

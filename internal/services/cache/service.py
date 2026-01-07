@@ -254,7 +254,8 @@ class CacheService:
             if self.dbWrapper:
                 # Load from DB
                 settings = {
-                    ChatSettingsKey(k): ChatSettingsValue(v) for k, v in self.dbWrapper.getChatSettings(chatId).items()
+                    ChatSettingsKey(k): ChatSettingsValue(v1, v2)
+                    for k, (v1, v2) in self.dbWrapper.getChatSettings(chatId).items()
                 }
                 chatCache["settings"] = settings
                 self.chats.set(chatId, chatCache)
@@ -262,7 +263,7 @@ class CacheService:
 
         return chatCache.get("settings", {})
 
-    def setChatSetting(self, chatId: int, key: "ChatSettingsKey", value: "ChatSettingsValue") -> None:
+    def setChatSetting(self, chatId: int, key: "ChatSettingsKey", value: "ChatSettingsValue", *, userId: int) -> None:
         """Update a single chat setting for a specific chat, dood!
 
         Updates one setting key-value pair in the cache and persists it to the database
@@ -298,7 +299,7 @@ class CacheService:
 
         # For critical settings, persist in DB
         if self.dbWrapper:
-            self.dbWrapper.setChatSetting(chatId, key, value.toStr())
+            self.dbWrapper.setChatSetting(chatId, key, value.toStr(), updatedBy=userId)
         else:
             logger.error(f"No dbWrapper found, can't save chatSettings for {chatId}")
 

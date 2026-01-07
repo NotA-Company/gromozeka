@@ -1702,7 +1702,7 @@ class DatabaseWrapper:
     # Chat Settings manipulation (see chat_settings.py for more details)
     ###
 
-    def setChatSetting(self, chatId: int, key: str, value: Any) -> bool:
+    def setChatSetting(self, chatId: int, key: str, value: Any, *, updatedBy: int) -> bool:
         """
         Set a setting for a chat.
 
@@ -1710,6 +1710,7 @@ class DatabaseWrapper:
             chatId: Chat identifier (used for source routing)
             key: Setting key
             value: Setting value
+            updatedBy: User ID who updated the setting (default: 0)
 
         Returns:
             bool: True if successful, False otherwise
@@ -1722,11 +1723,11 @@ class DatabaseWrapper:
                 cursor.execute(
                     """
                     INSERT OR REPLACE INTO chat_settings
-                        (chat_id, key, value, updated_at)
+                        (chat_id, key, value, updated_by, updated_at)
                     VALUES
-                        (?, ?, ?, CURRENT_TIMESTAMP)
+                        (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
-                    (chatId, key, value),
+                    (chatId, key, value, updatedBy),
                 )
                 return True
         except Exception as e:
@@ -1819,18 +1820,27 @@ class DatabaseWrapper:
             logger.error(f"Failed to get setting {setting} for chat {chatId}: {e}")
             return None
 
-    def getChatSettings(self, chatId: int, *, dataSource: Optional[str] = None) -> Dict[str, str]:
-        """Get all settings for a chat."""
+    def getChatSettings(self, chatId: int, *, dataSource: Optional[str] = None) -> Dict[str, tuple[str, int]]:
+        """
+        Get all settings for a chat.
+
+        Args:
+            chatId: Chat identifier
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            Dict mapping setting keys to tuples with value and updated_by values
+        """
         try:
             with self.getCursor(chatId=chatId, dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
                     """
-                    SELECT key, value FROM chat_settings
+                    SELECT key, value, updated_by FROM chat_settings
                     WHERE chat_id = ?
                 """,
                     (chatId,),
                 )
-                return {row["key"]: row["value"] for row in cursor.fetchall()}
+                return {row["key"]: (row["value"], row["updated_by"]) for row in cursor.fetchall()}
         except Exception as e:
             logger.error(f"Failed to get settings for chat {chatId}: {e}")
             return {}

@@ -5,6 +5,7 @@ class UserMetadataDict(TypedDict, total=False):
     """
     Typed Dict of user metadata JSON
     """
+
     isSpammer: bool
     """True if user defined as spammer"""
     notSpammer: bool
