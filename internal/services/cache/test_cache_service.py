@@ -195,7 +195,7 @@ class TestChatSettings(unittest.TestCase):
 
     def testGetChatSettingsFromDb(self):
         """Test loading chat settings from database"""
-        self.mockDb.getChatSettings.return_value = {"bayes-enabled": "true"}
+        self.mockDb.getChatSettings.return_value = {"bayes-enabled": ("true", 0)}
 
         settings = self.cache.getChatSettings(123)
 
@@ -209,9 +209,9 @@ class TestChatSettings(unittest.TestCase):
 
         key = ChatSettingsKey.BAYES_ENABLED
         value = ChatSettingsValue("true")
-        self.cache.setChatSetting(123, key, value)
+        self.cache.setChatSetting(123, key, value, userId=0)
 
-        self.mockDb.setChatSetting.assert_called_once_with(123, ChatSettingsKey.BAYES_ENABLED, "true")
+        self.mockDb.setChatSetting.assert_called_once_with(123, ChatSettingsKey.BAYES_ENABLED, "true", updatedBy=0)
 
 
 class TestChatInfo(unittest.TestCase):
@@ -591,7 +591,7 @@ class TestEdgeCases(unittest.TestCase):
         value = ChatSettingsValue("true")
 
         # Should not raise exception
-        self.cache.setChatSetting(123, key, value)
+        self.cache.setChatSetting(123, key, value, userId=0)
 
         # Should still be in cache
         cachedSettings = self.cache.getChatSettings(123)

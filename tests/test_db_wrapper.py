@@ -584,12 +584,12 @@ class TestChatSettingsOperations:
 
     def testSetChatSetting(self, inMemoryDb, sampleChatId):
         """Test setting a chat setting."""
-        result = inMemoryDb.setChatSetting(sampleChatId, "model", "gpt-4")
+        result = inMemoryDb.setChatSetting(sampleChatId, "model", "gpt-4", updatedBy=0)
         assert result is True
 
     def testGetChatSetting(self, inMemoryDb, sampleChatId):
         """Test retrieving a specific chat setting."""
-        inMemoryDb.setChatSetting(sampleChatId, "temperature", "0.7")
+        inMemoryDb.setChatSetting(sampleChatId, "temperature", "0.7", updatedBy=0)
 
         value = inMemoryDb.getChatSetting(sampleChatId, "temperature")
         assert value == "0.7"
@@ -608,10 +608,13 @@ class TestChatSettingsOperations:
         }
 
         for key, value in settings.items():
-            inMemoryDb.setChatSetting(sampleChatId, key, value)
+            inMemoryDb.setChatSetting(sampleChatId, key, value, updatedBy=0)
 
         retrieved = inMemoryDb.getChatSettings(sampleChatId)
-        assert retrieved == settings
+        assert len(retrieved) == len(settings)
+        for key, value in settings.items():
+            assert key in retrieved
+            assert retrieved[key] == (value, 0)
 
     def testGetChatSettingsEmpty(self, inMemoryDb, sampleChatId):
         """Test retrieving settings for chat with no settings."""
@@ -620,7 +623,7 @@ class TestChatSettingsOperations:
 
     def testUnsetChatSetting(self, inMemoryDb, sampleChatId):
         """Test removing a chat setting."""
-        inMemoryDb.setChatSetting(sampleChatId, "test_key", "test_value")
+        inMemoryDb.setChatSetting(sampleChatId, "test_key", "test_value", updatedBy=0)
 
         result = inMemoryDb.unsetChatSetting(sampleChatId, "test_key")
         assert result is True
@@ -630,8 +633,8 @@ class TestChatSettingsOperations:
 
     def testClearChatSettings(self, inMemoryDb, sampleChatId):
         """Test clearing all settings for a chat."""
-        inMemoryDb.setChatSetting(sampleChatId, "key1", "value1")
-        inMemoryDb.setChatSetting(sampleChatId, "key2", "value2")
+        inMemoryDb.setChatSetting(sampleChatId, "key1", "value1", updatedBy=0)
+        inMemoryDb.setChatSetting(sampleChatId, "key2", "value2", updatedBy=0)
 
         result = inMemoryDb.clearChatSettings(sampleChatId)
         assert result is True
@@ -644,8 +647,8 @@ class TestChatSettingsOperations:
         chat1 = 5001
         chat2 = 5002
 
-        inMemoryDb.setChatSetting(chat1, "model", "gpt-4")
-        inMemoryDb.setChatSetting(chat2, "model", "gpt-3.5")
+        inMemoryDb.setChatSetting(chat1, "model", "gpt-4", updatedBy=0)
+        inMemoryDb.setChatSetting(chat2, "model", "gpt-3.5", updatedBy=0)
 
         assert inMemoryDb.getChatSetting(chat1, "model") == "gpt-4"
         assert inMemoryDb.getChatSetting(chat2, "model") == "gpt-3.5"
@@ -1490,8 +1493,8 @@ class TestIntegration:
         userId = 13402
 
         # 1. Set chat settings
-        inMemoryDb.setChatSetting(chatId, "model", "gpt-4")
-        inMemoryDb.setChatSetting(chatId, "temperature", "0.7")
+        inMemoryDb.setChatSetting(chatId, "model", "gpt-4", updatedBy=0)
+        inMemoryDb.setChatSetting(chatId, "temperature", "0.7", updatedBy=0)
 
         # 2. Add user data
         inMemoryDb.addUserData(userId, chatId, "preference", "dark_mode")

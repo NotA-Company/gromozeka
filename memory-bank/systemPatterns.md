@@ -108,14 +108,7 @@ ls internal/database/migrations/versions/
    - Add 1 to get new version number
    - Create migration with correct version
 
-**Prevention**: Before creating any migration, always run:
-```bash
-# List all migrations to find the highest version
-ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tail -1
-
-# Or check the full directory listing
-ls internal/database/migrations/versions/
-```
+**Prevention**: Before creating any migration, always list `internal/database/migrations/versions/` directory
 
 **Key Takeaway**: Migration version numbers are sequential and immutable. Always verify the current highest version before creating a new migration, dood!
 

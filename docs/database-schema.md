@@ -144,6 +144,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 7 | [`migration_007_messages_metadata.py`](../internal/database/migrations/versions/migration_007_messages_metadata.py:1) | Adds `markup` and `metadata` columns to [`chat_messages`](#chat_messages) |
 | 8 | [`migration_008_add_media_group_support.py`](../internal/database/migrations/versions/migration_008_add_media_group_support.py:1) | Adds `media_group_id` column to [`chat_messages`](#chat_messages) and creates [`media_group`](#media_group) table |
 | 9 | [`migration_009_remove_is_spammer_from_chat_users.py`](../internal/database/migrations/versions/migration_009_remove_is_spammer_from_chat_users.py:1) | Removes `is_spammer` column from [`chat_users`](#chat_users) |
+| 10 | [`migration_010_add_updated_by_to_chat_settings.py`](../internal/database/migrations/versions/migration_010_add_updated_by_to_chat_settings.py:1) | Adds `updated_by` column to [`chat_settings`](#chat_settings) |
 
 ### Creating New Migrations
 
@@ -326,6 +327,7 @@ Stores per-chat configuration settings.
 | `chat_id` | INTEGER | No | - | Telegram chat identifier |
 | `key` | TEXT | No | - | Setting key (see [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41)) |
 | `value` | TEXT | Yes | NULL | Setting value (stored as string) |
+| `updated_by` | INTEGER | No | - | User ID who last updated the setting |
 | `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
 | `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
 

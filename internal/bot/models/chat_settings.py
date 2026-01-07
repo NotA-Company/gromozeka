@@ -252,10 +252,11 @@ class ChatSettingsKey(StrEnum):
 class ChatSettingsValue:
     """Value of chat settings."""
 
-    __slots__ = ("value",)
+    __slots__ = ("value", "updatedBy")
 
-    def __init__(self, value: Any):
+    def __init__(self, value: Any, updatedBy: Optional[int] = None):
         self.value = str(value).strip()
+        self.updatedBy = updatedBy if updatedBy is not None else 0
 
     def __str__(self) -> str:
         return self.toStr()
