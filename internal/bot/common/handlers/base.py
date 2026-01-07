@@ -23,6 +23,7 @@ import datetime
 import hashlib
 import json
 import logging
+import time
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -40,6 +41,7 @@ from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
     ChatSettingsValue,
+    ChatTier,
     ChatType,
     CommandHandlerInfoV2,
     CommandHandlerMixin,
@@ -193,8 +195,10 @@ class BaseBotHandler(CommandHandlerMixin):
         *,
         returnDefault: bool = True,
         chatType: Optional[ChatType] = None,
+        chatTier: Optional[ChatTier] = None,
     ) -> Dict[ChatSettingsKey, ChatSettingsValue]:
         """
+        TODO: rewrite docstring
         Get chat settings with optional default fallback, dood!
 
         Retrieves settings from cache, merging with defaults if requested.
@@ -209,6 +213,11 @@ class BaseBotHandler(CommandHandlerMixin):
             Dictionary mapping [`ChatSettingsKey`](internal/bot/models/chat_settings.py)
                             to [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
         """
+        if chatId is not None:
+            chatSettings = self.cache.getCachedChatSettings(chatId)
+            if chatSettings is not None:
+                return chatSettings
+
         defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {}
         if chatId is None and chatType is None:
             raise ValueError("Either chatId or chatType shoul be not None")
@@ -225,11 +234,33 @@ class BaseBotHandler(CommandHandlerMixin):
             defaultSettings.update(self.cache.getDefaultChatSettings(chatType))
 
         if chatId is None:
+            chatSettings: Optional[Dict[ChatSettingsKey, ChatSettingsValue]] = {}
+        else:
+            chatSettings = self.cache.getChatSettings(chatId)
+
+        if chatTier is None:
+            paidUntil = chatSettings[ChatSettingsKey.PAID_TIER_UNTILL_TS].toFloat()
+            if paidUntil >= time.time():
+                chatTier = ChatTier.fromStr(chatSettings[ChatSettingsKey.PAID_TIER].toStr())
+            else:
+                chatTier = ChatTier.fromStr(chatSettings[ChatSettingsKey.BASE_TIER].toStr())
+
+        if chatTier is None:
+            chatTier = ChatTier.fromStr(defaultSettings[ChatSettingsKey.BASE_TIER].toStr())
+
+        tierSettings = self.cache.getDefaultChatSettings(f"tier-{chatTier}")
+        if returnDefault:
+            defaultSettings.update(tierSettings)
+
+        if chatId is None:
             return defaultSettings
 
-        chatSettings = self.cache.getChatSettings(chatId)
+        # TODO: Add ability to revert some settings to default
+        #  if they are not allowed to be changed on given tier
+        chatSettings = {**defaultSettings, **chatSettings}
 
-        return {**defaultSettings, **chatSettings}
+        self.cache.cacheChatSettings(chatId, chatSettings)
+        return chatSettings
 
     def setChatSetting(self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue) -> None:
         """

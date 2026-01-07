@@ -6,7 +6,14 @@ Bot Models: Export all models
 from ...models import MessageType
 
 # Chat Settings (already exists)
-from .chat_settings import ChatSettingsKey, ChatSettingsPage, ChatSettingsType, ChatSettingsValue, getChatSettingsInfo
+from .chat_settings import (
+    ChatSettingsKey,
+    ChatSettingsPage,
+    ChatSettingsType,
+    ChatSettingsValue,
+    ChatTier,
+    getChatSettingsInfo,
+)
 
 # Command Handlers
 from .command_handlers import (
@@ -61,6 +68,7 @@ __all__ = [
     "CommandPermission",
     "CommandHandlerOrder",
     # Chat Settings
+    "ChatTier",
     "ChatSettingsKey",
     "ChatSettingsType",
     "ChatSettingsValue",
