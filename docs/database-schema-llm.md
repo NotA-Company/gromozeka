@@ -57,7 +57,6 @@ CREATE TABLE chat_users (
     full_name TEXT NOT NULL,
     timezone TEXT,
     messages_count INTEGER NOT NULL DEFAULT 0,
-    is_spammer BOOLEAN NOT NULL DEFAULT FALSE,
     metadata TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -120,6 +119,7 @@ CREATE TABLE chat_settings (
     chat_id INTEGER NOT NULL,
     key TEXT NOT NULL,
     value TEXT,
+    updated_by INTEGER NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (chat_id, key)
@@ -984,14 +984,6 @@ thread_messages = db.getChatMessagesByRootId(
     rootMessageId=root_msg_id,
     threadId=topic_id
 )
-```
-
-### Check User Spam Status
-```python
-user = db.getChatUser(chatId=chat_id, userId=user_id)
-if user and user['is_spammer']:
-    # Handle spammer
-    pass
 ```
 
 ### Get Chat Configuration
