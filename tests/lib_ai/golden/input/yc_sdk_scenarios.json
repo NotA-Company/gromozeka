@@ -17,8 +17,7 @@
         "context_size": 32768,
         "support_tools": false,
         "support_text": true,
-        "support_images": false,
-        "can_be_choosen": true
+        "support_images": false
       }
     },
     "kwargs": {
