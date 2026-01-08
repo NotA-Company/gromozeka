@@ -26,8 +26,27 @@ class ChatTier(StrEnum):
 
     FRIEND = "friend"
     """Friends with maximum abilities"""
-    BOT_OWNER = "bot_owner"
+    BOT_OWNER = "bot-owner"
     """Bot owners - can do anything"""
+
+    def emoji(self) -> str:
+        """Return emoji, associated with given tier"""
+        # ⭐️🌟😎🤩💰🚫⛔️✅🆓
+        match self:
+            case ChatTier.BANNED:
+                return "⛔️"
+            case ChatTier.FREE:
+                return "🆓"
+            case ChatTier.FREE_PERSONAL:
+                return "✅"
+            case ChatTier.PAID:
+                return "⭐️"
+            case ChatTier.FRIEND:
+                return "🌟"
+            case ChatTier.BOT_OWNER:
+                return "😎"
+            case _:
+                return "🚫"
 
     def getId(self) -> int:
         """Return some unique id

@@ -554,7 +554,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                     # If some tier is not set or chat has 'worse' tier, skip it
                     continue
 
-                buttonText = modelName
+                buttonText = f"{modelTier.emoji()} {modelName}"
                 if modelName == chatSettings[key].toStr():
                     buttonText += " (*)"
                 keyboard.append(
