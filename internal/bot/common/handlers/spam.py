@@ -235,7 +235,6 @@ class SpamHandler(BaseBotHandler):
                 "username": sender.username,
                 "full_name": sender.name,
                 "messages_count": 1,
-                "is_spammer": False,
                 "created_at": datetime.datetime.now(),
                 "updated_at": datetime.datetime.now(),
                 "timezone": "",
@@ -252,7 +251,7 @@ class SpamHandler(BaseBotHandler):
         maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
         if maxCheckMessages != 0 and userMessages >= maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
-            if not userInfo["is_spammer"]:
+            if not userMetadata.get("isSpammer", False):
                 await self.markAsHam(message=ensuredMessage)
             return False
 
@@ -269,7 +268,7 @@ class SpamHandler(BaseBotHandler):
         # TODO: Check user full_name for spam
 
         # If user marked as spammer, ban it again
-        if userInfo["is_spammer"]:
+        if userMetadata.get("isSpammer", False):
             logger.info(f"SPAM: User {sender} is marked as spammer, banning it again")
             logger.info(f"SPAM: {userInfo}")
             spamScore = 100.0
@@ -463,28 +462,32 @@ class SpamHandler(BaseBotHandler):
 
     async def markAsSpam(self, ensuredMessage: EnsuredMessage, reason: SpamReason, score: Optional[float] = None):
         """
-        Mark message as spam, ban user, and delete message, dood!
+        Mark message as spam, ban user, delete message, and update spam database, dood!
 
-        This method performs the following actions:
-        1. Validates that target is not an admin
-        2. Checks if user is old enough to be marked as spam (unless admin override)
-        3. Learns the message as spam in Bayes filter (if enabled)
-        4. Saves spam message to database
-        5. Deletes the spam message
-        6. Bans the user (and sender chat if applicable)
-        7. Optionally deletes all recent user messages
+        Executes comprehensive spam handling workflow:
+        1. Validates target is not an admin (abort if admin)
+        2. Validates user age/message count (abort if old user, unless admin-marked and allowed)
+        3. Learns message as spam in Bayes filter (if auto-learning enabled)
+        4. Saves spam message to database with reason and score
+        5. Deletes the spam message from chat
+        6. Bans the user from the chat
+        7. Marks user as spammer in database
+        8. Optionally deletes all recent user messages (if configured)
+        9. Auto-learns deleted messages as spam (if enabled)
 
         Args:
-            message (Message): The spam message to handle.
-            reason (SpamReason): Reason for marking as spam (AUTO, ADMIN, USER).
-            score (Optional[float]): Spam confidence score (0-100+). Defaults to 0.
+            ensuredMessage (EnsuredMessage): The spam message to handle with sender/recipient info.
+            reason (SpamReason): Classification source (AUTO, ADMIN, or USER).
+            score (Optional[float]): Spam confidence score (0-100+). Stored in database. Defaults to None.
 
         Note:
-            - Admins cannot be marked as spam
-            - Old users (messages_count > maxSpamMessages) cannot be auto-marked
-            - Admin-marked spam can override old user protection
-            - Bayes filter learns from spam if auto-learning is enabled
-            - Up to 10 recent user messages can be deleted if configured
+            - Admins cannot be marked as spam (displays alarm message)
+            - Old users (messages_count > AUTO_SPAM_MAX_MESSAGES) protected from auto-marking
+            - Admin-marked spam can override old user protection if ALLOW_MARK_SPAM_OLD_USERS enabled
+            - Bayes filter auto-learning controlled by BAYES_AUTO_LEARN setting
+            - Recent message deletion controlled by SPAM_DELETE_ALL_USER_MESSAGES setting
+            - Number of messages to delete capped by AUTO_SPAM_MAX_MESSAGES (max 32)
+            - All deleted messages also learned as spam and saved to spam database
         """
         chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
@@ -549,7 +552,15 @@ class SpamHandler(BaseBotHandler):
             raise ValueError("Bot is not initialized")
         await self._bot.banUserInChat(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
 
-        self.db.markUserIsSpammer(chatId=chatId, userId=userId, isSpammer=True)
+        self.setUserMetadata(
+            chatId=chatId,
+            userId=userId,
+            metadata={
+                "isSpammer": True,
+                "notSpammer": False,
+            },
+            isUpdate=True,
+        )
         logger.debug(f"Banned user {ensuredMessage.sender} in chat {ensuredMessage.recipient}")
         if chatSettings[ChatSettingsKey.SPAM_DELETE_ALL_USER_MESSAGES].toBool():
             maxMessagesToDelete = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
@@ -798,28 +809,22 @@ class SpamHandler(BaseBotHandler):
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
-        """TODO rewrite docstring
-        Main message handler for automatic spam detection, dood!
+        """
+        Main message handler for automatic spam detection in groups, dood!
 
-        This handler is called for every message and performs spam checking
-        in group and supergroup chats if spam detection is enabled.
+        Performs spam checking in group and supergroup chats when enabled.
+        Private messages and channels are skipped.
 
         Args:
-            update (Update): Telegram update object containing the message.
-            context (ContextTypes.DEFAULT_TYPE): Bot context for the update.
-            ensuredMessage (Optional[EnsuredMessage]): Pre-processed message wrapper.
+            ensuredMessage (EnsuredMessage): Pre-processed message wrapper with sender/recipient info.
+            updateObj (UpdateObjectType): Platform-specific update object (Telegram or Max).
 
         Returns:
             HandlerResultStatus: Handler execution status:
-                - SKIPPED: Private chat (no spam check needed)
-                - FATAL: Message was spam and handled (stop processing)
+                - SKIPPED: Private chat or channel (no spam check needed)
+                - FINAL: Message was spam and handled (stop processing)
                 - NEXT: Message is not spam (continue processing)
                 - ERROR: Error occurred during spam check
-
-        Note:
-            - Private messages are not checked for spam
-            - Spam detection must be enabled in chat settings
-            - If spam is detected, message is deleted and user is banned
         """
         if ensuredMessage.recipient.chatType != ChatType.GROUP:
             # No need to check spam in private messages and channels
@@ -938,9 +943,15 @@ class SpamHandler(BaseBotHandler):
 
             hamUserDB: Optional[ChatUserDict] = self.db.getChatUser(chatId=chat.id, userId=hamUserId)
             if hamUserDB is not None:
-                userMetadata = self.parseUserMetadata(hamUserDB)
-                userMetadata["notSpammer"] = True
-                self.setUserMetadata(chatId=hamUserDB["chat_id"], userId=hamUserDB["user_id"], metadata=userMetadata)
+                self.setUserMetadata(
+                    chatId=hamUserDB["chat_id"],
+                    userId=hamUserDB["user_id"],
+                    metadata={
+                        "isSpammer": False,
+                        "notSpammer": True,
+                    },
+                    isUpdate=True,
+                )
 
         # We need to fallback somewhere, let's fallback to called user
         reportedUser = eRepliedMessage.sender
@@ -1509,9 +1520,6 @@ class SpamHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
 
-        # Mark user as not spammer
-        self.db.markUserIsSpammer(chatId=user["chat_id"], userId=user["user_id"], isSpammer=False)
-
         # Get user messages, remembered as spam, delete them from spam base and add them to ham base
         userMessages = self.db.getSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
         self.db.deleteSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
@@ -1526,10 +1534,16 @@ class SpamHandler(BaseBotHandler):
             )
 
         # Set user metadata[notSpammer] = True to skip spam-check for this user in this chat
-        userMetadata = self.parseUserMetadata(user)
-        userMetadata["notSpammer"] = True
-        userMetadata["dropMessages"] = False
-        self.setUserMetadata(chatId=user["chat_id"], userId=user["user_id"], metadata=userMetadata)
+        self.setUserMetadata(
+            chatId=user["chat_id"],
+            userId=user["user_id"],
+            metadata={
+                "isSpammer": False,
+                "notSpammer": True,
+                "dropMessages": False,
+            },
+            isUpdate=True,
+        )
 
         userName = user["full_name"] if user["full_name"] else user["username"]
         await self.sendMessage(
@@ -1557,7 +1571,22 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        TODO: write docstring
+        Handles the mark_for_delete/unmark_for_delete command to flag users for automatic message
+        deletion, dood.
+
+        When an admin replies to a user's message with this command, it toggles the dropMessages flag
+        in that user's metadata. Messages from users marked for deletion will be automatically dropped.
+        The command message itself is deleted to reduce chat clutter, dood.
+
+        Args:
+            ensuredMessage: The command message with sender and recipient information, dood.
+            command: The command name (e.g., 'mark_for_delete' or 'unmark_for_delete').
+            args: Additional command arguments (unused in this handler).
+            UpdateObj: The platform-specific update object containing the raw message data.
+            typingManager: Optional typing indicator manager (unused in this handler).
+
+        Returns:
+            None
         """
 
         repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
@@ -1577,9 +1606,12 @@ class SpamHandler(BaseBotHandler):
             if user is None:
                 logger.error(f"User {repliedMessage.sender} not found in chat {ensuredMessage.recipient}")
             else:
-                userMetadata = self.parseUserMetadata(user)
-                userMetadata["dropMessages"] = isMark
-                self.setUserMetadata(chatId=user["chat_id"], userId=user["user_id"], metadata=userMetadata)
+                self.setUserMetadata(
+                    chatId=user["chat_id"],
+                    userId=user["user_id"],
+                    metadata={"dropMessages": isMark},
+                    isUpdate=True,
+                )
                 logger.info(
                     f"User {repliedMessage.sender}#{repliedMessage.recipient} mark for delete messages is: {isMark}"
                 )

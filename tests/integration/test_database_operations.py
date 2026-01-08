@@ -138,7 +138,7 @@ async def testNestedTransactions(inMemoryDb):
     # that multiple operations in sequence work correctly
     db.updateChatInfo(chatId=123, type="group", title="Test")
     db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
-    db.setChatSetting(chatId=123, key="model", value="gpt-4")
+    db.setChatSetting(chatId=123, key="model", value="gpt-4", updatedBy=0)
 
     # Verify all operations succeeded
     assert db.getChatInfo(123) is not None
@@ -406,8 +406,8 @@ async def testDeadlockHandling(inMemoryDb):
     results = []
 
     def updateChats(chatId1: int, chatId2: int):
-        db.setChatSetting(chatId1, "key1", "value1")
-        db.setChatSetting(chatId2, "key2", "value2")
+        db.setChatSetting(chatId1, "key1", "value1", updatedBy=0)
+        db.setChatSetting(chatId2, "key2", "value2", updatedBy=0)
         results.append(True)
 
     thread1 = threading.Thread(target=updateChats, args=(123, 456))
@@ -484,7 +484,7 @@ async def testSchemaUpdates(inMemoryDb):
         cursor.execute("PRAGMA table_info(chat_users)")
         columns = [row[1] for row in cursor.fetchall()]
         assert "metadata" in columns, "chat_users should have metadata column (migration 003)"
-        assert "is_spammer" in columns, "chat_users should have is_spammer column (migration 002)"
+        # Note: is_spammer column was removed in migration 009
 
 
 @pytest.mark.asyncio
@@ -700,12 +700,7 @@ async def testChatUsersCrud(inMemoryDb):
     user = db.getChatUser(123, 1001)
     assert user["metadata"] == metadata
 
-    # UPDATE spammer status
-    success = db.markUserIsSpammer(123, 1001, True)
-    assert success is True
-
-    user = db.getChatUser(123, 1001)
-    assert user["is_spammer"] is True
+    # Note: is_spammer functionality removed in migration 009
 
 
 # ============================================================================
@@ -722,7 +717,7 @@ async def testChatSettingsCrud(inMemoryDb):
     db.updateChatInfo(chatId=123, type="group", title="Test")
 
     # CREATE
-    success = db.setChatSetting(123, "model", "gpt-4")
+    success = db.setChatSetting(123, "model", "gpt-4", updatedBy=0)
     assert success is True
 
     # READ
@@ -732,18 +727,18 @@ async def testChatSettingsCrud(inMemoryDb):
     # READ all
     settings = db.getChatSettings(123)
     assert "model" in settings
-    assert settings["model"] == "gpt-4"
+    assert settings["model"] == ("gpt-4", 0)
 
     # UPDATE
-    success = db.setChatSetting(123, "model", "gpt-3.5-turbo")
+    success = db.setChatSetting(123, "model", "gpt-3.5-turbo", updatedBy=0)
     assert success is True
 
     value = db.getChatSetting(123, "model")
     assert value == "gpt-3.5-turbo"
 
     # CREATE multiple
-    db.setChatSetting(123, "temperature", "0.7")
-    db.setChatSetting(123, "max_tokens", "1000")
+    db.setChatSetting(123, "temperature", "0.7", updatedBy=0)
+    db.setChatSetting(123, "max_tokens", "1000", updatedBy=0)
 
     settings = db.getChatSettings(123)
     assert len(settings) == 3

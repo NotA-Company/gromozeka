@@ -10,7 +10,7 @@ context = 64000
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "free"
 
 [models.models."openrouter/gemma-3-27b-it:free"]
 # https://openrouter.ai/google/gemma-3-27b-it:free
@@ -22,7 +22,7 @@ context = 96000
 support_tools = false
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "free"
 
 [models.models."openrouter/mistral-7b-instruct:free"]
 # https://openrouter.ai/mistralai/mistral-7b-instruct:free
@@ -34,7 +34,7 @@ context = 32768
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "free"
 
 [models.models."openrouter/gpt-oss-20b:free"]
 # https://openrouter.ai/openai/gpt-oss-20b:free
@@ -47,7 +47,7 @@ context = 32768
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "free"
 
 [models.models."openrouter/qwen3-235b-a22b:free"]
 # https://openrouter.ai/qwen/qwen3-235b-a22b:free
@@ -59,4 +59,4 @@ context = 131100
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "free"

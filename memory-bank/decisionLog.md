@@ -179,3 +179,56 @@
 * All 1185 tests pass
 * Code quality checks: make format lint passed (0 errors, 0 warnings)
 * No breaking changes to existing functionality
+
+[2026-01-07 23:42:00] - Chat Settings Audit Trail Implementation
+
+### Decision: Add updated_by Column to Track Setting Changes
+
+* **Problem**: No tracking of which user last modified each chat setting
+* **Solution**: Add `updated_by` column (INTEGER NOT NULL) to chat_settings table via migration_010
+
+### Architecture Choice
+
+* **Column Definition**: INTEGER NOT NULL with no default value in schema
+* **Migration Strategy**: Use table recreation pattern for SQLite (supports NOT NULL without default)
+* **Existing Data Handling**: Set updated_by=0 for all existing rows during migration
+* **API Changes**:
+  - `setChatSetting(chatId, key, value, *, updatedBy: int)` - updatedBy is required keyword-only argument
+  - `getChatSetting(chatId, setting)` - returns Optional[str] (just the value for backward compatibility)
+  - `getChatSettings(chatId)` - returns Dict[str, tuple[str, int]] where tuple is (value, updated_by)
+
+### Implementation Details
+
+* **Files Modified**:
+  - `internal/database/migrations/versions/migration_010_add_updated_by_to_chat_settings.py`: New migration
+  - `internal/database/wrapper.py`: Updated setChatSetting, getChatSettings methods
+  - `internal/services/cache/service.py`: Updated to pass userId to setChatSetting
+  - `internal/bot/models/chat_settings.py`: Updated ChatSettingsValue to include updated_by field
+  - `internal/bot/common/handlers/base.py`: Pass userId when setting chat settings
+  - `docs/database-schema.md` & `docs/database-schema-llm.md`: Updated with migration info and schema changes
+
+* **API Design Decision**:
+  - getChatSetting returns only value (string) to avoid breaking most code that only needs the value
+  - getChatSettings returns tuples (value, updated_by) for full information
+  - This minimizes breaking changes while providing audit capability
+
+### Documentation Lesson Learned
+
+**Critical Requirement**: When creating database migrations, ALWAYS update documentation in the same commit:
+1. Add migration entry to the migrations list with description
+2. Update affected table schemas with new columns
+3. Update example queries if column affects common operations
+4. Document any API changes resulting from schema changes
+
+**Rationale**: Migrations are permanent changes to data structure and must be fully documented for:
+- Future developers understanding schema evolution
+- Troubleshooting and debugging
+- Schema consistency verification
+- Migration rollback planning (if needed)
+
+### Testing Results
+
+* All 1183 tests pass
+* Code quality checks: make format lint passed
+* Fixed 8 test locations that needed updatedBy parameter
+* No breaking changes to existing bot functionality (userId=0 used for system changes)

@@ -90,15 +90,15 @@ class ChatSettingsPage(IntEnum):
             case ChatSettingsPage.LLM_BASE:
                 return "Базовые настройки LLM"
             case ChatSettingsPage.LLM_PAID:
-                return "Премиум настройки LLM"
+                return "Премиум настройки LLM ⭐️"
             case ChatSettingsPage.PAID:
-                return "Премиум настройки"
+                return "Премиум настройки ⭐️"
             case ChatSettingsPage.FRIEND:
-                return "Настройки для самых важных"
+                return "Настройки для самых важных 🌟"
             case ChatSettingsPage.BOT_OWNER:
-                return "Только для владельцев"
+                return "Только для владельцев 😎"
             case ChatSettingsPage.BOT_OWNER_SYSTEM:
-                return "Системные настройки (не трогать)"
+                return "Системные настройки (не трогать) 😎"
             case _:
                 return f"{self.name}"
 
@@ -252,10 +252,11 @@ class ChatSettingsKey(StrEnum):
 class ChatSettingsValue:
     """Value of chat settings."""
 
-    __slots__ = ("value",)
+    __slots__ = ("value", "updatedBy")
 
-    def __init__(self, value: Any):
+    def __init__(self, value: Any, updatedBy: Optional[int] = None):
         self.value = str(value).strip()
+        self.updatedBy = updatedBy if updatedBy is not None else 0
 
     def __str__(self) -> str:
         return self.toStr()
