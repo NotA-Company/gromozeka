@@ -106,7 +106,7 @@ class HelpHandler(BaseBotHandler):
             UpdateObj: Original update object from the platform
             typingManager: Optional typing manager (unused for help)
         """
-        isBotOwner = await self.isAdmin(ensuredMessage.sender, allowBotOwners=True)
+        isBotOwner = self.isBotOwner(ensuredMessage.sender)
 
         commands: Dict[CommandHandlerOrder, List[str]] = {}
         for commandOrder in CommandHandlerOrder:

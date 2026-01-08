@@ -258,6 +258,9 @@ class ChatSettingsValue:
         self.value = str(value).strip()
         self.updatedBy = updatedBy if updatedBy is not None else 0
 
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(value='{self.value}', updatedBy={self.updatedBy})"
+
     def __str__(self) -> str:
         return self.toStr()
 

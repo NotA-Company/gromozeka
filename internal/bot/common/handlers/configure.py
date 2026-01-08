@@ -191,7 +191,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         )
         userChats = self.db.getUserChats(user.id)
         keyboard: List[List[CallbackButton]] = []
-        isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
+        isBotOwner = self.isBotOwner(user=user)
 
         for chat in userChats:
             chatObj = MessageRecipient(id=chat["chat_id"], chatType=ChatType(chat["type"]))
@@ -287,7 +287,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         logger.debug(f"ConfigureChat: chatInfo: {chatInfo}")
         chatSettings = self.getChatSettings(chatId)
         chatTier = self.getChatTier(chatSettings)
-        if await self.isAdmin(user, chat=None, allowBotOwners=True):
+        if self.isBotOwner(user):
             chatTier = ChatTier.BOT_OWNER
         if chatTier is None:
             chatTier = ChatTier.FREE  # By default treat user as free user
@@ -444,11 +444,17 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
         chatSettings = self.getChatSettings(chatId)
-        defaultChatSettings = self.getChatSettings(None, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP)
 
         chatOptions = getChatSettingsInfo()
         chatTier = self.getChatTier(chatSettings)
-        if await self.isAdmin(user, chat=None, allowBotOwners=True):
+        defaultChatSettings = self.getChatSettings(
+            None,
+            chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP,
+            chatTier=chatTier,
+        )
+
+        if self.isBotOwner(user):
+            # BotOwner can set any setting
             chatTier = ChatTier.BOT_OWNER
 
         try:
@@ -529,11 +535,10 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
         elif chatOptions[key]["type"] in [ChatSettingsType.MODEL, ChatSettingsType.IMAGE_MODEL]:
             for modelIdx, modelName in enumerate(self.selectableModels):
-                llmModel = self.llmManager.getModel(modelName)
-                if llmModel is None:
-                    logger.error(f"ConfigureKey: model {modelName} not found")
+                modelInfo = self.llmManager.getModelInfo(modelName)
+                if modelInfo is None:
+                    logger.error(f"ConfigureKey: modelInfo for {modelName} not found")
                     continue
-                modelInfo = llmModel.getInfo()
                 if (
                     chatOptions[key]["type"] == ChatSettingsType.MODEL and not modelInfo.get("support_text", False)
                 ) or (
@@ -676,7 +681,8 @@ class ConfigureCommandHandler(BaseBotHandler):
         chatOptions = getChatSettingsInfo()
         chatSettings = self.getChatSettings(chatId)
         chatTier = self.getChatTier(chatSettings)
-        if await self.isAdmin(user, chat=None, allowBotOwners=True):
+        if self.isBotOwner(user):
+            # BotOwner can set any setting
             chatTier = ChatTier.BOT_OWNER
 
         try:
@@ -819,7 +825,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         action = data.get(ButtonDataKey.ConfigureAction, None)
 
-        isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
+        isBotOwner = self.isBotOwner(user=user)
         chatId = data.get(ButtonDataKey.ChatId, None)
         if not isinstance(chatId, int):
             chatId = None
