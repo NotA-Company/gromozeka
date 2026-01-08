@@ -40,6 +40,7 @@ from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
+    ChatSettingsType,
     ChatSettingsValue,
     ChatTier,
     ChatType,
@@ -55,6 +56,7 @@ from internal.bot.models import (
     MessageType,
     OutputFormat,
     UserMetadataDict,
+    getChatSettingsInfo,
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
@@ -244,6 +246,9 @@ class BaseBotHandler(CommandHandlerMixin):
         if chatTier is None and ChatSettingsKey.BASE_TIER in defaultSettings:
             chatTier = ChatTier.fromStr(defaultSettings[ChatSettingsKey.BASE_TIER].toStr())
 
+        if chatTier is None:
+            chatTier = ChatTier.BANNED
+
         tierSettings = self.cache.getDefaultChatSettings(f"tier-{chatTier}")
         if returnDefault:
             defaultSettings.update(tierSettings)
@@ -251,14 +256,39 @@ class BaseBotHandler(CommandHandlerMixin):
         if chatId is None:
             return defaultSettings
 
-        # TODO: Add ability to revert some settings to default
-        #  if they are not allowed to be changed on given tier
-        chatSettings = {**defaultSettings, **chatSettings}
+        retSettings = {**defaultSettings}
+        settingsInfo = getChatSettingsInfo()
+        # Check if chat settings are available for this chat tier
+        # (Settings set by BotOwner are available for any Tier)
+        # logger.debug(f"chat#{chatId} settings: {chatSettings}")
+        for k, v in chatSettings.items():
+            settingTier = settingsInfo[k]["page"].minTier()
+            # NOTE: We can't get user's username here, but on initialization
+            #  We are getting userId for each botOwner username from DB
+            isSetByBotOwner = v.updatedBy == 0 or self.isBotOwner(MessageSender(v.updatedBy, "", ""))
+            # logger.debug(f"{k}: {settingTier} -> {chatTier}, {isSetByBotOwner} ({v.updatedBy})")
+            # logger.debug(self._bot.botOwnersId)
+            # logger.debug(self._bot.botOwnersUsername)
+            if not chatTier.isBetterOrEqualThan(settingTier) and not isSetByBotOwner:
+                # Chat no longer able to set such option due to lower Tier
+                # logger.debug(f"{k} -> if not chatTier.isBetterOrEqualThan(settingTier) and not isSetByBotOwner:")
+                continue
+            if settingsInfo[k]["type"] in (ChatSettingsType.MODEL, ChatSettingsType.IMAGE_MODEL):
+                modelInfo = self.llmManager.getModelInfo(v.toStr())
+                if modelInfo is None:
+                    # Wrong model, fallback to default
+                    continue
+                modelTier = ChatTier.fromStr(modelInfo.get("tier", ""))
+                if not isSetByBotOwner and (modelTier is None or not chatTier.isBetterOrEqualThan(modelTier)):
+                    # Chat no longer able to use such LLM due to lower Tier
+                    continue
+
+            retSettings[k] = v
 
         if returnDefault:
             # Update cached settings only if we added defaults as well
-            self.cache.cacheChatSettings(chatId, chatSettings)
-        return chatSettings
+            self.cache.cacheChatSettings(chatId, retSettings)
+        return retSettings
 
     def setChatSetting(
         self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue, *, user: MessageSender
@@ -362,6 +392,11 @@ class BaseBotHandler(CommandHandlerMixin):
         if self._bot is None:
             raise ValueError("Bot is not initialized")
         return await self._bot.getBotUserName()
+
+    def isBotOwner(self, user: MessageSender) -> bool:
+        if self._bot is None:
+            raise ValueError("Bot is not initialized")
+        return self._bot.isBotOwner(user=user)
 
     async def isAdmin(
         self, user: MessageSender, chat: Optional[MessageRecipient] = None, allowBotOwners: bool = True

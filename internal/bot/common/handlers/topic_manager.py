@@ -79,7 +79,7 @@ class TopicManagerHandler(BaseBotHandler):
         )
         userChats = self.db.getUserChats(user.id)
         keyboard: List[List[CallbackButton]] = []
-        isBotOwner = await self.isAdmin(user=user, allowBotOwners=True)
+        isBotOwner = self.isBotOwner(user=user)
 
         for chat in userChats:
             chatObj = MessageRecipient(id=chat["chat_id"], chatType=ChatType(chat["type"]))

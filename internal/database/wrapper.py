@@ -9,7 +9,7 @@ import hashlib
 import logging
 import sqlite3
 import threading
-from collections.abc import Sequence
+from collections.abc import MutableSet, Sequence
 from contextlib import contextmanager
 from types import UnionType
 from typing import Any, Dict, List, Optional, cast
@@ -1391,7 +1391,7 @@ class DatabaseWrapper:
         dataSource: Optional[str] = None,
     ) -> Optional[ChatUserDict]:
         """
-        Get the user id of a user in a chat.
+        Get the user info of a user in a chat.
 
         Args:
             chatId: Chat identifier
@@ -1556,6 +1556,49 @@ class DatabaseWrapper:
 
         logger.debug(f"Aggregated {len(allResults)} unique group chats, dood!")
         return allResults
+
+    def getUserIdByUserName(self, username: str, *, dataSource: Optional[str] = None) -> List[int]:
+        """
+        Get all user IDs associated with a username across data sources.
+
+        Performs case-insensitive username lookup in chat_info table. Aggregates
+        results from all sources by default or queries specific source if provided.
+
+        Args:
+            username: Username to search for (case-insensitive)
+            dataSource: Optional specific data source name. If None, aggregates from all sources.
+
+        Returns:
+            List of unique user IDs matching the username. Empty list if not found.
+        """
+
+        # Multi-source aggregation
+        logger.debug(f"Aggregating userId for username {username} from sources, dood!")
+        resultSet: MutableSet[int] = set[int]()
+
+        sourcesList = [dataSource] if dataSource else self._sources.keys()
+
+        for sourceName in sourcesList:
+            try:
+                with self.getCursor(dataSource=sourceName, readonly=True) as cursor:
+                    cursor.execute(
+                        """
+                        SELECT chat_id FROM chat_info
+                        WHERE
+                            LOWER(username) = :username
+                    """,
+                        {
+                            "username": username.lower(),
+                        },
+                    )
+                    for row in cursor.fetchall():
+                        resultSet.add(dict(row)["chat_id"])
+            except Exception as e:
+                logger.warning(f"Failed to get info from source '{sourceName}': {e}, dood!")
+                continue
+
+        logger.debug(f"Aggregated {len(resultSet)} unique user_id's for user {username}, dood!")
+        return list(resultSet)
 
     ###
     # User Data manipulation functions

@@ -192,6 +192,11 @@ class HandlersManager(CommandHandlerGetterInterface):
         if theBot is None:
             raise ValueError("Unexpected bot class")
 
+        # For each botOwner username try to add it's userId as well
+        for botOwner in theBot.botOwnersUsername:
+            for userId in self.db.getUserIdByUserName(botOwner.lower()):
+                theBot.botOwnersId.add(userId)
+
         for handler in self.handlers:
             handler.injectBot(theBot)
 

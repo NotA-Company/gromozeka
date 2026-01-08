@@ -26,8 +26,27 @@ class ChatTier(StrEnum):
 
     FRIEND = "friend"
     """Friends with maximum abilities"""
-    BOT_OWNER = "bot_owner"
+    BOT_OWNER = "bot-owner"
     """Bot owners - can do anything"""
+
+    def emoji(self) -> str:
+        """Return emoji, associated with given tier"""
+        # ⭐️🌟😎🤩💰🚫⛔️✅🆓
+        match self:
+            case ChatTier.BANNED:
+                return "⛔️"
+            case ChatTier.FREE:
+                return "🆓"
+            case ChatTier.FREE_PERSONAL:
+                return "✅"
+            case ChatTier.PAID:
+                return "⭐️"
+            case ChatTier.FRIEND:
+                return "🌟"
+            case ChatTier.BOT_OWNER:
+                return "😎"
+            case _:
+                return "🚫"
 
     def getId(self) -> int:
         """Return some unique id
@@ -257,6 +276,9 @@ class ChatSettingsValue:
     def __init__(self, value: Any, updatedBy: Optional[int] = None):
         self.value = str(value).strip()
         self.updatedBy = updatedBy if updatedBy is not None else 0
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(value='{self.value}', updatedBy={self.updatedBy})"
 
     def __str__(self) -> str:
         return self.toStr()
