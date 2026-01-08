@@ -7,7 +7,7 @@ with message handling, media processing, and administrative operations.
 import datetime
 import hashlib
 import logging
-from collections.abc import Sequence
+from collections.abc import MutableSet, Sequence
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import magic
@@ -80,17 +80,17 @@ class TheBot:
         else:
             raise ValueError(f"Unexpected botProvider: {self.botProvider}")
 
-        self.botOwnersUsername: List[str] = []
-        self.botOwnersId: List[int] = []
+        self.botOwnersUsername: MutableSet[str] = set[str]()
+        self.botOwnersId: MutableSet[int] = set[int]()
         for val in self.config.get("bot_owners", []):
             if isinstance(val, int):
-                self.botOwnersId.append(val)
+                self.botOwnersId.add(val)
             elif isinstance(val, str):
-                self.botOwnersUsername.append(val.lower())
+                self.botOwnersUsername.add(val.lower())
                 if val and val[0] in "-0123456789":
                     try:
                         intVal = int(val)
-                        self.botOwnersId.append(intVal)
+                        self.botOwnersId.add(intVal)
                     except ValueError:
                         pass
             else:
@@ -136,6 +136,17 @@ class TheBot:
 
         raise RuntimeError("No Active bot found")
 
+    def isBotOwner(self, user: MessageSender) -> bool:
+        """Check if a user is a bot owner.
+
+        Args:
+            user: Telegram user to check
+
+        Returns:
+            True if user is bot owner, False otherwise
+        """
+        return user.username in self.botOwnersUsername or user.id in self.botOwnersId
+
     async def isAdmin(
         self, user: MessageSender, chat: Optional[MessageRecipient] = None, allowBotOwners: bool = True
     ) -> bool:
@@ -159,7 +170,7 @@ class TheBot:
         if username:
             username = username.lower().lstrip("@")
 
-        if allowBotOwners and (username in self.botOwnersUsername or user.id in self.botOwnersId):
+        if allowBotOwners and self.isBotOwner(user):
             # User is bot owner and bot owners are allowed
             return True
 

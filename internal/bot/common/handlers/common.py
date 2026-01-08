@@ -406,7 +406,7 @@ class CommonHandler(BaseBotHandler):
         listAll = args.strip().lower().startswith("all")
 
         if listAll:
-            listAll = await self.isAdmin(ensuredMessage.sender, None, True)
+            listAll = self.isBotOwner(ensuredMessage.sender)
 
         knownChats = self.db.getAllGroupChats() if listAll else self.db.getUserChats(ensuredMessage.sender.id)
 

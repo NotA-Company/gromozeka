@@ -410,8 +410,8 @@ class SummarizationHandler(BaseBotHandler):
             )
             return
 
-        # BotOwner cat summarize any chat
-        chatFound = await self.isAdmin(user, None, True)
+        # BotOwner can summarize any chat
+        chatFound = self.isBotOwner(user)
         chatInfo: Optional[ChatInfoDict] = None
         for chat in userChats:
             if chat["chat_id"] == chatId:
