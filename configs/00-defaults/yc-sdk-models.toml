@@ -8,3 +8,4 @@ model_version = "latest"
 support_tools = false
 support_text = false
 support_images = true
+tier = "paid"

@@ -9,6 +9,7 @@ context = 200000
 support_tools = true
 support_text = true
 support_images = false
+tier = "friend"
 
 [models.models."openrouter/deepseek-chat-v3.1"]
 # https://openrouter.ai/deepseek/deepseek-chat-v3.1
@@ -20,6 +21,7 @@ context = 163840
 support_tools = true
 support_text = true
 support_images = false
+tier = "paid"
 
 [models.models."openrouter/qwen-turbo"]
 # https://openrouter.ai/qwen/qwen-turbo
@@ -31,17 +33,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
-
-[models.models."openrouter/gemini-2.5-flash-image"]
-# https://openrouter.ai/google/gemini-2.5-flash-image
-provider = "openrouter"
-model_id = "google/gemini-2.5-flash-image"
-model_version = "latest"
-temparature = 0.3
-context = 32768
-support_tools = true
-support_text = true
-support_images = true
+tier = "paid"
 
 [models.models."openrouter/qwen3-vl-235b-a22b-instruct"]
 # https://openrouter.ai/qwen/qwen3-vl-235b-a22b-instruct
@@ -52,4 +44,19 @@ temparature = 0.3
 context = 262144
 support_tools = true
 support_text = true
+support_images = false
+tier = "paid"
+
+# Image generation Models
+
+[models.models."openrouter/gemini-2.5-flash-image"]
+# https://openrouter.ai/google/gemini-2.5-flash-image
+provider = "openrouter"
+model_id = "google/gemini-2.5-flash-image"
+model_version = "latest"
+temparature = 0.3
+context = 32768
+support_tools = true
+support_text = false  # Actualy it does support text, but we do not want to use it for text
 support_images = true
+tier = "friend"

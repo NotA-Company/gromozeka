@@ -8,7 +8,7 @@ context = 32768
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "paid"
 
 [models.models.yandexgpt-lite]
 provider = "yc-openai"
@@ -19,7 +19,7 @@ context = 32768
 support_tools = false
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "paid"
 
 [models.models.aliceai-llm]
 provider = "yc-openai"
@@ -30,7 +30,7 @@ context = 32768
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "paid"
 
 [models.models."yc/gpt-oss-120b"]
 provider = "yc-openai"
@@ -41,7 +41,7 @@ context = 128000
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "paid"
 
 [models.models."yc/gpt-oss-20b"]
 provider = "yc-openai"
@@ -52,7 +52,7 @@ context = 128000
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "paid"
 
 [models.models."yc/qwen3-235b-a22b-fp8"]
 provider = "yc-openai"
@@ -63,7 +63,7 @@ context = 256000
 support_tools = true
 support_text = true
 support_images = false
-can_be_choosen = true
+tier = "friend"
 
 [models.models."yc/gemma-3-27b-it"]
 provider = "yc-openai"
@@ -74,3 +74,4 @@ context = 128000
 support_tools = true
 support_text = true
 support_images = false
+tier = "paid"

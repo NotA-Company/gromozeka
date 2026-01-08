@@ -75,9 +75,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         Initialize the configuration handler with required dependencies, dood!
 
         Builds a list of selectable AI models that users can choose from during
-        configuration. Only models marked with can_be_choosen=True in their metadata
-        are included in the selection list.
-
+        configuration.
         Args:
             configManager: Configuration manager instance for accessing bot settings
             database: Database wrapper for data persistence operations
@@ -97,7 +95,7 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         for modelName in llmManager.listModels():
             modelInfo = llmManager.getModelInfo(modelName)
-            if modelInfo and modelInfo.get("extra", {}).get("can_be_choosen", False):
+            if modelInfo and modelInfo.get("tier", None):
                 selectableModels.append(modelName)
         self.selectableModels = selectableModels
         logger.debug(f"Selectable models are: {selectableModels}")
@@ -449,6 +447,9 @@ class ConfigureCommandHandler(BaseBotHandler):
         defaultChatSettings = self.getChatSettings(None, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP)
 
         chatOptions = getChatSettingsInfo()
+        chatTier = self.getChatTier(chatSettings)
+        if await self.isAdmin(user, chat=None, allowBotOwners=True):
+            chatTier = ChatTier.BOT_OWNER
 
         try:
             key = ChatSettingsKey.fromId(keyId)
@@ -526,8 +527,28 @@ class ConfigureCommandHandler(BaseBotHandler):
                     )
                 ]
             )
-        elif chatOptions[key]["type"] == ChatSettingsType.MODEL:
+        elif chatOptions[key]["type"] in [ChatSettingsType.MODEL, ChatSettingsType.IMAGE_MODEL]:
             for modelIdx, modelName in enumerate(self.selectableModels):
+                llmModel = self.llmManager.getModel(modelName)
+                if llmModel is None:
+                    logger.error(f"ConfigureKey: model {modelName} not found")
+                    continue
+                modelInfo = llmModel.getInfo()
+                if (
+                    chatOptions[key]["type"] == ChatSettingsType.MODEL and not modelInfo.get("support_text", False)
+                ) or (
+                    chatOptions[key]["type"] == ChatSettingsType.IMAGE_MODEL
+                    and not modelInfo.get("support_images", False)
+                ):
+                    # For IMAGE_MODEL, skip models, which does not support image generation
+                    # For MODEL, skip models, which does not support text generation
+                    continue
+
+                modelTier = ChatTier.fromStr(modelInfo.get("tier", ""))
+                if modelTier is None or chatTier is None or not chatTier.isBetterOrEqualThan(modelTier):
+                    # If some tier is not set or chat has 'worse' tier, skip it
+                    continue
+
                 buttonText = modelName
                 if modelName == chatSettings[key].toStr():
                     buttonText += " (*)"
