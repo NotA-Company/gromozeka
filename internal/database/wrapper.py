@@ -1722,10 +1722,15 @@ class DatabaseWrapper:
             with self.getCursor(chatId=chatId, readonly=False) as cursor:
                 cursor.execute(
                     """
-                    INSERT OR REPLACE INTO chat_settings
+                    INSERT INTO chat_settings
                         (chat_id, key, value, updated_by, updated_at)
                     VALUES
                         (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT (chat_id, key)
+                    DO UPDATE SET
+                        value = excluded.value,
+                        updated_by = excluded.updated_by,
+                        updated_at = CURRENT_TIMESTAMP
                 """,
                     (chatId, key, value, updatedBy),
                 )
