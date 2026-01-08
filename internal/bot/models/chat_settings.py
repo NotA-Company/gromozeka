@@ -90,15 +90,15 @@ class ChatSettingsPage(IntEnum):
             case ChatSettingsPage.LLM_BASE:
                 return "Базовые настройки LLM"
             case ChatSettingsPage.LLM_PAID:
-                return "Премиум настройки LLM"
+                return "Премиум настройки LLM ⭐️"
             case ChatSettingsPage.PAID:
-                return "Премиум настройки"
+                return "Премиум настройки ⭐️"
             case ChatSettingsPage.FRIEND:
-                return "Настройки для самых важных"
+                return "Настройки для самых важных 🌟"
             case ChatSettingsPage.BOT_OWNER:
-                return "Только для владельцев"
+                return "Только для владельцев 😎"
             case ChatSettingsPage.BOT_OWNER_SYSTEM:
-                return "Системные настройки (не трогать)"
+                return "Системные настройки (не трогать) 😎"
             case _:
                 return f"{self.name}"
 
