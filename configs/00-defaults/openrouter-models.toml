@@ -9,7 +9,7 @@ context = 200000
 support_tools = true
 support_text = true
 support_images = false
-tier = "friend"
+tier = "bot-owner"
 
 [models.models."openrouter/deepseek-chat-v3.1"]
 # https://openrouter.ai/deepseek/deepseek-chat-v3.1
