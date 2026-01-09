@@ -532,13 +532,28 @@ class FormatEntity:
                 nestedEntities.append(entities[i])
                 i += 1
 
-            matchedText = (
-                cls.parseText(utf16MatchedText, nestedEntities, outputFormat, entity.offset)
-                if nestedEntities
-                else utf16MatchedText.decode("utf-16-le")
-            )
+            matchedText: str = ""
+            if nestedEntities:
+                matchedText = cls.parseText(utf16MatchedText, nestedEntities, outputFormat, entity.offset)
+            else:
+                try:
+                    matchedText = utf16MatchedText.decode("utf-16-le")
+                except UnicodeDecodeError as e:
+                    logger.error(f"Failed to decode text: {e}")
+                    logger.exception(e)
+                    logger.debug(
+                        f"utf16Text: {utf16Text} \n    "
+                        f"offset: {offset}, length: {length}, utf16MatchedText: {utf16MatchedText}"
+                    )
+                    matchedText = utf16MatchedText.decode("utf-16-le", errors="replace")
+
             ret += entity.formatText(matchedText, outputFormat)
             lastPos = offset + length
-
-        ret += utf16Text[lastPos:].decode("utf-16-le")
+        try:
+            ret += utf16Text[lastPos:].decode("utf-16-le")
+        except UnicodeDecodeError as e:
+            logger.error(f"Failed to decode text: {e}")
+            logger.exception(e)
+            logger.debug(f"utf16Text: {utf16Text} \n    lastPos: {lastPos}")
+            ret += utf16Text[lastPos:].decode("utf-16-le", errors="replace")
         return ret
