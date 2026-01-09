@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .abstract import AbstractLLMProvider, AbstractModel
+from .providers.custom_openai_provider import CustomOpenAIProvider
 from .providers.openrouter_provider import OpenrouterProvider
 from .providers.yc_openai_provider import YcOpenaiProvider
 from .providers.yc_sdk_provider import YcSdkProvider
@@ -40,6 +41,7 @@ class LLMManager:
             "yc-openai": YcOpenaiProvider,
             "openrouter": OpenrouterProvider,
             "yc-sdk": YcSdkProvider,
+            "custom-openai": CustomOpenAIProvider,
         }
 
         for provider_name, provider_config in providers_config.items():
