@@ -306,7 +306,7 @@ class YandexSearchHandler(BaseBotHandler):
         """
         try:
             # TODO: Switch to httpx and properly handle redirects and so on
-            doc: requests.Response = requests.get(url)
+            doc: requests.Response = requests.get(url, timeout=(120.0, 120.0))
 
             if doc.status_code < 200 or doc.status_code >= 300:
                 reason = doc.reason
