@@ -48,11 +48,24 @@ support_images = false
 tier = "paid"
 
 # Image generation Models
+# https://openrouter.ai/models?fmt=table&output_modalities=image
 
 [models.models."openrouter/gemini-2.5-flash-image"]
 # https://openrouter.ai/google/gemini-2.5-flash-image
 provider = "openrouter"
 model_id = "google/gemini-2.5-flash-image"
+model_version = "latest"
+temparature = 0.3
+context = 32768
+support_tools = true
+support_text = false  # Actualy it does support text, but we do not want to use it for text
+support_images = true
+tier = "friend"
+
+[models.models."openrouter/gemini-3-pro-image-preview"]
+# https://openrouter.ai/google/gemini-3-pro-image-preview
+provider = "openrouter"
+model_id = "google/gemini-3-pro-image-preview"
 model_version = "latest"
 temparature = 0.3
 context = 32768
