@@ -1,16 +1,4 @@
 # https://openrouter.ai/models?fmt=table&max_price=0&order=pricing-low-to-high
-[models.models."openrouter/deepseek-chat-v3.1:free"]
-# https://openrouter.ai/deepseek/deepseek-chat-v3.1:free
-# enabled = false # It rate-limited most of the time, so not sure, that it worth to try it
-provider = "openrouter"
-model_id = "deepseek/deepseek-chat-v3.1:free"
-model_version = "latest"
-temparature = 0.3
-context = 64000
-support_tools = true
-support_text = true
-support_images = false
-tier = "free"
 
 [models.models."openrouter/gemma-3-27b-it:free"]
 # https://openrouter.ai/google/gemma-3-27b-it:free
@@ -44,18 +32,6 @@ model_id = "openai/gpt-oss-20b:free"
 model_version = "latest"
 temparature = 0.3
 context = 32768
-support_tools = true
-support_text = true
-support_images = false
-tier = "free"
-
-[models.models."openrouter/qwen3-235b-a22b:free"]
-# https://openrouter.ai/qwen/qwen3-235b-a22b:free
-provider = "openrouter"
-model_id = "qwen/qwen3-235b-a22b:free"
-model_version = "latest"
-temparature = 0.3
-context = 131100
 support_tools = true
 support_text = true
 support_images = false
