@@ -2,7 +2,9 @@
 Bot handlers manager for coordinating message processing across multiple handlers.
 """
 
+import asyncio
 import logging
+from collections.abc import MutableSet
 from typing import Dict, List, Optional, Set, Tuple
 
 from telegram.ext import ExtBot
@@ -54,6 +56,20 @@ from .weather import WeatherHandler
 from .yandex_search import YandexSearchHandler
 
 logger = logging.getLogger(__name__)
+
+
+class MessageQueueRecord:
+    """
+    Represents a message queue record with a message and a semaphore.
+    """
+
+    __slots__ = ("message", "updateObj", "lock", "handled")
+
+    def __init__(self, message: EnsuredMessage, updateObj: UpdateObjectType, lock: asyncio.Lock):
+        self.message = message
+        self.updateObj = updateObj
+        self.lock = lock
+        self.handled = False
 
 
 class HandlersManager(CommandHandlerGetterInterface):
@@ -132,16 +148,22 @@ class HandlersManager(CommandHandlerGetterInterface):
             )
 
         # Initialize handlers
-        self.handlers: List[BaseBotHandler] = [
+        # handlersHead - forst bunch of handlers. Can be run in parallel
+        self.handlersHead: List[BaseBotHandler] = [
             # Should be first to check for spam before other handlers
             SpamHandler(configManager, database, llmManager, botProvider),
+            # # Next - Handlers, which uses `newMessageHandler` for setting settings
             # Should be before MessagePreprocessorHandler to not save configuration answers
             ConfigureCommandHandler(configManager, database, llmManager, botProvider),
             SummarizationHandler(configManager, database, llmManager, botProvider),
+            UserDataHandler(configManager, database, llmManager, botProvider),
+            # # Last - Preprocessor handler to preprocess message (handle images and so on)
             # Should be before other handlers to ensure message saving + media processing
             MessagePreprocessorHandler(configManager, database, llmManager, botProvider),
-            #
-            UserDataHandler(configManager, database, llmManager, botProvider),
+        ]
+
+        # handlersTail - second buch of handlers. Should be run in sequence for each ChatId+ThreadId
+        self.handlersTail: List[BaseBotHandler] = [
             DevCommandsHandler(configManager, database, llmManager, botProvider),
             MediaHandler(configManager, database, llmManager, botProvider),
             CommonHandler(configManager, database, llmManager, botProvider),
@@ -150,7 +172,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         ]
 
         if self.botProvider == BotProvider.TELEGRAM:
-            self.handlers.extend(
+            self.handlersTail.extend(
                 [
                     ReactOnUserMessageHandler(configManager, database, llmManager, botProvider),
                     TopicManagerHandler(
@@ -161,16 +183,23 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
         if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
-            self.handlers.append(WeatherHandler(configManager, database, llmManager, botProvider))
+            self.handlersTail.append(WeatherHandler(configManager, database, llmManager, botProvider))
         if self.configManager.getYandexSearchConfig().get("enabled", False):
-            self.handlers.append(YandexSearchHandler(configManager, database, llmManager, botProvider))
+            self.handlersTail.append(YandexSearchHandler(configManager, database, llmManager, botProvider))
         if self.configManager.get("resender", {}).get("enabled", False):
-            self.handlers.append(ResenderHandler(configManager, database, llmManager, botProvider))
+            self.handlersTail.append(ResenderHandler(configManager, database, llmManager, botProvider))
 
-        self.handlers.append(
+        self.handlersTail.append(
             # Should be last messageHandler as it can handle any message
             LLMMessageHandler(configManager, database, llmManager, botProvider)
         )
+
+        self.handlersCombined = self.handlersHead + self.handlersTail
+
+        self.handlingQueues: Dict[str, asyncio.Queue[MessageQueueRecord]] = {}
+        self.queueHandlers: MutableSet[asyncio.Task] = set[asyncio.Task]()
+        self.queueLock = asyncio.Lock()
+        self._isShuttonDown = asyncio.Event()
 
     def injectBot(self, bot: ExtBot | libMax.MaxBotClient) -> None:
         """Inject bot instance into all registered handlers.
@@ -198,8 +227,68 @@ class HandlersManager(CommandHandlerGetterInterface):
             for userId in self.db.getUserIdByUserName(botOwner.lower()):
                 theBot.botOwnersId.add(userId)
 
-        for handler in self.handlers:
+        for handler in self.handlersCombined:
             handler.injectBot(theBot)
+
+    async def shutdown(self) -> None:
+        """Shutdown the HandlersManager.
+
+        This method will await for all running tasks and drop queues.
+        """
+        logger.info("Shutting down HandlersManager...")
+        self._isShuttonDown.set()
+        logger.info("Awaiting for queue handlers...")
+        await asyncio.gather(*self.queueHandlers)
+
+    async def addMessageToQueue(self, messageRec: MessageQueueRecord) -> None:
+        """
+        TODO: Write docstring
+        """
+
+        key = f"{messageRec.message.recipient.id}:{messageRec.message.threadId}"
+        async with self.queueLock:
+            # We have to do everything inside of lock to ensure, that nobody will delete\create queue in process
+            # I.e. to avoid race
+            isNewQueue = key not in self.handlingQueues
+
+            if isNewQueue:
+                self.handlingQueues[key] = asyncio.Queue()
+                queueHandler = asyncio.create_task(self._processMessageQueue(key))
+                self.queueHandlers.add(queueHandler)
+                queueHandler.add_done_callback(self.queueHandlers.discard)
+
+            await self.handlingQueues[key].put(messageRec)
+
+    async def _dropQueueIfEmptyNoLock(self, queueKey: str) -> bool:
+        """
+        TODO: Write docstring
+        """
+        if queueKey not in self.handlingQueues:
+            logger.warning(f"Queue {queueKey} not found, skipping")
+            return False
+        
+        queue = self.handlingQueues[queueKey]
+        # Recheck, that queue is empty
+        if not queue.empty():
+            logger.info(f"Queue {queueKey} is not empty, skipping")
+            return False
+
+        logger.debug(f"Queue {queueKey} is empty, dropping")
+        self.handlingQueues.pop(queueKey, None)
+        # For Python 3.13+
+        if hasattr(queue, "shutdown") and callable(queue.shutdown):  # pyright: ignore[reportAttributeAccessIssue]
+            queue.shutdown()  # pyright: ignore[reportAttributeAccessIssue]
+        return True
+
+    async def dropQueueIfEmpty(self, queueKey: str, skipLock: bool = False) -> bool:
+        """
+        TODO: Write docstring
+        """
+        if skipLock:
+            return await self._dropQueueIfEmptyNoLock(queueKey)
+
+        async with self.queueLock:
+            return await self._dropQueueIfEmptyNoLock(queueKey)
 
     def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
         """Get dictionary of all available command handlers.
@@ -215,7 +304,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             return self._commands
 
         ret: Dict[str, CommandHandlerInfoV2] = {}
-        for handler in self.handlers:
+        for handler in self.handlersCombined:
             for cmdHandlerInfo in handler.getCommandHandlersV2():
                 ret.update({cmd.lower(): cmdHandlerInfo for cmd in cmdHandlerInfo.commands})
 
@@ -233,7 +322,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         Returns:
             Tuple of (command, args) if message contains command, None otherwise
         """
-        if not self.handlers:
+        if not self.handlersCombined:
             # No handlers, no command
             logger.error("No handlers initialized, cannot parse command")
             return None
@@ -251,7 +340,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             splittedCommand = command.split("@")
             command = splittedCommand[0]
             if len(splittedCommand) > 1:
-                myUsername = await self.handlers[0].getBotUserName()
+                myUsername = await self.handlersCombined[0].getBotUserName()
                 if not myUsername or myUsername.lower() != splittedCommand[1].lower():
                     # TODO: Should we somehow indicate, that it is command but for someone else?
                     logger.debug(
@@ -397,28 +486,145 @@ class HandlersManager(CommandHandlerGetterInterface):
             ensuredMessage: Normalized message object
             updateObj: Original update object from the platform
         """
-        ensuredMessage.setUserData(
-            self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-        )
+        lock = asyncio.Lock()
+        async with lock:
+            messageRec = MessageQueueRecord(ensuredMessage, updateObj, lock)
+            await self.addMessageToQueue(messageRec)
+            ensuredMessage.setUserData(
+                self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
+            )
 
-        commandRet = await self.handleCommand(ensuredMessage, updateObj)
-        if commandRet is not None:
-            logger.debug(f"Handled as command with result: {commandRet}")
+            commandRet = await self.handleCommand(ensuredMessage, updateObj)
+            if commandRet is not None:
+                logger.debug(f"Handled as command with result: {commandRet}")
+                messageRec.handled = True
+                return
+
+            # resultSet: Set[HandlerResultStatus] = set()
+            ret: HandlerResultStatus = HandlerResultStatus.SKIPPED
+            for handler in self.handlersHead:
+                ret = await handler.newMessageHandler(ensuredMessage, updateObj)
+                # resultSet.add(ret)
+                if ret.needLogs():
+                    logger.debug(f"Handler {type(handler).__name__} returned {ret.value}")
+                if ret.isFinalState():
+                    messageRec.handled = True
+                    break
+
+            # Do nothing else, message will be processed by _processMessageQueue()
+
+    async def _processMessageRec(self, messageRec: MessageQueueRecord) -> None:
+        """
+        TODO: write docstring
+        """
+        async with messageRec.lock:
+            if messageRec.handled:
+                logger.debug(f"Message {messageRec.message.sender}#{messageRec.message.recipient} already handled")
+                return
+
+            for handler in self.handlersTail:
+                # TODO: Should I add max wait here?
+                ret = await handler.newMessageHandler(messageRec.message, messageRec.updateObj)
+                # resultSet.add(ret)
+                if ret.needLogs():
+                    logger.debug(f"Handler {type(handler).__name__} returned {ret.value}")
+                if ret.isFinalState():
+                    break
+
+            logger.debug(
+                f"Handled message {messageRec.message.sender}#{messageRec.message.recipient}: "
+                f"{messageRec.message.messageText[:50]}... "
+                # f"(resultSet: {resultSet})"
+            )
+
+    async def _processMessageQueue(self, queueKey: str) -> None:
+        """Process a message queue.
+
+        Args:
+            queueKey: Key of the queue to process
+        """
+
+        async with self.queueLock:
+            if queueKey not in self.handlingQueues:
+                logger.error(f"Queue {queueKey} not found")
+                return
+
+            queue = self.handlingQueues[queueKey]
+
+        if queue is None:
+            logger.error(f"Queue {queueKey} not found")
             return
 
-        resultSet: Set[HandlerResultStatus] = set()
-        for handler in self.handlers:
-            ret = await handler.newMessageHandler(ensuredMessage, updateObj)
-            resultSet.add(ret)
-            if ret.needLogs():
-                logger.debug(f"Handler {type(handler).__name__} returned {ret.value}")
-            if ret.isFinalState():
-                break
+        awaitShutdown = asyncio.create_task(self._isShuttonDown.wait())
+        while True:
+            try:
+                # If there is more that 30 minutes of no new message, drop queue
+                awaitMessage = asyncio.create_task(queue.get())
+                await asyncio.wait(
+                    [awaitMessage, awaitShutdown],
+                    timeout=60 * 30,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if awaitMessage.cancelled():
+                    logger.debug(f"Awaiting of Queue {queueKey} cancelled...")
+                elif awaitMessage.done():
+                    messageRec: Optional[MessageQueueRecord] = None
+                    try:
+                        messageRec = awaitMessage.result()
+                    except asyncio.CancelledError as e:
+                        logger.error(f"Awaiting of Queue {queueKey} cancelled")
+                        logger.exception(e)
+                        continue
+                    except asyncio.InvalidStateError as e:
+                        logger.error(f"Awaiting of Queue {queueKey} failed")
+                        logger.exception(e)
+                        awaitMessage.cancel()
+                        continue
+                    except Exception as e:
+                        logger.exception(e)
+                        # continue
 
-        logger.debug(
-            f"Handled message from {ensuredMessage.sender}: {ensuredMessage.messageText[:50]}... "
-            f"(resultSet: {resultSet})"
-        )
+                    if messageRec is not None:
+                        try:
+                            await self._processMessageRec(messageRec)
+                        except Exception as e:
+                            logger.exception(e)
+                        finally:
+                            queue.task_done()
+                            continue
+                else:
+                    # Cancel awaiting for new message in queue
+                    awaitMessage.cancel()
+
+                if awaitShutdown.done():
+                    logger.info(f"Shutdown initiated, we have {queue.qsize()} messages left in queue {queueKey}")
+                    async with self.queueLock:
+                        logger.debug(f"Queue#{queueKey}: lock acquired")
+                        while not queue.empty():
+                            messageRec = queue.get_nowait()
+                            try:
+                                await self._processMessageRec(messageRec)
+                            except Exception as e:
+                                logger.exception(e)
+                            finally:
+                                queue.task_done()
+                            logger.debug(f"Queue {queueKey}: {queue.qsize()} messages left...")
+
+                        logger.debug(f"Queue#{queueKey}: trying to drop queue")
+                        if not await self.dropQueueIfEmpty(queueKey, skipLock=True):
+                            logger.error(f"Unable to drop Queue {queueKey}, continue shutdown process...")
+                            
+                    break
+
+                # Timeout triggered
+                if await self.dropQueueIfEmpty(queueKey):
+                    awaitShutdown.cancel()
+                    break
+                else:
+                    logger.warning(f"Queue {queueKey}: Timeout triggered, but queue is not empty, cannot drop queue")
+
+            except Exception as e:
+                logger.exception(e)
 
     async def handleCallback(
         self, ensuredMessage: EnsuredMessage, data: utils.PayloadDict, user: MessageSender, updateObj: UpdateObjectType
@@ -433,7 +639,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         """
 
         retSet: Set[HandlerResultStatus] = set()
-        for handler in self.handlers:
+        for handler in self.handlersCombined:
             ret = await handler.callbackHandler(
                 ensuredMessage=ensuredMessage, data=data, user=user, updateObj=updateObj
             )
@@ -462,7 +668,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         """
 
         retSet: Set[HandlerResultStatus] = set()
-        for handler in self.handlers:
+        for handler in self.handlersCombined:
             ret = await handler.newChatMemberHandler(
                 targetChat=targetChat,
                 messageId=messageId,
@@ -494,7 +700,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         """
 
         retSet: Set[HandlerResultStatus] = set()
-        for handler in self.handlers:
+        for handler in self.handlersCombined:
             ret = await handler.leftChatMemberHandler(
                 targetChat=targetChat,
                 messageId=messageId,

@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] Support random-message sending function
 - [ ] Add user to DB on first message (even if spam) or join
 - [ ] Handle user leave (add to DB to deny chat in list\summarisation\etc)
 - [ ] auto-learn ham\spam only if confidence level is more, than treshold
