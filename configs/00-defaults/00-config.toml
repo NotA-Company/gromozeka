@@ -36,6 +36,7 @@ maxRequests = 1
 yandex-search = "default"
 openweathermap = "default"
 geocode-maps = "one-per-second" # Free Tier has a limit of 1-5 requests per second
+chat-default = "default"
 
 [models.json-logging]
 # Log LLM request:responce into JSON format for debugging purposes

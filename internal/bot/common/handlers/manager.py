@@ -14,6 +14,7 @@ from internal.bot.common.bot import TheBot
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import (
     BotProvider,
+    ChatSettingsDict,
     ChatSettingsKey,
     ChatSettingsValue,
     ChatTier,
@@ -91,7 +92,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.queueService = QueueService.getInstance()
         # Initialize default Chat Settings
         botConfig = configManager.getBotConfig()
-        defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {k: ChatSettingsValue("") for k in ChatSettingsKey}
+        defaultSettings: ChatSettingsDict = {k: ChatSettingsValue("") for k in ChatSettingsKey}
         defaultSettings.update(
             {
                 ChatSettingsKey(k): ChatSettingsValue(v)

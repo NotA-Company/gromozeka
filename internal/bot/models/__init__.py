@@ -7,6 +7,7 @@ from ...models import MessageType
 
 # Chat Settings (already exists)
 from .chat_settings import (
+    ChatSettingsDict,
     ChatSettingsKey,
     ChatSettingsPage,
     ChatSettingsType,
@@ -74,6 +75,7 @@ __all__ = [
     "ChatSettingsValue",
     "getChatSettingsInfo",
     "ChatSettingsPage",
+    "ChatSettingsDict",
     # Ensured Message
     "EnsuredMessage",
     "MentionCheckResult",

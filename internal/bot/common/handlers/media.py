@@ -174,10 +174,13 @@ class MediaHandler(BaseBotHandler):
             f"Generating image: {image_prompt}. Image description: {image_description}, "
             f"mcID: {ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
         )
-        imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
-        fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
 
-        mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=image_prompt)], fallbackImageLLM)
+        mlRet = await self.llmService.generateImage(
+            image_prompt,
+            chatId=ensuredMessage.recipient.id,
+            chatSettings=chatSettings,
+            llmManager=self.llmManager,
+        )
         logger.debug(
             f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
         )
@@ -425,9 +428,6 @@ class MediaHandler(BaseBotHandler):
             )
             return
 
-        parserLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
-        parserFallbackLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL].toModel(self.llmManager)
-
         mediaDataList: List[bytes] = []
 
         if (
@@ -512,7 +512,14 @@ class MediaHandler(BaseBotHandler):
                 ),
             ]
 
-            llmRet = await parserLLM.generateTextWithFallBack(reqMessages, parserFallbackLLM)
+            llmRet = await self.llmService.generateText(
+                reqMessages,
+                chatId=ensuredMessage.recipient.id,
+                chatSettings=chatSettings,
+                llmManager=self.llmManager,
+                modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
+                fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
+            )
             logger.debug(f"LLM result: {llmRet}")
             if llmRet.status != ModelResultStatus.FINAL:
                 await self.sendMessage(
@@ -629,10 +636,15 @@ class MediaHandler(BaseBotHandler):
                     )
                 )
 
-            textLLM = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
-            fallbackLLM = chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager)
-            llmRet = await textLLM.generateTextWithFallBack(latestMessages, fallbackModel=fallbackLLM)
-            # Should i check llmRet.status? do not wanna for now
+            llmRet = await self.llmService.generateText(
+                latestMessages,
+                chatId=ensuredMessage.recipient.id,
+                chatSettings=chatSettings,
+                llmManager=self.llmManager,
+                modelKey=ChatSettingsKey.CHAT_MODEL,
+                fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
+            )
+            # Should I check llmRet.status? do not wanna for now
             if llmRet.resultText:
                 prompt = llmRet.resultText
             else:
@@ -657,10 +669,12 @@ class MediaHandler(BaseBotHandler):
             )
             return
 
-        imageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
-        fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
-
-        mlRet = await imageLLM.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
+        mlRet = await self.llmService.generateImage(
+            prompt,
+            chatId=ensuredMessage.recipient.id,
+            chatSettings=chatSettings,
+            llmManager=self.llmManager,
+        )
         logger.debug(
             f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
         )

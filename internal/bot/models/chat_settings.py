@@ -248,6 +248,9 @@ class ChatSettingsKey(StrEnum):
     PAID_TIER = "paid-tier"
     PAID_TIER_UNTILL_TS = "paid-tier-untill-ts"
 
+    LLM_RATELIMITER = "llm-ratelimiter"
+    TOOLS_RATELIMITER = "tools-ratelimiter"
+
     # System settings. Not to be used\configured
     CACHED_TS = "cached-ts"
     """TS when chat settings were cached, to be used in Cache Service only"""
@@ -320,6 +323,8 @@ class ChatSettingsInfoValue(TypedDict):
     long: str
     page: ChatSettingsPage
 
+
+type ChatSettingsDict = Dict[ChatSettingsKey, ChatSettingsValue]
 
 _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     # # LLM Models
@@ -645,6 +650,18 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.FLOAT,
         "short": "Время действия платного Tier чата",
         "long": "Таймштамп, до которого оплачен Tier чата. Скорее всего не стоит менять это значение.",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.LLM_RATELIMITER: {
+        "type": ChatSettingsType.STRING,
+        "short": "Рэйтлимитер использования LLM",
+        "long": "Ограничивает частоту запросов к LLM. Возможные значения смотри в конфиге.",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.TOOLS_RATELIMITER: {
+        "type": ChatSettingsType.STRING,
+        "short": "Рэйтлимитер использования инструментов",
+        "long": "Ограничивает частоту запросов к инструментам. Возможные значения смотри в конфиге.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
 }
