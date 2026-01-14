@@ -7,13 +7,23 @@ The service supports fallback models and provides a unified interface for LLM op
 
 import logging
 import uuid
-from collections.abc import MutableSequence
+from collections.abc import Awaitable, Callable, Iterable, MutableSequence, Sequence
 from threading import RLock
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, TypeAlias
+from typing import Any, Dict, List, Optional, TypeAlias, Union
 
+from internal.bot.models.chat_settings import ChatSettingsDict, ChatSettingsKey
 from lib import utils
 from lib.ai.abstract import AbstractModel
-from lib.ai.models import LLMFunctionParameter, LLMToolFunction, ModelMessage, ModelResultStatus, ModelRunResult
+from lib.ai.manager import LLMManager
+from lib.ai.models import (
+    LLMAbstractTool,
+    LLMFunctionParameter,
+    LLMToolFunction,
+    ModelMessage,
+    ModelResultStatus,
+    ModelRunResult,
+)
+from lib.rate_limiter.manager import RateLimiterManager
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +72,7 @@ class LLMService:
         """
         if not hasattr(self, "initialized"):
             self.toolsHandlers: Dict[str, LLMToolFunction] = {}
+            self.rateLimiterManager = RateLimiterManager()
 
             self.initialized = True
             logger.info("LLMService initialized, dood!")
@@ -97,9 +108,13 @@ class LLMService:
 
     async def generateTextViaLLM(
         self,
-        model: AbstractModel,
-        fallbackModel: AbstractModel,
         messages: Sequence[ModelMessage],
+        *,
+        chatId: Optional[int],
+        chatSettings: ChatSettingsDict,
+        llmManager: LLMManager,
+        modelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
+        fallbackModelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
         useTools: bool = False,
         callId: Optional[str] = None,
         callback: Optional[Callable[[ModelRunResult, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
@@ -138,6 +153,19 @@ class LLMService:
         if callId is None:
             callId = str(uuid.uuid4())
 
+        model = self.resolveModel(
+            modelKey,
+            chatSettings=chatSettings,
+            llmManager=llmManager,
+            defaultKey=ChatSettingsKey.CHAT_MODEL,
+        )
+        fallbackModel = self.resolveModel(
+            fallbackModelKey,
+            chatSettings=chatSettings,
+            llmManager=llmManager,
+            defaultKey=ChatSettingsKey.FALLBACK_MODEL,
+        )
+
         ret: Optional[ModelRunResult] = None
         toolsUsed = False
         tools: Sequence[LLMToolFunction] = list(self.toolsHandlers.values()) if useTools else []
@@ -161,9 +189,13 @@ class LLMService:
             # First iteration - just strip context, next - properly condense context via LLM
             _condensingModel = condensingModel or model
 
-            ret = await model.generateTextWithFallBack(
+            ret = await self.generateText(
                 _messages,
-                fallbackModel=fallbackModel,
+                chatId=chatId,
+                chatSettings=chatSettings,
+                llmManager=llmManager,
+                modelKey=model,
+                fallbackKey=fallbackModel,
                 tools=tools,
             )
             logger.debug(f"LLM returned: {ret} for callId #{callId}")
@@ -342,3 +374,62 @@ class LLMService:
         ret.extend(retTail)
         logger.debug(f"Condensed context: {ret}")
         return ret
+
+    async def generateText(
+        self,
+        prompt: Union[str, Sequence[ModelMessage]],
+        *,
+        chatId: Optional[int],
+        chatSettings: ChatSettingsDict,
+        llmManager: LLMManager,
+        modelKey: Union[ChatSettingsKey, AbstractModel],
+        fallbackKey: Union[ChatSettingsKey, AbstractModel],
+        tools: Optional[Iterable[LLMAbstractTool]] = None,
+    ) -> ModelRunResult:
+        """Generate text with given prompt and chat settings."""
+        if isinstance(prompt, str):
+            prompt = [ModelMessage(content=prompt)]
+        llmModel = self.resolveModel(
+            modelKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.CHAT_MODEL
+        )
+        fallbackModel = self.resolveModel(
+            fallbackKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.FALLBACK_MODEL
+        )
+
+        if chatId is not None:
+            await self.rateLimit(chatId, chatSettings)
+        return await llmModel.generateTextWithFallBack(prompt, fallbackModel, tools=tools)
+
+    async def generateImage(
+        self, prompt: str, chatId: Optional[int], chatSettings: ChatSettingsDict, llmManager: LLMManager
+    ) -> ModelRunResult:
+        """Generate image with given prompt and chat settings."""
+        imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(llmManager)
+        fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(llmManager)
+
+        if chatId is not None:
+            await self.rateLimit(chatId, chatSettings)
+        return await imageGenerationModel.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
+
+    async def rateLimit(self, chatId: int, chatSettings: ChatSettingsDict) -> None:
+        rateLimiterName = chatSettings[ChatSettingsKey.LLM_RATELIMITER].toStr()
+        await self.rateLimiterManager.applyLimit(rateLimiterName, self.getRateLimiterKey(chatId))
+
+    def getRateLimiterKey(self, chatId: int) -> str:
+        return f"chatLLM#{chatId}"
+
+    def resolveModel(
+        self,
+        modelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
+        *,
+        chatSettings: ChatSettingsDict,
+        llmManager: LLMManager,
+        defaultKey: ChatSettingsKey,
+    ) -> AbstractModel:
+        if isinstance(modelKey, AbstractModel):
+            return modelKey
+
+        if isinstance(modelKey, ChatSettingsKey):
+            return chatSettings[modelKey].toModel(llmManager)
+
+        return chatSettings[defaultKey].toModel(llmManager)

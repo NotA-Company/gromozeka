@@ -1,4 +1,7 @@
 # Our TODO list
+- [ ] Add user to DB on first message (even if spam) or join
+- [ ] Handle user leave (add to DB to deny chat in list\summarisation\etc)
+- [ ] auto-learn ham\spam only if confidence level is more, than treshold
 - [ ] Do cache service refactoring
 - [ ] Add command for condensing context of given discussion
 - [ ] Add test\dev decorator support

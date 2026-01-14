@@ -231,7 +231,7 @@ class RateLimiterManager:
 
         return self._rateLimiters[self._defaultLimiter]
 
-    async def applyLimit(self, queue: str = "default") -> None:
+    async def applyLimit(self, queue: str = "default", key: Optional[str] = None) -> None:
         """
         Apply rate limiting for the specified queue.
 
@@ -248,10 +248,12 @@ class RateLimiterManager:
             >>> await manager.applyLimit("yandex_search")  # Uses mapped limiter
             >>> await manager.applyLimit()  # Uses default limiter
         """
+        if key is None:
+            key = queue
         limiter = self._getLimiterForQueue(queue)
-        await limiter.applyLimit(queue)
+        await limiter.applyLimit(key)
 
-    def getStats(self, queue: str = "default") -> Dict[str, Any]:
+    def getStats(self, queue: str = "default", key: Optional[str] = None) -> Dict[str, Any]:
         """
         Get rate limiting statistics for a queue.
 
@@ -269,8 +271,10 @@ class RateLimiterManager:
             >>> stats = manager.getStats("yandex_search")
             >>> print(f"Requests: {stats['requestsInWindow']}/{stats['maxRequests']}")
         """
+        if key is None:
+            key = queue
         limiter = self._getLimiterForQueue(queue)
-        return limiter.getStats(queue)
+        return limiter.getStats(key)
 
     def listRateLimiters(self) -> List[str]:
         """

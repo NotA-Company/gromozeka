@@ -11,8 +11,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from internal.bot.models.chat_settings import ChatSettingsDict
 from internal.services.llm.service import LLMService, LLMToolHandler
 from lib.ai.abstract import AbstractModel
+from lib.ai.manager import LLMManager
 from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
@@ -62,6 +64,21 @@ def mockFallbackModel():
     model.generateText = createAsyncMock()
     model.getEstimateTokensCount = Mock(return_value=100)
     return model
+
+
+@pytest.fixture
+def mockChatSettings():
+    """Create mock chat settings, dood!"""
+    settings = Mock(spec=ChatSettingsDict)
+    settings.__getitem__ = Mock(return_value=Mock(toModel=Mock(return_value=None)))
+    return settings
+
+
+@pytest.fixture
+def mockLlmManager():
+    """Create mock LLM manager, dood!"""
+    manager = Mock(spec=LLMManager)
+    return manager
 
 
 @pytest.fixture
@@ -417,7 +434,9 @@ async def testToolExecutionWithoutFunction():
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithoutTools(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testGenerateTextWithoutTools(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test generating text without tool calling, dood!"""
     expectedResult = ModelRunResult(
         rawResult={"response": "test"},
@@ -427,9 +446,12 @@ async def testGenerateTextWithoutTools(llmService, mockModel, mockFallbackModel,
     mockModel.generateTextWithFallBack.return_value = expectedResult
 
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=False,
     )
 
@@ -445,7 +467,9 @@ async def testGenerateTextWithoutTools(llmService, mockModel, mockFallbackModel,
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithCallId(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testGenerateTextWithCallId(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test generating text with custom callId, dood!"""
     expectedResult = ModelRunResult(
         rawResult={},
@@ -456,9 +480,12 @@ async def testGenerateTextWithCallId(llmService, mockModel, mockFallbackModel, s
 
     customCallId = "custom-call-123"
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=False,
         callId=customCallId,
     )
@@ -468,7 +495,9 @@ async def testGenerateTextWithCallId(llmService, mockModel, mockFallbackModel, s
 
 
 @pytest.mark.asyncio
-async def testGenerateTextAutoGeneratesCallId(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testGenerateTextAutoGeneratesCallId(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test generating text auto-generates callId when not provided, dood!"""
     expectedResult = ModelRunResult(
         rawResult={},
@@ -481,9 +510,12 @@ async def testGenerateTextAutoGeneratesCallId(llmService, mockModel, mockFallbac
         mockUuid.return_value = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
         await llmService.generateTextViaLLM(
-            model=mockModel,
-            fallbackModel=mockFallbackModel,
             messages=sampleMessages,
+            chatId=None,
+            chatSettings=mockChatSettings,
+            llmManager=mockLlmManager,
+            modelKey=mockModel,
+            fallbackModelKey=mockFallbackModel,
             useTools=False,
             callId=None,
         )
@@ -497,7 +529,9 @@ async def testGenerateTextAutoGeneratesCallId(llmService, mockModel, mockFallbac
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithToolCall(llmService, mockModel, mockFallbackModel, sampleMessages, sampleToolHandler):
+async def testGenerateTextWithToolCall(
+    llmService, mockModel, mockFallbackModel, sampleMessages, sampleToolHandler, mockChatSettings, mockLlmManager
+):
     """Test generating text with single tool call, dood!"""
     # Register tool
     llmService.registerTool(
@@ -531,9 +565,12 @@ async def testGenerateTextWithToolCall(llmService, mockModel, mockFallbackModel,
     mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
 
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -546,7 +583,9 @@ async def testGenerateTextWithToolCall(llmService, mockModel, mockFallbackModel,
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithMultipleToolCalls(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testGenerateTextWithMultipleToolCalls(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test generating text with multiple tool calls in sequence, dood!"""
 
     # Register tools
@@ -580,9 +619,12 @@ async def testGenerateTextWithMultipleToolCalls(llmService, mockModel, mockFallb
     mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
 
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -591,7 +633,9 @@ async def testGenerateTextWithMultipleToolCalls(llmService, mockModel, mockFallb
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithMultipleToolCallRounds(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testGenerateTextWithMultipleToolCallRounds(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test generating text with multiple rounds of tool calls, dood!"""
 
     # Register tool
@@ -627,9 +671,12 @@ async def testGenerateTextWithMultipleToolCallRounds(llmService, mockModel, mock
     mockModel.generateTextWithFallBack.side_effect = [round1, round2, finalRound]
 
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -638,7 +685,9 @@ async def testGenerateTextWithMultipleToolCallRounds(llmService, mockModel, mock
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithToolCallCallback(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testGenerateTextWithToolCallCallback(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test callback is invoked when tool calls are made, dood!"""
 
     # Register tool
@@ -668,9 +717,12 @@ async def testGenerateTextWithToolCallCallback(llmService, mockModel, mockFallba
     extraData = {"key": "value"}
 
     await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
         callback=callbackMock,
         extraData=extraData,
@@ -684,7 +736,9 @@ async def testGenerateTextWithToolCallCallback(llmService, mockModel, mockFallba
 
 
 @pytest.mark.asyncio
-async def testGenerateTextToolCallResultFormatting(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testGenerateTextToolCallResultFormatting(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test tool call results are properly formatted as JSON, dood!"""
 
     # Register tool that returns dict
@@ -709,9 +763,12 @@ async def testGenerateTextToolCallResultFormatting(llmService, mockModel, mockFa
     mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
 
     await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -737,7 +794,9 @@ async def testGenerateTextToolCallResultFormatting(llmService, mockModel, mockFa
 
 
 @pytest.mark.asyncio
-async def testToolCallMessageConstruction(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testToolCallMessageConstruction(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test tool call messages are constructed correctly, dood!"""
 
     async def testTool(extraData=None, **kwargs):
@@ -763,9 +822,12 @@ async def testToolCallMessageConstruction(llmService, mockModel, mockFallbackMod
     originalMessageCount = len(sampleMessages)
 
     await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -788,7 +850,9 @@ async def testToolCallMessageConstruction(llmService, mockModel, mockFallbackMod
 
 
 @pytest.mark.asyncio
-async def testConversationContextPreserved(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testConversationContextPreserved(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test conversation context is preserved through tool calls, dood!"""
 
     async def testTool(extraData=None, **kwargs):
@@ -812,9 +876,12 @@ async def testConversationContextPreserved(llmService, mockModel, mockFallbackMo
     mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
 
     await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -834,7 +901,9 @@ async def testConversationContextPreserved(llmService, mockModel, mockFallbackMo
 
 
 @pytest.mark.asyncio
-async def testToolExecutionException(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testToolExecutionException(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test handling of tool execution exceptions, dood!"""
 
     async def failingTool(extraData=None, **kwargs):
@@ -853,15 +922,20 @@ async def testToolExecutionException(llmService, mockModel, mockFallbackModel, s
 
     with pytest.raises(RuntimeError, match="Tool failed!"):
         await llmService.generateTextViaLLM(
-            model=mockModel,
-            fallbackModel=mockFallbackModel,
             messages=sampleMessages,
+            chatId=None,
+            chatSettings=mockChatSettings,
+            llmManager=mockLlmManager,
+            modelKey=mockModel,
+            fallbackModelKey=mockFallbackModel,
             useTools=True,
         )
 
 
 @pytest.mark.asyncio
-async def testMissingToolHandler(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testMissingToolHandler(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test handling of missing tool handler, dood!"""
     # Don't register any tools
 
@@ -876,15 +950,20 @@ async def testMissingToolHandler(llmService, mockModel, mockFallbackModel, sampl
 
     with pytest.raises(KeyError):
         await llmService.generateTextViaLLM(
-            model=mockModel,
-            fallbackModel=mockFallbackModel,
             messages=sampleMessages,
+            chatId=None,
+            chatSettings=mockChatSettings,
+            llmManager=mockLlmManager,
+            modelKey=mockModel,
+            fallbackModelKey=mockFallbackModel,
             useTools=True,
         )
 
 
 @pytest.mark.asyncio
-async def testCallbackException(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testCallbackException(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test handling of callback exceptions, dood!"""
 
     async def testTool(extraData=None, **kwargs):
@@ -907,9 +986,12 @@ async def testCallbackException(llmService, mockModel, mockFallbackModel, sample
 
     with pytest.raises(ValueError, match="Callback failed!"):
         await llmService.generateTextViaLLM(
-            model=mockModel,
-            fallbackModel=mockFallbackModel,
             messages=sampleMessages,
+            chatId=None,
+            chatSettings=mockChatSettings,
+            llmManager=mockLlmManager,
+            modelKey=mockModel,
+            fallbackModelKey=mockFallbackModel,
             useTools=True,
             callback=failingCallback,
         )
@@ -1059,7 +1141,9 @@ def testParameterTypeConversion():
 
 
 @pytest.mark.asyncio
-async def testFullWorkflowRegisterGenerateExecute(llmService, mockModel, mockFallbackModel):
+async def testFullWorkflowRegisterGenerateExecute(
+    llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
+):
     """Test full workflow: register tools → generate → execute tools → continue, dood!"""
 
     # Step 1: Register tools
@@ -1100,9 +1184,12 @@ async def testFullWorkflowRegisterGenerateExecute(llmService, mockModel, mockFal
 
     # Step 3: Execute
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=messages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -1114,7 +1201,9 @@ async def testFullWorkflowRegisterGenerateExecute(llmService, mockModel, mockFal
 
 
 @pytest.mark.asyncio
-async def testConversationWithMultipleToolCallRounds(llmService, mockModel, mockFallbackModel):
+async def testConversationWithMultipleToolCallRounds(
+    llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
+):
     """Test conversation with multiple rounds of tool calls, dood!"""
 
     # Register calculator tool
@@ -1159,9 +1248,12 @@ async def testConversationWithMultipleToolCallRounds(llmService, mockModel, mock
     mockModel.generateTextWithFallBack.side_effect = [round1, round2, round3]
 
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=messages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -1171,7 +1263,9 @@ async def testConversationWithMultipleToolCallRounds(llmService, mockModel, mock
 
 
 @pytest.mark.asyncio
-async def testToolResultsAffectSubsequentResponses(llmService, mockModel, mockFallbackModel):
+async def testToolResultsAffectSubsequentResponses(
+    llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
+):
     """Test tool results are properly passed to subsequent LLM calls, dood!"""
 
     # Register tool
@@ -1198,9 +1292,12 @@ async def testToolResultsAffectSubsequentResponses(llmService, mockModel, mockFa
     mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
 
     await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=messages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -1218,7 +1315,7 @@ async def testToolResultsAffectSubsequentResponses(llmService, mockModel, mockFa
 
 
 @pytest.mark.asyncio
-async def testExtraDataPassedToTools(llmService, mockModel, mockFallbackModel):
+async def testExtraDataPassedToTools(llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
     """Test extraData is properly passed to tool handlers, dood!"""
     # Track what extraData was received
     receivedExtraData = []
@@ -1249,9 +1346,12 @@ async def testExtraDataPassedToTools(llmService, mockModel, mockFallbackModel):
     extraData = {"userId": 123, "chatId": 456}
 
     await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=messages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
         extraData=extraData,
     )
@@ -1266,7 +1366,9 @@ async def testExtraDataPassedToTools(llmService, mockModel, mockFallbackModel):
 
 
 @pytest.mark.asyncio
-async def testEmptyToolCallsList(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testEmptyToolCallsList(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test handling of empty tool calls list, dood!"""
     # Response with TOOL_CALLS status but empty list
     emptyToolCallsResult = ModelRunResult(
@@ -1285,9 +1387,12 @@ async def testEmptyToolCallsList(llmService, mockModel, mockFallbackModel, sampl
     mockModel.generateTextWithFallBack.side_effect = [emptyToolCallsResult, finalResult]
 
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -1296,7 +1401,9 @@ async def testEmptyToolCallsList(llmService, mockModel, mockFallbackModel, sampl
 
 
 @pytest.mark.asyncio
-async def testToolReturnsNone(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testToolReturnsNone(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test tool that returns None, dood!"""
 
     async def noneReturningTool(extraData=None, **kwargs):
@@ -1320,9 +1427,12 @@ async def testToolReturnsNone(llmService, mockModel, mockFallbackModel, sampleMe
     mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
 
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -1331,7 +1441,9 @@ async def testToolReturnsNone(llmService, mockModel, mockFallbackModel, sampleMe
 
 
 @pytest.mark.asyncio
-async def testToolReturnsComplexObject(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testToolReturnsComplexObject(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test tool that returns complex nested object, dood!"""
 
     async def complexTool(extraData=None, **kwargs):
@@ -1361,9 +1473,12 @@ async def testToolReturnsComplexObject(llmService, mockModel, mockFallbackModel,
     mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
 
     await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -1380,7 +1495,9 @@ async def testToolReturnsComplexObject(llmService, mockModel, mockFallbackModel,
 
 
 @pytest.mark.asyncio
-async def testNoCallbackProvided(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testNoCallbackProvided(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test tool calls work without callback, dood!"""
 
     async def testTool(extraData=None, **kwargs):
@@ -1405,9 +1522,12 @@ async def testNoCallbackProvided(llmService, mockModel, mockFallbackModel, sampl
 
     # No callback provided
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
         callback=None,
     )
@@ -1416,7 +1536,9 @@ async def testNoCallbackProvided(llmService, mockModel, mockFallbackModel, sampl
 
 
 @pytest.mark.asyncio
-async def testToolsListPassedToModel(llmService, mockModel, mockFallbackModel, sampleMessages):
+async def testToolsListPassedToModel(
+    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
+):
     """Test tools list is correctly passed to model when useTools=True, dood!"""
 
     # Register multiple tools
@@ -1438,9 +1560,12 @@ async def testToolsListPassedToModel(llmService, mockModel, mockFallbackModel, s
     mockModel.generateTextWithFallBack.return_value = finalResponse
 
     await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=sampleMessages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
@@ -1515,7 +1640,7 @@ async def testManyToolsRegistration(llmService):
 
 
 @pytest.mark.asyncio
-async def testManySequentialToolCalls(llmService, mockModel, mockFallbackModel):
+async def testManySequentialToolCalls(llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
     """Test many sequential tool calls, dood!"""
 
     async def testTool(extraData=None, **kwargs):
@@ -1549,9 +1674,12 @@ async def testManySequentialToolCalls(llmService, mockModel, mockFallbackModel):
     mockModel.generateTextWithFallBack.side_effect = responses
 
     result = await llmService.generateTextViaLLM(
-        model=mockModel,
-        fallbackModel=mockFallbackModel,
         messages=messages,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=mockModel,
+        fallbackModelKey=mockFallbackModel,
         useTools=True,
     )
 
