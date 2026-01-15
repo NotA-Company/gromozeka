@@ -730,6 +730,10 @@ class ConfigureCommandHandler(BaseBotHandler):
                         value = currentValue
                     else:
                         value = self.selectableModels[value]
+                        modelInfo = self.llmManager.getModelInfo(value)
+                        modelTier = ChatTier.fromStr(modelInfo.get("tier", "") if modelInfo is not None else "")
+                        if modelTier is None or not chatTier.isBetterOrEqualThan(modelTier):
+                            value = currentValue
                 else:
                     value = currentValue
             # TODO: Validate other ChatSettingsType as well
