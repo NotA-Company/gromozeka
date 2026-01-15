@@ -384,7 +384,7 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def runAsync(self, func: Coroutine) -> asyncio.Task:
         """Run background tasks."""
         while len(self.handlerTasks) >= 1024:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
         task = asyncio.create_task(func)
         self.handlerTasks.add(task)
         task.add_done_callback(self.handlerTasks.discard)
