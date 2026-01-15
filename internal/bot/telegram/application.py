@@ -338,7 +338,7 @@ class TelegramBotApplication:
         appBuilder = (
             Application.builder()
             .token(self.botToken)
-            .concurrent_updates(PerTopicUpdateProcessor(128))
+            # .concurrent_updates(PerTopicUpdateProcessor(128))
             .post_init(self.postInit)
             .post_stop(self.postStop)
             .local_mode(botConfig.get("localMode", False))

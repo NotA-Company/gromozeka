@@ -7,7 +7,7 @@ import logging
 import random
 import sys
 from collections.abc import MutableSet
-from typing import Awaitable, Optional
+from typing import Optional
 
 import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
@@ -115,27 +115,6 @@ class MaxBotApplication:
         # Start the bot
         asyncio.run(self._runPolling())
 
-    async def runAsynced(self, coroutine: Awaitable) -> None:
-        # if there are too many tasks, wait for some to discard itself
-        while len(self._tasks) > self.maxTasks:
-            logger.warning(f"There are {len(self._tasks)} active tasks, awaiting fo someone to be done...")
-            await asyncio.sleep(1)
-
-        task = asyncio.create_task(self.runWithTimeout(coroutine))
-
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
-    async def runWithTimeout(self, coroutine: Awaitable) -> None:
-        # logger.debug(f"awaiting corutine for chatId: {key}")
-        try:
-            # Each request should be processed for at most 30 minutes
-            # Just to workaround diffetent stucks in externat services\libs
-            await asyncio.wait_for(coroutine, 60 * 30)
-        except Exception as e:
-            logger.error(f"Error during awaiting coroutine for {coroutine}")
-            logger.exception(e)
-
     async def maxHandler(self, update: maxModels.Update) -> None:
         """Handle incoming Max Messenger updates.
 
@@ -150,38 +129,32 @@ class MaxBotApplication:
             logger.debug("It's new message, processing...")
             ensuredMessage = EnsuredMessage.fromMaxMessage(update.message)
 
-            return await self.runAsynced(
-                self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update),
-            )
+            return await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
 
         elif isinstance(update, maxModels.UserAddedToChatUpdate):
             logger.debug("It's new chat member, processing...")
 
-            return await self.runAsynced(
-                self.handlerManager.handleNewChatMember(
-                    targetChat=MessageRecipient(
-                        id=update.chat_id,
-                        chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
-                    ),
-                    messageId=None,
-                    newMember=MessageSender.fromMaxUser(update.user),
-                    updateObj=update,
+            return await self.handlerManager.handleNewChatMember(
+                targetChat=MessageRecipient(
+                    id=update.chat_id,
+                    chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
                 ),
+                messageId=None,
+                newMember=MessageSender.fromMaxUser(update.user),
+                updateObj=update,
             )
 
         elif isinstance(update, maxModels.UserRemovedFromChatUpdate):
             logger.debug("It's removed chat member, processing...")
 
-            return await self.runAsynced(
-                self.handlerManager.handleLeftChatMember(
-                    targetChat=MessageRecipient(
-                        id=update.chat_id,
-                        chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
-                    ),
-                    messageId=None,
-                    leftMember=MessageSender.fromMaxUser(update.user),
-                    updateObj=update,
+            return await self.handlerManager.handleLeftChatMember(
+                targetChat=MessageRecipient(
+                    id=update.chat_id,
+                    chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
                 ),
+                messageId=None,
+                leftMember=MessageSender.fromMaxUser(update.user),
+                updateObj=update,
             )
 
         elif isinstance(update, maxModels.MessageCallbackUpdate):
@@ -204,10 +177,11 @@ class MaxBotApplication:
                 username=update.callback.user.username or "",
             )
 
-            return await self.runAsynced(
-                self.handlerManager.handleCallback(
-                    ensuredMessage=ensuredMessage, data=payload, user=user, updateObj=update
-                ),
+            return await self.handlerManager.handleCallback(
+                ensuredMessage=ensuredMessage,
+                data=payload,
+                user=user,
+                updateObj=update,
             )
 
         else:
