@@ -381,8 +381,10 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         await asyncio.gather(*self.handlerTasks)
 
-    def runAsync(self, func: Coroutine) -> asyncio.Task:
+    async def runAsync(self, func: Coroutine) -> asyncio.Task:
         """Run background tasks."""
+        while len(self.handlerTasks) >= 1024:
+            await asyncio.sleep(0.1)
         task = asyncio.create_task(func)
         self.handlerTasks.add(task)
         task.add_done_callback(self.handlerTasks.discard)
@@ -602,7 +604,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             updateObj: Original update object from the platform
         """
         messageRec = await self.addMessageToChatQueue(ensuredMessage, updateObj)
-        self.runAsync(self._processMessageRec(messageRec))
+        await self.runAsync(self._processMessageRec(messageRec))
 
     async def _processMessageRec(self, messageRec: MessageQueueRecord) -> None:
         """
@@ -671,7 +673,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         user: MessageSender,
         updateObj: UpdateObjectType,
     ) -> None:
-        self.runAsync(self._handleCallback(ensuredMessage, data, user, updateObj))
+        await self.runAsync(self._handleCallback(ensuredMessage, data, user, updateObj))
 
     async def _handleCallback(
         self,
@@ -718,7 +720,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             updateObj: Original update object from the platform
         """
 
-        self.runAsync(self._handleNewChatMember(targetChat, messageId, newMember, updateObj))
+        await self.runAsync(self._handleNewChatMember(targetChat, messageId, newMember, updateObj))
 
     async def _handleNewChatMember(
         self,
@@ -768,7 +770,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             updateObj: Original update object from the platform
         """
 
-        self.runAsync(self._handleLeftChatMember(targetChat, messageId, leftMember, updateObj))
+        await self.runAsync(self._handleLeftChatMember(targetChat, messageId, leftMember, updateObj))
 
     async def _handleLeftChatMember(
         self,
