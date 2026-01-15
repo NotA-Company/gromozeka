@@ -722,8 +722,8 @@ class ConfigureCommandHandler(BaseBotHandler):
         elif action == ButtonConfigureAction.SetValue:
             value = data.get(ButtonDataKey.Value, None)
             currentValue = chatSettings[key].toStr()
-            if chatOptions[key]["type"] == ChatSettingsType.MODEL:
-                # Validate And get ModelName bu index from selectable models list
+            if chatOptions[key]["type"] in [ChatSettingsType.MODEL, ChatSettingsType.IMAGE_MODEL]:
+                # Validate And get ModelName by index from selectable models list
                 if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
                     value = int(value)
                     if value < 0 or value > len(self.selectableModels) - 1:
