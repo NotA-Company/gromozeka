@@ -408,7 +408,7 @@ class CommonHandler(BaseBotHandler):
         if listAll:
             listAll = self.isBotOwner(ensuredMessage.sender)
 
-        knownChats = self.db.getAllGroupChats() if listAll else self.db.getUserChats(ensuredMessage.sender.id)
+        knownChats = self.db.getAllGroupChats() if listAll else self.getUserChats(ensuredMessage.sender.id)
 
         resp = "Список доступных чатов:\n\n"
 

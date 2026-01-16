@@ -189,7 +189,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             "Закончить настройку",
             {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel},
         )
-        userChats = self.db.getUserChats(user.id)
+        userChats = self.getUserChats(user.id)
         keyboard: List[List[CallbackButton]] = []
         isBotOwner = self.isBotOwner(user=user)
 
