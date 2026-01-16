@@ -862,7 +862,13 @@ async def testSpamHamMessagesCrud(inMemoryDb):
 
     # CREATE spam message
     success = db.addSpamMessage(
-        chatId=123, userId=1001, messageId=1, messageText="Buy now!", spamReason=SpamReason.AUTO, score=0.95
+        chatId=123,
+        userId=1001,
+        messageId=1,
+        messageText="Buy now!",
+        spamReason=SpamReason.AUTO,
+        score=0.95,
+        confidence=1.0,
     )
     assert success is True
 
@@ -878,7 +884,13 @@ async def testSpamHamMessagesCrud(inMemoryDb):
 
     # CREATE ham message
     success = db.addHamMessage(
-        chatId=123, userId=1001, messageId=2, messageText="Hello friend", spamReason=SpamReason.USER, score=0.05
+        chatId=123,
+        userId=1001,
+        messageId=2,
+        messageText="Hello friend",
+        spamReason=SpamReason.USER,
+        score=0.05,
+        confidence=1.0,
     )
     assert success is True
 

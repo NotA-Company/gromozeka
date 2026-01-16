@@ -137,6 +137,11 @@ class ConfigureCommandHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         messageText = ensuredMessage.formatMessageText()
+        self.db.updateChatMessageCategory(
+            chatId=ensuredMessage.recipient.id,
+            messageId=ensuredMessage.messageId,
+            messageCategory=MessageCategory.USER_CONFIG_ANSWER,
+        )
 
         await self._handle_chat_configuration(
             data={

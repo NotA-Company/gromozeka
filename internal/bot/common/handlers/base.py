@@ -502,7 +502,9 @@ class BaseBotHandler(CommandHandlerMixin):
 
         return ret
 
-    async def deleteMessage(self, ensuredMessage: EnsuredMessage) -> bool:
+    async def deleteMessage(
+        self, ensuredMessage: EnsuredMessage, setMessageCategory: Optional[MessageCategory] = MessageCategory.DELETED
+    ) -> bool:
         """Delete a message from the chat.
 
         Args:
@@ -513,9 +515,21 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         if self._bot is None:
             raise ValueError("Bot is not initialized")
+
+        if setMessageCategory is not None:
+            self.db.updateChatMessageCategory(
+                ensuredMessage.recipient.id,
+                ensuredMessage.messageId,
+                setMessageCategory,
+            )
         return await self._bot.deleteMessage(ensuredMessage)
 
-    async def deleteMessagesById(self, chatId: int, messageIds: List[MessageIdType]) -> bool:
+    async def deleteMessagesById(
+        self,
+        chatId: int,
+        messageIds: List[MessageIdType],
+        setMessageCategory: Optional[MessageCategory] = MessageCategory.DELETED,
+    ) -> bool:
         """Delete multiple messages by their IDs in the specified chat.
 
         Args:
@@ -528,6 +542,14 @@ class BaseBotHandler(CommandHandlerMixin):
 
         if self._bot is None:
             raise ValueError("Bot is not initialized")
+
+        if setMessageCategory is not None:
+            for messageId in messageIds:
+                self.db.updateChatMessageCategory(
+                    chatId,
+                    messageId,
+                    setMessageCategory,
+                )
         return await self._bot.deleteMessagesById(chatId=chatId, messageIds=messageIds)
 
     ###

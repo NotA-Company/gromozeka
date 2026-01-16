@@ -250,14 +250,14 @@ class SpamHandler(BaseBotHandler):
 
         userMessages = userInfo["messages_count"]
         maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
-        if maxCheckMessages != 0 and userMessages >= maxCheckMessages:
+        if not userMetadata.get("isSpammer", False) and maxCheckMessages != 0 and userMessages >= maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
-            if not userMetadata.get("isSpammer", False):
-                await self.markAsHam(message=ensuredMessage)
+            await self.markAsHam(message=ensuredMessage)
             return False
 
         if userMetadata.get("notSpammer", False):
             logger.info(f"SPAM: User {sender} explicitely marked as not spammer, skipping spam check")
+            await self.markAsHam(message=ensuredMessage)
             return False
 
         # TODO: Check for admins?
@@ -265,6 +265,7 @@ class SpamHandler(BaseBotHandler):
         logger.debug(f"SPAM CHECK: {userMessages} < {maxCheckMessages}, checking message for spam ({ensuredMessage})")
 
         spamScore = 0.0
+        confidence = 1.0  # By default we 100% sure in our decision
 
         # TODO: Check user full_name for spam
 
@@ -390,8 +391,11 @@ class SpamHandler(BaseBotHandler):
                         f"Confidence: {bayesResult.confidence:.3f}"
                     )
 
+                    # If previous checks (i.e. not bayes) added some spam score, use combined score and confidence
+                    confidence = bayesResult.confidence if spamScore == 0 else (bayesResult.confidence + confidence) / 2
                     # Use combined score for final decision
                     spamScore = spamScore + bayesResult.score
+
                 else:
                     logger.debug(
                         f"SPAM Bayes: confidence {bayesResult.confidence:.3f} < {minConfidence}, ignoring result"
@@ -424,7 +428,12 @@ class SpamHandler(BaseBotHandler):
                 )
             else:
                 logger.error("Wasn't been able to send SPAM notification")
-            await self.markAsSpam(ensuredMessage=ensuredMessage, reason=SpamReason.AUTO, score=spamScore)
+            await self.markAsSpam(
+                ensuredMessage=ensuredMessage,
+                reason=SpamReason.AUTO,
+                score=spamScore,
+                confidence=confidence,
+            )
             return True
         elif spamScore >= warnTreshold:
             logger.info(f"Possible SPAM: spamScore: {spamScore} >= {warnTreshold} {ensuredMessage}")
@@ -458,10 +467,16 @@ class SpamHandler(BaseBotHandler):
                 self._rememberSpamWarningMessage(sentMessage[0])
         else:
             logger.debug(f"Not SPAM: spamScore: {spamScore} < {warnTreshold} {ensuredMessage}")
+            minHamAutoLearnConfidense = chatSettings[ChatSettingsKey.BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_HAM].toFloat()
+            if confidence >= minHamAutoLearnConfidense:
+                logger.debug(f"Auto-learning as HAM: confidence: {confidence} >= {minHamAutoLearnConfidense}")
+                await self.markAsHam(ensuredMessage)
 
         return False
 
-    async def markAsSpam(self, ensuredMessage: EnsuredMessage, reason: SpamReason, score: Optional[float] = None):
+    async def markAsSpam(
+        self, ensuredMessage: EnsuredMessage, reason: SpamReason, score: Optional[float] = None, confidence: float = 1.0
+    ):
         """
         Mark message as spam, ban user, delete message, and update spam database, dood!
 
@@ -527,6 +542,8 @@ class SpamHandler(BaseBotHandler):
 
         # Learn from spam message using Bayes filter, dood!
         doBayesLearn = chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool()
+        minConfidence = chatSettings[ChatSettingsKey.BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM].toFloat()
+        doBayesLearn = doBayesLearn and confidence >= minConfidence
         if ensuredMessage.messageText and doBayesLearn:
             try:
                 await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
@@ -545,9 +562,12 @@ class SpamHandler(BaseBotHandler):
                 messageText=str(ensuredMessage.messageText),
                 spamReason=reason,
                 score=score if score is not None else 0,
+                confidence=confidence,
             )
 
-        await self.deleteMessagesById(chatId=chatId, messageIds=[ensuredMessage.messageId])
+        await self.deleteMessagesById(
+            chatId=chatId, messageIds=[ensuredMessage.messageId], setMessageCategory=MessageCategory.USER_SPAM
+        )
         logger.debug("Deleted spam message")
         if self._bot is None:
             raise ValueError("Bot is not initialized")
@@ -596,6 +616,7 @@ class SpamHandler(BaseBotHandler):
                             messageText=msg["message_text"],
                             spamReason=reason,
                             score=score if score is not None else 0,
+                            confidence=confidence,
                         )
                 # Update message category to USER_SPAM
                 # TODO: We can do bulk upgrade, but i don't care, actually
@@ -607,7 +628,7 @@ class SpamHandler(BaseBotHandler):
 
             try:
                 if messageIds:
-                    await self.deleteMessagesById(chatId=chatId, messageIds=messageIds)
+                    await self.deleteMessagesById(chatId=chatId, messageIds=messageIds, setMessageCategory=None)
 
             except Exception as e:
                 logger.error("Failed during deleteing spam message:")
@@ -884,7 +905,7 @@ class SpamHandler(BaseBotHandler):
                 logger.info(f"handle_button: repliedMessage is deleted, but messageInfo is {messageInfo}")
                 # TODO: We can get message from DB and create Message\EnsuredMessage for it
                 try:
-                    await self.deleteMessage(ensuredMessage)
+                    await self.deleteMessage(ensuredMessage, setMessageCategory=None)
                 except Exception as e:
                     logger.error(f"Failed to delete message {ensuredMessage}: {e}")
 
@@ -940,6 +961,7 @@ class SpamHandler(BaseBotHandler):
                     messageText=messageText,
                     spamReason=markReason,
                     score=100,
+                    confidence=1.0,
                 )
 
             hamUserDB: Optional[ChatUserDict] = self.db.getChatUser(chatId=chat.id, userId=hamUserId)
@@ -1320,6 +1342,7 @@ class SpamHandler(BaseBotHandler):
                 messageText=repliedText,
                 spamReason=SpamReason.ADMIN,
                 score=100,
+                confidence=1.0,
             )
             await self.sendMessage(
                 ensuredMessage,
@@ -1335,6 +1358,7 @@ class SpamHandler(BaseBotHandler):
                 messageText=repliedText,
                 spamReason=SpamReason.ADMIN,
                 score=100,
+                confidence=1.0,
             )
             await self.sendMessage(
                 ensuredMessage,
@@ -1532,6 +1556,7 @@ class SpamHandler(BaseBotHandler):
                 messageText=userMsg["text"],
                 spamReason=SpamReason.UNBAN,
                 score=userMsg["score"],
+                confidence=1.0,
             )
 
         # Set user metadata[notSpammer] = True to skip spam-check for this user in this chat

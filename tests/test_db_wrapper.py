@@ -972,6 +972,7 @@ class TestSpamOperations:
             messageText="Buy now!",
             spamReason=SpamReason.AUTO,
             score=0.95,
+            confidence=1.0,
         )
         assert result is True
 
@@ -985,6 +986,7 @@ class TestSpamOperations:
                 f"Spam {i}",
                 SpamReason.AUTO,
                 0.9,
+                1.0,
             )
 
         messages = inMemoryDb.getSpamMessages(limit=10)
@@ -1000,6 +1002,7 @@ class TestSpamOperations:
             text,
             SpamReason.AUTO,
             0.95,
+            1.0,
         )
 
         messages = inMemoryDb.getSpamMessagesByText(text)
@@ -1011,9 +1014,9 @@ class TestSpamOperations:
         user1 = 9301
         user2 = 9302
 
-        inMemoryDb.addSpamMessage(sampleChatId, user1, 9401, "Spam 1", SpamReason.AUTO, 0.9)
-        inMemoryDb.addSpamMessage(sampleChatId, user1, 9402, "Spam 2", SpamReason.AUTO, 0.9)
-        inMemoryDb.addSpamMessage(sampleChatId, user2, 9403, "Spam 3", SpamReason.AUTO, 0.9)
+        inMemoryDb.addSpamMessage(sampleChatId, user1, 9401, "Spam 1", SpamReason.AUTO, 0.9, 1.0)
+        inMemoryDb.addSpamMessage(sampleChatId, user1, 9402, "Spam 2", SpamReason.AUTO, 0.9, 1.0)
+        inMemoryDb.addSpamMessage(sampleChatId, user2, 9403, "Spam 3", SpamReason.AUTO, 0.9, 1.0)
 
         user1Messages = inMemoryDb.getSpamMessagesByUserId(sampleChatId, user1)
         assert len(user1Messages) == 2
@@ -1021,8 +1024,8 @@ class TestSpamOperations:
 
     def testDeleteSpamMessagesByUserId(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test deleting spam messages by user ID."""
-        inMemoryDb.addSpamMessage(sampleChatId, sampleUserId, 9501, "Spam", SpamReason.AUTO, 0.9)
-        inMemoryDb.addSpamMessage(sampleChatId, sampleUserId, 9502, "Spam", SpamReason.AUTO, 0.9)
+        inMemoryDb.addSpamMessage(sampleChatId, sampleUserId, 9501, "Spam", SpamReason.AUTO, 0.9, 1.0)
+        inMemoryDb.addSpamMessage(sampleChatId, sampleUserId, 9502, "Spam", SpamReason.AUTO, 0.9, 1.0)
 
         result = inMemoryDb.deleteSpamMessagesByUserId(sampleChatId, sampleUserId)
         assert result is True
@@ -1039,6 +1042,7 @@ class TestSpamOperations:
             messageText="Normal message",
             spamReason=SpamReason.UNBAN,
             score=0.1,
+            confidence=1.0,
         )
         assert result is True
 
@@ -1481,6 +1485,7 @@ class TestIntegration:
                 f"Spam message {i}",
                 SpamReason.AUTO,
                 0.95,
+                1.0,
             )
 
         # 3. Verify spam messages (is_spammer functionality removed in migration 009)
@@ -1781,10 +1786,10 @@ class TestBayesFilterStorage:
         chatId = 16001
         userId = 16002
 
-        result = inMemoryDb.addSpamMessage(chatId, userId, 16003, "spam text", SpamReason.AUTO, 0.9)
+        result = inMemoryDb.addSpamMessage(chatId, userId, 16003, "spam text", SpamReason.AUTO, 0.9, 1.0)
         assert result is True
 
-        result = inMemoryDb.addHamMessage(chatId, userId, 16004, "ham text", SpamReason.UNBAN, 0.1)
+        result = inMemoryDb.addHamMessage(chatId, userId, 16004, "ham text", SpamReason.UNBAN, 0.1, 1.0)
         assert result is True
 
 
