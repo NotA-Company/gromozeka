@@ -228,6 +228,7 @@ class SpamHandler(BaseBotHandler):
 
         userInfo: Optional[ChatUserDict] = self.db.getChatUser(chatId=chatId, userId=sender.id)
         if not userInfo:
+            # self.db.updateChatUser(chatId=chatId, userId=sender.id, username=sender.username, fullName=sender.name)
             logger.debug(f"userInfo for {ensuredMessage} is null, assume it's first user message")
             userInfo = {
                 "chat_id": chatId,

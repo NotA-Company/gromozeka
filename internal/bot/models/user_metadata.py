@@ -12,3 +12,5 @@ class UserMetadataDict(TypedDict, total=False):
     """True if user defined as not spammer"""
     dropMessages: bool
     """True if bot need to delete all new user messages"""
+    leftChat: bool
+    """True if user left chat"""

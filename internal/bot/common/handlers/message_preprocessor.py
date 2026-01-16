@@ -94,7 +94,20 @@ class MessagePreprocessorHandler(BaseBotHandler):
             HandlerResultStatus.FINAL if join message deleted, NEXT otherwise
         """
 
-        # Someday add adding of user into database
+        self.db.updateChatUser(
+            chatId=targetChat.id,
+            userId=newMember.id,
+            username=newMember.username,
+            fullName=newMember.name,
+        )
+        self.setUserMetadata(
+            chatId=targetChat.id,
+            userId=newMember.id,
+            metadata={
+                "leftChat": False,
+            },
+            isUpdate=True,
+        )
 
         chatSettings = self.getChatSettings(targetChat.id)
         if messageId is not None and chatSettings[ChatSettingsKey.DELETE_JOIN_MESSAGES].toBool():
@@ -123,7 +136,20 @@ class MessagePreprocessorHandler(BaseBotHandler):
         Returns:
             HandlerResultStatus.FINAL if left message deleted, NEXT otherwise
         """
-        # Someday add adding of user into database
+        self.db.updateChatUser(
+            chatId=targetChat.id,
+            userId=leftMember.id,
+            username=leftMember.username,
+            fullName=leftMember.name,
+        )
+        self.setUserMetadata(
+            chatId=targetChat.id,
+            userId=leftMember.id,
+            metadata={
+                "leftChat": True,
+            },
+            isUpdate=True,
+        )
 
         chatSettings = self.getChatSettings(targetChat.id)
         if messageId is not None and chatSettings[ChatSettingsKey.DELETE_LEFT_MESSAGES].toBool():

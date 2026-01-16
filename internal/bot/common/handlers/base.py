@@ -1010,6 +1010,25 @@ class BaseBotHandler(CommandHandlerMixin):
                 chatTitle = f"#{chatInfo['chat_id']} {chatTitle}"
         return chatTitle
 
+    def getUserChats(self, userId: int) -> List[ChatInfoDict]:
+        """
+        Get chats for the given user.
+        Skip chats that the user has left.
+        """
+        userChats = self.db.getUserChats(userId)
+        ret: List[ChatInfoDict] = []
+        for chatInfo in userChats:
+            userInfo: Optional[ChatUserDict] = self.db.getChatUser(chatId=chatInfo["chat_id"], userId=userId)
+            if userInfo is None:
+                logger.warning(f"User {userId} not found in chat {chatInfo['chat_id']}")
+                continue
+            userMetadata = self.parseUserMetadata(userInfo)
+            if userMetadata.get("leftChat", False):
+                # User has left the chat, do not show
+                continue
+            ret.append(chatInfo)
+        return userChats
+
     ###
     # Processing media
     ###

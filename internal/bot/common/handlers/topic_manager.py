@@ -77,7 +77,7 @@ class TopicManagerHandler(BaseBotHandler):
             "Закончить настройку",
             {ButtonDataKey.TopicManagementAction: ButtonTopicManagementAction.Cancel},
         )
-        userChats = self.db.getUserChats(user.id)
+        userChats = self.getUserChats(user.id)
         keyboard: List[List[CallbackButton]] = []
         isBotOwner = self.isBotOwner(user=user)
 

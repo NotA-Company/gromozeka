@@ -375,7 +375,7 @@ class SummarizationHandler(BaseBotHandler):
         if not isinstance(maxMessages, int):
             maxMessages = 0
 
-        userChats = self.db.getUserChats(user.id)
+        userChats = self.getUserChats(user.id)
 
         chatId = data.get(ButtonDataKey.ChatId, None)
         # Choose chatID
