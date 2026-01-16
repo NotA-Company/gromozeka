@@ -541,7 +541,7 @@ class DevCommandsHandler(BaseBotHandler):
                     return
 
                 entities = repliedMessage.formatEntities
-                messageText = repliedMessage.messageText
+                messageText = repliedMessage.messagePrefix + repliedMessage.messageText
                 ret = ""
                 for entity in entities:
                     ret += (

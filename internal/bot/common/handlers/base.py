@@ -488,6 +488,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 if replyText.startswith(addMessagePrefix):
                     replyText = replyText[len(addMessagePrefix) :]
                     ensuredReplyMessage.messageText = replyText
+                    ensuredReplyMessage.setMessagePrefix(addMessagePrefix)
             replyMessage = ensuredReplyMessage.getBaseMessage()
             if isinstance(replyMessage, telegram.Message):
                 media = await self.processTelegramMedia(ensuredReplyMessage, mediaPrompt)
