@@ -10,6 +10,12 @@ bot_owners = ["YOUR_BOT_OWNER_USERNAME_OR_USER_ID_HERE"]
 # Salt for signing [not]spam buttons to reject those actions on random messages
 spam-button-salt = "YOUR_SALT_HERE"
 
+# Maximum amount of parallel tasks (i.e messages) to process
+# All new tasks will wait for some task to be completed
+max-tasks = 1024
+# Max parallel tasks per chat. All new tasks will be ignored if queue is full
+max-tasks-per-chat = 512
+
 [database]
 default = "default"
 

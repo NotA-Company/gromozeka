@@ -249,6 +249,9 @@ class HandlersManager(CommandHandlerGetterInterface):
                 },
             )
 
+        self.maxTasks = botConfig.get("max-tasks", 1024)
+        self.maxTasksPerChat = botConfig.get("max-tasks-per-chat", 512)
+
         # Initialize handlers
         self.handlers: List[HandlerTuple] = [
             # Should be first to check for spam before other handlers
@@ -383,14 +386,16 @@ class HandlersManager(CommandHandlerGetterInterface):
 
     async def runAsync(self, func: Coroutine) -> asyncio.Task:
         """Run background tasks."""
-        while len(self.handlerTasks) >= 1024:
+        while len(self.handlerTasks) >= self.maxTasks:
             await asyncio.sleep(0.5)
         task = asyncio.create_task(func)
         self.handlerTasks.add(task)
         task.add_done_callback(self.handlerTasks.discard)
         return task
 
-    async def addMessageToChatQueue(self, message: EnsuredMessage, updateObj: UpdateObjectType) -> MessageQueueRecord:
+    async def addMessageToChatQueue(
+        self, message: EnsuredMessage, updateObj: UpdateObjectType
+    ) -> Optional[MessageQueueRecord]:
         """
         TODO: Write docstring
         """
@@ -404,6 +409,11 @@ class HandlersManager(CommandHandlerGetterInterface):
 
             if isNewQueue:
                 self.chatStates[key] = ChatProcessingState(chatId=chatId, threadId=threadId, queueKey=key)
+
+            async with self.chatStates[key].lock:
+                if len(self.chatStates[key].queue) >= self.maxTasksPerChat:
+                    logger.warning(f"Queue for chat {key} is full, skipping message {message}")
+                    return None
 
             return await self.chatStates[key].addMessage(message, updateObj)
 
@@ -604,7 +614,8 @@ class HandlersManager(CommandHandlerGetterInterface):
             updateObj: Original update object from the platform
         """
         messageRec = await self.addMessageToChatQueue(ensuredMessage, updateObj)
-        await self.runAsync(self._processMessageRec(messageRec))
+        if messageRec is not None:
+            await self.runAsync(self._processMessageRec(messageRec))
 
     async def _processMessageRec(self, messageRec: MessageQueueRecord) -> None:
         """
