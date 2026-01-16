@@ -266,6 +266,20 @@ class MediaHandler(BaseBotHandler):
         restTextLower = restText.lower()
 
         ###
+        # what is prompt? Return prompt of replied message (if any)
+        ###
+        getPromptList = ["что за промпт", "как промпт", "what prompt"]
+        isGetPrompt = False
+        for getPrompt in getPromptList:
+            if restTextLower.startswith(getPrompt):
+                tail = restTextLower[len(getPrompt) :].strip()
+
+                # Match only whole message
+                if not tail.rstrip("?.").strip():
+                    isGetPrompt = True
+                    break
+
+        ###
         # what there? Return parsed media content of replied message (if any)
         ###
         whatThereList = ["что там"]
@@ -280,12 +294,13 @@ class MediaHandler(BaseBotHandler):
                     isWhatThere = True
                     break
 
-        if not isWhatThere:
+        if not isWhatThere and not isGetPrompt:
             return HandlerResultStatus.SKIPPED
 
         if not ensuredMessage.isReply:
             logger.warning(
-                f"WhatsThere triggered on non-reply message {ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
+                "WhatsThere\\getPrompt triggered on non-reply message "
+                f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
             )
             return HandlerResultStatus.ERROR
 
@@ -315,7 +330,13 @@ class MediaHandler(BaseBotHandler):
             else:
                 eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
                 await eStoredMsg.updateMediaContent(self.db)
-                response = eStoredMsg.mediaContent
+                if isWhatThere:
+                    response = eStoredMsg.mediaContent
+                elif isGetPrompt:
+                    response = eStoredMsg.mediaPrompt
+                    if response:
+                        response = f"```\n{response}\n```"
+
                 if response is None or response == "":
                     response = constants.DUNNO_EMOJI
 
