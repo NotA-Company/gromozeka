@@ -161,6 +161,12 @@ class UserDataHandler(BaseBotHandler):
         if userDataConfig is None:
             return HandlerResultStatus.SKIPPED
 
+        self.db.updateChatMessageCategory(
+            chatId=ensuredMessage.recipient.id,
+            messageId=ensuredMessage.messageId,
+            messageCategory=MessageCategory.USER_CONFIG_ANSWER,
+        )
+
         await self._handleUserDataConfiguration(
             data={
                 **userDataConfig["data"],
@@ -197,7 +203,7 @@ class UserDataHandler(BaseBotHandler):
         )
         keyboard: List[List[CallbackButton]] = []
 
-        for chat in self.db.getUserChats(user.id):
+        for chat in self.getUserChats(user.id):
             keyboard.append(
                 [
                     CallbackButton(

@@ -52,6 +52,11 @@ class MessageCategory(StrEnum):
     USER_SPAM = "user-spam"
     """Spam message from user"""
 
+    DELETED = "deleted"
+    """Message deleted"""
+    USER_CONFIG_ANSWER = "user-config-answer"
+    """Answer to some config option"""
+
 
 class SpamReason(StrEnum):
     """
@@ -155,6 +160,7 @@ class SpamMessageDict(TypedDict):
     text: str
     reason: Union[str, SpamReason]
     score: float
+    confidence: float
     created_at: datetime.datetime
     updated_at: datetime.datetime
 

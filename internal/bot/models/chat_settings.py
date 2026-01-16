@@ -234,6 +234,8 @@ class ChatSettingsKey(StrEnum):
     BAYES_MIN_CONFIDENCE = "bayes-min-confidence"
     BAYES_AUTO_LEARN = "bayes-auto-learn"
     BAYES_USE_TRIGRAMS = "bayes-use-trigrams"
+    BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM = "bayes-min-confedence-to-autolearn-spam"
+    BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_HAM = "bayes-min-confedence-to-autolearn-ham"
 
     # # Reaction settings
     # JSON-serialized Dict(userID|"username" -> "emoji")
@@ -247,6 +249,9 @@ class ChatSettingsKey(StrEnum):
     BASE_TIER = "base-tier"
     PAID_TIER = "paid-tier"
     PAID_TIER_UNTILL_TS = "paid-tier-untill-ts"
+
+    LLM_RATELIMITER = "llm-ratelimiter"
+    TOOLS_RATELIMITER = "tools-ratelimiter"
 
     # System settings. Not to be used\configured
     CACHED_TS = "cached-ts"
@@ -320,6 +325,8 @@ class ChatSettingsInfoValue(TypedDict):
     long: str
     page: ChatSettingsPage
 
+
+type ChatSettingsDict = Dict[ChatSettingsKey, ChatSettingsValue]
 
 _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     # # LLM Models
@@ -608,6 +615,26 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         ),
         "page": ChatSettingsPage.SPAM,
     },
+    ChatSettingsKey.BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "Минимальная уверенность для автоматического обучения на спам",
+        "long": (
+            "Минимальная уверенность для автоматического обучения Bayes фильтра на спам.\n"
+            "Если уверенность выше, сообщение, помеченное как спам добавляется в обучающую выборку.\n"
+            "Диапазон значения: 0.0-1.0."
+        ),
+        "page": ChatSettingsPage.SPAM,
+    },
+    ChatSettingsKey.BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_HAM: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "Минимальная уверенность для автоматического обучения на НЕ спам",
+        "long": (
+            "Минимальная уверенность для автоматического обучения Bayes фильтра на НЕ спам.\n"
+            "Если уверенность выше, сообщение, помеченное как НЕ спам добавляется в обучающую выборку.\n"
+            "Диапазон значения: 0.0-1.0."
+        ),
+        "page": ChatSettingsPage.SPAM,
+    },
     # # Reaction settings
     ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP: {
         "type": ChatSettingsType.STRING,
@@ -645,6 +672,18 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.FLOAT,
         "short": "Время действия платного Tier чата",
         "long": "Таймштамп, до которого оплачен Tier чата. Скорее всего не стоит менять это значение.",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.LLM_RATELIMITER: {
+        "type": ChatSettingsType.STRING,
+        "short": "Рэйтлимитер использования LLM",
+        "long": "Ограничивает частоту запросов к LLM. Возможные значения смотри в конфиге.",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.TOOLS_RATELIMITER: {
+        "type": ChatSettingsType.STRING,
+        "short": "Рэйтлимитер использования инструментов",
+        "long": "Ограничивает частоту запросов к инструментам. Возможные значения смотри в конфиге.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
 }

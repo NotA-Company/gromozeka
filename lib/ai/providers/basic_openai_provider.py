@@ -5,7 +5,8 @@ Basic OpenAI provider and model base classes for shared functionality, dood!
 import base64
 import json
 import logging
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion
@@ -53,7 +54,7 @@ class BasicOpenAIModel(AbstractModel):
         return {}
 
     async def _generateText(
-        self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
+        self, messages: Iterable[ModelMessage], tools: Optional[Iterable[LLMAbstractTool]] = None
     ) -> ModelRunResult:
         """Run the OpenAI-compatible model with given messages, dood!
 

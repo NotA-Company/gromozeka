@@ -1,10 +1,9 @@
 # Our TODO list
+- [ ] Support random-message sending function
+- [ ] Spam module refactoring
 - [ ] Do cache service refactoring
 - [ ] Add command for condensing context of given discussion
 - [ ] Add test\dev decorator support
-- [x] Fix spam message
-- [x] Add spammer mark
-- [x] Add support for deleteing join message
 - [ ] Fix:
 2025-12-27 15:26:52,074 - lib.ai.providers.basic_openai_provider:155 - ERROR - Error running OpenAI-compatible model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}
 2025-12-27 15:26:52,074 - lib.ai.abstract:114 - ERROR - Error running model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}
@@ -44,6 +43,12 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add coverage badge?
+- [x] Add user to DB on first message (even if spam) or join
+- [x] Handle user leave (add to DB to deny chat in list\summarisation\etc)
+- [x] auto-learn ham\spam only if confidence level is more, than treshold
+- [x] Fix spam message
+- [x] Add spammer mark
+- [x] Add support for deleteing join message
 - [x] Add commands for listing topics and renaming topics in DB
 - [x] Add ENV\.env support in config secrets
 - [x] instead of background tasks, use set like in `internal/bot/max/application.py`

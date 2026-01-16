@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 import sys
-from typing import Awaitable, Dict, List, Optional
+from typing import Awaitable, List, Optional
 
 import telegram
 from telegram.ext import (
@@ -36,7 +36,7 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
 
     async def initialize(self) -> None:
         """Initialize the update processor with empty chat-topic mapping."""
-        self.chatTopicMap: Dict[str, asyncio.Semaphore] = {}
+        pass
 
     async def shutdown(self) -> None:
         """Clean up resources when shutting down the processor."""
@@ -44,35 +44,19 @@ class PerTopicUpdateProcessor(BaseUpdateProcessor):
 
     async def do_process_update(self, update, coroutine: Awaitable) -> None:
         # This method is called for every update
+        # Process updates in parallel. HandlersManager will handle all locking
         if not isinstance(update, telegram.Update):
             logger.error(f"Invalid update type: {type(update)}")
             await coroutine
             return
 
-        chatId = None
-        topicId = None
-        if update.message:
-            chatId = update.message.chat_id
-            if update.message.is_topic_message:
-                topicId = update.message.message_thread_id
-
-        key = f"{chatId}:{topicId}"
-        # logger.debug(f"Processing update for chatId: {chatId}, topicId: {topicId}")
-
-        topicSemaphore = self.chatTopicMap.get(key, None)
-        if not isinstance(topicSemaphore, asyncio.Semaphore):
-            topicSemaphore = asyncio.BoundedSemaphore(1)
-            self.chatTopicMap[key] = topicSemaphore
-
-        async with topicSemaphore:
-            # logger.debug(f"awaiting corutine for chatId: {chatId}, topicId: {topicId}")
-            try:
-                # Each request should be processed for at most 30 minutes
-                # Just to workaround diffetent stucks in externat services\libs
-                await asyncio.wait_for(coroutine, 60 * 30)
-            except Exception as e:
-                logger.error(f"Error during awaiting coroutine for {update}")
-                logger.exception(e)
+        try:
+            # Each request should be processed for at most 30 minutes
+            # Just to workaround diffetent stucks in externat services\libs
+            await asyncio.wait_for(coroutine, 60 * 30)
+        except Exception as e:
+            logger.error(f"Error during awaiting coroutine for {update}")
+            logger.exception(e)
 
 
 class TelegramBotApplication:
@@ -322,17 +306,21 @@ class TelegramBotApplication:
             application: Telegram application instance
         """  # noqa: E501
 
-        logger.info("Application stopping, stopping Delayed Tasks Scheduler...")
-        await self.queueService.beginShutdown()
-        logger.info("Step 1 of shutdown is done...")
+        # TODO: add some base application class with common postStop function
 
+        logger.info("Application shutting down...")
+        logger.info("Step 1: Stopping HandlerManager...")
+        await self.handlerManager.shutdown()
+        logger.info("Step 2: Stopping Delayed Tasks Scheduler...")
+        await self.queueService.beginShutdown()
+
+        logger.info("Step 3: Waiting for delayed scheduler task...")
         if self._schedulerTask is not None:
             await self._schedulerTask
-        logger.info("Step 2 of shutdown is done...")
 
         # Destroy rate limiters
         # TODO: should we move it into doExit handler?
-        logger.info("Destroying rate limiters...")
+        logger.info("Step 4: Destroying rate limiters...")
         manager = RateLimiterManager.getInstance()
         await manager.destroy()
         logger.info("Rate limiters destroyed...")
@@ -350,7 +338,7 @@ class TelegramBotApplication:
         appBuilder = (
             Application.builder()
             .token(self.botToken)
-            .concurrent_updates(PerTopicUpdateProcessor(128))
+            # .concurrent_updates(PerTopicUpdateProcessor(128))
             .post_init(self.postInit)
             .post_stop(self.postStop)
             .local_mode(botConfig.get("localMode", False))

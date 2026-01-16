@@ -19,8 +19,8 @@ from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     ButtonDataKey,
     ButtonSummarizationAction,
+    ChatSettingsDict,
     ChatSettingsKey,
-    ChatSettingsValue,
     ChatType,
     CommandCategory,
     CommandHandlerOrder,
@@ -89,6 +89,11 @@ class SummarizationHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         messageText = ensuredMessage.formatMessageText()
+        self.db.updateChatMessageCategory(
+            chatId=ensuredMessage.recipient.id,
+            messageId=ensuredMessage.messageId,
+            messageCategory=MessageCategory.USER_CONFIG_ANSWER,
+        )
 
         data = activeSummarization["data"]
         # TODO: Make user action enum
@@ -118,7 +123,7 @@ class SummarizationHandler(BaseBotHandler):
         *,
         chatId: int,
         threadId: Optional[int],
-        chatSettings: Dict[ChatSettingsKey, ChatSettingsValue],
+        chatSettings: ChatSettingsDict,
         sinceDT: Optional[datetime.datetime] = None,
         tillDT: Optional[datetime.datetime] = None,
         maxMessages: Optional[int] = None,
@@ -271,9 +276,13 @@ class SummarizationHandler(BaseBotHandler):
                 mlRet: Optional[ModelRunResult] = None
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
-                    mlRet = await llmModel.generateTextWithFallBack(
+                    mlRet = await self.llmService.generateText(
                         ModelMessage.fromDictList(reqMessages),
-                        chatSettings[ChatSettingsKey.SUMMARY_FALLBACK_MODEL].toModel(self.llmManager),
+                        chatId=chatId,
+                        chatSettings=chatSettings,
+                        llmManager=self.llmManager,
+                        modelKey=llmModel,
+                        fallbackKey=ChatSettingsKey.SUMMARY_FALLBACK_MODEL,
                     )
                     logger.debug(f"LLM Response: {mlRet}")
                 except Exception as e:
@@ -371,7 +380,7 @@ class SummarizationHandler(BaseBotHandler):
         if not isinstance(maxMessages, int):
             maxMessages = 0
 
-        userChats = self.db.getUserChats(user.id)
+        userChats = self.getUserChats(user.id)
 
         chatId = data.get(ButtonDataKey.ChatId, None)
         # Choose chatID

@@ -2528,6 +2528,7 @@ class DatabaseWrapper:
         messageText: str,
         spamReason: SpamReason,
         score: float,
+        confidence: float,
     ) -> bool:
         """
         Add spam message to the database.
@@ -2552,9 +2553,9 @@ class DatabaseWrapper:
                 cursor.execute(
                     """
                     INSERT INTO spam_messages
-                        (chat_id, user_id, message_id, text, reason, score)
+                        (chat_id, user_id, message_id, text, reason, score, confidence)
                     VALUES
-                        (:chatId, :userId, :messageId, :messageText, :spamReason, :score)
+                        (:chatId, :userId, :messageId, :messageText, :spamReason, :score, :confidence)
                 """,
                     {
                         "chatId": chatId,
@@ -2563,6 +2564,7 @@ class DatabaseWrapper:
                         "messageText": messageText,
                         "spamReason": spamReason.value,
                         "score": score,
+                        "confidence": confidence,
                     },
                 )
                 return True
@@ -2578,6 +2580,7 @@ class DatabaseWrapper:
         messageText: str,
         spamReason: SpamReason,
         score: float,
+        confidence: float,
     ) -> bool:
         """
         Add ham message to the database.
@@ -2602,9 +2605,9 @@ class DatabaseWrapper:
                 cursor.execute(
                     """
                     INSERT INTO ham_messages
-                        (chat_id, user_id, message_id, text, reason, score)
+                        (chat_id, user_id, message_id, text, reason, score, confidence)
                     VALUES
-                        (:chatId, :userId, :messageId, :messageText, :spamReason, :score)
+                        (:chatId, :userId, :messageId, :messageText, :spamReason, :score, :confidence)
                 """,
                     {
                         "chatId": chatId,
@@ -2613,6 +2616,7 @@ class DatabaseWrapper:
                         "messageText": messageText,
                         "spamReason": spamReason.value,
                         "score": score,
+                        "confidence": confidence,
                     },
                 )
                 return True
