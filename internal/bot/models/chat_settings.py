@@ -234,6 +234,8 @@ class ChatSettingsKey(StrEnum):
     BAYES_MIN_CONFIDENCE = "bayes-min-confidence"
     BAYES_AUTO_LEARN = "bayes-auto-learn"
     BAYES_USE_TRIGRAMS = "bayes-use-trigrams"
+    BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM = "bayes-min-confedence-to-autolearn-spam"
+    BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_HAM = "bayes-min-confedence-to-autolearn-ham"
 
     # # Reaction settings
     # JSON-serialized Dict(userID|"username" -> "emoji")
@@ -610,6 +612,26 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "long": (
             "Использование триграмм в Bayes фильтре для более точного определения спама. "
             "Наиболее полезны только когда достаточно много сообщений в баазе данных. "
+        ),
+        "page": ChatSettingsPage.SPAM,
+    },
+    ChatSettingsKey.BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "Минимальная уверенность для автоматического обучения на спам",
+        "long": (
+            "Минимальная уверенность для автоматического обучения Bayes фильтра на спам.\n"
+            "Если уверенность выше, сообщение, помеченное как спам добавляется в обучающую выборку.\n"
+            "Диапазон значения: 0.0-1.0."
+        ),
+        "page": ChatSettingsPage.SPAM,
+    },
+    ChatSettingsKey.BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_HAM: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "Минимальная уверенность для автоматического обучения на НЕ спам",
+        "long": (
+            "Минимальная уверенность для автоматического обучения Bayes фильтра на НЕ спам.\n"
+            "Если уверенность выше, сообщение, помеченное как НЕ спам добавляется в обучающую выборку.\n"
+            "Диапазон значения: 0.0-1.0."
         ),
         "page": ChatSettingsPage.SPAM,
     },

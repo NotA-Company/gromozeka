@@ -161,6 +161,12 @@ class UserDataHandler(BaseBotHandler):
         if userDataConfig is None:
             return HandlerResultStatus.SKIPPED
 
+        self.db.updateChatMessageCategory(
+            chatId=ensuredMessage.recipient.id,
+            messageId=ensuredMessage.messageId,
+            messageCategory=MessageCategory.USER_CONFIG_ANSWER,
+        )
+
         await self._handleUserDataConfiguration(
             data={
                 **userDataConfig["data"],

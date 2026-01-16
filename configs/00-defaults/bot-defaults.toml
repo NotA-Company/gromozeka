@@ -78,6 +78,8 @@ spam-ban-treshold = 90
 spam-warn-treshold = 60
 # Allow to block old (with more, than `auto-spam-max-messages` messages) users with /spam command
 allow-mark-spam-old-users = false
+bayes-min-confedence-to-autolearn-spam = "0.9"
+bayes-min-confedence-to-autolearn-ham = "0.9"
 
 # DEleteing join\left messages - default False
 

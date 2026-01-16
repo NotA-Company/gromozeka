@@ -89,6 +89,11 @@ class SummarizationHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         messageText = ensuredMessage.formatMessageText()
+        self.db.updateChatMessageCategory(
+            chatId=ensuredMessage.recipient.id,
+            messageId=ensuredMessage.messageId,
+            messageCategory=MessageCategory.USER_CONFIG_ANSWER,
+        )
 
         data = activeSummarization["data"]
         # TODO: Make user action enum

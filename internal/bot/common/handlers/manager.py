@@ -254,19 +254,20 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         # Initialize handlers
         self.handlers: List[HandlerTuple] = [
-            # Should be first to check for spam before other handlers
+            # # Should be first to save message to history + process media.
+            # Should be before other handlers to ensure message saving + media processing
+            (
+                MessagePreprocessorHandler(configManager, database, llmManager, botProvider),
+                HandlerParallelism.SEQUENTIAL,
+            ),
+            # Should be first (but after Preprocessor) to check for spam before other handlers
+            # and do not allow SPAM to be processed by other handlers
             (SpamHandler(configManager, database, llmManager, botProvider), HandlerParallelism.SEQUENTIAL),
             # # Next - Handlers, which uses `newMessageHandler` for setting settings
             # Should be before MessagePreprocessorHandler to not save configuration answers
             (ConfigureCommandHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
             (SummarizationHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
             (UserDataHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
-            # # Third - Preprocessor handler to preprocess message (handle images and so on)
-            # Should be before other handlers to ensure message saving + media processing
-            (
-                MessagePreprocessorHandler(configManager, database, llmManager, botProvider),
-                HandlerParallelism.SEQUENTIAL,
-            ),
             # # Fourth - all other handlers
             (DevCommandsHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
             (MediaHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
