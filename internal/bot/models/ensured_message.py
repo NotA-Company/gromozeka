@@ -368,6 +368,7 @@ class EnsuredMessage:
         "threadId",
         "isTopicMessage",
         "mediaContent",
+        "mediaPrompt",
         "mediaId",
         "userData",
         "_mentionCheckResult",
@@ -441,6 +442,7 @@ class EnsuredMessage:
 
         # TODO: should we deprecate it in favor of mediaList?
         self.mediaContent: Optional[str] = None
+        self.mediaPrompt: Optional[str] = None
         self.mediaId: Optional[str] = None
 
         self.mediaGroupId: Optional[str] = mediaGroupId
@@ -957,6 +959,7 @@ class EnsuredMessage:
         mediaAttachment = await self.__class__._awaitMedia(db, self.mediaId)
         if mediaAttachment and mediaAttachment.get("description", None) is not None:
             self.mediaContent = mediaAttachment["description"]
+            self.mediaPrompt = mediaAttachment["prompt"]
 
     @classmethod
     async def _awaitMedia(cls, db: DatabaseWrapper, mediaId: str) -> Optional[MediaAttachmentDict]:
