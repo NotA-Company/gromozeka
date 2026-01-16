@@ -7,7 +7,7 @@ import logging
 import random
 import sys
 from collections.abc import MutableSet
-from typing import Awaitable, Dict, Optional
+from typing import Optional
 
 import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
@@ -54,7 +54,6 @@ class MaxBotApplication:
         self._schedulerTask: Optional[asyncio.Task] = None
         self.maxBot: Optional[libMax.MaxBotClient] = None
 
-        self.chatSemaphoreMap: Dict[int, asyncio.Semaphore] = {}
         self._tasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
         self.maxTasks = 128
 
@@ -80,25 +79,25 @@ class MaxBotApplication:
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
         """
-        await self.queueService.beginShutdown()
-        logger.info("Application stopping, Awaiting for all tasks to complete")
-        logger.info(f"Currently there are {len(self._tasks)} tasks active...")
+
+        logger.info("Application shutting down...")
+        logger.info("Step 0: Awaiting for all tasks to complete...")
         while len(self._tasks) > 0:
             await asyncio.sleep(1)
             logger.info(f"{len(self._tasks)} tasks left...")
-        logger.info("All tasks awaited!")
 
-        logger.info("Stopping Delayed Tasks Scheduler...")
+        logger.info("Step 1: Stopping HandlerManager...")
+        await self.handlerManager.shutdown()
+        logger.info("Step 2: Stopping Delayed Tasks Scheduler...")
         await self.queueService.beginShutdown()
-        logger.info("Step 1 of shutdown is done...")
 
+        logger.info("Step 3: Waiting for delayed scheduler task...")
         if self._schedulerTask is not None:
             await self._schedulerTask
-        logger.info("Step 2 of shutdown is done...")
 
         # Destroy rate limiters
         # TODO: should we move it into doExit handler?
-        logger.info("Destroying rate limiters...")
+        logger.info("Step 4: Destroying rate limiters...")
         manager = RateLimiterManager.getInstance()
         await manager.destroy()
         logger.info("Rate limiters destroyed...")
@@ -116,55 +115,6 @@ class MaxBotApplication:
         # Start the bot
         asyncio.run(self._runPolling())
 
-    async def runAsynced(self, ensuredMessage: Optional[EnsuredMessage], coroutine: Awaitable) -> None:
-        # if there are too many tasks, wait for some to discard itself
-        while len(self._tasks) > self.maxTasks:
-            logger.warning(f"There are {len(self._tasks)} active tasks, awaiting fo someone to be done...")
-            await asyncio.sleep(1)
-
-        if ensuredMessage is None:
-            task = asyncio.create_task(
-                self.runWOSemaphore(
-                    coroutine,
-                )
-            )
-        else:
-            task = asyncio.create_task(
-                self.runWithSemaphore(
-                    ensuredMessage,
-                    coroutine,
-                )
-            )
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
-    async def runWithSemaphore(self, ensuredMessage: EnsuredMessage, coroutine: Awaitable) -> None:
-        key = ensuredMessage.recipient.id
-        topicSemaphore = self.chatSemaphoreMap.get(key, None)
-        if not isinstance(topicSemaphore, asyncio.Semaphore):
-            topicSemaphore = asyncio.BoundedSemaphore(1)
-            self.chatSemaphoreMap[key] = topicSemaphore
-
-        async with topicSemaphore:
-            # logger.debug(f"awaiting corutine for chatId: {key}")
-            try:
-                # Each request should be processed for at most 30 minutes
-                # Just to workaround diffetent stucks in externat services\libs
-                await asyncio.wait_for(coroutine, 60 * 30)
-            except Exception as e:
-                logger.error(f"Error during awaiting coroutine for {ensuredMessage}:{coroutine}")
-                logger.exception(e)
-
-    async def runWOSemaphore(self, coroutine: Awaitable) -> None:
-        # logger.debug(f"awaiting corutine for chatId: {key}")
-        try:
-            # Each request should be processed for at most 30 minutes
-            # Just to workaround diffetent stucks in externat services\libs
-            await asyncio.wait_for(coroutine, 60 * 30)
-        except Exception as e:
-            logger.error(f"Error during awaiting coroutine for {coroutine}")
-            logger.exception(e)
-
     async def maxHandler(self, update: maxModels.Update) -> None:
         """Handle incoming Max Messenger updates.
 
@@ -179,41 +129,32 @@ class MaxBotApplication:
             logger.debug("It's new message, processing...")
             ensuredMessage = EnsuredMessage.fromMaxMessage(update.message)
 
-            return await self.runAsynced(
-                ensuredMessage,
-                self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update),
-            )
+            return await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
 
         elif isinstance(update, maxModels.UserAddedToChatUpdate):
             logger.debug("It's new chat member, processing...")
 
-            return await self.runAsynced(
-                None,
-                self.handlerManager.handleNewChatMember(
-                    targetChat=MessageRecipient(
-                        id=update.chat_id,
-                        chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
-                    ),
-                    messageId=None,
-                    newMember=MessageSender.fromMaxUser(update.user),
-                    updateObj=update,
+            return await self.handlerManager.handleNewChatMember(
+                targetChat=MessageRecipient(
+                    id=update.chat_id,
+                    chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
                 ),
+                messageId=None,
+                newMember=MessageSender.fromMaxUser(update.user),
+                updateObj=update,
             )
 
         elif isinstance(update, maxModels.UserRemovedFromChatUpdate):
             logger.debug("It's removed chat member, processing...")
 
-            return await self.runAsynced(
-                None,
-                self.handlerManager.handleLeftChatMember(
-                    targetChat=MessageRecipient(
-                        id=update.chat_id,
-                        chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
-                    ),
-                    messageId=None,
-                    leftMember=MessageSender.fromMaxUser(update.user),
-                    updateObj=update,
+            return await self.handlerManager.handleLeftChatMember(
+                targetChat=MessageRecipient(
+                    id=update.chat_id,
+                    chatType=ChatType.CHANNEL if update.is_channel else ChatType.GROUP,
                 ),
+                messageId=None,
+                leftMember=MessageSender.fromMaxUser(update.user),
+                updateObj=update,
             )
 
         elif isinstance(update, maxModels.MessageCallbackUpdate):
@@ -236,11 +177,11 @@ class MaxBotApplication:
                 username=update.callback.user.username or "",
             )
 
-            return await self.runAsynced(
-                ensuredMessage,
-                self.handlerManager.handleCallback(
-                    ensuredMessage=ensuredMessage, data=payload, user=user, updateObj=update
-                ),
+            return await self.handlerManager.handleCallback(
+                ensuredMessage=ensuredMessage,
+                data=payload,
+                user=user,
+                updateObj=update,
             )
 
         else:

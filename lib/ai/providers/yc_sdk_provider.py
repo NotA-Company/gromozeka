@@ -3,7 +3,8 @@ Yandex Cloud SDK provider for LLM models, dood!
 """
 
 import logging
-from typing import Any, Dict, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any, Dict, Optional
 
 from yandex_cloud_ml_sdk import AsyncYCloudML
 from yandex_cloud_ml_sdk._exceptions import AioRpcError
@@ -86,7 +87,7 @@ class YcSdkModel(AbstractModel):
         return ModelResultStatus(status)
 
     async def _generateText(
-        self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
+        self, messages: Iterable[ModelMessage], tools: Optional[Iterable[LLMAbstractTool]] = None
     ) -> ModelRunResult:
         """Run the YC SDK model with given messages, dood!
 

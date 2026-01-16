@@ -32,6 +32,7 @@ from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
+    ChatSettingsDict,
     ChatSettingsKey,
     ChatType,
     EnsuredMessage,
@@ -43,7 +44,6 @@ from internal.database.models import MessageCategory
 from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
-    AbstractModel,
     LLMManager,
     ModelMessage,
     ModelResultStatus,
@@ -89,11 +89,10 @@ class LLMMessageHandler(BaseBotHandler):
 
     async def _generateTextViaLLM(
         self,
-        model: AbstractModel,
         messages: Sequence[ModelMessage],
-        fallbackModel: AbstractModel,
         ensuredMessage: EnsuredMessage,
         *,
+        chatSettings: ChatSettingsDict,
         typingManager: TypingManager,
         useTools: bool = False,
         sendIntermediateMessages: bool = True,
@@ -135,9 +134,12 @@ class LLMMessageHandler(BaseBotHandler):
 
         # TODO: Make extraData typedDict (or dataclass?)
         ret = await self.llmService.generateTextViaLLM(
-            model=model,
-            fallbackModel=fallbackModel,
-            messages=messages,
+            messages,
+            chatId=ensuredMessage.recipient.id,
+            chatSettings=chatSettings,
+            llmManager=self.llmManager,
+            modelKey=ChatSettingsKey.CHAT_MODEL,
+            fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
             useTools=useTools,
             callId=f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}",
             callback=processIntermediateMessages,
@@ -193,16 +195,14 @@ class LLMMessageHandler(BaseBotHandler):
         logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
 
         chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
-        llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
         mlRet: Optional[ModelRunResult] = None
 
         try:
             mlRet = await self._generateTextViaLLM(
-                model=llmModel,
                 messages=messagesHistory,
-                fallbackModel=chatSettings[ChatSettingsKey.FALLBACK_MODEL].toModel(self.llmManager),
                 ensuredMessage=ensuredMessage,
+                chatSettings=chatSettings,
                 useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
                 typingManager=typingManager,
                 keepFirstN=keepFirstN,
@@ -270,12 +270,13 @@ class LLMMessageHandler(BaseBotHandler):
 
         # TODO: Add separate method for generating+sending photo
         if imagePrompt is not None:
-            imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(self.llmManager)
-            fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(self.llmManager)
             typingManager.action = TypingAction.UPLOAD_PHOTO
             await typingManager.sendTypingAction()
-            imgMLRet = await imageGenerationModel.generateImageWithFallBack(
-                [ModelMessage(content=imagePrompt)], fallbackImageLLM
+            imgMLRet = await self.llmService.generateImage(
+                imagePrompt,
+                chatId=ensuredMessage.recipient.id,
+                chatSettings=chatSettings,
+                llmManager=self.llmManager,
             )
             logger.debug(
                 f"Generated image Data: {imgMLRet} for mcID: "

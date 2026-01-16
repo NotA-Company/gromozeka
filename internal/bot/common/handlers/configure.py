@@ -137,6 +137,11 @@ class ConfigureCommandHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         messageText = ensuredMessage.formatMessageText()
+        self.db.updateChatMessageCategory(
+            chatId=ensuredMessage.recipient.id,
+            messageId=ensuredMessage.messageId,
+            messageCategory=MessageCategory.USER_CONFIG_ANSWER,
+        )
 
         await self._handle_chat_configuration(
             data={
@@ -189,7 +194,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             "Закончить настройку",
             {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel},
         )
-        userChats = self.db.getUserChats(user.id)
+        userChats = self.getUserChats(user.id)
         keyboard: List[List[CallbackButton]] = []
         isBotOwner = self.isBotOwner(user=user)
 
@@ -722,14 +727,18 @@ class ConfigureCommandHandler(BaseBotHandler):
         elif action == ButtonConfigureAction.SetValue:
             value = data.get(ButtonDataKey.Value, None)
             currentValue = chatSettings[key].toStr()
-            if chatOptions[key]["type"] == ChatSettingsType.MODEL:
-                # Validate And get ModelName bu index from selectable models list
+            if chatOptions[key]["type"] in [ChatSettingsType.MODEL, ChatSettingsType.IMAGE_MODEL]:
+                # Validate And get ModelName by index from selectable models list
                 if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
                     value = int(value)
                     if value < 0 or value > len(self.selectableModels) - 1:
                         value = currentValue
                     else:
                         value = self.selectableModels[value]
+                        modelInfo = self.llmManager.getModelInfo(value)
+                        modelTier = ChatTier.fromStr(modelInfo.get("tier", "") if modelInfo is not None else "")
+                        if modelTier is None or not chatTier.isBetterOrEqualThan(modelTier):
+                            value = currentValue
                 else:
                     value = currentValue
             # TODO: Validate other ChatSettingsType as well

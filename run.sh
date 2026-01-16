@@ -45,7 +45,7 @@ fi
 PROFILER=""
 PROFILR_LOG=""
 if [ "$USE_PROFILER" = "1" ]; then
-    NOW=`date +%Y-%m-%d_%H-%M`
+    NOW=`date +%Y-%m-%d_%H-%M-%S`
     PROFILR_LOG="logs/profile.${NOW}.profile"
     PROFILER=" -m cProfile -o $PROFILR_LOG "
 fi

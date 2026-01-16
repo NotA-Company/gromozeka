@@ -153,7 +153,17 @@ class CommonHandler(BaseBotHandler):
             If the bot is not initialized, logs an error instead of attempting deletion.
         """
         kwargs = delayedTask.kwargs
-        await self.deleteMessagesById(chatId=kwargs["chatId"], messageIds=[kwargs["messageId"]])
+        messageCategory = kwargs.get("messageCategory", None)
+        try:
+            if messageCategory is not None:
+                messageCategory = MessageCategory(messageCategory)
+        except ValueError:
+            messageCategory = None
+            logger.error(f"Invalid message category: {messageCategory}")
+
+        await self.deleteMessagesById(
+            chatId=kwargs["chatId"], messageIds=[kwargs["messageId"]], setMessageCategory=messageCategory
+        )
 
     ###
     # LLM Tool-Calling handlers
@@ -408,7 +418,7 @@ class CommonHandler(BaseBotHandler):
         if listAll:
             listAll = self.isBotOwner(ensuredMessage.sender)
 
-        knownChats = self.db.getAllGroupChats() if listAll else self.db.getUserChats(ensuredMessage.sender.id)
+        knownChats = self.db.getAllGroupChats() if listAll else self.getUserChats(ensuredMessage.sender.id)
 
         resp = "Список доступных чатов:\n\n"
 

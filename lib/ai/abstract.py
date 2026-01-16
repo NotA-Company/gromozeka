@@ -6,7 +6,8 @@ import datetime
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any, Dict, List, Optional
 
 from lib import utils
 
@@ -54,7 +55,7 @@ class AbstractModel(ABC):
 
     @abstractmethod
     async def _generateText(
-        self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
+        self, messages: Iterable[ModelMessage], tools: Optional[Iterable[LLMAbstractTool]] = None
     ) -> ModelRunResult:
         """Run the model with given messages, dood!
 
@@ -67,7 +68,7 @@ class AbstractModel(ABC):
         raise NotImplementedError
 
     async def generateText(
-        self, messages: Iterable[ModelMessage], tools: Iterable[LLMAbstractTool] = []
+        self, messages: Iterable[ModelMessage], tools: Optional[Iterable[LLMAbstractTool]] = None
     ) -> ModelRunResult:
         """Generate text using the model with optional tools, dood!
 
@@ -96,7 +97,7 @@ class AbstractModel(ABC):
         self,
         messages: Iterable[ModelMessage],
         fallbackModel: "AbstractModel",
-        tools: Iterable[LLMAbstractTool] = [],
+        tools: Optional[Iterable[LLMAbstractTool]] = None,
     ) -> ModelRunResult:
         """Run the model with given messages and fallback, dood!"""
         try:

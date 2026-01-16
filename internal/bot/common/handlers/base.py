@@ -39,6 +39,7 @@ from internal.bot.common.models import CallbackButton, TypingAction, UpdateObjec
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
+    ChatSettingsDict,
     ChatSettingsKey,
     ChatSettingsType,
     ChatSettingsValue,
@@ -198,7 +199,7 @@ class BaseBotHandler(CommandHandlerMixin):
         returnDefault: bool = True,
         chatType: Optional[ChatType] = None,
         chatTier: Optional[ChatTier] = None,
-    ) -> Dict[ChatSettingsKey, ChatSettingsValue]:
+    ) -> ChatSettingsDict:
         """
         TODO: rewrite docstring
         Get chat settings with optional default fallback, dood!
@@ -220,7 +221,7 @@ class BaseBotHandler(CommandHandlerMixin):
             if chatSettings is not None:
                 return chatSettings
 
-        defaultSettings: Dict[ChatSettingsKey, ChatSettingsValue] = {}
+        defaultSettings: ChatSettingsDict = {}
         if chatId is None and chatType is None:
             raise ValueError("Either chatId or chatType should be not None")
 
@@ -236,7 +237,7 @@ class BaseBotHandler(CommandHandlerMixin):
             defaultSettings.update(self.cache.getDefaultChatSettings(chatType))
 
         if chatId is None:
-            chatSettings: Optional[Dict[ChatSettingsKey, ChatSettingsValue]] = {}
+            chatSettings: Optional[ChatSettingsDict] = {}
         else:
             chatSettings = self.cache.getChatSettings(chatId)
 
@@ -319,7 +320,7 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         self.cache.unsetChatSetting(chatId=chatId, key=key)
 
-    def getChatTier(self, chatSettings: Dict[ChatSettingsKey, ChatSettingsValue]) -> Optional[ChatTier]:
+    def getChatTier(self, chatSettings: ChatSettingsDict) -> Optional[ChatTier]:
         """
         Determine chat tier based on settings, checking paid tier first.
 
@@ -501,7 +502,9 @@ class BaseBotHandler(CommandHandlerMixin):
 
         return ret
 
-    async def deleteMessage(self, ensuredMessage: EnsuredMessage) -> bool:
+    async def deleteMessage(
+        self, ensuredMessage: EnsuredMessage, setMessageCategory: Optional[MessageCategory] = MessageCategory.DELETED
+    ) -> bool:
         """Delete a message from the chat.
 
         Args:
@@ -512,9 +515,21 @@ class BaseBotHandler(CommandHandlerMixin):
         """
         if self._bot is None:
             raise ValueError("Bot is not initialized")
+
+        if setMessageCategory is not None:
+            self.db.updateChatMessageCategory(
+                ensuredMessage.recipient.id,
+                ensuredMessage.messageId,
+                setMessageCategory,
+            )
         return await self._bot.deleteMessage(ensuredMessage)
 
-    async def deleteMessagesById(self, chatId: int, messageIds: List[MessageIdType]) -> bool:
+    async def deleteMessagesById(
+        self,
+        chatId: int,
+        messageIds: List[MessageIdType],
+        setMessageCategory: Optional[MessageCategory] = MessageCategory.DELETED,
+    ) -> bool:
         """Delete multiple messages by their IDs in the specified chat.
 
         Args:
@@ -527,6 +542,14 @@ class BaseBotHandler(CommandHandlerMixin):
 
         if self._bot is None:
             raise ValueError("Bot is not initialized")
+
+        if setMessageCategory is not None:
+            for messageId in messageIds:
+                self.db.updateChatMessageCategory(
+                    chatId,
+                    messageId,
+                    setMessageCategory,
+                )
         return await self._bot.deleteMessagesById(chatId=chatId, messageIds=messageIds)
 
     ###
@@ -1009,6 +1032,25 @@ class BaseBotHandler(CommandHandlerMixin):
                 chatTitle = f"#{chatInfo['chat_id']} {chatTitle}"
         return chatTitle
 
+    def getUserChats(self, userId: int) -> List[ChatInfoDict]:
+        """
+        Get chats for the given user.
+        Skip chats that the user has left.
+        """
+        userChats = self.db.getUserChats(userId)
+        ret: List[ChatInfoDict] = []
+        for chatInfo in userChats:
+            userInfo: Optional[ChatUserDict] = self.db.getChatUser(chatId=chatInfo["chat_id"], userId=userId)
+            if userInfo is None:
+                logger.warning(f"User {userId} not found in chat {chatInfo['chat_id']}")
+                continue
+            userMetadata = self.parseUserMetadata(userInfo)
+            if userMetadata.get("leftChat", False):
+                # User has left the chat, do not show
+                continue
+            ret.append(chatInfo)
+        return userChats
+
     ###
     # Processing media
     ###
@@ -1037,12 +1079,15 @@ class BaseBotHandler(CommandHandlerMixin):
         chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
 
         try:
-            imageParsingLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_MODEL].toModel(self.llmManager)
-            imageParsingFallbackLLM = chatSettings[ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL].toModel(
-                self.llmManager
-            )
             logger.debug(f"Prompting Image {ensuredMessage.mediaId} LLM for image with prompt: {messages[:1]}")
-            llmRet = await imageParsingLLM.generateTextWithFallBack(messages, imageParsingFallbackLLM)
+            llmRet = await self.llmService.generateText(
+                messages,
+                chatId=ensuredMessage.recipient.id,
+                chatSettings=chatSettings,
+                llmManager=self.llmManager,
+                modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
+                fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
+            )
             logger.debug(f"Image LLM Response: {llmRet}")
 
             if llmRet.status != ModelResultStatus.FINAL:
