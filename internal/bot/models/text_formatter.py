@@ -19,6 +19,9 @@ from lib import utils
 
 logger = logging.getLogger(__name__)
 
+FORMATER_ENCODING = "utf-16-le"
+FORMATER_ENCODING_BYTES_PER_CHAR = 2
+
 
 class FormatType(StrEnum):
     """Enumeration of supported text formatting types.
@@ -502,7 +505,7 @@ class FormatEntity:
         entities = sorted(entities, key=lambda v: (v.offset, -v.length, v.type.getIndex()))
         # Use UTF-16 to get fixed-length characters
         # if text is bytes, suppose it was already converted to UTF-16
-        utf16Text = text.encode("utf-16-le") if isinstance(text, str) else text
+        utf16Text = text.encode(FORMATER_ENCODING) if isinstance(text, str) else text
         ret: str = ""
 
         # logger.debug(f"Parsing text: '{text}' -> '{utf16Text}' with ({entities})")
@@ -516,10 +519,15 @@ class FormatEntity:
             entity = entities[i]
             # Increase `i` here as we'll use it later for searching for nested entities
             i += 1
-            offset = (entity.offset - _initialOffset) * 2
-            length = entity.length * 2
+            offset = (entity.offset - _initialOffset) * FORMATER_ENCODING_BYTES_PER_CHAR
+            length = entity.length * FORMATER_ENCODING_BYTES_PER_CHAR
             # Add the text before the entity if any
-            ret += utf16Text[lastPos:offset].decode("utf-16-le")
+            try:
+                ret += utf16Text[lastPos:offset].decode(FORMATER_ENCODING)
+            except UnicodeDecodeError as e:
+                logger.error(f"Failed to decode text: {e}")
+                logger.exception(e)
+                ret += utf16Text[lastPos:offset].decode(FORMATER_ENCODING, errors="replace")
 
             utf16MatchedText = utf16Text[offset : offset + length]
 
@@ -537,7 +545,7 @@ class FormatEntity:
                 matchedText = cls.parseText(utf16MatchedText, nestedEntities, outputFormat, entity.offset)
             else:
                 try:
-                    matchedText = utf16MatchedText.decode("utf-16-le")
+                    matchedText = utf16MatchedText.decode(FORMATER_ENCODING)
                 except UnicodeDecodeError as e:
                     logger.error(f"Failed to decode text: {e}")
                     logger.exception(e)
@@ -545,15 +553,15 @@ class FormatEntity:
                         f"utf16Text: {utf16Text} \n    "
                         f"offset: {offset}, length: {length}, utf16MatchedText: {utf16MatchedText}"
                     )
-                    matchedText = utf16MatchedText.decode("utf-16-le", errors="replace")
+                    matchedText = utf16MatchedText.decode(FORMATER_ENCODING, errors="replace")
 
             ret += entity.formatText(matchedText, outputFormat)
             lastPos = offset + length
         try:
-            ret += utf16Text[lastPos:].decode("utf-16-le")
+            ret += utf16Text[lastPos:].decode(FORMATER_ENCODING)
         except UnicodeDecodeError as e:
             logger.error(f"Failed to decode text: {e}")
             logger.exception(e)
             logger.debug(f"utf16Text: {utf16Text} \n    lastPos: {lastPos}")
-            ret += utf16Text[lastPos:].decode("utf-16-le", errors="replace")
+            ret += utf16Text[lastPos:].decode(FORMATER_ENCODING, errors="replace")
         return ret

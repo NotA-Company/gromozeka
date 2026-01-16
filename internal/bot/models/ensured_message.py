@@ -55,6 +55,7 @@ class CondensingDict(TypedDict):
 class MetadataDict(TypedDict, total=False):
     condensedThread: List[CondensingDict]
     forwardedFrom: Dict[str, Any]
+    messagePrefix: str
 
 
 class ChatType(StrEnum):
@@ -376,6 +377,7 @@ class EnsuredMessage:
         "metadata",
         "mediaGroupId",
         "mediaList",
+        "messagePrefix",
     )
 
     def __init__(
@@ -421,6 +423,8 @@ class EnsuredMessage:
         """Message text if any"""
         self.messageType: MessageType = messageType
         """Message Type"""
+        self.messagePrefix: str = ""
+        """Prefix for message (usually in bot's answers)"""
 
         # If this is reply, then set replyId and replyText
         self.replyId: Optional[MessageIdType] = None
@@ -851,6 +855,8 @@ class EnsuredMessage:
             # If we aren't getting list of attachments, add media_it to list
             ensuredMessage.addMedia(mediaId=data["media_id"], setMediaId=True)
 
+        ensuredMessage.messagePrefix = metadata.get("messagePrefix", "")
+
         # logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
         return ensuredMessage
 
@@ -901,7 +907,10 @@ class EnsuredMessage:
         if not self.formatEntities:
             return self.messageText
 
-        return FormatEntity.parseText(self.messageText, self.formatEntities, outputFormat)
+        ret = FormatEntity.parseText(self.messagePrefix + self.messageText, self.formatEntities, outputFormat)
+        if self.messagePrefix:
+            return ret[len(self.messagePrefix) :]
+        return ret
 
     def addMedia(self, mediaId: str, mediaContent: Optional[str] = None, setMediaId: bool = True):
         """
@@ -960,6 +969,14 @@ class EnsuredMessage:
         if mediaAttachment and mediaAttachment.get("description", None) is not None:
             self.mediaContent = mediaAttachment["description"]
             self.mediaPrompt = mediaAttachment["prompt"]
+
+    def setMessagePrefix(self, messagePrefix: str) -> None:
+        """
+        Add message prefix
+        """
+
+        self.messagePrefix = messagePrefix
+        self.metadata["messagePrefix"] = messagePrefix
 
     @classmethod
     async def _awaitMedia(cls, db: DatabaseWrapper, mediaId: str) -> Optional[MediaAttachmentDict]:
