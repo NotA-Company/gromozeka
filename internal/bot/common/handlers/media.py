@@ -519,7 +519,7 @@ class MediaHandler(BaseBotHandler):
                     messageCategory=MessageCategory.BOT_ERROR,
                     typingManager=typingManager,
                 )
-                return
+                continue
 
             reqMessages = [
                 ModelMessage(
