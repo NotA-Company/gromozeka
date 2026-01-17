@@ -295,12 +295,13 @@ class LLMMessageHandler(BaseBotHandler):
                         mediaPrompt=imagePrompt,
                         addMessagePrefix=imgAddPrefix,
                         typingManager=typingManager if stopTypingOnSend else None,
+                        toolsHistory=mlRet.toolUsageHistory,
                     )
                     is not None
                 )
 
             # Something went wrong, log and fallback to ordinary message
-            logger.error(f"Failed generating Image by prompt '{imagePrompt}': {imgMLRet}")
+            logger.error(f"Failed to generate Image by prompt '{imagePrompt}': {imgMLRet}")
 
         return (
             await self.sendMessage(
@@ -309,6 +310,7 @@ class LLMMessageHandler(BaseBotHandler):
                 addMessagePrefix=addPrefix,
                 tryParseInputJSON=llmMessageFormat == LLMMessageFormat.JSON,
                 typingManager=typingManager if stopTypingOnSend else None,
+                toolsHistory=mlRet.toolUsageHistory,
             )
             is not None
         )
@@ -704,8 +706,8 @@ class LLMMessageHandler(BaseBotHandler):
                     eMsg = EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
                     self._updateEMessageUserData(eMsg)
 
-                    storedMessages.append(
-                        await eMsg.toModelMessage(
+                    storedMessages.extend(
+                        await eMsg.toModelMessageList(
                             self.db,
                             format=llmMessageFormat,
                             role="user" if storedMsg["message_category"] == "user" else "assistant",
