@@ -122,8 +122,8 @@ class LLMService:
         keepFirstN: int = 0,
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,
-        condensingPrompt: Optional[str] = None,
-        condensingModel: Optional[AbstractModel] = None,
+        condensingPromptKey: Optional[Union[str, ChatSettingsKey]] = None,
+        condensingModelKey: Optional[Union[AbstractModel, ChatSettingsKey]] = None,
     ) -> ModelRunResult:
         """Generate text using an LLM with automatic tool execution support, dood!
 
@@ -165,6 +165,19 @@ class LLMService:
             llmManager=llmManager,
             defaultKey=ChatSettingsKey.FALLBACK_MODEL,
         )
+        condensingModel = self.resolveModel(
+            condensingModelKey,
+            chatSettings=chatSettings,
+            llmManager=llmManager,
+            defaultKey=ChatSettingsKey.CONDENSING_MODEL,
+        )
+        condensingPrompt = None
+        if isinstance(condensingPromptKey, ChatSettingsKey):
+            condensingPrompt = chatSettings[condensingPromptKey].toStr()
+        elif isinstance(condensingPromptKey, str):
+            condensingPrompt = condensingPromptKey
+        else:
+            condensingPrompt = chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr()
 
         ret: Optional[ModelRunResult] = None
         toolsUsed = False
@@ -172,6 +185,7 @@ class LLMService:
         _keepLastN = keepLastN
 
         _messages: Sequence[ModelMessage] = messages
+        toolsHistory: MutableSequence[ModelMessage] = []
 
         _condensingModel: Optional[AbstractModel] = None
         while True:
@@ -204,7 +218,7 @@ class LLMService:
                     await callback(ret, extraData)
 
                 if ret.isFallback:
-                    # If fallback happened, use fallback model for the next iterations
+                    # If fallback happened, use fallback model for the rest iterations
                     model = fallbackModel
 
                 toolsUsed = True
@@ -224,6 +238,7 @@ class LLMService:
                 if not isinstance(_messages, MutableSequence):
                     # If somehow _messages is not mutable, make it list (i.e. mutable)
                     _messages = list(_messages)
+                toolsHistory.extend(newMessages)
                 _messages.extend(newMessages)
                 _keepLastN = keepLastN + len(newMessages)
                 logger.debug(f"Tools used: {newMessages} for callId #{callId}")
@@ -232,6 +247,7 @@ class LLMService:
 
         if toolsUsed:
             ret.setToolsUsed(True)
+            ret.toolUsageHistory = toolsHistory
 
         return ret
 

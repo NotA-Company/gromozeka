@@ -461,6 +461,7 @@ class BaseBotHandler(CommandHandlerMixin):
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
         attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
+        toolsHistory: Optional[Sequence[ModelMessage]] = None,
     ) -> List[EnsuredMessage]:
         if self._bot is None:
             raise ValueError("Bot is not initialized")
@@ -499,6 +500,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 for media in mediaList:
                     ensuredReplyMessage.addMediaProcessingInfo(media)
 
+            if toolsHistory:
+                ensuredReplyMessage.metadata["usedTools"] = [v.toDict() for v in toolsHistory]
             await self.saveChatMessage(ensuredReplyMessage, messageCategory=messageCategory)
 
         return ret
@@ -591,14 +594,12 @@ class BaseBotHandler(CommandHandlerMixin):
         if dbMessage["root_message_id"] is None:
             eMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
             self._updateEMessageUserData(eMessage)
-            return ret + [
-                await eMessage.toModelMessage(
-                    self.db,
-                    format=llmMFormat,
-                    outputFormat=outputFormat,
-                    role="user" if dbMessage["message_category"] == "user" else "assistant",
-                )
-            ]
+            return ret + await eMessage.toModelMessageList(
+                self.db,
+                format=llmMFormat,
+                outputFormat=outputFormat,
+                role="user" if dbMessage["message_category"] == "user" else "assistant",
+            )
 
         dbMessageList = self.db.getChatMessagesByRootId(
             dbMessage["chat_id"],
@@ -617,14 +618,15 @@ class BaseBotHandler(CommandHandlerMixin):
         eRootMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[0], self.db)
         self._updateEMessageUserData(eRootMessage)
         condenseCache = eRootMessage.metadata.get("condensedThread", [])
+        condenseCacheMessages: List[ModelMessage] = []
         if condenseCache and condenseThread:
             # First - add skipped messages to result.
             # It should be ony starting message
             for i in range(min(keepFirstN, len(dbMessageList))):
                 eMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
                 self._updateEMessageUserData(eMessage)
-                ret.append(
-                    await eMessage.toModelMessage(
+                ret.extend(
+                    await eMessage.toModelMessageList(
                         self.db,
                         format=llmMFormat,
                         outputFormat=outputFormat,
@@ -638,7 +640,10 @@ class BaseBotHandler(CommandHandlerMixin):
             for condensedMessage in condenseCache:
                 # If we'll decide to condenseContext, skip summary message from condensing
                 keepFirstN += 1
-                ret.append(ModelMessage(role="user", content=condensedMessage["text"]))
+                # TODO: does "user" role suited here? maybe system or something? check possible values
+                cacheEntry = ModelMessage(role="user", content=condensedMessage["text"])
+                ret.append(cacheEntry)
+                condenseCacheMessages.append(cacheEntry)
                 lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"])
                 skippedMessages = 0
                 for dbMessage in dbMessageList:
@@ -650,8 +655,8 @@ class BaseBotHandler(CommandHandlerMixin):
         for dbMessage in dbMessageList:
             eMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
             self._updateEMessageUserData(eMessage)
-            ret.append(
-                await eMessage.toModelMessage(
+            ret.extend(
+                await eMessage.toModelMessageList(
                     self.db,
                     format=llmMFormat,
                     outputFormat=outputFormat,
@@ -690,12 +695,13 @@ class BaseBotHandler(CommandHandlerMixin):
         # logger.debug(f"cache = {condenseCache}")
         # logger.debug(f"lastM = {lastCondensedMessage}")
 
-        currentTokens = llmModel.getEstimateTokensCount([v.toDict() for v in condensedRet])
+        condenseCacheMessages.extend(condensedRet)
+        currentTokens = llmModel.getEstimateTokensCount([v.toDict() for v in condenseCacheMessages])
         if currentTokens > maxTokens:
             # If there are too many condensed entries in cache, condense them as well
             keepFirstN = 1
             condensedRet = await self.llmService.condenseContext(
-                condensedRet,
+                condenseCacheMessages,
                 model=llmModel,
                 keepFirstN=keepFirstN,
                 keepLastN=keepLastN,
@@ -705,6 +711,7 @@ class BaseBotHandler(CommandHandlerMixin):
             )
             # We'll need to rewrite cache, so empty it here
             condenseCache = []
+            condenseCacheMessages = []
 
         for i in range(keepFirstN + 1, len(condensedRet) - keepLastN):
             condenseCache.append(

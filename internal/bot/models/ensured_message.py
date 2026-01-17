@@ -56,6 +56,7 @@ class MetadataDict(TypedDict, total=False):
     condensedThread: List[CondensingDict]
     forwardedFrom: Dict[str, Any]
     messagePrefix: str
+    usedTools: List[Dict[str, Any]]
 
 
 class ChatType(StrEnum):
@@ -1105,6 +1106,37 @@ class EnsuredMessage:
                 raise ValueError(f"Invalid format: {format}")
 
         raise RuntimeError("Unreacible code has been reached")
+
+    async def toModelMessageList(
+        self,
+        db: DatabaseWrapper,
+        format: LLMMessageFormat = LLMMessageFormat.JSON,
+        replaceMessageText: Optional[str] = None,
+        stripAtsign: bool = False,
+        role: str = "user",
+        outputFormat: OutputFormat = OutputFormat.MARKDOWN,
+        useSingleMedia: bool = True,
+    ) -> List[ModelMessage]:
+        """Convert to ModelMessage + tools history (if any)"""
+
+        ret: List[ModelMessage] = []
+        toolsHistory = self.metadata.get("usedTools", None)
+        if toolsHistory:
+            for toolsMessage in toolsHistory:
+                ret.append(ModelMessage.fromDict(toolsMessage))
+
+        ret.append(
+            await self.toModelMessage(
+                db=db,
+                format=format,
+                replaceMessageText=replaceMessageText,
+                stripAtsign=stripAtsign,
+                role=role,
+                outputFormat=outputFormat,
+                useSingleMedia=useSingleMedia,
+            )
+        )
+        return ret
 
     async def toModelMessage(
         self,
