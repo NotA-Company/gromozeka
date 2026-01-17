@@ -137,14 +137,42 @@ class ModelMessage:
 
     @classmethod
     def fromDict(cls, d: Dict[str, Any]) -> "ModelMessage":
+        kwargs: Dict[str, Any] = dict[str, Any](
+            role=d["role"],
+        )
         content = d.get("content", None)
         contentKey = "content"
         if content is None:
             content = d.get("text", None)
             contentKey = "text"
+
         if content is None:
             raise ValueError("No content found in message")
-        return cls(d["role"], content, contentKey)
+
+        kwargs.update(
+            {
+                "content": content,
+                "contentKey": contentKey,
+            }
+        )
+
+        if "weight" in d:
+            kwargs["weight"] = d["weight"]
+        if "tool_call_id" in d:
+            kwargs["toolCallId"] = d["tool_call_id"]
+        if "tool_calls" in d:
+            toolCalls: List[LLMToolCall] = []
+            for toolCall in d["tool_calls"]:
+                toolCalls.append(
+                    LLMToolCall(
+                        id=toolCall["id"],
+                        name=toolCall["function"]["name"],
+                        parameters=json.loads(toolCall["function"]["arguments"]),
+                    )
+                )
+            kwargs["toolCalls"] = toolCalls
+
+        return cls(**kwargs)
 
     @classmethod
     def fromDictList(cls, dictList: List[Dict[str, Any]]) -> List["ModelMessage"]:
@@ -252,6 +280,19 @@ class ModelResultStatus(Enum):
 class ModelRunResult:
     """Unified Result of model run"""
 
+    __slots__ = (
+        "status",
+        "resultText",
+        "result",
+        "toolCalls",
+        "mediaMimeType",
+        "mediaData",
+        "error",
+        "toolUsageHistory",
+        "isFallback",
+        "isToolsUsed",
+    )
+
     def __init__(
         self,
         rawResult: Any,
@@ -261,6 +302,7 @@ class ModelRunResult:
         mediaMimeType: Optional[str] = None,
         mediaData: Optional[bytes] = None,
         error: Optional[Exception] = None,
+        toolUsageHistory: Optional[Sequence[ModelMessage]] = None,
     ):
         self.status = status
         self.resultText = resultText
@@ -269,6 +311,7 @@ class ModelRunResult:
         self.mediaMimeType = mediaMimeType
         self.mediaData = mediaData
         self.error = error
+        self.toolUsageHistory = toolUsageHistory
 
         self.isFallback = False
         self.isToolsUsed = False
