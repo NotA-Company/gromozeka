@@ -441,9 +441,8 @@ async def testSchemaCreation(inMemoryDb):
     expectedTables = [
         "bayes_classes",  # Created by migrations
         "bayes_tokens",  # Created by migrations
-        "cache_geocoding",
+        "cache",
         "cache_storage",
-        "cache_weather",
         "chat_info",
         "chat_messages",
         "chat_settings",
@@ -455,6 +454,7 @@ async def testSchemaCreation(inMemoryDb):
         "delayed_tasks",
         "ham_messages",
         "media_attachments",
+        "media_groups",
         "settings",
         "spam_messages",
         "user_data",

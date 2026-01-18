@@ -2858,13 +2858,15 @@ class DatabaseWrapper:
         try:
             with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
                 cursor.execute(
-                    f"""
-                    SELECT *
-                    FROM cache_{cacheType}
-                    WHERE key = :cacheKey AND
-                    (:minimalUpdatedAt IS NULL OR updated_at >= :minimalUpdatedAt)
+                    """
+                    SELECT key, data, created_at, updated_at
+                    FROM cache
+                    WHERE namespace = :namespace AND
+                          key = :cacheKey AND
+                          (:minimalUpdatedAt IS NULL OR updated_at >= :minimalUpdatedAt)
                 """,
                     {
+                        "namespace": cacheType,
                         "cacheKey": key,
                         "minimalUpdatedAt": minimalUpdatedAt,
                     },
@@ -2897,16 +2899,20 @@ class DatabaseWrapper:
         try:
             with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
                 cursor.execute(
-                    f"""
-                    INSERT INTO cache_{cacheType}
-                        (key, data, created_at, updated_at)
+                    """
+                    INSERT INTO cache
+                        (namespace, key, data, created_at, updated_at)
                     VALUES
-                        (:key, :data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT(key) DO UPDATE SET
+                        (:namespace, :key, :data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(namespace, key) DO UPDATE SET
                         data = :data,
                         updated_at = CURRENT_TIMESTAMP
                 """,
-                    {"key": key, "data": data},
+                    {
+                        "namespace": cacheType,
+                        "key": key,
+                        "data": data,
+                    },
                 )
                 return True
         except Exception as e:
@@ -2915,7 +2921,7 @@ class DatabaseWrapper:
 
     def clearCache(self, cacheType: CacheType, *, dataSource: Optional[str] = None) -> None:
         """
-        Clear all entries from a specific cache table.
+        Clear all entries from a specific cache.
 
         Args:
             cacheType: The type of cache to clear (WEATHER, GEOCODING, or YANDEX_SEARCH)
@@ -2929,9 +2935,12 @@ class DatabaseWrapper:
         try:
             with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
                 cursor.execute(
-                    f"""
-                    DELETE FROM cache_{cacheType}
                     """
+                    DELETE FROM cache
+                    WHERE
+                        namespace = :cacheType
+                    """,
+                    {"cacheType": cacheType},
                 )
         except Exception as e:
             logger.error(f"Failed to clear cache {cacheType}: {e}")
