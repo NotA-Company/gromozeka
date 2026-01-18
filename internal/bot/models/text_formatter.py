@@ -565,3 +565,31 @@ class FormatEntity:
             logger.debug(f"utf16Text: {utf16Text} \n    lastPos: {lastPos}")
             ret += utf16Text[lastPos:].decode(FORMATER_ENCODING, errors="replace")
         return ret
+
+    def extractEntityText(self, text: str) -> str:
+        """Extract the text segment corresponding to this entity from the provided text.
+
+        This method extracts a substring from the provided text based on the entity's offset
+        and length properties. It handles UTF-16 encoding to properly support Unicode characters.
+
+        Args:
+            text: The source text from which to extract the entity text
+
+        Returns:
+            The extracted text segment corresponding to this entity
+
+        Note:
+            This method uses UTF-16 encoding (FORMATER_ENCODING) to handle Unicode characters
+            properly, as the offset and length properties are based on UTF-16 code units.
+            If a UnicodeDecodeError occurs, it will be logged and the method will attempt
+            to decode with error replacement.
+        """
+        utf16Text = text.encode(FORMATER_ENCODING) if isinstance(text, str) else text
+        ret = utf16Text[self.offset * 2 : self.offset * 2 + self.length * 2]
+        try:
+            return ret.decode(FORMATER_ENCODING)
+        except UnicodeDecodeError as e:
+            logger.error(f"Failed to decode text: {e}")
+            logger.exception(e)
+            logger.debug(f"utf16Text: {ret}")
+            return ret.decode(FORMATER_ENCODING, errors="replace")
