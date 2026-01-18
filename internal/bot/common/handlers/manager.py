@@ -197,6 +197,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.db = database
         self.llmManager = llmManager
         self.botProvider: BotProvider = botProvider
+        self.handlerTimeout = 60 * 30
 
         # Map of command name -> CommandHandlerInfo
         self._commands: Dict[str, CommandHandlerInfoV2] = {}
@@ -385,10 +386,12 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         await asyncio.gather(*self.handlerTasks)
 
-    async def runAsync(self, func: Coroutine) -> asyncio.Task:
+    async def runAsync(self, func: Coroutine, timeout: Optional[float] = None) -> asyncio.Task:
         """Run background tasks."""
         while len(self.handlerTasks) >= self.maxTasks:
             await asyncio.sleep(0.5)
+        if timeout is not None and timeout > 0:
+            func = asyncio.wait_for(func, timeout=timeout)
         task = asyncio.create_task(func)
         self.handlerTasks.add(task)
         task.add_done_callback(self.handlerTasks.discard)
@@ -638,7 +641,10 @@ class HandlersManager(CommandHandlerGetterInterface):
                 self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
             )
 
-            commandRet = await self.handleCommand(ensuredMessage, updateObj)
+            commandRet = await asyncio.wait_for(
+                self.handleCommand(ensuredMessage, updateObj),
+                timeout=self.handlerTimeout,
+            )
             if commandRet is not None:
                 logger.debug(f"Handled as command with result: {commandRet}")
                 return
@@ -654,7 +660,10 @@ class HandlersManager(CommandHandlerGetterInterface):
                     case _:
                         raise ValueError(f"Unknown parallelism: {parallelism}")
 
-                ret = await handler.newMessageHandler(ensuredMessage, updateObj)
+                ret = await asyncio.wait_for(
+                    handler.newMessageHandler(ensuredMessage, updateObj),
+                    timeout=self.handlerTimeout,
+                )
                 messageRec.step = stepIndex
                 resultSet.add(ret)
                 if ret.needLogs():
@@ -685,7 +694,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         user: MessageSender,
         updateObj: UpdateObjectType,
     ) -> None:
-        await self.runAsync(self._handleCallback(ensuredMessage, data, user, updateObj))
+        await self.runAsync(
+            self._handleCallback(ensuredMessage, data, user, updateObj),
+            timeout=self.handlerTimeout,
+        )
 
     async def _handleCallback(
         self,
@@ -732,7 +744,10 @@ class HandlersManager(CommandHandlerGetterInterface):
             updateObj: Original update object from the platform
         """
 
-        await self.runAsync(self._handleNewChatMember(targetChat, messageId, newMember, updateObj))
+        await self.runAsync(
+            self._handleNewChatMember(targetChat, messageId, newMember, updateObj),
+            timeout=self.handlerTimeout,
+        )
 
     async def _handleNewChatMember(
         self,
@@ -782,7 +797,10 @@ class HandlersManager(CommandHandlerGetterInterface):
             updateObj: Original update object from the platform
         """
 
-        await self.runAsync(self._handleLeftChatMember(targetChat, messageId, leftMember, updateObj))
+        await self.runAsync(
+            self._handleLeftChatMember(targetChat, messageId, leftMember, updateObj),
+            timeout=self.handlerTimeout,
+        )
 
     async def _handleLeftChatMember(
         self,
