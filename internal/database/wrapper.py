@@ -11,7 +11,6 @@ import sqlite3
 import threading
 from collections.abc import MutableSet, Sequence
 from contextlib import contextmanager
-from types import UnionType
 from typing import Any, Dict, List, Optional, cast
 
 import dateutil
@@ -420,7 +419,7 @@ class DatabaseWrapper:
                     # Keep as string if not a valid enum value
 
             # Ensure required fields are present with proper types
-            required_fields: Dict[str, UnionType | type | tuple[type, ...]] = {
+            required_fields: Dict[str, Any] = {
                 "chat_id": int,
                 "message_id": MessageIdType,
                 "date": datetime.datetime,
