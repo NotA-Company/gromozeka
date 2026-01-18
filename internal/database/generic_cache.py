@@ -104,7 +104,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
 
     async def clear(self) -> None:
         """Clear all cache entries in this namespace."""
-        self.db.clearCache(self.namespace)
+        self.db.clearCache(self.namespace, dataSource=self.dataSource)
 
     def getStats(self) -> Dict[str, Any]:
         """
