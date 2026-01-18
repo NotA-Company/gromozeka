@@ -321,17 +321,52 @@ class HandlersManager(CommandHandlerGetterInterface):
         """Global Lock for Queue management (checking, creating, deleteing)"""
 
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
+        self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
         self._shutdownEvent = asyncio.Event()
 
+    async def _dtOnExit(self, task: DelayedTask) -> None:
+        """Handle application exit by cleaning up old database cache entries.
+
+        Removes cache entries older than 90 days from the database.
+
+        Args:
+            task: DelayedTask instance containing task execution context
+
+        Returns:
+            None
+        """
+
+        await self._cleanupOldData()
+
     async def _dtCronJob(self, task: DelayedTask) -> None:
-        # Only run cleanup every 10 minutes
+        """Periodic cron job to clean up stalled chat states.
+
+        Runs every 30 minutes to identify and remove chat states that have been
+        inactive for more than 1 hour with empty message queues. This prevents
+        memory leaks from abandoned chat sessions.
+
+        Args:
+            task: DelayedTask instance containing task execution context
+
+        Returns:
+            None
+        """
 
         nowTime = time.time()
-        nowMinutes = time.gmtime(nowTime).tm_min
+        nowTimeStuct = time.gmtime(nowTime)
+        nowMinutes = nowTimeStuct.tm_min
+        nowHour = nowTimeStuct.tm_hour
+        nowWDay = nowTimeStuct.tm_wday
+
+        if nowMinutes == 0 and nowHour == 0 and nowWDay == 0:
+            # Once a week, cleanup old data
+            await self._cleanupOldData()
+
+        # Every 30 minutes drop unused chat states
         if nowMinutes % 30 != 0:
             return
 
-        logger.debug("Running cleanup for stalled chat states...")
+        logger.debug("Running cleanup for obsolete chat states...")
         async with self.stateLock:
             stalledStateNames: List[str] = []
             for k, v in self.chatStates.items():
@@ -342,6 +377,12 @@ class HandlersManager(CommandHandlerGetterInterface):
 
             for stateName in stalledStateNames:
                 self.chatStates.pop(stateName)
+
+    async def _cleanupOldData(self) -> None:
+        # Drop cache entries, that more than 3 month old
+        self.db.clearOldCacheEntries(ttl=60 * 60 * 24 * 90)
+        # Also drop completed tasks older than a month
+        self.db.cleanupOldCompletedDelayedTasks(ttl=60 * 60 * 24 * 30)
 
     def injectBot(self, bot: ExtBot | libMax.MaxBotClient) -> None:
         """Inject bot instance into all registered handlers.
