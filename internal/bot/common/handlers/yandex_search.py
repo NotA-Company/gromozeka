@@ -54,7 +54,7 @@ from lib.ai import (
     LLMParameterType,
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
-from lib.cache import JsonValueConverter
+from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator, StringValueConverter
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 from .base import BaseBotHandler
@@ -197,6 +197,22 @@ class YandexSearchHandler(BaseBotHandler):
             handler=self._llmToolGetUrlContent,
         )
 
+        self.urlContentCache = GenericDatabaseCache(
+            database,
+            namespace=CacheType.URL_CONTENT,
+            keyGenerator=StringKeyGenerator(),
+            valueConverter=JsonValueConverter[Dict[str, Any]](),
+        )
+        self.urlContentCondensedCache = GenericDatabaseCache(
+            database,
+            namespace=CacheType.URL_CONTENT_CONDENSED,
+            keyGenerator=JsonKeyGenerator[Dict[str, Any]](hash=False),
+            valueConverter=StringValueConverter(),
+        )
+        self.urlContentCacheTTL = 60 * 60  # 1 Hour
+
+        # End of __init__
+
     async def _llmToolWebSearch(
         self,
         extraData: Optional[Dict[str, Any]],
@@ -326,6 +342,80 @@ class YandexSearchHandler(BaseBotHandler):
             raise RuntimeError(
                 f"ensuredMessage should be instance of EnsuredMessage but got {type(ensuredMessage).__name__}"
             )
+
+        condensedCacheKey = {"url": url, "max_size": max_size}
+        content = await self.urlContentCondensedCache.get(condensedCacheKey, self.urlContentCacheTTL)
+        if content is not None:
+            return content
+
+        try:
+            contentDict = await self.urlContentCache.get(url, self.urlContentCacheTTL)
+            if contentDict is None:
+                contentDict = await self._downloadUrl(url)
+                if not contentDict.get("done", False):
+                    # If done is not True, then it's some error, return it
+                    return utils.jsonDumps(contentDict)
+                contentType = contentDict["contentType"]
+                if not contentType.startswith("text/"):
+                    logger.warning(f"getUrl: content type of '{url}' is {contentType}")
+                    return utils.jsonDumps({"done": False, "error": f"Content is not text, but {contentType}"})
+
+                contentDict.pop("done", None)
+
+                await self.urlContentCache.set(url, contentDict)
+
+            content = contentDict["content"]
+            contentType = contentDict["contentType"]
+
+            if parse_to_markdown and "html" in contentType:
+                # TODO: think about caching it as well. Or not
+                # Parse to Markdown only if it's HTML
+                content = html_to_markdown.convert(
+                    content,
+                    options=html_to_markdown.ConversionOptions(
+                        extract_metadata=False,
+                        strip_tags={"svg", "img"},
+                    ),
+                )
+
+            if len(content) >= max_size:
+                logger.debug(f"Content length is {len(content)} > {max_size}, condensing...")
+                chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+                prompt = [
+                    ModelMessage(
+                        role="system",
+                        content="Сделай максимально подробный пересказ этого документа. "
+                        "Сохраняй язык оригинала (не переводи),"
+                        " ответ так же давай на языке документа (не этого завпроса). "
+                        "Включи все идеи, аргументы и факты. "
+                        "Структура пересказа должна соответствовать структуре"
+                        " исходного текста (разделы, подразделы). "
+                        "Пересказывай исключительно на языке исходного текста.",
+                    ),
+                    ModelMessage(role="user", content=content),
+                ]
+                promptDump = "\n".join([f"\t{repr(v)}" for v in prompt])
+                logger.debug(f"Will condense \n{promptDump}")
+                mlRet = await self.llmService.generateText(
+                    prompt=prompt,
+                    chatId=ensuredMessage.recipient.id,
+                    chatSettings=chatSettings,
+                    llmManager=self.llmManager,
+                    modelKey=ChatSettingsKey.CHAT_MODEL,
+                    fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                )
+                logger.debug(f"Condensing result: {mlRet}, len is {len(mlRet.resultText)}")
+                if mlRet.status == ModelResultStatus.FINAL and mlRet.resultText:
+                    content = mlRet.resultText
+                    await self.urlContentCondensedCache.set(condensedCacheKey, content)
+
+            return content
+
+        except Exception as e:
+            logger.error(f"Error getting content from {url}: {e}")
+            return utils.jsonDumps({"done": False, "error": str(e)})
+
+    async def _downloadUrl(self, url: str) -> Dict[str, Any]:
         try:
             async with httpx.AsyncClient(
                 http2=True,
@@ -338,73 +428,32 @@ class YandexSearchHandler(BaseBotHandler):
                     "Accept-Language": "ru-RU,ru,en-US,en;q=0.5",
                     "Accept-Encoding": "gzip, deflate",
                     # "Connection": "keep-alive",
+                    # TODO: add proxy support via config
                 },
-                # TODO: add proxy support via config
             ) as client:
                 # response: requests.Response = requests.get(url, timeout=(120.0, 120.0))
                 response = await client.get(url)
                 await response.aread()
 
                 if response.status_code < 200 or response.status_code >= 300:
-                    return utils.jsonDumps(
-                        {
-                            "done": False,
-                            "error": f"Request failed with status {response.status_code}: {response.reason_phrase}",
-                        }
-                    )
+                    return {
+                        "done": False,
+                        "error": f"Request failed with status {response.status_code}: {response.reason_phrase}",
+                    }
                 contentType = response.headers.get("Content-Type")
                 if contentType is None:
                     contentType = "test/html"
-                if not contentType.startswith("text/"):
-                    logger.warning(f"getUrl: content type of '{url}' is {contentType}")
-                    return utils.jsonDumps({"done": False, "error": f"Content is not text, but {contentType}"})
-
-                content = response.text
-
-                if parse_to_markdown and "html" in contentType:
-                    # Parse to Markdown only if it's HTML
-                    content = html_to_markdown.convert(
-                        content,
-                        options=html_to_markdown.ConversionOptions(
-                            extract_metadata=False,
-                            strip_tags={"svg", "img"},
-                        ),
-                    )
-
-                if len(content) >= max_size:
-                    logger.debug(f"Content length is {len(content)} > {max_size}, condensing...")
-                    chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
-                    prompt = [
-                        ModelMessage(
-                            role="system",
-                            content="Сделай максимально подробный пересказ этого документа. "
-                            "Сохраняй язык оригинала (не переводи),"
-                            " ответ так же давай на языке документа (не этого завпроса). "
-                            "Включи все идеи, аргументы и факты. "
-                            "Структура пересказа должна соответствовать структуре"
-                            " исходного текста (разделы, подразделы). "
-                            "Пересказывай исключительно на языке исходного текста.",
-                        ),
-                        ModelMessage(role="user", content=content),
-                    ]
-                    promptDump = "\n".join([f"\t{repr(v)}" for v in prompt])
-                    logger.debug(f"Will condense \n{promptDump}")
-                    mlRet = await self.llmService.generateText(
-                        prompt=prompt,
-                        chatId=ensuredMessage.recipient.id,
-                        chatSettings=chatSettings,
-                        llmManager=self.llmManager,
-                        modelKey=ChatSettingsKey.CHAT_MODEL,
-                        fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
-                    )
-                    logger.debug(f"Condensing result: {mlRet}, len is {len(mlRet.resultText)}")
-                    if mlRet.status == ModelResultStatus.FINAL and mlRet.resultText:
-                        content = mlRet.resultText
-
-                return content
+                return {
+                    "done": True,
+                    "content": response.text,
+                    "contentType": contentType,
+                }
         except Exception as e:
             logger.error(f"Error getting content from {url}: {e}")
-            return utils.jsonDumps({"done": False, "error": str(e)})
+            return {
+                "done": False,
+                "error": str(e),
+            }
 
     def _formatSearchResult(self, searchResult: ys.SearchResponse) -> Sequence[str]:
         """Format Yandex Search API response for Telegram message display.
