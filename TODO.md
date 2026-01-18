@@ -24,7 +24,6 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
 - [ ] Think about channels support
 - [ ] Fix found tool-calling bugs
-- [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
@@ -35,6 +34,7 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add coverage badge?
+- [x] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [x] use `httpx` instead of `request` in [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py) + add redirection handling + headers 
 - [x] Add some cache into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
 - [x] Add optional condensing of page content via LLM into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)

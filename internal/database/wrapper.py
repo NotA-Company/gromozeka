@@ -2513,6 +2513,35 @@ class DatabaseWrapper:
             logger.error(f"Failed to get pending delayed tasks: {e}")
             return []
 
+    def cleanupOldCompletedDelayedTasks(self, ttl: Optional[int], *, dataSource: Optional[str] = None) -> bool:
+        """Cleanup old completed tasks"""
+
+        if ttl is None:
+            ttl = 0
+        maxUpdatedAt = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=ttl)
+
+        try:
+            with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
+                # Clear old entries of specific cache type
+                cursor.execute(
+                    """
+                    DELETE FROM delayed_tasks
+                    WHERE
+                        is_done = TRUE AND
+                        updated_at < :maxUpdatedAt
+                    """,
+                    {
+                        "maxUpdatedAt": maxUpdatedAt,
+                    },
+                )
+
+                deletedCount = cursor.rowcount
+                logger.info(f"Cleared {deletedCount} completed delayed tasks (older than {ttl}s).")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to clear old cache entries: {e}")
+            return False
+
     ###
     # SPAM/Ham Processing functions
     ###
@@ -2940,3 +2969,52 @@ class DatabaseWrapper:
                 )
         except Exception as e:
             logger.error(f"Failed to clear cache {cacheType}: {e}")
+
+    def clearOldCacheEntries(
+        self,
+        ttl: Optional[int],
+        cacheType: Optional[CacheType] = None,
+        *,
+        dataSource: Optional[str] = None,
+    ) -> bool:
+        """
+        Clear cache entries older than the specified age, dood!
+
+        Args:
+            olderThanSeconds: Remove entries older than this many seconds
+            cacheType: Optional cache type to filter by. If None, clears old entries from all caches.
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Writes to default source unless dataSource specified. Cannot write to readonly sources.
+        """
+        # Calculate the cutoff timestamp
+        if ttl is None:
+            ttl = 0
+        cutoffTime = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=ttl)
+
+        try:
+            with self.getCursor(dataSource=dataSource, readonly=False) as cursor:
+                # Clear old entries of specific cache type
+                cursor.execute(
+                    """
+                    DELETE FROM cache
+                    WHERE
+                        (:cacheType IS NULL OR namespace = :cacheType) AND
+                        updated_at < :cutoffTime
+                    """,
+                    {
+                        "cacheType": cacheType,
+                        "cutoffTime": cutoffTime,
+                    },
+                )
+
+                deletedCount = cursor.rowcount
+                logger.info(f"Cleared {deletedCount} old cache entries (older than {ttl}s, type={cacheType}).")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to clear old cache entries: {e}")
+            return False
