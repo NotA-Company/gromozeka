@@ -24,7 +24,7 @@ import logging
 from typing import Any, Dict, Optional, Sequence
 
 import html_to_markdown
-import requests
+import httpx
 
 import lib.utils as utils
 import lib.yandex_search as ys
@@ -305,45 +305,50 @@ class YandexSearchHandler(BaseBotHandler):
                  if the request fails
         """
         try:
-            # TODO: Switch to httpx and properly handle redirects and so on
-            doc: requests.Response = requests.get(url, timeout=(120.0, 120.0))
+            async with httpx.AsyncClient(
+                http2=True,
+                timeout=httpx.Timeout(60),  # Set Timeout to 1 minute for everything
+                follow_redirects=True,
+                max_redirects=5,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; MyWebScraper/1.0)",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "ru-RU,ru,en-US,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                    # "Connection": "keep-alive",
+                },
+                # TODO: add proxy support via config
+            ) as client:
+                # response: requests.Response = requests.get(url, timeout=(120.0, 120.0))
+                response = await client.get(url)
+                await response.aread()
 
-            if doc.status_code < 200 or doc.status_code >= 300:
-                reason = doc.reason
-                if isinstance(doc.reason, bytes):
-                    try:
-                        reason = doc.reason.decode("utf-8")
-                    except UnicodeDecodeError:
-                        reason = doc.reason.decode("iso-8859-1", errors="replace")
+                if response.status_code < 200 or response.status_code >= 300:
+                    return utils.jsonDumps(
+                        {
+                            "done": False,
+                            "error": f"Request failed with status {response.status_code}: {response.reason_phrase}",
+                        }
+                    )
+                contentType = response.headers.get("Content-Type")
+                if contentType is None:
+                    contentType = "test/html"
+                if not contentType.startswith("text/"):
+                    logger.warning(f"getUrl: content type of '{url}' is {contentType}")
+                    return utils.jsonDumps({"done": False, "error": f"Content is not text, but {contentType}"})
 
-                return utils.jsonDumps(
-                    {
-                        "done": False,
-                        "error": f"Request failed with status {doc.status_code}: {reason}",
-                    }
-                )
+                content = response.text
 
-            contentType = doc.headers.get("content-type", "text/html")
-            if not contentType.startswith("text/"):
-                logger.warning(f"getUrl: content type of '{url}' is {contentType}")
-                return utils.jsonDumps({"done": False, "error": f"Content is not text, but {contentType}"})
-
-            try:
-                ret = doc.content.decode(doc.encoding or "utf-8")
-            except Exception as e:
-                logger.error(f"getUrl: cannot decode content as {doc.encoding}: {e}")
-                ret = doc.content.decode("iso-8859-1", errors="replace")
-
-            if parse_to_markdown and "html" in contentType:
-                # Parse to Markdown only if it's HTML
-                ret = html_to_markdown.convert(
-                    ret,
-                    options=html_to_markdown.ConversionOptions(
-                        extract_metadata=False,
-                        strip_tags={"svg", "img"},
-                    ),
-                )
-            return ret
+                if parse_to_markdown and "html" in contentType:
+                    # Parse to Markdown only if it's HTML
+                    content = html_to_markdown.convert(
+                        content,
+                        options=html_to_markdown.ConversionOptions(
+                            extract_metadata=False,
+                            strip_tags={"svg", "img"},
+                        ),
+                    )
+                return content
         except Exception as e:
             logger.error(f"Error getting content from {url}: {e}")
             return utils.jsonDumps({"done": False, "error": str(e)})
