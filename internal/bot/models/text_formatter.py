@@ -453,7 +453,7 @@ class FormatEntity:
                 url = self.url if self.url else text
                 return f"[{text}]({url})"
             case FormatType.USER_MENTION:
-                if self.userId is None and self.userId is None:
+                if self.userId is None and self.userName is None:
                     return text
                 elif self.userName is not None:
                     # Ensure it starts with @
