@@ -251,7 +251,6 @@ class ChatSettingsKey(StrEnum):
     PAID_TIER_UNTILL_TS = "paid-tier-untill-ts"
 
     LLM_RATELIMITER = "llm-ratelimiter"
-    TOOLS_RATELIMITER = "tools-ratelimiter"
 
     # System settings. Not to be used\configured
     CACHED_TS = "cached-ts"
@@ -676,14 +675,9 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     },
     ChatSettingsKey.LLM_RATELIMITER: {
         "type": ChatSettingsType.STRING,
-        "short": "Рэйтлимитер использования LLM",
-        "long": "Ограничивает частоту запросов к LLM. Возможные значения смотри в конфиге.",
-        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
-    },
-    ChatSettingsKey.TOOLS_RATELIMITER: {
-        "type": ChatSettingsType.STRING,
-        "short": "Рэйтлимитер использования инструментов",
-        "long": "Ограничивает частоту запросов к инструментам. Возможные значения смотри в конфиге.",
+        "short": "Рэйтлимитер использования LLM и Инструментов",
+        "long": "Ограничивает частоту запросов к LLM и Инструментам (как то погода, поиск, пр...). "
+        "Возможные значения смотри в конфиге.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
 }
