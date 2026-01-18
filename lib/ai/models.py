@@ -11,6 +11,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import magic
 
+import lib.utils as utils
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,9 +112,8 @@ class LLMToolCall:
         self.parameters = parameters
 
     def __str__(self) -> str:
-        return json.dumps(
+        return utils.jsonDumps(
             {"id": self.id, "name": self.name, "parameters": self.parameters},
-            ensure_ascii=False,
         )
 
 
@@ -205,7 +206,7 @@ class ModelMessage:
                     "id": toolCall.id,
                     "function": {
                         "name": toolCall.name,
-                        "arguments": json.dumps(toolCall.parameters, ensure_ascii=False, default=str),
+                        "arguments": utils.jsonDumps(toolCall.parameters),
                     },
                     "type": "function",
                 }
@@ -217,7 +218,7 @@ class ModelMessage:
         return ret
 
     def __str__(self) -> str:
-        return json.dumps(self.toDict(), ensure_ascii=False, default=str)
+        return utils.jsonDumps(self.toDict())
 
     def __repr__(self) -> str:
         return f"ModelMessage({str(self)})"
@@ -323,24 +324,29 @@ class ModelRunResult:
         self.isToolsUsed = isToolsUsed
 
     def to_json(self) -> str:
-        return json.dumps(self.result, ensure_ascii=False)
+        return utils.jsonDumps(self.result)
 
     def __str__(self) -> str:
+        retDict = {
+            k: v
+            for k, v in {
+                "status": self.status.name,
+                "resultText": self.resultText,
+                "isFallback": self.isFallback,
+                "toolCalls": self.toolCalls if self.toolCalls else None,
+                "mediaMimeType": self.mediaMimeType,
+                "mediaData": (f"BinaryData({len(self.mediaData)})" if self.mediaData else None),
+                "error": str(self.error) if self.error else None,
+                "raw": "\n" + str(self.result),
+            }.items()
+            if v is not None
+        }
         return (
             "ModelRunResult("
-            + json.dumps(
-                {
-                    "status": self.status.name,
-                    "resultText": self.resultText,
-                    "isFallback": self.isFallback,
-                    "toolCalls": self.toolCalls,
-                    "raw": str(self.result),
-                    "mediaMimeType": self.mediaMimeType,
-                    "mediaData": (f"BinaryData({len(self.mediaData)})" if self.mediaData else None),
-                    "error": str(self.error) if self.error else "None",
-                },
-                ensure_ascii=False,
-                default=str,
+            + utils.jsonDumps(
+                retDict,
+                indent=2,
+                sort_keys=False,
             )
             + ")"
         )

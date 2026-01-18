@@ -195,6 +195,7 @@ class ChatSettingsKey(StrEnum):
     CHAT_PROMPT = "chat-prompt"
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
     CONDENSING_PROMPT = "condensing-prompt"
+    DOCUMET_CONDENSING_PROMPT = "document-condensing-prompt"
 
     # # Some system settings
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
@@ -251,7 +252,6 @@ class ChatSettingsKey(StrEnum):
     PAID_TIER_UNTILL_TS = "paid-tier-untill-ts"
 
     LLM_RATELIMITER = "llm-ratelimiter"
-    TOOLS_RATELIMITER = "tools-ratelimiter"
 
     # System settings. Not to be used\configured
     CACHED_TS = "cached-ts"
@@ -413,6 +413,12 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.STRING,
         "short": "Промпт для сжатия контекста",
         "long": "Промпт, используемый для сжатия контекста.",
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.DOCUMET_CONDENSING_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Промпт для сжатия документов (например вемб-страниц)",
+        "long": "Промпт, используемый для сжатия различных слишком больших документов (например, веб-страниц).",
         "page": ChatSettingsPage.LLM_BASE,
     },
     # # Some system settings
@@ -676,14 +682,9 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     },
     ChatSettingsKey.LLM_RATELIMITER: {
         "type": ChatSettingsType.STRING,
-        "short": "Рэйтлимитер использования LLM",
-        "long": "Ограничивает частоту запросов к LLM. Возможные значения смотри в конфиге.",
-        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
-    },
-    ChatSettingsKey.TOOLS_RATELIMITER: {
-        "type": ChatSettingsType.STRING,
-        "short": "Рэйтлимитер использования инструментов",
-        "long": "Ограничивает частоту запросов к инструментам. Возможные значения смотри в конфиге.",
+        "short": "Рэйтлимитер использования LLM и Инструментов",
+        "long": "Ограничивает частоту запросов к LLM и Инструментам (как то погода, поиск, пр...). "
+        "Возможные значения смотри в конфиге.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
 }
