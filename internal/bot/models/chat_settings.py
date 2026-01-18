@@ -195,6 +195,7 @@ class ChatSettingsKey(StrEnum):
     CHAT_PROMPT = "chat-prompt"
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
     CONDENSING_PROMPT = "condensing-prompt"
+    DOCUMET_CONDENSING_PROMPT = "document-condensing-prompt"
 
     # # Some system settings
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
@@ -412,6 +413,12 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.STRING,
         "short": "Промпт для сжатия контекста",
         "long": "Промпт, используемый для сжатия контекста.",
+        "page": ChatSettingsPage.LLM_BASE,
+    },
+    ChatSettingsKey.DOCUMET_CONDENSING_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Промпт для сжатия документов (например вемб-страниц)",
+        "long": "Промпт, используемый для сжатия различных слишком больших документов (например, веб-страниц).",
         "page": ChatSettingsPage.LLM_BASE,
     },
     # # Some system settings

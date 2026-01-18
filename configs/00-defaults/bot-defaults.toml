@@ -153,3 +153,10 @@ Output only the summary of the conversation so far, without any
 additional commentary or explanation.
 Answer using language of conversation, not language of this message."
 """
+document-condensing-prompt = """
+Сделай максимально подробный пересказ этого документа.
+Сохраняй язык оригинала (не переводи), ответ так же давай на языке документа (не этого завпроса).
+Включи все идеи, аргументы и факты. 
+Структура пересказа должна соответствовать структуре исходного текста (разделы, подразделы).
+Пересказывай исключительно на языке исходного текста.
+"""

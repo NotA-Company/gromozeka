@@ -39,6 +39,7 @@ from internal.bot.models import (
     EnsuredMessage,
     commandHandlerV2,
 )
+from internal.bot.models.chat_settings import ChatSettingsKey
 from internal.config.manager import ConfigManager
 from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
@@ -52,6 +53,7 @@ from lib.ai import (
     LLMManager,
     LLMParameterType,
 )
+from lib.ai.models import ModelMessage, ModelResultStatus
 from lib.cache import JsonValueConverter
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
@@ -128,10 +130,11 @@ class YandexSearchHandler(BaseBotHandler):
         self.llmService.registerTool(
             name="web_search",
             description=(
-                "Search information in Web."
-                " Return list of result URLs with"
-                " brief description of what found"
-                " or content from found pages"
+                "Search information in Web. "
+                "Return list of result URLs with brief description of what found"
+                " or content from found pages. "
+                "Use this tool when user asks for it or when"
+                " you do not know answer but think, that it could be found in Internet."
             ),
             parameters=[
                 LLMFunctionParameter(
@@ -181,6 +184,13 @@ class YandexSearchHandler(BaseBotHandler):
                     name="parse_to_markdown",
                     description="Whether to parse the content to Markdown format (Default: true)",
                     type=LLMParameterType.BOOLEAN,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="max_size",
+                    description="Max size of returned content. "
+                    "It will be condensed if page content is bigger than it (Default: 10240)",
+                    type=LLMParameterType.NUMBER,
                     required=False,
                 ),
             ],
@@ -283,8 +293,10 @@ class YandexSearchHandler(BaseBotHandler):
     async def _llmToolGetUrlContent(
         self,
         extraData: Optional[Dict[str, Any]],
+        *,
         url: str,
         parse_to_markdown: bool = True,
+        max_size: int = 10240,
         **kwargs,
     ) -> str:
         """
@@ -298,12 +310,22 @@ class YandexSearchHandler(BaseBotHandler):
             extraData: Optional extra data passed by the LLM service (unused)
             url: The URL to fetch content from
             parse_to_markdown: Whether to parse the content to Markdown (default: True)
+            max_size: Max size returned, will be condensed via LLM if page is bigger
             **kwargs: Additional keyword arguments (unused)
 
         Returns:
             str: The content from the URL as a string, or a JSON error object
                  if the request fails
         """
+        if extraData is None:
+            raise RuntimeError("extraData should be provided")
+        if "ensuredMessage" not in extraData:
+            raise RuntimeError("ensuredMessage should be provided")
+        ensuredMessage = extraData["ensuredMessage"]
+        if not isinstance(ensuredMessage, EnsuredMessage):
+            raise RuntimeError(
+                f"ensuredMessage should be instance of EnsuredMessage but got {type(ensuredMessage).__name__}"
+            )
         try:
             async with httpx.AsyncClient(
                 http2=True,
@@ -348,6 +370,37 @@ class YandexSearchHandler(BaseBotHandler):
                             strip_tags={"svg", "img"},
                         ),
                     )
+
+                if len(content) >= max_size:
+                    logger.debug(f"Content length is {len(content)} > {max_size}, condensing...")
+                    chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+                    prompt = [
+                        ModelMessage(
+                            role="system",
+                            content="Сделай максимально подробный пересказ этого документа. "
+                            "Сохраняй язык оригинала (не переводи),"
+                            " ответ так же давай на языке документа (не этого завпроса). "
+                            "Включи все идеи, аргументы и факты. "
+                            "Структура пересказа должна соответствовать структуре"
+                            " исходного текста (разделы, подразделы). "
+                            "Пересказывай исключительно на языке исходного текста.",
+                        ),
+                        ModelMessage(role="user", content=content),
+                    ]
+                    promptDump = "\n".join([f"\t{repr(v)}" for v in prompt])
+                    logger.debug(f"Will condense \n{promptDump}")
+                    mlRet = await self.llmService.generateText(
+                        prompt=prompt,
+                        chatId=ensuredMessage.recipient.id,
+                        chatSettings=chatSettings,
+                        llmManager=self.llmManager,
+                        modelKey=ChatSettingsKey.CHAT_MODEL,
+                        fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                    )
+                    logger.debug(f"Condensing result: {mlRet}, len is {len(mlRet.resultText)}")
+                    if mlRet.status == ModelResultStatus.FINAL and mlRet.resultText:
+                        content = mlRet.resultText
+
                 return content
         except Exception as e:
             logger.error(f"Error getting content from {url}: {e}")
