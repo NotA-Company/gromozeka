@@ -434,6 +434,11 @@ class YandexSearchHandler(BaseBotHandler):
 
         searchQuery = args
 
+        chatId = ensuredMessage.recipient.id
+        chatSettings = self.getChatSettings(chatId=chatId)
+        # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
+        await self.llmService.rateLimit(chatId, chatSettings)
+
         try:
             searchRet = await self.yandexSearchClient.search(searchQuery, **self.yandexSearchDefaults)
             if searchRet is None:

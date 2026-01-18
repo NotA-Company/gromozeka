@@ -113,7 +113,6 @@ paid-tier-untill-ts = 0
 
 # Per-char ratelimiters for LLM usage and Tools-usage
 llm-ratelimiter                 = "chat-default"
-tools-ratelimiter               = "chat-default"
 
 chat-model                      = "openrouter/mistral-7b-instruct:free"
 fallback-model                  = "openrouter/gemma-3-12b-it:free"

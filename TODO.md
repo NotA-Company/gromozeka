@@ -19,30 +19,30 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
   "image_description": "..."
 }
 
-- [x] Add support for cache condenced context + reuse it
 - [ ] Think, how to add summarization of chat to context of random answers
-- [x] ensuredMessage: support miltiple media
 - [ ] ConfigManager: Use TypedDict's
-- [ ] Save info about used tools to put it into context
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
-- [ ] Add ability for different chats use different rate-limiters 
 - [ ] Think about channels support
 - [ ] Fix found tool-calling bugs
 - [ ] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
-- [ ] use `httpx` instead of `request` in [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py) + add redirection handling + headers 
-- [ ] Add some cache into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
-- [ ] Add optional condensing of page content via LLM into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
 - [ ] Add support for embeddings + Vector search on chat's database
-- [ ] Add support for local LLM-providers (Like Ollama or LLama.cpp)
 - [ ] Run LLM and other requests in separate threads
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] Add coverage badge?
+- [ ] use `httpx` instead of `request` in [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py) + add redirection handling + headers 
+- [ ] Add some cache into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
+- [ ] Add optional condensing of page content via LLM into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
+- [x] Add support for local LLM-providers (Like Ollama or LLama.cpp)
+- [x] Add ability for different chats use different rate-limiters
+- [x] Add support for cache condenced context + reuse it
+- [x] ensuredMessage: support miltiple media
+- [x] Save info about used tools to put it into context
 - [x] Add user to DB on first message (even if spam) or join
 - [x] Handle user leave (add to DB to deny chat in list\summarisation\etc)
 - [x] auto-learn ham\spam only if confidence level is more, than treshold

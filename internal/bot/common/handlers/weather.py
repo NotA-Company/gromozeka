@@ -454,7 +454,10 @@ class WeatherHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_ERROR,
             )
             return
-
+        chatId = ensuredMessage.recipient.id
+        chatSettings = self.getChatSettings(chatId=chatId)
+        # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
+        await self.llmService.rateLimit(chatId, chatSettings)
         try:
             lon: Optional[float] = None
             lat: Optional[float] = None
@@ -577,6 +580,10 @@ class WeatherHandler(BaseBotHandler):
             )
             return
 
+        chatId = ensuredMessage.recipient.id
+        chatSettings = self.getChatSettings(chatId=chatId)
+        # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
+        await self.llmService.rateLimit(chatId, chatSettings)
         try:
             geocodeRet = await self.geocodeMapsClient.search(address)
             if not geocodeRet:
