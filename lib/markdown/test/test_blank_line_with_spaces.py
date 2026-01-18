@@ -2,6 +2,7 @@
 """
 Test blank lines with spaces between list items, dood!
 """
+
 import os
 import sys
 

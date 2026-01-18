@@ -372,16 +372,14 @@ class DatabaseWrapper:
 
             # Create settings table (needed before migrations for version tracking)
             with self.getCursor(dataSource=sourceName) as cursor:
-                cursor.execute(
-                    """
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS settings (
                         key TEXT PRIMARY KEY,
                         value TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
-                """
-                )
+                """)
 
             # Run migrations for this source
             migrationManager.migrate(dataSource=sourceName)
@@ -2740,13 +2738,11 @@ class DatabaseWrapper:
             List of cache storage dictionaries"""
         try:
             with self.getCursor(dataSource=dataSource, readonly=True) as cursor:
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT namespace, key, value, updated_at
                     FROM cache_storage
                     ORDER BY updated_at DESC
-                    """
-                )
+                    """)
                 return [self._validateDictIsCacheStorageDict(dict(row)) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Failed to get cache storage: {e}")

@@ -20,10 +20,7 @@ import zlib
 from typing import Any, Dict, List, Optional, Set
 
 import telegram
-from telegram._utils.entities import parse_message_entity
-from telegram.constants import MessageEntityType
 
-import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
@@ -36,6 +33,7 @@ from internal.bot.models import (
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    FormatType,
     MessageRecipient,
     MessageSender,
     commandHandlerV2,
@@ -300,72 +298,33 @@ class SpamHandler(BaseBotHandler):
             spamScore = max(spamScore, 100)
 
         # Parse entities
-        if isinstance(message, telegram.Message):
-            messageText = ensuredMessage.messageText
-            entities = message.entities
-            if message.text:
-                messageText = message.text
-                entities = message.entities
-            elif message.caption:
-                messageText = message.caption
-                entities = message.caption_entities
-            else:
-                logger.error(
-                    f"SPAM: {chatId}#{ensuredMessage.messageId}: text and caption are empty while messageText isn't"
-                )
-
-            if messageText and entities:
-                for entity in entities:
-                    match entity.type:
-                        case MessageEntityType.URL | MessageEntityType.TEXT_LINK:
-                            # Any URL looks like a spam
+        # Actually messagePrefix is possible for bot messages only, but whatever
+        messageText = ensuredMessage.messagePrefix + ensuredMessage.messageText
+        entities = ensuredMessage.formatEntities
+        if messageText and entities:
+            for entity in entities:
+                match entity.type:
+                    case FormatType.LINK:
+                        # Any URL looks like a spam
+                        spamScore = spamScore + 60
+                        logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
+                    case FormatType.USER_MENTION:
+                        mentionStr = entity.userName
+                        if mentionStr is None:
+                            mentionStr = entity.extractEntityText(messageText)
+                        chatUser = self.db.getChatUserByUsername(
+                            chatId=ensuredMessage.recipient.id, username=mentionStr
+                        )
+                        if chatUser is None:
+                            # Mentioning user not from chat looks like spam
                             spamScore = spamScore + 60
-                            logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
-                        case MessageEntityType.MENTION:
-                            mentionStr = parse_message_entity(messageText, entity)
-                            chatUser = self.db.getChatUserByUsername(
-                                chatId=ensuredMessage.recipient.id, username=mentionStr
-                            )
-                            if chatUser is None:
-                                # Mentioning user not from chat looks like spam
-                                spamScore = spamScore + 60
-                                logger.debug(f"SPAM: Found mention ({mentionStr}) in message, adding 60 to spam score")
-                                if mentionStr.endswith("bot"):
-                                    spamScore = spamScore + 40
-                                    logger.debug(
-                                        f"SPAM: Found mention of bot ({mentionStr}) in message, "
-                                        "adding 40 more to spam score"
-                                    )
-        elif isinstance(message, maxModels.Message):
-            entities = message.body.markup
-            messageText = ensuredMessage.messageText
-            if messageText and entities:
-                for entity in entities:
-                    match entity.type:
-                        case maxModels.MarkupType.LINK:
-                            # Any URL looks like a spam
-                            spamScore = spamScore + 60
-                            logger.debug(f"SPAM: Found URL ({entity.type}) in message, adding 60 to spam score")
-                        case maxModels.MarkupType.USER_MENTION:
-                            if isinstance(entity, maxModels.UserMentionMarkup):
-                                username = entity.user_link
-                                # userId = entity.user_id
-                                if username:
-                                    chatUser = self.db.getChatUserByUsername(
-                                        chatId=ensuredMessage.recipient.id, username=username
-                                    )
-                                    if chatUser is None:
-                                        # Mentioning user not from chat looks like spam
-                                        spamScore = spamScore + 60
-                                        logger.debug(
-                                            f"SPAM: Found mention ({username}) in message, adding 60 to spam score"
-                                        )
-                                        if username.endswith("bot"):
-                                            spamScore = spamScore + 40
-                                            logger.debug(
-                                                f"SPAM: Found mention of bot ({username}) in message, "
-                                                "adding 40 more to spam score"
-                                            )
+                            logger.debug(f"SPAM: Found mention ({mentionStr}) in message, adding 60 to spam score")
+                            if mentionStr.endswith("bot"):
+                                spamScore = spamScore + 40
+                                logger.debug(
+                                    f"SPAM: Found mention of bot ({mentionStr}) in message, "
+                                    "adding 40 more to spam score"
+                                )
         # End of entities parsing
 
         warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
