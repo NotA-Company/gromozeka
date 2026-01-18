@@ -200,9 +200,16 @@ class CacheStorageDict(TypedDict):
 class CacheType(StrEnum):
     """Cache type enum"""
 
-    WEATHER = "weather"  # Weather cache (coordinates -> weather data)
-    GEOCODING = "geocoding"  # Geocoding cache (city name -> coordinates)
-    YANDEX_SEARCH = "yandex_search"  # Yandex Search API Client cache (request-> Search Result)
+    WEATHER = "weather"
+    """Weather cache (coordinates -> weather data)"""
+    GEOCODING = "geocoding"
+    """Geocoding cache (city name -> coordinates)"""
+    YANDEX_SEARCH = "yandex_search"
+    """Yandex Search API Client cache (request-> Search Result)"""
+    URL_CONTENT = "url_content"
+    """Cached content of URL (url -> content+contentType)"""
+    URL_CONTENT_CONDENSED = "url_content_condensed"
+    """Cached condensed content of URL (url+max_size -> content)"""
 
     # Geocode Maps cache
     GM_SEARCH = "geocode_maps_search"
