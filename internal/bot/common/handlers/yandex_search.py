@@ -21,7 +21,7 @@ Dependencies:
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import html_to_markdown
 import httpx
@@ -235,6 +235,23 @@ class YandexSearchHandler(BaseBotHandler):
         Returns:
             JSON string containing search results or page contents with status information
         """
+
+        async def fetchUrlContent(urls: Sequence[Optional[str]]) -> Optional[Dict[str, str]]:
+            try:
+                for url in urls:
+                    if not url:
+                        continue
+                    content = await self._llmToolGetUrlContent(extraData=extraData, url=url, parse_to_markdown=True)
+                    if content and content[0] != "{":
+                        # Check that there is any result and it isn't json
+                        return {"url": url, "content": content}
+                    else:
+                        logger.warning(f"Failed to fetch content from {url}: {content}")
+            except Exception as e:
+                logger.exception(e)
+                return None
+            return None
+
         try:
             max_results = min(max(1, max_results), 10)
             if return_page_content:
@@ -261,33 +278,34 @@ class YandexSearchHandler(BaseBotHandler):
                     ret["error"] = searchResult
 
                 ret["pages"] = []
+                urlContentList: List[Dict[str, Any]] = []
 
                 for group in searchResult["groups"]:
                     for doc in group:
-                        fetched = False
-                        for url in [doc["url"], doc.get("savedCopyUrl", None)]:
-                            if url is None:
-                                continue
-                            # Try URL and cachedCopy if failed
-                            # url = doc["savedCopyUrl"]
-                            content = await self._llmToolGetUrlContent(
-                                extraData=extraData, url=url, parse_to_markdown=True
-                            )
-                            if content and content[0] != "{":
-                                # Check that there is any result and it isn't json
-                                ret["pages"].append({"url": url, "content": content})
-                                fetched = True
-                                break
-                            else:
-                                logger.warning(f"Failed to fetch content from {url}: {content}")
-                        if not fetched:
-                            # If fetch fails, print description
-                            ret["pages"].append(
-                                {
-                                    "url": doc["url"],
-                                    "description": doc.get("extendedText", "") + "\n" + "\n".join(doc["passages"]),
-                                }
-                            )
+                        urlContentList.append(
+                            {
+                                "url": doc["url"],
+                                "description": doc.get("extendedText", "") + "\n" + "\n".join(doc["passages"]),
+                                "fetcher": asyncio.create_task(
+                                    fetchUrlContent([doc["url"], doc.get("savedCopyUrl", None)])
+                                ),
+                            }
+                        )
+
+                logger.debug(f"Fetching {len(urlContentList)} pages: {urlContentList}")
+                for i, contentDict in enumerate(urlContentList):
+                    try:
+                        pageContent = await contentDict["fetcher"]
+                        logger.debug(f"Fetched {i+1}/{len(urlContentList)} pages: {pageContent}")
+                        if pageContent is None:
+                            ret["pages"].append({"url": contentDict["url"], "description": contentDict["description"]})
+                        else:
+                            ret["pages"].append(pageContent)
+
+                    except Exception as e:
+                        logger.error(f"Error during fetching content of {doc["url"]}: {e}")
+                        logger.exception(e)
+                        ret["pages"].append({"url": contentDict["url"], "description": contentDict["description"]})
 
             else:
                 # Return only search results
