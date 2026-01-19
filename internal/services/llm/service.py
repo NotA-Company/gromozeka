@@ -9,7 +9,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, MutableSequence, Sequence
+from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from threading import RLock
 from typing import Any, Dict, List, Optional, TypeAlias, Union
 
@@ -429,7 +429,7 @@ class LLMService:
         llmManager: LLMManager,
         modelKey: Union[ChatSettingsKey, AbstractModel, None],
         fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
-        tools: Optional[Iterable[LLMAbstractTool]] = None,
+        tools: Optional[Sequence[LLMAbstractTool]] = None,
     ) -> ModelRunResult:
         """Generate text with given prompt and chat settings."""
         if isinstance(prompt, str):

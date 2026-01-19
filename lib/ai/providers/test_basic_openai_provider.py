@@ -17,6 +17,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
     ChatCompletionMessageToolCall,
     Function,
 )
+from openai.types.completion_usage import CompletionUsage
 
 from lib.ai.models import (
     LLMFunctionParameter,
@@ -323,6 +324,12 @@ async def testGenerateTextSuccess(testModel, mockAsyncOpenAI, sampleMessages):
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     result = await testModel.generateText(sampleMessages)
@@ -363,6 +370,12 @@ async def testGenerateTextTruncated(testModel, mockAsyncOpenAI, sampleMessages):
     mockChoice.finish_reason = "length"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     result = await testModel.generateText(sampleMessages)
@@ -382,6 +395,12 @@ async def testGenerateTextContentFilter(testModel, mockAsyncOpenAI, sampleMessag
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "content_filter"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -403,6 +422,12 @@ async def testGenerateTextUnknownFinishReason(testModel, mockAsyncOpenAI, sample
     mockChoice.finish_reason = "unknown_reason"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     result = await testModel.generateText(sampleMessages)
@@ -421,6 +446,12 @@ async def testGenerateTextWithNullContent(testModel, mockAsyncOpenAI, sampleMess
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -455,6 +486,12 @@ async def testGenerateTextWithTools(testModel, mockAsyncOpenAI, sampleMessages, 
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "tool_calls"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -497,6 +534,12 @@ async def testGenerateTextWithMultipleToolCalls(testModel, mockAsyncOpenAI, samp
     mockChoice.finish_reason = "tool_calls"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     await testModel.generateText(sampleMessages, sampleTools)
@@ -520,6 +563,12 @@ async def testGenerateTextToolsNotSupported(testModel, mockAsyncOpenAI, sampleMe
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     await testModel.generateText(sampleMessages, sampleTools)
@@ -540,6 +589,12 @@ async def testGenerateTextToolsPassedToApi(testModel, mockAsyncOpenAI, sampleMes
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -570,6 +625,12 @@ async def testRequestParametersFormatting(testModel, mockAsyncOpenAI, sampleMess
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     await testModel.generateText(sampleMessages)
@@ -593,6 +654,12 @@ async def testMessagesConversion(testModel, mockAsyncOpenAI, sampleMessages):
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -642,6 +709,12 @@ async def testGenerateTextInvalidToolCallJson(testModel, mockAsyncOpenAI, sample
     mockChoice.finish_reason = "tool_calls"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     with pytest.raises(json.JSONDecodeError):
@@ -681,6 +754,12 @@ async def testGenerateImageSuccess(testModel, mockAsyncOpenAI, sampleMessages):
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -729,6 +808,12 @@ async def testFullWorkflowAddModelAndGenerate(testProvider, mockAsyncOpenAI):
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 

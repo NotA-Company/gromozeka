@@ -292,6 +292,9 @@ class ModelRunResult:
         "toolUsageHistory",
         "isFallback",
         "isToolsUsed",
+        "inputTokens",
+        "outputTokens",
+        "totalTokens",
     )
 
     def __init__(
@@ -304,6 +307,9 @@ class ModelRunResult:
         mediaData: Optional[bytes] = None,
         error: Optional[Exception] = None,
         toolUsageHistory: Optional[Sequence[ModelMessage]] = None,
+        inputTokens: Optional[int] = None,
+        outputTokens: Optional[int] = None,
+        totalTokens: Optional[int] = None,
     ):
         self.status = status
         self.resultText = resultText
@@ -316,6 +322,10 @@ class ModelRunResult:
 
         self.isFallback = False
         self.isToolsUsed = False
+
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.totalTokens = totalTokens
 
     def setFallback(self, isFallback: bool):
         self.isFallback = isFallback
@@ -337,6 +347,7 @@ class ModelRunResult:
                 "mediaMimeType": self.mediaMimeType,
                 "mediaData": (f"BinaryData({len(self.mediaData)})" if self.mediaData else None),
                 "error": str(self.error) if self.error else None,
+                "usage": {"input": self.inputTokens, "output": self.outputTokens, "total": self.totalTokens},
                 "raw": "\n" + str(self.result),
             }.items()
             if v is not None
