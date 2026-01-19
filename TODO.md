@@ -4,7 +4,9 @@
 - [ ] Do cache service refactoring
 - [ ] Add command for condensing context of given discussion
 - [ ] Add test\dev decorator support
+- [ ] Log used tokens count
 - [ ] Fix:
+
 2025-12-27 15:26:52,074 - lib.ai.providers.basic_openai_provider:155 - ERROR - Error running OpenAI-compatible model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}
 2025-12-27 15:26:52,074 - lib.ai.abstract:114 - ERROR - Error running model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}
 
@@ -13,27 +15,24 @@ Error running OpenAI-compatible model deepseek/deepseek-chat-v3.1: Error code: 4
 nput). Please reduce the length of either one, or use the "middle-out" transform to compress your prompt automatically.', 'code': 400, 'metadata': {'provider_name
 ': None}}}
 
-
-{
-  "image_prompt": "...",
-  "image_description": "..."
-}
-
-- [ ] Think, how to add summarization of chat to context of random answers
-- [ ] ConfigManager: Use TypedDict's
+- [ ] think about https://download.geonames.org/export/dump/
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
-- [ ] Think about channels support
-- [ ] Fix found tool-calling bugs
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
+# Vector search: 
 - [ ] Add support for embeddings + Vector search on chat's database
-- [ ] Run LLM and other requests in separate threads
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
-- [ ] think about https://download.geonames.org/export/dump/
+- [ ] Think, how to add summarization of chat to context of random answers
+
+# Also:
 - [ ] Add coverage badge?
+- [ ] Think about channels support
+- [ ] Run LLM and other requests in separate threads
+- [ ] ConfigManager: Use TypedDict's
+- [x] Fix found tool-calling bugs
 - [x] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [x] use `httpx` instead of `request` in [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py) + add redirection handling + headers 
 - [x] Add some cache into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
