@@ -3,7 +3,7 @@ Yandex Cloud SDK provider for LLM models, dood!
 """
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Any, Dict, Optional
 
 from yandex_cloud_ml_sdk import AsyncYCloudML
@@ -87,7 +87,7 @@ class YcSdkModel(AbstractModel):
         return ModelResultStatus(status)
 
     async def _generateText(
-        self, messages: Iterable[ModelMessage], tools: Optional[Iterable[LLMAbstractTool]] = None
+        self, messages: Sequence[ModelMessage], tools: Optional[Sequence[LLMAbstractTool]] = None
     ) -> ModelRunResult:
         """Run the YC SDK model with given messages, dood!
 
@@ -111,17 +111,34 @@ class YcSdkModel(AbstractModel):
             # Convert messages to YC SDK format if needed
             # For now, pass through as-is
             result = self._ycModel.run([message.toDict("text") for message in messages])
+
+            inputTokens: Optional[int] = None
+            outputTokens: Optional[int] = None
+            totalTokens: Optional[int] = None
+
+            if hasattr(result, "usage") and result.usage:
+                usage = result.usage
+                if hasattr(usage, "input_text_tokens"):
+                    inputTokens = result.usage.input_text_tokens
+                if hasattr(usage, "completion_tokens"):
+                    outputTokens = result.usage.completion_tokens
+                if hasattr(usage, "total_tokens"):
+                    totalTokens = result.usage.total_tokens
+
             return ModelRunResult(
                 result,
                 self._statusToModelRunResultStatus(result.status),
                 result.alternatives[0].text,
+                inputTokens=inputTokens,
+                outputTokens=outputTokens,
+                totalTokens=totalTokens,
             )
 
         except Exception as e:
             logger.error(f"Error running YC SDK model {self.modelId}: {e}")
             raise
 
-    async def generateImage(self, messages: Iterable[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
         """Generate an image via the YC SDK model, dood"""
 
         if not self._ycModel:

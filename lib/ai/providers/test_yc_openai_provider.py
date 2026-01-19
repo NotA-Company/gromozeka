@@ -11,6 +11,7 @@ import pytest
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
+from openai.types.completion_usage import CompletionUsage
 
 from lib.ai.models import ModelMessage, ModelResultStatus
 from lib.ai.providers.yc_openai_provider import YcOpenaiModel, YcOpenaiProvider
@@ -346,6 +347,12 @@ async def testYcOpenaiGenerateTextSuccess(ycOpenaiModel, mockAsyncOpenAI, sample
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     result = await ycOpenaiModel.generateText(sampleMessages)
@@ -366,6 +373,12 @@ async def testYcOpenaiGenerateTextWithYcModelId(ycOpenaiModel, mockAsyncOpenAI, 
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -388,6 +401,12 @@ async def testYcOpenaiGenerateTextRequestParameters(ycOpenaiModel, mockAsyncOpen
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -432,6 +451,12 @@ async def testYcOpenaiGenerateTextWithDifferentVersions(ycOpenaiProvider, mockAs
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -520,6 +545,12 @@ async def testYcOpenaiFullWorkflow(ycOpenaiProvider, mockAsyncOpenAI):
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -632,6 +663,12 @@ async def testYcOpenaiGenerateTextEmptyResponse(ycOpenaiModel, mockAsyncOpenAI, 
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     result = await ycOpenaiModel.generateText(sampleMessages)
@@ -651,6 +688,12 @@ async def testYcOpenaiGenerateTextNullContent(ycOpenaiModel, mockAsyncOpenAI, sa
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
