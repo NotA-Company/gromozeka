@@ -11,6 +11,7 @@ import pytest
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
+from openai.types.completion_usage import CompletionUsage
 
 from lib.ai.models import ModelMessage, ModelResultStatus
 from lib.ai.providers.openrouter_provider import OpenrouterModel, OpenrouterProvider
@@ -281,6 +282,12 @@ async def testOpenrouterGenerateTextSuccess(openrouterModel, mockAsyncOpenAI, sa
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     result = await openrouterModel.generateText(sampleMessages)
@@ -301,6 +308,12 @@ async def testOpenrouterGenerateTextWithExtraHeaders(openrouterModel, mockAsyncO
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -326,6 +339,12 @@ async def testOpenrouterGenerateTextRequestParameters(openrouterModel, mockAsync
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -370,6 +389,12 @@ async def testOpenrouterGenerateTextWithDifferentModels(openrouterProvider, mock
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -419,6 +444,12 @@ async def testOpenrouterGenerateTextWithTools(openrouterModel, mockAsyncOpenAI, 
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -502,6 +533,12 @@ async def testOpenrouterFullWorkflow(openrouterProvider, mockAsyncOpenAI):
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
@@ -611,6 +648,12 @@ async def testOpenrouterGenerateTextEmptyResponse(openrouterModel, mockAsyncOpen
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
 
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 
     result = await openrouterModel.generateText(sampleMessages)
@@ -630,6 +673,12 @@ async def testOpenrouterGenerateTextNullContent(openrouterModel, mockAsyncOpenAI
     mockChoice.message = mockMessage
     mockChoice.finish_reason = "stop"
     mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
 
     mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
 

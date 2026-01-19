@@ -209,6 +209,7 @@ class ChatSettingsKey(StrEnum):
 
     TOOLS_USED_PREFIX = "tools-used-prefix"
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
+    INTERMEDIATE_MESSAGE_PREFIX = "intermediate-message-prefix"
 
     # # Allowing different commands in chat
     ALLOW_TOOLS_COMMANDS = "allow-tools-commands"
@@ -486,6 +487,12 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.STRING,
         "short": "Префикс для ошибок",
         "long": "Префикс у сообщения если по каким либо причинам была использована запасная модель генерации текста",
+        "page": ChatSettingsPage.EXTENDED,
+    },
+    ChatSettingsKey.INTERMEDIATE_MESSAGE_PREFIX: {
+        "type": ChatSettingsType.STRING,
+        "short": "Префикс для промежуточных сообщений",
+        "long": "Префикс у сообщения, которое бот отвечает в процессе ответа на сообщение",
         "page": ChatSettingsPage.EXTENDED,
     },
     ChatSettingsKey.ALLOW_TOOLS_COMMANDS: {
