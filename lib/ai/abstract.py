@@ -87,7 +87,17 @@ class AbstractModel(ABC):
             f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
             f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
         )
-        # TODO: Should I fail if there are too many tokens?
+
+        if self.contextSize and tokensCount > self.contextSize * 2:
+            # If estimated tokens twice exceed model context, return error immediately
+            return ModelRunResult(
+                rawResult=None,
+                status=ModelResultStatus.ERROR,
+                error=Exception(
+                    f"Context too large: Estimated tokens: {tokensCount} model context: {self.contextSize}"
+                ),
+            )
+
         ret = await self._generateText(messages=messages, tools=tools)
 
         if self.enableJSONLog:
