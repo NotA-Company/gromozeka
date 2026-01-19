@@ -219,25 +219,36 @@ class LLMService:
             if ret.status == ModelResultStatus.FINAL and ret.resultText:
                 # First - check if it was really tool call
                 resultText = ret.resultText.strip()
-                match = re.match(r"^```(?:json\s*)?\s*({.*?})\s*```$", resultText, re.DOTALL | re.IGNORECASE)
+                match = re.match(r"^(.*?)```(?:json\s*)?\s*({.*?})\s*```(.*)$", resultText, re.DOTALL | re.IGNORECASE)
                 if match is not None:
-                    logger.debug(f"JSON found: {match.group(1)}")
+                    logger.debug(f"JSON found: {match.groups()}")
+                    prefixStr = match.group(1)
+                    suffixStr = match.group(3)
                     try:
-                        jsonData = json.loads(match.group(1))
+                        jsonData = json.loads(match.group(2))
                         logger.debug(f"JSON result: {jsonData}")
-                        if "name" in jsonData and "parameters" in jsonData and jsonData["name"] in self.toolsHandlers:
-                            # TODO: is "parameters" required?
+                        parameters = None
+                        if "arguments" in jsonData:
+                            parameters = jsonData.get("arguments", None)
+                        elif "parameters" in jsonData:
+                            parameters = jsonData.get("parameters", None)
+                        # Look fo tool calling only in begin or end of message, so prefix of suffix should be empty
+                        if (
+                            (not prefixStr or not suffixStr)
+                            and "name" in jsonData
+                            and isinstance(parameters, dict)
+                            and jsonData["name"] in self.toolsHandlers
+                        ):
+                            # TODO: is "parameters"|"arguments" required?
                             logger.debug("It looks like tool call, converting...")
                             ret.setToolsUsed(True)
                             ret.status = ModelResultStatus.TOOL_CALLS
-                            ret.resultText = ""
+                            ret.resultText = (prefixStr + suffixStr).strip()
                             toolCallId = jsonData.get("callId", None)
                             if toolCallId is None:
                                 toolCallId = str(uuid.uuid4())
 
-                            ret.toolCalls = [
-                                LLMToolCall(id=toolCallId, name=jsonData["name"], parameters=jsonData["parameters"])
-                            ]
+                            ret.toolCalls = [LLMToolCall(id=toolCallId, name=jsonData["name"], parameters=parameters)]
                         # TODO: In other cases do some conversion as well
                     except json.JSONDecodeError:
                         pass
