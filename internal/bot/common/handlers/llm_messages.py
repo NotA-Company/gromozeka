@@ -129,7 +129,15 @@ class LLMMessageHandler(BaseBotHandler):
             if mRet.resultText.strip() and sendIntermediateMessages:
                 try:
                     logger.debug(f"Sending intermediate message. LLM Result status is: {mRet.status}")
-                    await self.sendMessage(ensuredMessage, mRet.resultText, messageCategory=MessageCategory.BOT)
+                    prefixStr = chatSettings[ChatSettingsKey.INTERMEDIATE_MESSAGE_PREFIX].toStr()
+                    if ret.isFallback:
+                        prefixStr += chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
+                    await self.sendMessage(
+                        ensuredMessage,
+                        mRet.resultText,
+                        messageCategory=MessageCategory.BOT,
+                        addMessagePrefix=prefixStr,
+                    )
                     # Add more timeout + ping typing manager
                     typingManager.maxTimeout = typingManager.maxTimeout + 120
                     await typingManager.sendTypingAction()
