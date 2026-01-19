@@ -5,7 +5,7 @@ Basic OpenAI provider and model base classes for shared functionality, dood!
 import base64
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
@@ -54,7 +54,7 @@ class BasicOpenAIModel(AbstractModel):
         return {}
 
     async def _generateText(
-        self, messages: Iterable[ModelMessage], tools: Optional[Iterable[LLMAbstractTool]] = None
+        self, messages: Sequence[ModelMessage], tools: Optional[Sequence[LLMAbstractTool]] = None
     ) -> ModelRunResult:
         """Run the OpenAI-compatible model with given messages, dood!
 
@@ -112,6 +112,15 @@ class BasicOpenAIModel(AbstractModel):
                 logger.error(f"response.choices is empty: {type(response.choices).__name__}({response.choices})")
                 raise ValueError(f"Invalid response from OpenAI-compatible model: 3#{response}")
 
+            inputTokens: Optional[int] = None
+            outputTokens: Optional[int] = None
+            totalTokens: Optional[int] = None
+
+            if response.usage:
+                inputTokens = response.usage.prompt_tokens
+                outputTokens = response.usage.completion_tokens
+                totalTokens = response.usage.total_tokens
+
             status = ModelResultStatus.UNSPECIFIED
             match response.choices[0].finish_reason:
                 case "stop":
@@ -150,13 +159,21 @@ class BasicOpenAIModel(AbstractModel):
                     if tool.type == "function"
                 ]
 
-            return ModelRunResult(response, status, resText, toolCalls)
+            return ModelRunResult(
+                rawResult=response,
+                status=status,
+                resultText=resText,
+                toolCalls=toolCalls,
+                inputTokens=inputTokens,
+                outputTokens=outputTokens,
+                totalTokens=totalTokens,
+            )
 
         except Exception as e:
             logger.error(f"Error running OpenAI-compatible model {self.modelId}: {e}")
             raise
 
-    async def generateImage(self, messages: Iterable[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
         """Generate an image via the OpenAI-compatible model, dood"""
 
         if not self._config.get("support_images", False):
@@ -202,8 +219,20 @@ class BasicOpenAIModel(AbstractModel):
             # The generated image will be in the assistant message
             retMessage = response.choices[0].message
 
+            inputTokens: Optional[int] = None
+            outputTokens: Optional[int] = None
+            totalTokens: Optional[int] = None
+
+            if response.usage:
+                inputTokens = response.usage.prompt_tokens
+                outputTokens = response.usage.completion_tokens
+                totalTokens = response.usage.total_tokens
+
             if hasattr(retMessage, "images"):
                 images = getattr(retMessage, "images")
+                if len(images) > 1:
+                    logger.warning(f"Multiple ({len(images)}) images returned by model {self.modelId}: {images}")
+
                 for i, image in enumerate(images):
                     imageDataURL = image["image_url"]["url"]  # Base64 data URL 'data:image/png;base64,...'
                     # Format is usually: data:[<mediatype>][;base64],<data>
@@ -221,13 +250,21 @@ class BasicOpenAIModel(AbstractModel):
                         status,
                         mediaMimeType=mimeType,
                         mediaData=imageBytes,
+                        inputTokens=inputTokens,
+                        outputTokens=outputTokens,
+                        totalTokens=totalTokens,
                     )
             else:
                 logger.error("No images field in model response")
                 status = ModelResultStatus.ERROR
 
             return ModelRunResult(
-                response, status, resultText=retMessage.content if retMessage.content is not None else ""
+                response,
+                status,
+                resultText=retMessage.content if retMessage.content is not None else "",
+                inputTokens=inputTokens,
+                outputTokens=outputTokens,
+                totalTokens=totalTokens,
             )
 
         except Exception as e:

@@ -6,7 +6,7 @@ import datetime
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Any, Dict, List, Optional
 
 from lib import utils
@@ -55,7 +55,7 @@ class AbstractModel(ABC):
 
     @abstractmethod
     async def _generateText(
-        self, messages: Iterable[ModelMessage], tools: Optional[Iterable[LLMAbstractTool]] = None
+        self, messages: Sequence[ModelMessage], tools: Optional[Sequence[LLMAbstractTool]] = None
     ) -> ModelRunResult:
         """Run the model with given messages, dood!
 
@@ -68,7 +68,7 @@ class AbstractModel(ABC):
         raise NotImplementedError
 
     async def generateText(
-        self, messages: Iterable[ModelMessage], tools: Optional[Iterable[LLMAbstractTool]] = None
+        self, messages: Sequence[ModelMessage], tools: Optional[Sequence[LLMAbstractTool]] = None
     ) -> ModelRunResult:
         """Generate text using the model with optional tools, dood!
 
@@ -82,6 +82,12 @@ class AbstractModel(ABC):
         Returns:
             ModelRunResult containing the generated text and metadata
         """
+        tokensCount = self.getEstimateTokensCount(messages)
+        logger.debug(
+            f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
+            f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
+        )
+        # TODO: Should I fail if there are too many tokens?
         ret = await self._generateText(messages=messages, tools=tools)
 
         if self.enableJSONLog:
@@ -89,15 +95,15 @@ class AbstractModel(ABC):
         return ret
 
     @abstractmethod
-    async def generateImage(self, messages: Iterable[ModelMessage]) -> ModelRunResult:
+    async def generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
         """Generate Image"""
         raise NotImplementedError
 
     async def generateTextWithFallBack(
         self,
-        messages: Iterable[ModelMessage],
+        messages: Sequence[ModelMessage],
         fallbackModel: "AbstractModel",
-        tools: Optional[Iterable[LLMAbstractTool]] = None,
+        tools: Optional[Sequence[LLMAbstractTool]] = None,
     ) -> ModelRunResult:
         """Run the model with given messages and fallback, dood!"""
         try:
@@ -119,7 +125,7 @@ class AbstractModel(ABC):
 
     async def generateImageWithFallBack(
         self,
-        messages: Iterable[ModelMessage],
+        messages: Sequence[ModelMessage],
         fallbackModel: "AbstractModel",
     ) -> ModelRunResult:
         """Generate image with given messages and fallback, dood!"""
@@ -157,9 +163,10 @@ class AbstractModel(ABC):
         if isinstance(data, str):
             text = data
         else:
-            text = json.dumps(data, ensure_ascii=False)
-        # In average, each token is 4 characters long
-        tokensCount = len(text) // 4
+            text = json.dumps(data, ensure_ascii=False, default=str)
+        # According my experience, average, each token is 3-4 characters long, so use 3.5
+        # For being conservative
+        tokensCount = len(text) / 3.5
         # As we use estimated token count, it won't count tokens properly,
         # so we need to multiply by some coefficient to be sure
         return int(tokensCount * self.tokensCountCoeff)
@@ -202,7 +209,7 @@ class AbstractModel(ABC):
         self.jsonLogFile = file
         self.jsonLogAddDateSuffix = addDateSuffix
 
-    def printJSONLog(self, messages: Iterable[ModelMessage], result: ModelRunResult) -> None:
+    def printJSONLog(self, messages: Sequence[ModelMessage], result: ModelRunResult) -> None:
         """Write a request-response pair to the JSON log file, dood!
 
         This method writes the conversation history (messages) and model response

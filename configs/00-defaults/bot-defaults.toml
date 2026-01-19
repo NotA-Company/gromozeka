@@ -105,6 +105,7 @@ random-answer-to-admin = true
 
 tools-used-prefix        = "🛠"
 fallback-happened-prefix = "🤖"
+intermediate-message-prefix = "✍️"
 
 # Default to free tier, also fill paid-tier with free tier as well
 base-tier = "free"
