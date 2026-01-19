@@ -5,7 +5,9 @@ managing tool registration and execution, and handling multi-turn conversations 
 The service supports fallback models and provides a unified interface for LLM operations.
 """
 
+import json
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, MutableSequence, Sequence
 from threading import RLock
@@ -18,6 +20,7 @@ from lib.ai.manager import LLMManager
 from lib.ai.models import (
     LLMAbstractTool,
     LLMFunctionParameter,
+    LLMToolCall,
     LLMToolFunction,
     ModelMessage,
     ModelResultStatus,
@@ -213,6 +216,32 @@ class LLMService:
                 tools=tools,
             )
             logger.debug(f"LLM returned: {ret} for callId #{callId}")
+            if ret.status == ModelResultStatus.FINAL and ret.resultText:
+                # First - check if it was really tool call
+                resultText = ret.resultText.strip()
+                match = re.match(r"^```(?:json\s*)?\s*({.*?})\s*```$", resultText, re.DOTALL | re.IGNORECASE)
+                if match is not None:
+                    logger.debug(f"JSON found: {match.group(1)}")
+                    try:
+                        jsonData = json.loads(match.group(1))
+                        logger.debug(f"JSON result: {jsonData}")
+                        if "name" in jsonData and "parameters" in jsonData and jsonData["name"] in self.toolsHandlers:
+                            # TODO: is "parameters" required?
+                            logger.debug("It looks like tool call, converting...")
+                            ret.setToolsUsed(True)
+                            ret.status = ModelResultStatus.TOOL_CALLS
+                            ret.resultText = ""
+                            toolCallId = jsonData.get("callId", None)
+                            if toolCallId is None:
+                                toolCallId = str(uuid.uuid4())
+
+                            ret.toolCalls = [
+                                LLMToolCall(id=toolCallId, name=jsonData["name"], parameters=jsonData["parameters"])
+                            ]
+                        # TODO: In other cases do some conversion as well
+                    except json.JSONDecodeError:
+                        pass
+
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 if callback:
                     await callback(ret, extraData)
@@ -398,8 +427,8 @@ class LLMService:
         chatId: Optional[int],
         chatSettings: ChatSettingsDict,
         llmManager: LLMManager,
-        modelKey: Union[ChatSettingsKey, AbstractModel],
-        fallbackKey: Union[ChatSettingsKey, AbstractModel],
+        modelKey: Union[ChatSettingsKey, AbstractModel, None],
+        fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
         tools: Optional[Iterable[LLMAbstractTool]] = None,
     ) -> ModelRunResult:
         """Generate text with given prompt and chat settings."""
