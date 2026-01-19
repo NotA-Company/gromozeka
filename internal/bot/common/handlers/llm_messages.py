@@ -35,9 +35,13 @@ from internal.bot.models import (
     ChatSettingsDict,
     ChatSettingsKey,
     ChatType,
+    CommandCategory,
+    CommandHandlerOrder,
+    CommandPermission,
     EnsuredMessage,
     LLMMessageFormat,
     MessageType,
+    commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
@@ -126,7 +130,7 @@ class LLMMessageHandler(BaseBotHandler):
                 try:
                     logger.debug(f"Sending intermediate message. LLM Result status is: {mRet.status}")
                     await self.sendMessage(ensuredMessage, mRet.resultText, messageCategory=MessageCategory.BOT)
-                    # Add more timeout + pint typing manager
+                    # Add more timeout + ping typing manager
                     typingManager.maxTimeout = typingManager.maxTimeout + 120
                     await typingManager.sendTypingAction()
                 except Exception as e:
@@ -728,3 +732,70 @@ class LLMMessageHandler(BaseBotHandler):
                 return False
 
             return True
+
+    @commandHandlerV2(
+        commands=("test_llm",),
+        shortDescription=" Run internal llm test",
+        helpMessage=": Internal command for LLM testing.",
+        visibility={CommandPermission.BOT_OWNER},
+        availableFor={CommandPermission.BOT_OWNER},
+        helpOrder=CommandHandlerOrder.TEST,
+        category=CommandCategory.TECHNICAL,
+    )
+    async def llm_test_command(
+        self,
+        ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """
+        Command to call llm with predefined prompt
+        Used for debugging llm responses (to fix toll calls for example)
+        """
+        request = [
+            # Put "request" list from .../logs/llm-json-logging.log.* here to test LLM response
+        ]
+        mReq = ModelMessage.fromDictList(request)
+
+        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+
+        async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
+            try:
+                logger.debug(f"IM: {mRet}")
+                await self.sendMessage(
+                    ensuredMessage,
+                    f"IM:\n```\n{mRet}\n```",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                )
+                # Add more timeout + pint typing manager
+            except Exception as e:
+                logger.error(f"Failed to send intermediate message: {e}")
+
+        # TODO: Make extraData typedDict (or dataclass?)
+        mlRet = await self.llmService.generateTextViaLLM(
+            mReq,
+            chatId=ensuredMessage.recipient.id,
+            chatSettings=chatSettings,
+            llmManager=self.llmManager,
+            modelKey=ChatSettingsKey.CHAT_MODEL,
+            fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
+            useTools=True,
+            callId=f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}",
+            callback=processIntermediateMessages,
+            extraData={
+                "ensuredMessage": ensuredMessage,
+                "typingManager": typingManager,
+            },
+        )
+
+        logger.debug(f"Request: {mReq}")
+        logger.debug(f"Generated result: {mlRet}")
+
+        await self.sendMessage(
+            ensuredMessage,
+            f"```\n{mlRet}\n```",
+            typingManager=typingManager,
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
