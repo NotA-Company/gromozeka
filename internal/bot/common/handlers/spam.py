@@ -503,6 +503,9 @@ class SpamHandler(BaseBotHandler):
         doBayesLearn = chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool()
         minConfidence = chatSettings[ChatSettingsKey.BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM].toFloat()
         doBayesLearn = doBayesLearn and confidence >= minConfidence
+        logger.debug(
+            f"Bayes AutoLearn status: {doBayesLearn}, confidence: {confidence}, minConfidence: {minConfidence}"
+        )
         if ensuredMessage.messageText and doBayesLearn:
             try:
                 await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
