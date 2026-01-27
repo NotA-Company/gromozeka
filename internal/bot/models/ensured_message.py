@@ -54,6 +54,7 @@ class CondensingDict(TypedDict):
 
 class MetadataDict(TypedDict, total=False):
     condensedThread: List[CondensingDict]
+    randomContext: str
     forwardedFrom: Dict[str, Any]
     messagePrefix: str
     usedTools: List[Dict[str, Any]]
@@ -1120,6 +1121,10 @@ class EnsuredMessage:
         """Convert to ModelMessage + tools history (if any)"""
 
         ret: List[ModelMessage] = []
+        randomContext = self.metadata.get("randomContext", None)
+        if randomContext:
+            ret.append(ModelMessage(role="system", content=randomContext))
+
         toolsHistory = self.metadata.get("usedTools", None)
         if toolsHistory:
             for toolsMessage in toolsHistory:
