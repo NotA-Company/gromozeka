@@ -598,7 +598,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 self.db,
                 format=llmMFormat,
                 outputFormat=outputFormat,
-                role="user" if dbMessage["message_category"] == "user" else "assistant",
+                role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
             )
 
         dbMessageList = self.db.getChatMessagesByRootId(
@@ -630,7 +630,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         self.db,
                         format=llmMFormat,
                         outputFormat=outputFormat,
-                        role="user" if dbMessageList[i]["message_category"] == "user" else "assistant",
+                        role=MessageCategory.fromStr(dbMessageList[i]["message_category"]).toRole(),
                     )
                 )
 
@@ -659,7 +659,7 @@ class BaseBotHandler(CommandHandlerMixin):
                     self.db,
                     format=llmMFormat,
                     outputFormat=outputFormat,
-                    role="user" if dbMessage["message_category"] == "user" else "assistant",
+                    role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
                 )
             )
 
