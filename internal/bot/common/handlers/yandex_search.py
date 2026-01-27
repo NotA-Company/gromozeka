@@ -412,8 +412,7 @@ class YandexSearchHandler(BaseBotHandler):
                     ),
                     ModelMessage(role="user", content=content),
                 ]
-                promptDump = "\n".join([f"\t{repr(v)}" for v in prompt])
-                logger.debug(f"Will condense \n{promptDump}")
+                logger.debug(f"Will condense content of {url}...")
                 mlRet = await self.llmService.generateText(
                     prompt=prompt,
                     chatId=ensuredMessage.recipient.id,
@@ -422,7 +421,7 @@ class YandexSearchHandler(BaseBotHandler):
                     modelKey=ChatSettingsKey.CHAT_MODEL,
                     fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
                 )
-                logger.debug(f"Condensing result: {mlRet}, len is {len(mlRet.resultText)}")
+                logger.debug(f"Condensed len is {len(mlRet.resultText)}")
                 if mlRet.status == ModelResultStatus.FINAL and mlRet.resultText:
                     content = mlRet.resultText
                     await self.urlContentCondensedCache.set(condensedCacheKey, content)

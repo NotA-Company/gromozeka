@@ -8,7 +8,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional
 
-from openai import AsyncOpenAI
+import openai
 from openai.types.chat.chat_completion import ChatCompletion
 
 from ..abstract import AbstractLLMProvider, AbstractModel
@@ -37,7 +37,7 @@ class BasicOpenAIModel(AbstractModel):
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        openAiClient: AsyncOpenAI,
+        openAiClient: openai.AsyncOpenAI,
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize basic OpenAI model, dood!"""
@@ -88,7 +88,26 @@ class BasicOpenAIModel(AbstractModel):
             params.update(self._getExtraParams())
 
             # Use OpenAI-compatible API
-            response: ChatCompletion = await self._client.chat.completions.create(**params)
+            response: Optional[ChatCompletion] = None
+            try:
+                response = await self._client.chat.completions.create(**params)
+            except openai.BadRequestError as e:
+                logger.exception(e)
+                logger.error(f"Error generating text with OpenAI-compatible model: {e}")
+                return ModelRunResult(
+                    rawResult=response,
+                    status=ModelResultStatus.ERROR,
+                    error=e,
+                )
+                # raise ValueError(f"Invalid response from OpenAI-compatible model: 4#{response}")
+            except Exception as e:
+                logger.error(f"Error generating text with OpenAI-compatible model: {e}")
+                # return ModelRunResult(
+                #     rawResult=response,
+                #     status=ModelResultStatus.ERROR,
+                #     error=e,
+                # )
+                raise
 
             # for chunk in response:
             #   if chunk.choices[0].delta.content is not None:
@@ -278,7 +297,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
     def __init__(self, config: Dict[str, Any]):
         """Initialize basic OpenAI provider, dood!"""
         super().__init__(config)
-        self._client: Optional[AsyncOpenAI] = None
+        self._client: Optional[openai.AsyncOpenAI] = None
         self._initClient()
 
     def _getBaseUrl(self) -> str:
@@ -309,7 +328,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             }
             client_params.update(self._getClientParams())
 
-            self._client = AsyncOpenAI(**client_params)
+            self._client = openai.AsyncOpenAI(**client_params)
 
             logger.info(f"{self.__class__.__name__} initialized, dood!")
 

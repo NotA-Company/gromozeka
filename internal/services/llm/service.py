@@ -190,7 +190,6 @@ class LLMService:
         _messages: Sequence[ModelMessage] = messages
         toolsHistory: MutableSequence[ModelMessage] = []
 
-        _condensingModel: Optional[AbstractModel] = None
         while True:
             # First - condense context if needed
             maxTokens = int(model.contextSize * maxTokensCoeff)
@@ -200,11 +199,9 @@ class LLMService:
                 keepFirstN=keepFirstN,
                 keepLastN=_keepLastN,
                 maxTokens=maxTokens,
-                condensingModel=_condensingModel,
+                condensingModel=condensingModel,
                 condensingPrompt=condensingPrompt,
             )
-            # First iteration - just strip context, next - properly condense context via LLM
-            _condensingModel = condensingModel or model
 
             ret = await self.generateText(
                 _messages,
@@ -214,6 +211,7 @@ class LLMService:
                 modelKey=model,
                 fallbackKey=fallbackModel,
                 tools=tools,
+                doDebugLogging=False,
             )
             logger.debug(f"LLM returned: {ret} for callId #{callId}")
             if ret.status == ModelResultStatus.FINAL and ret.resultText:
@@ -467,6 +465,7 @@ class LLMService:
         modelKey: Union[ChatSettingsKey, AbstractModel, None],
         fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
         tools: Optional[Sequence[LLMAbstractTool]] = None,
+        doDebugLogging: bool = True,
     ) -> ModelRunResult:
         """Generate text with given prompt and chat settings."""
         if isinstance(prompt, str):
@@ -480,7 +479,21 @@ class LLMService:
 
         if chatId is not None:
             await self.rateLimit(chatId, chatSettings)
-        return await llmModel.generateTextWithFallBack(prompt, fallbackModel, tools=tools)
+        if doDebugLogging:
+            logger.debug(
+                f"Generating Text for chat#{chatId}, LLMs: {llmModel}, {fallbackModel}, "
+                f"tools: {len(tools) if tools is not None else False}"
+            )
+            messageHistoryStr = ""
+            for msg in prompt:
+                messageHistoryStr += f"\t{repr(msg)}\n"
+            logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
+
+        ret = await llmModel.generateTextWithFallBack(prompt, fallbackModel, tools=tools)
+
+        if doDebugLogging:
+            logger.debug(f"LLM returned: {ret}")
+        return ret
 
     async def generateImage(
         self, prompt: str, chatId: Optional[int], chatSettings: ChatSettingsDict, llmManager: LLMManager
