@@ -296,7 +296,7 @@ class YandexSearchHandler(BaseBotHandler):
                 for i, contentDict in enumerate(urlContentList):
                     try:
                         pageContent = await contentDict["fetcher"]
-                        logger.debug(f"Fetched {i+1}/{len(urlContentList)} pages: {pageContent}")
+                        logger.debug(f"Fetched {i + 1}/{len(urlContentList)} pages: {pageContent}")
                         if pageContent is None:
                             ret["pages"].append({"url": contentDict["url"], "description": contentDict["description"]})
                         else:
