@@ -22,11 +22,10 @@ import logging
 import random
 import re
 from collections.abc import Sequence
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import telegram
 
-import lib.max_bot.models as maxModels
 from internal.bot import constants
 from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
@@ -422,25 +421,9 @@ class LLMMessageHandler(BaseBotHandler):
         if not chatSettings[ChatSettingsKey.ALLOW_REPLY].toBool():
             return False
 
-        message = ensuredMessage.getBaseMessage()
         isReplyToMyMessage = False
-        if (
-            self.botProvider == BotProvider.TELEGRAM
-            and isinstance(message, telegram.Message)
-            and message.reply_to_message
-            and message.reply_to_message.from_user
-            and message.reply_to_message.from_user.id == await self.getBotId()
-        ):
-            isReplyToMyMessage = True
-
-        elif (
-            self.botProvider == BotProvider.MAX
-            and isinstance(message, maxModels.Message)
-            and message.link
-            and message.link.type == maxModels.MessageLinkType.REPLY
-            and message.link.sender
-            and message.link.sender.user_id == await self.getBotId()
-        ):
+        eRepliedMEssage = ensuredMessage.getEnsuredRepliedToMessage()
+        if eRepliedMEssage is not None and eRepliedMEssage.sender.id == await self.getBotId():
             isReplyToMyMessage = True
 
         if not isReplyToMyMessage:
@@ -478,8 +461,8 @@ class LLMMessageHandler(BaseBotHandler):
                 ensuredMessage,
                 reqMessages,
                 typingManager=typingManager,
-                keepFirstN=1,
-                keepLastN=1,
+                keepFirstN=0,
+                keepLastN=2,  # Last message + message it is reply to
                 maxTokensCoeff=0.8,
             ):
                 logger.error("Failed to send LLM reply")
@@ -692,19 +675,25 @@ class LLMMessageHandler(BaseBotHandler):
             keepLastMessagesN: int = 1
             maxTokensCoeff: float = 0.8
 
-            # TODO: Add method for getting whole discussion
             if parentId is not None:
                 storedMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
-                # In case of condensing, keep thread-start message
-                keepFirstMessagesN = 1
+                # In case of condensing, keep message, last message is answer to
+                keepLastMessagesN += 1
 
             if not storedMessages:
+                # Not a thread, get last messages for context
                 storedMessages = [
                     ModelMessage(
                         role="system",
                         content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
                         + "\n"
                         + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+                    ),
+                ]
+                contextMessages: List[ModelMessage] = [
+                    ModelMessage(
+                        role="system",
+                        content=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
                     ),
                 ]
                 for storedMsg in reversed(
@@ -715,18 +704,42 @@ class LLMMessageHandler(BaseBotHandler):
                         # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
                     )
                 ):
+                    if storedMsg["message_id"] == ensuredMessage.messageId:
+                        # Skip current message from context
+                        continue
                     eMsg = EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
                     self._updateEMessageUserData(eMsg)
 
-                    storedMessages.extend(
+                    contextMessages.extend(
                         await eMsg.toModelMessageList(
                             self.db,
                             format=llmMessageFormat,
                             role="user" if storedMsg["message_category"] == "user" else "assistant",
                         )
                     )
-                # In case of getting last allow less context
-                maxTokensCoeff = 0.4
+
+                # Instead of sending messages as is, summarize them.
+                mlRet = await self.llmService.generateText(
+                    contextMessages,
+                    chatId=ensuredMessage.recipient.id,
+                    chatSettings=chatSettings,
+                    llmManager=self.llmManager,
+                    modelKey=ChatSettingsKey.CHAT_MODEL,
+                    fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                )
+                if mlRet.status != ModelResultStatus.FINAL:
+                    logger.error(f"Wrong LLM Reply Status: {mlRet.status} Error: {mlRet.error}")
+                else:
+                    # No need to add to context as it will be added later
+                    # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
+                    ensuredMessage.metadata["randomContext"] = mlRet.resultText
+                    self.db.updateChatMessageMetadata(
+                        chatId=ensuredMessage.recipient.id,
+                        messageId=ensuredMessage.messageId,
+                        metadata=ensuredMessage.metadata,
+                    )
+
+                storedMessages.extend(await ensuredMessage.toModelMessageList(self.db, format=llmMessageFormat))
 
             if not await self._sendLLMChatMessage(
                 ensuredMessage,
