@@ -640,8 +640,7 @@ class BaseBotHandler(CommandHandlerMixin):
             for condensedMessage in condenseCache:
                 # If we'll decide to condenseContext, skip summary message from condensing
                 keepFirstN += 1
-                # TODO: does "user" role suited here? maybe system or something? check possible values
-                cacheEntry = ModelMessage(role="user", content=condensedMessage["text"])
+                cacheEntry = ModelMessage(role="system", content=condensedMessage["text"])
                 ret.append(cacheEntry)
                 condenseCacheMessages.append(cacheEntry)
                 lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"])

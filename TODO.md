@@ -31,6 +31,8 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 - [ ] Add coverage badge?
 - [ ] Think about channels support
 - [ ] Run LLM and other requests in separate threads
+- [ ] Random answer: summarisation instead of raw messages
+- [ ] Logging: try to not log same messages if possible
 - [ ] ConfigManager: Use TypedDict's
 - [x] Fix found tool-calling bugs
 - [x] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
