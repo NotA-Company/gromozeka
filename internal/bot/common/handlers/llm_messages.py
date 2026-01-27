@@ -21,8 +21,9 @@ import json
 import logging
 import random
 import re
+from collections import deque
 from collections.abc import Sequence
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import telegram
 
@@ -690,19 +691,15 @@ class LLMMessageHandler(BaseBotHandler):
                         + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
                     ),
                 ]
-                contextMessages: List[ModelMessage] = [
-                    ModelMessage(
-                        role="system",
-                        content=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
-                    ),
-                ]
-                for storedMsg in reversed(
-                    self.db.getChatMessagesSince(
-                        chatId=chatId,
-                        threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
-                        limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
-                        # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
-                    )
+                # We need to use deque as we add messages to begin of queue (to not reverse db result)
+                # And we do not want to reverse db result as we do not want to process ALL retrieved
+                # messages if some message already has summarized context (i.e. metadata["randomContext"])
+                contextMessages = deque[ModelMessage]()
+                for storedMsg in self.db.getChatMessagesSince(
+                    chatId=chatId,
+                    threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
+                    limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
+                    # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
                 ):
                     if storedMsg["message_id"] == ensuredMessage.messageId:
                         # Skip current message from context
@@ -710,35 +707,58 @@ class LLMMessageHandler(BaseBotHandler):
                     eMsg = EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
                     self._updateEMessageUserData(eMsg)
 
-                    contextMessages.extend(
-                        await eMsg.toModelMessageList(
-                            self.db,
-                            format=llmMessageFormat,
-                            role="user" if storedMsg["message_category"] == "user" else "assistant",
+                    # We need to use `reversed` as deque.extendleft will add messages in reversed order
+                    # I assume, that it will just call appendleft for each item in the list
+                    # Which will automatically reverse the list. So we need to reverse it again
+                    # (using appendleft in for cycle will require reversing the list as well)
+                    contextMessages.extendleft(
+                        reversed(
+                            await eMsg.toModelMessageList(
+                                self.db,
+                                format=llmMessageFormat,
+                                role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
+                            )
                         )
                     )
+                    if eMsg.metadata.get("randomContext", None) is not None:
+                        # If some message already have summarized context,
+                        #  do not add previous messages to context
+                        break
 
-                # Instead of sending messages as is, summarize them.
-                mlRet = await self.llmService.generateText(
-                    contextMessages,
-                    chatId=ensuredMessage.recipient.id,
-                    chatSettings=chatSettings,
-                    llmManager=self.llmManager,
-                    modelKey=ChatSettingsKey.CHAT_MODEL,
-                    fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
-                )
-                if mlRet.status != ModelResultStatus.FINAL:
-                    logger.error(f"Wrong LLM Reply Status: {mlRet.status} Error: {mlRet.error}")
-                else:
-                    # No need to add to context as it will be added later
-                    # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
-                    ensuredMessage.metadata["randomContext"] = mlRet.resultText
-                    self.db.updateChatMessageMetadata(
-                        chatId=ensuredMessage.recipient.id,
-                        messageId=ensuredMessage.messageId,
-                        metadata=ensuredMessage.metadata,
+                if len(contextMessages) > 3:
+                    # If there a more than 3 messages (to not summarize too often)
+                    # Instead of sending messages as is, summarize them.
+                    # We need to use 3 here as 1 for `randomContext``
+                    # + 1 for message, randomContext is attached to
+                    # + 1 answer from bot
+                    contextMessages.appendleft(
+                        ModelMessage(
+                            role="system",
+                            content=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+                        )
                     )
+                    mlRet = await self.llmService.generateText(
+                        contextMessages,
+                        chatId=ensuredMessage.recipient.id,
+                        chatSettings=chatSettings,
+                        llmManager=self.llmManager,
+                        modelKey=ChatSettingsKey.CHAT_MODEL,
+                        fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                    )
+                    if mlRet.status != ModelResultStatus.FINAL:
+                        logger.error(f"Wrong LLM Reply Status: {mlRet.status} Error: {mlRet.error}")
+                    else:
+                        # No need to add to context as it will be added later
+                        # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
+                        ensuredMessage.metadata["randomContext"] = mlRet.resultText
+                        self.db.updateChatMessageMetadata(
+                            chatId=ensuredMessage.recipient.id,
+                            messageId=ensuredMessage.messageId,
+                            metadata=ensuredMessage.metadata,
+                        )
 
+                else:
+                    storedMessages.extend(contextMessages)
                 storedMessages.extend(await ensuredMessage.toModelMessageList(self.db, format=llmMessageFormat))
 
             if not await self._sendLLMChatMessage(

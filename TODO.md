@@ -34,6 +34,7 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 - [ ] Random answer: summarisation instead of raw messages
 - [ ] Logging: try to not log same messages if possible
 - [ ] ConfigManager: Use TypedDict's
+- [ ] Add replied message to context more close to message (maybe in message metadata)
 - [x] Fix found tool-calling bugs
 - [x] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [x] use `httpx` instead of `request` in [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py) + add redirection handling + headers 

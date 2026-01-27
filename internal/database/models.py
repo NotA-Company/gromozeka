@@ -57,6 +57,21 @@ class MessageCategory(StrEnum):
     USER_CONFIG_ANSWER = "user-config-answer"
     """Answer to some config option"""
 
+    @classmethod
+    def fromStr(cls, value: str, default: Optional["MessageCategory"] = None) -> "MessageCategory":
+        try:
+            return cls(value)
+        except ValueError:
+            if default is None:
+                default = MessageCategory.UNSPECIFIED
+            return default
+
+    def toRole(self) -> str:
+        if self.value.startswith("bot"):
+            return "assistant"
+
+        return "user"
+
 
 class SpamReason(StrEnum):
     """
