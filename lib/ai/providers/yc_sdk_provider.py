@@ -112,8 +112,8 @@ class YcAIModel(AbstractModel):
             # Convert messages to YC SDK format if needed
             # For now, pass through as-is
             result = await self._ycModel.run(
-                [message.toDict("text") for message in messages]
-            )  # pyright: ignore[reportArgumentType]
+                [message.toDict("text") for message in messages]  # pyright: ignore[reportArgumentType]
+            )
 
             inputTokens: Optional[int] = None
             outputTokens: Optional[int] = None
