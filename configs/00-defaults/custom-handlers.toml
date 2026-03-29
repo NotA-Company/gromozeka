@@ -1,0 +1,31 @@
+# Custom Handler Module Loading Configuration
+#
+# This file configures the dynamic loading of custom bot handlers.
+# Custom handlers extend BaseBotHandler and are inserted into the
+# handler chain after built-in handlers but before LLMMessageHandler.
+
+[custom-handlers]
+# Enable or disable the entire custom handler loading system
+enabled = false
+
+# Directory for local handler modules (relative to application root-dir)
+# Files in this directory can be imported by name when using the "module" field
+modules-dir = "modules"
+
+# Example handler configurations (commented out by default):
+#
+# [[custom-handlers.handlers]]
+# id = "my-custom-handler"
+# module = "my_handler"           # Loads from {modules-dir}/my_handler.py
+# class = "MyHandler"              # Class name within the module
+# parallelism = "parallel"         # "sequential" or "parallel" (default: "parallel")
+# order = 10                       # Lower numbers run first (default: 100)
+# enabled = true                   # Enable/disable this specific handler (default: true)
+#
+# Alternative using import-path:
+# [[custom-handlers.handlers]]
+# id = "installed-handler"
+# import-path = "my_package.handlers.MyHandler"  # Full dotted import path
+# parallelism = "parallel"
+# order = 20
+# enabled = true
