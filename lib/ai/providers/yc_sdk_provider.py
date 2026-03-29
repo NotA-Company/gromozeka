@@ -6,13 +6,13 @@ import logging
 from collections.abc import Sequence
 from typing import Any, Dict, Optional
 
-from yandex_cloud_ml_sdk import AsyncYCloudML
-from yandex_cloud_ml_sdk._exceptions import AioRpcError
-from yandex_cloud_ml_sdk._models.completions.model import AsyncGPTModel
-from yandex_cloud_ml_sdk._models.image_generation.model import AsyncImageGenerationModel
-from yandex_cloud_ml_sdk._models.image_generation.result import ImageGenerationModelResult
-from yandex_cloud_ml_sdk._types.operation import AsyncOperation
-from yandex_cloud_ml_sdk.auth import YandexCloudCLIAuth
+from yandex_ai_studio_sdk import AsyncAIStudio
+from yandex_ai_studio_sdk.exceptions import AioRpcError
+from yandex_ai_studio_sdk._models.image_generation.result import ImageGenerationModelResult
+from yandex_ai_studio_sdk._types.operation import AsyncOperation
+from yandex_ai_studio_sdk._models.completions.model import AsyncGPTModel
+from yandex_ai_studio_sdk._models.image_generation.model import AsyncImageGenerationModel  
+from yandex_ai_studio_sdk.auth import YandexCloudCLIAuth
 
 from ..abstract import AbstractLLMProvider, AbstractModel
 from ..models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
@@ -20,23 +20,23 @@ from ..models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunR
 logger = logging.getLogger(__name__)
 
 
-class YcSdkModel(AbstractModel):
+class YcAIModel(AbstractModel):
     """Yandex Cloud SDK model implementation, dood!"""
 
     def __init__(
         self,
-        provider: "YcSdkProvider",
+        provider: "YcAIProvider",
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        ycSDK: AsyncYCloudML,  # pyright: ignore[reportGeneralTypeIssues]
+        ycSDK: AsyncAIStudio,
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize YC SDK model, dood!"""
         super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
         self._ycModel: Optional[
-            AsyncImageGenerationModel | AsyncGPTModel  # pyright: ignore[reportGeneralTypeIssues]
+            AsyncImageGenerationModel | AsyncGPTModel
         ] = None
         self.ycSDK = ycSDK
 
@@ -106,11 +106,16 @@ class YcSdkModel(AbstractModel):
 
         if not self.supportText:
             raise NotImplementedError(f"Text generation isn't supported by {self.modelId}, dood!")
+        
+        if not isinstance(self._ycModel, AsyncGPTModel):
+            raise ValueError(
+                "Need AsyncGPTModel for generating text, " f"but got {type(self._ycModel).__name__}"
+            )
 
         try:
             # Convert messages to YC SDK format if needed
             # For now, pass through as-is
-            result = self._ycModel.run([message.toDict("text") for message in messages])
+            result = await self._ycModel.run([message.toDict("text") for message in messages]) # pyright: ignore[reportArgumentType]
 
             inputTokens: Optional[int] = None
             outputTokens: Optional[int] = None
@@ -147,7 +152,7 @@ class YcSdkModel(AbstractModel):
         if not self.supportImages:
             raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
 
-        if not isinstance(self._ycModel, AsyncImageGenerationModel):  # pyright: ignore[reportArgumentType]
+        if not isinstance(self._ycModel, AsyncImageGenerationModel):
             raise ValueError(
                 "Need AsyncImageGenerationModel for generating images, " f"but got {type(self._ycModel).__name__}"
             )
@@ -161,7 +166,7 @@ class YcSdkModel(AbstractModel):
 
         try:
             operation: AsyncOperation[ImageGenerationModelResult] = await self._ycModel.run_deferred(
-                [message.toDict("text", skipRole=True) for message in messages]
+                [message.toDict("text", skipRole=True) for message in messages] # pyright: ignore[reportArgumentType]
             )
             result = await operation.wait()
             if not isinstance(result, ImageGenerationModelResult):
@@ -203,17 +208,17 @@ class YcSdkModel(AbstractModel):
     #    return len(tokens)
 
 
-class YcSdkProvider(AbstractLLMProvider):
+class YcAIProvider(AbstractLLMProvider):
     """Yandex Cloud SDK provider implementation, dood!"""
 
     def __init__(self, config: Dict[str, Any]):
         """Initialize YC SDK provider, dood!"""
         super().__init__(config)
-        self._ycMlSDK = None
+        self._ycAISDK: Optional[AsyncAIStudio] = None
         self._initSDK()
 
     def _initSDK(self):
-        """Initialize Yandex Cloud ML SDK, dood!"""
+        """Initialize Yandex Cloud AI SDK, dood!"""
         try:
             folder_id = self.config.get("folder_id")
             yc_profile = self.config.get("yc_profile", None)
@@ -226,7 +231,7 @@ class YcSdkProvider(AbstractLLMProvider):
 
             logger.debug(f"Initializing YC SDK provider with folder_id: {folder_id} and yc_profile: {yc_profile}, dood")
             # TODO: Add ability to configure somehow else
-            self._ycMlSDK = AsyncYCloudML(folder_id=folder_id, auth=YandexCloudCLIAuth(), yc_profile=yc_profile)
+            self._ycAISDK = AsyncAIStudio(folder_id=folder_id, auth=YandexCloudCLIAuth(), yc_profile=yc_profile)
 
             logger.info("YC SDK provider initialized, dood!")
 
@@ -244,18 +249,21 @@ class YcSdkProvider(AbstractLLMProvider):
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Add a YC SDK model, dood!"""
+        if self._ycAISDK is None:
+            raise RuntimeError("YC AI SDK provider not initialized")
+
         if name in self.models:
             logger.warning(f"Model {name} already exists in YC SDK provider, dood!")
             return self.models[name]
 
         try:
-            model = YcSdkModel(
+            model = YcAIModel(
                 provider=self,
                 modelId=modelId,
                 modelVersion=modelVersion,
                 temperature=temperature,
                 contextSize=contextSize,
-                ycSDK=self._ycMlSDK,
+                ycSDK=self._ycAISDK,
                 extraConfig=extraConfig,
             )
 
