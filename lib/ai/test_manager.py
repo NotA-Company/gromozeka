@@ -185,7 +185,7 @@ def mockProviderClasses():
     return {
         "YcOpenaiProvider": MockProvider,
         "OpenrouterProvider": MockProvider,
-        "YcSdkProvider": MockProvider,
+        "YcAIProvider": MockProvider,
     }
 
 
@@ -210,7 +210,7 @@ def testManagerInitializationWithSingleProvider(singleProviderConfig, mockProvid
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
 
@@ -226,7 +226,7 @@ def testManagerInitializationWithMultipleProviders(multiProviderConfig, mockProv
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(multiProviderConfig)
 
@@ -243,7 +243,7 @@ def testManagerInitializationSkipsDisabledModels(configWithDisabledModel, mockPr
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(configWithDisabledModel)
 
@@ -273,7 +273,7 @@ def testProviderRegistrationSuccess(mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(config)
 
@@ -362,7 +362,7 @@ def testListModelsSingle(singleProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
         models = manager.listModels()
@@ -377,7 +377,7 @@ def testListModelsMultiple(multiProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(multiProviderConfig)
         models = manager.listModels()
@@ -394,7 +394,7 @@ def testGetModelSuccess(singleProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
         model = manager.getModel("test-model")
@@ -418,7 +418,7 @@ def testGetModelProviderNotFound(singleProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
         # Manually corrupt the registry
@@ -434,7 +434,7 @@ def testGetModelInfoSuccess(singleProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
         info = manager.getModelInfo("test-model")
@@ -473,7 +473,7 @@ def testListProvidersSingle(singleProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
         providers = manager.listProviders()
@@ -488,7 +488,7 @@ def testListProvidersMultiple(multiProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(multiProviderConfig)
         providers = manager.listProviders()
@@ -505,7 +505,7 @@ def testGetProviderSuccess(singleProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
         provider = manager.getProvider("test-provider")
@@ -551,7 +551,7 @@ def testModelInitializationWithMissingProvider(caplog, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         with caplog.at_level(logging.WARNING):
             manager = LLMManager(config)
@@ -615,7 +615,7 @@ def testModelInitializationWithDefaultValues(mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(config)
 
@@ -638,7 +638,7 @@ def testMultiProviderModelSelection(multiProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(multiProviderConfig)
 
@@ -692,7 +692,7 @@ def testDuplicateModelNamesAcrossProviders(mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(config)
 
@@ -715,7 +715,7 @@ def testModelAvailabilityChecking(singleProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
 
@@ -732,7 +732,7 @@ def testFullWorkflowInitializeAndUseModel(singleProviderConfig, mockProviderClas
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         # Initialize manager
         manager = LLMManager(singleProviderConfig)
@@ -761,7 +761,7 @@ def testConfigurationPersistence(singleProviderConfig, mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(singleProviderConfig)
 
@@ -800,7 +800,7 @@ def testEmptyModelsConfig(mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(config)
 
@@ -835,7 +835,7 @@ def testModelWithExtraConfig(mockProviderClasses):
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
         OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
-        YcSdkProvider=mockProviderClasses["YcSdkProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
     ):
         manager = LLMManager(config)
 

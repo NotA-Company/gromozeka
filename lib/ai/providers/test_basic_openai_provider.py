@@ -89,7 +89,7 @@ def providerConfig():
 @pytest.fixture
 def testProvider(providerConfig):
     """Create a test provider instance, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = MockOpenAIProvider(providerConfig)
         return provider
@@ -145,7 +145,7 @@ def sampleTools():
 
 def testProviderInitializationSuccess(providerConfig):
     """Test provider initializes successfully with valid config, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = MockOpenAIProvider(providerConfig)
 
@@ -170,7 +170,7 @@ def testProviderInitializationWithClientParams(providerConfig):
         def _getClientParams(self) -> Dict[str, Any]:
             return {"timeout": 60, "max_retries": 3}
 
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         CustomProvider(providerConfig)
 
