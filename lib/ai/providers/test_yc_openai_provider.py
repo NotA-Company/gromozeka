@@ -44,7 +44,7 @@ def providerConfig():
 @pytest.fixture
 def ycOpenaiProvider(providerConfig):
     """Create a YC OpenAI provider instance, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = YcOpenaiProvider(providerConfig)
         return provider
@@ -82,7 +82,7 @@ def sampleMessages():
 
 def testYcOpenaiProviderInitialization(providerConfig):
     """Test YC OpenAI provider initializes correctly, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = YcOpenaiProvider(providerConfig)
 
@@ -125,7 +125,7 @@ def testYcOpenaiProviderInitializationEmptyFolderId():
 
 def testYcOpenaiProviderClientInitialization(providerConfig):
     """Test YC OpenAI provider initializes AsyncOpenAI client correctly, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         testProvider = YcOpenaiProvider(providerConfig)
 
@@ -139,7 +139,7 @@ def testYcOpenaiProviderClientInitialization(providerConfig):
 
 def testYcOpenaiProviderFolderIdStorage(providerConfig):
     """Test YC OpenAI provider stores folder_id correctly, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = YcOpenaiProvider(providerConfig)
 
@@ -270,7 +270,7 @@ def testYcOpenaiModelGetModelIdFormat():
     provider = YcOpenaiProvider.__new__(YcOpenaiProvider)
     provider._folderId = "test-folder-123"
 
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI"):
+    with patch("openai.AsyncOpenAI"):
         model = YcOpenaiModel(
             provider=provider,
             modelId="test-model",
@@ -293,7 +293,7 @@ def testYcOpenaiModelGetModelIdWithoutFolderId():
     """Test YC OpenAI model raises error without folder_id, dood!"""
     provider = YcOpenaiProvider.__new__(YcOpenaiProvider)
 
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI"):
+    with patch("openai.AsyncOpenAI"):
         model = YcOpenaiModel(
             provider=provider,
             modelId="yandexgpt",
@@ -613,7 +613,7 @@ def testYcOpenaiProviderWithCustomConfig():
         "max_retries": 5,
     }
 
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = YcOpenaiProvider(config)
 
@@ -729,7 +729,7 @@ def testYcOpenaiModelIdWithDifferentFolderIds():
         provider = YcOpenaiProvider.__new__(YcOpenaiProvider)
         provider._folderId = folderId
 
-        with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI"):
+        with patch("openai.AsyncOpenAI"):
             model = YcOpenaiModel(
                 provider=provider,
                 modelId="yandexgpt",

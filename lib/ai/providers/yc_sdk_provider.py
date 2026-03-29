@@ -7,12 +7,12 @@ from collections.abc import Sequence
 from typing import Any, Dict, Optional
 
 from yandex_ai_studio_sdk import AsyncAIStudio
-from yandex_ai_studio_sdk.exceptions import AioRpcError
+from yandex_ai_studio_sdk._models.completions.model import AsyncGPTModel
+from yandex_ai_studio_sdk._models.image_generation.model import AsyncImageGenerationModel
 from yandex_ai_studio_sdk._models.image_generation.result import ImageGenerationModelResult
 from yandex_ai_studio_sdk._types.operation import AsyncOperation
-from yandex_ai_studio_sdk._models.completions.model import AsyncGPTModel
-from yandex_ai_studio_sdk._models.image_generation.model import AsyncImageGenerationModel  
 from yandex_ai_studio_sdk.auth import YandexCloudCLIAuth
+from yandex_ai_studio_sdk.exceptions import AioRpcError
 
 from ..abstract import AbstractLLMProvider, AbstractModel
 from ..models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
@@ -35,9 +35,7 @@ class YcAIModel(AbstractModel):
     ):
         """Initialize YC SDK model, dood!"""
         super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
-        self._ycModel: Optional[
-            AsyncImageGenerationModel | AsyncGPTModel
-        ] = None
+        self._ycModel: Optional[AsyncImageGenerationModel | AsyncGPTModel] = None
         self.ycSDK = ycSDK
 
         self.supportText = self._config.get("support_text", True)
@@ -106,16 +104,16 @@ class YcAIModel(AbstractModel):
 
         if not self.supportText:
             raise NotImplementedError(f"Text generation isn't supported by {self.modelId}, dood!")
-        
+
         if not isinstance(self._ycModel, AsyncGPTModel):
-            raise ValueError(
-                "Need AsyncGPTModel for generating text, " f"but got {type(self._ycModel).__name__}"
-            )
+            raise ValueError("Need AsyncGPTModel for generating text, " f"but got {type(self._ycModel).__name__}")
 
         try:
             # Convert messages to YC SDK format if needed
             # For now, pass through as-is
-            result = await self._ycModel.run([message.toDict("text") for message in messages]) # pyright: ignore[reportArgumentType]
+            result = await self._ycModel.run(
+                [message.toDict("text") for message in messages]  # pyright: ignore[reportArgumentType]
+            )
 
             inputTokens: Optional[int] = None
             outputTokens: Optional[int] = None
@@ -166,7 +164,7 @@ class YcAIModel(AbstractModel):
 
         try:
             operation: AsyncOperation[ImageGenerationModelResult] = await self._ycModel.run_deferred(
-                [message.toDict("text", skipRole=True) for message in messages] # pyright: ignore[reportArgumentType]
+                [message.toDict("text", skipRole=True) for message in messages]  # pyright: ignore[reportArgumentType]
             )
             result = await operation.wait()
             if not isinstance(result, ImageGenerationModelResult):
