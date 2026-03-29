@@ -9,7 +9,7 @@ from .abstract import AbstractLLMProvider, AbstractModel
 from .providers.custom_openai_provider import CustomOpenAIProvider
 from .providers.openrouter_provider import OpenrouterProvider
 from .providers.yc_openai_provider import YcOpenaiProvider
-from .providers.yc_sdk_provider import YcSdkProvider
+from .providers.yc_sdk_provider import YcAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class LLMManager:
         providerTypes = {
             "yc-openai": YcOpenaiProvider,
             "openrouter": OpenrouterProvider,
-            "yc-sdk": YcSdkProvider,
+            "yc-sdk": YcAIProvider,
             "custom-openai": CustomOpenAIProvider,
         }
 
