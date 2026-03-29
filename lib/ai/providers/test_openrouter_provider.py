@@ -43,7 +43,7 @@ def providerConfig():
 @pytest.fixture
 def openrouterProvider(providerConfig):
     """Create an OpenRouter provider instance, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = OpenrouterProvider(providerConfig)
         return provider
@@ -80,7 +80,7 @@ def sampleMessages():
 
 def testOpenrouterProviderInitialization(providerConfig):
     """Test OpenRouter provider initializes correctly, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = OpenrouterProvider(providerConfig)
 
@@ -106,7 +106,7 @@ def testOpenrouterProviderInitializationMissingApiKey():
 
 def testOpenrouterProviderClientInitialization(providerConfig):
     """Test OpenRouter provider initializes AsyncOpenAI client correctly, dood!"""
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         testProvider = OpenrouterProvider(providerConfig)
 
@@ -599,7 +599,7 @@ def testOpenrouterProviderWithCustomConfig():
         "max_retries": 5,
     }
 
-    with patch("lib.ai.providers.basic_openai_provider.AsyncOpenAI") as mockClient:
+    with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = OpenrouterProvider(config)
 
