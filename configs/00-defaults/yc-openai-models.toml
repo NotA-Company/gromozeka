@@ -1,4 +1,4 @@
-# Possible YC Models: https://yandex.cloud/ru/docs/foundation-models/concepts/generation/models
+# Possible YC Models: https://aistudio.yandex.ru/docs/ru/ai-studio/concepts/generation/models.html
 [models.models.yandexgpt]
 provider = "yc-openai"
 model_id = "yandexgpt"
@@ -37,7 +37,18 @@ provider = "yc-openai"
 model_id = "gpt-oss-120b"
 model_version="latest"
 temperature = 0.5
-context = 128000
+context = 131072
+support_tools = true
+support_text = true
+support_images = false
+tier = "paid"
+
+[models.models."yc/deepseek-v32"]
+provider = "yc-openai"
+model_id = "deepseek-v32"
+model_version="latest"
+temperature = 0.5
+context = 131072
 support_tools = true
 support_text = true
 support_images = false
@@ -48,7 +59,7 @@ provider = "yc-openai"
 model_id = "gpt-oss-20b"
 model_version="latest"
 temperature = 0.5
-context = 128000
+context = 131072
 support_tools = true
 support_text = true
 support_images = false
@@ -59,7 +70,7 @@ provider = "yc-openai"
 model_id = "qwen3-235b-a22b-fp8"
 model_version="latest"
 temperature = 0.5
-context = 256000
+context = 262144
 support_tools = true
 support_text = true
 support_images = false
@@ -70,7 +81,7 @@ provider = "yc-openai"
 model_id = "gemma-3-27b-it"
 model_version="latest"
 temperature = 0.5
-context = 128000
+context = 131072
 support_tools = true
 support_text = true
 support_images = false
