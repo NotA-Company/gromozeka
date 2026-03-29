@@ -310,6 +310,16 @@ class HandlersManager(CommandHandlerGetterInterface):
                 (ResenderHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
             )
 
+        # Load custom handlers from config
+        # We have to import module_loader here to avoid circular imports
+        from .module_loader import CustomHandlerLoader
+
+        customLoader = CustomHandlerLoader(configManager, database, llmManager, botProvider)
+        customHandlers = customLoader.loadAll()
+        if customHandlers:
+            logger.info(f"Loaded {len(customHandlers)} custom handler(s)")
+            self.handlers.extend(customHandlers)
+
         self.handlers.append(
             # Should be last messageHandler as it can handle any message
             (LLMMessageHandler(configManager, database, llmManager, botProvider), HandlerParallelism.SEQUENTIAL)
