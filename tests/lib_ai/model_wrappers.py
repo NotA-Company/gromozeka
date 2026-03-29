@@ -13,7 +13,7 @@ from typing import Any, Dict
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.providers.openrouter_provider import OpenrouterProvider
 from lib.ai.providers.yc_openai_provider import YcOpenaiProvider
-from lib.ai.providers.yc_sdk_provider import YcSdkProvider
+from lib.ai.providers.yc_sdk_provider import YcAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -121,4 +121,4 @@ class YcSdkModelWrapper(AbstractModelWrapper):
 
     @classmethod
     def getProvider(cls, config: Dict[str, Any]) -> AbstractLLMProvider:
-        return YcSdkProvider(config)
+        return YcAIProvider(config)
