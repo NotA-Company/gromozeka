@@ -725,10 +725,10 @@ class LLMMessageHandler(BaseBotHandler):
                         #  do not add previous messages to context
                         break
 
-                if len(contextMessages) > 3:
-                    # If there a more than 3 messages (to not summarize too often)
+                if len(contextMessages) > constants.MAX_RANDOM_CONTEXT_MESSAGES:
+                    # If there a more than MAX_RANDOM_CONTEXT_MESSAGES messages (to not summarize too often)
                     # Instead of sending messages as is, summarize them.
-                    # We need to use 3 here as 1 for `randomContext``
+                    # We need to use at least 3 here as 1 for `randomContext``
                     # + 1 for message, randomContext is attached to
                     # + 1 answer from bot
                     contextMessages.appendleft(
