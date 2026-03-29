@@ -24,3 +24,6 @@ HPA_TO_MMHG = 0.75006157584567  # hPA to mmHg coefficient
 
 # Geocoder settings
 GEOCODER_LOCATION_LANGS = ["en", "ru"]
+
+# Max messages in random message context, should be >=3
+MAX_RANDOM_CONTEXT_MESSAGES = 6
