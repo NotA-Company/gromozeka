@@ -335,7 +335,7 @@ class ResenderHandler(BaseBotHandler):
                             # Media group is ready, mark as processed
                             processedMediaGroups.add(message["media_group_id"])
 
-                        attachmentList: List[Tuple[bytes, MessageType]] = []
+                        attachmentList: List[Tuple[bytes, MessageType, Optional[str]]] = []
                         if message["media_group_id"]:
                             logger.debug(f"Processing media group {message['media_group_id']}")
                             for media in self.db.getMediaAttachmentsByGroupId(
@@ -350,7 +350,7 @@ class ResenderHandler(BaseBotHandler):
                                     continue
 
                                 mediaType = MessageType(media["media_type"])
-                                attachmentList.append((mediaData, mediaType))
+                                attachmentList.append((mediaData, mediaType, None))
 
                         messageText = message["message_text"]
                         if message["markup"]:
