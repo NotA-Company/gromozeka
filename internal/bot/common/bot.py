@@ -595,10 +595,11 @@ class TheBot:
             {
                 "reply_to_message_id": replyToMessageId,
                 "message_thread_id": threadId,
-                "reply_markup": inlineKeyboard,
                 "chat_id": chatId,
             }
         )
+        if inlineKeyboard is not None:
+            replyKwargs["reply_markup"] = inlineKeyboard
         if notify is not None:
             replyKwargs["disable_notification"] = not notify
 
