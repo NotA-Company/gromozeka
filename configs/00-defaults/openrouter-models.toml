@@ -23,6 +23,18 @@ support_text = true
 support_images = false
 tier = "paid"
 
+[models.models."openrouter/qwen3-235b-a22b"]
+# https://openrouter.ai/qwen/qwen3-235b-a22b
+provider = "openrouter"
+model_id = "qwen/qwen3-235b-a22b"
+model_version = "latest"
+temparature = 0.3
+context = 131100
+support_tools = true
+support_text = true
+support_images = false
+tier = "paid"
+
 [models.models."openrouter/qwen-turbo"]
 # https://openrouter.ai/qwen/qwen-turbo
 provider = "openrouter"
