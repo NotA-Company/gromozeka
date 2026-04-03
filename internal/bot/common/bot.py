@@ -460,6 +460,34 @@ class TheBot:
                 if not skipLogs:
                     logger.debug(f"Sending reply to {replyToMessage}")
 
+                # Must be only one file attachment in message (code: proto.payload)
+                # So we send all except last attachment as separate messages in case of non-media attachments
+                if attachments:
+                    maxAttachmentsCount = 1
+                    newAttachments: List[maxModels.AttachmentRequest] = []
+                    while len(attachments) > maxAttachmentsCount:
+                        firstAttachment = attachments[0]
+                        attachments = attachments[1 :]
+
+                        if firstAttachment.type in [
+                            maxModels.AttachmentType.IMAGE,
+                            maxModels.AttachmentType.VIDEO,
+                            maxModels.AttachmentType.AUDIO,
+                        ]:
+                            # If there is at leas one media attachment, do not allow other
+                            # (i.e. not media) attachments in last message
+                            maxAttachmentsCount = 0
+                            newAttachments.append(firstAttachment)
+                            continue
+
+                        ret = await self.maxBot.sendMessage(
+                            attachments=[firstAttachment],
+                            **replyKwargs,
+                        )
+                        replyMessageList.append(ret.message)
+
+                    attachments = newAttachments + attachments
+
                 messageTextList: List[str] = [messageText]
                 maxMessageLength = libMax.MAX_MESSAGE_LENGTH - len(addMessagePrefix)
                 if splitIfTooLong and len(messageText) > maxMessageLength:
