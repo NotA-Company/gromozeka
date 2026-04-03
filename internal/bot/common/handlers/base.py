@@ -460,7 +460,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
-        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType, Optional[str]]]] = None,
         toolsHistory: Optional[Sequence[ModelMessage]] = None,
     ) -> List[EnsuredMessage]:
         if self._bot is None:

@@ -294,7 +294,7 @@ class TheBot:
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
-        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType, Optional[str]]]] = None,
     ) -> List[EnsuredMessage]:
         """Send message as reply with text and/or photo.
 
@@ -382,7 +382,7 @@ class TheBot:
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
-        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType, Optional[str]]]] = None,
     ) -> List[EnsuredMessage]:
         if self.maxBot is None:
             raise RuntimeError("Max bot is Undefined")
@@ -392,7 +392,7 @@ class TheBot:
                 attachmentList = []
             else:
                 attachmentList = list(attachmentList)
-            attachmentList.append((photoData, MessageType.IMAGE))
+            attachmentList.append((photoData, MessageType.IMAGE, None))
 
         replyToMessageId: Optional[MessageIdType] = None
         chatType: ChatType = ChatType.PRIVATE
@@ -436,12 +436,14 @@ class TheBot:
 
         try:
             if attachmentList:
-                for mediaData, mediaType in attachmentList:
+                for mediaData, mediaType, fileName in attachmentList:
                     mimeType = magic.from_buffer(mediaData, mime=True)
-                    digest = hashlib.sha256(mediaData).hexdigest()
-                    ext = mimeType.split("/")[1]
+                    if fileName is None:
+                        digest = hashlib.sha256(mediaData).hexdigest()
+                        ext = mimeType.split("/")[1]
+                        fileName = f"{mediaType}-{digest}.{ext}"
                     ret = await self.maxBot.uploadFile(
-                        filename=f"{mediaType}-{digest}.{ext}",
+                        filename=fileName,
                         data=mediaData,
                         mimeType=mimeType,
                         uploadType=mediaType.toMaxUploadType(),
@@ -457,6 +459,34 @@ class TheBot:
 
                 if not skipLogs:
                     logger.debug(f"Sending reply to {replyToMessage}")
+
+                # Must be only one file attachment in message (code: proto.payload)
+                # So we send all except last attachment as separate messages in case of non-media attachments
+                if attachments:
+                    maxAttachmentsCount = 1
+                    newAttachments: List[maxModels.AttachmentRequest] = []
+                    while len(attachments) > maxAttachmentsCount:
+                        firstAttachment = attachments[0]
+                        attachments = attachments[1 :]
+
+                        if firstAttachment.type in [
+                            maxModels.AttachmentType.IMAGE,
+                            maxModels.AttachmentType.VIDEO,
+                            maxModels.AttachmentType.AUDIO,
+                        ]:
+                            # If there is at leas one media attachment, do not allow other
+                            # (i.e. not media) attachments in last message
+                            maxAttachmentsCount = 0
+                            newAttachments.append(firstAttachment)
+                            continue
+
+                        ret = await self.maxBot.sendMessage(
+                            attachments=[firstAttachment],
+                            **replyKwargs,
+                        )
+                        replyMessageList.append(ret.message)
+
+                    attachments = newAttachments + attachments
 
                 messageTextList: List[str] = [messageText]
                 maxMessageLength = libMax.MAX_MESSAGE_LENGTH - len(addMessagePrefix)
@@ -526,7 +556,7 @@ class TheBot:
         chatId: Optional[int] = None,
         threadId: Optional[int] = None,
         notify: Optional[bool] = None,
-        attachmentList: Optional[Sequence[Tuple[bytes, MessageType]]] = None,
+        attachmentList: Optional[Sequence[Tuple[bytes, MessageType, Optional[str]]]] = None,
     ) -> List[EnsuredMessage]:
         """Send message via Telegram platform.
 
@@ -557,7 +587,7 @@ class TheBot:
 
         if photoData is not None and attachmentList is not None:
             attachmentList = list(attachmentList)
-            attachmentList.append((photoData, MessageType.IMAGE))
+            attachmentList.append((photoData, MessageType.IMAGE, None))
             photoData = None
 
         replyMessageList: List[telegram.Message] = []
@@ -595,10 +625,11 @@ class TheBot:
             {
                 "reply_to_message_id": replyToMessageId,
                 "message_thread_id": threadId,
-                "reply_markup": inlineKeyboard,
                 "chat_id": chatId,
             }
         )
+        if inlineKeyboard is not None:
+            replyKwargs["reply_markup"] = inlineKeyboard
         if notify is not None:
             replyKwargs["disable_notification"] = not notify
 
@@ -645,16 +676,21 @@ class TheBot:
                         telegram.InputMediaVideo,
                     ]
                 ] = []
-                for mediaData, mediaType in attachmentList:
+                for mediaData, mediaType, fileName in attachmentList:
+                    if fileName is None:
+                        mimeType = magic.from_buffer(mediaData, mime=True)
+                        digest = hashlib.sha256(mediaData).hexdigest()
+                        ext = mimeType.split("/")[1]
+                        fileName = f"{mediaType}-{digest}.{ext}"
                     match mediaType:
                         case MessageType.IMAGE | MessageType.STICKER:
-                            media.append(telegram.InputMediaPhoto(mediaData))
+                            media.append(telegram.InputMediaPhoto(mediaData, filename=fileName))
                         case MessageType.ANIMATION | MessageType.VIDEO | MessageType.VIDEO_NOTE:
-                            media.append(telegram.InputMediaVideo(mediaData))
+                            media.append(telegram.InputMediaVideo(mediaData, filename=fileName))
                         case MessageType.AUDIO | MessageType.VOICE:
-                            media.append(telegram.InputMediaAudio(mediaData))
+                            media.append(telegram.InputMediaAudio(mediaData, filename=fileName))
                         case _:
-                            media.append(telegram.InputMediaDocument(mediaData))
+                            media.append(telegram.InputMediaDocument(mediaData, filename=fileName))
 
                 replyMessages: Optional[Sequence[telegram.Message]] = None
                 if tryMarkdownV2 and messageText is not None:
