@@ -467,7 +467,7 @@ class TheBot:
                     newAttachments: List[maxModels.AttachmentRequest] = []
                     while len(attachments) > maxAttachmentsCount:
                         firstAttachment = attachments[0]
-                        attachments = attachments[1 :]
+                        attachments = attachments[1:]
 
                         if firstAttachment.type in [
                             maxModels.AttachmentType.IMAGE,
