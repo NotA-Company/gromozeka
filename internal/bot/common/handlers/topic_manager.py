@@ -186,7 +186,7 @@ class TopicManagerHandler(BaseBotHandler):
                 CallbackButton(
                     "<< Назад к списку чатов",
                     {
-                        ButtonDataKey.SummarizationAction: ButtonTopicManagementAction.Init,
+                        ButtonDataKey.TopicManagementAction: ButtonTopicManagementAction.Init,
                     },
                 )
             ]
