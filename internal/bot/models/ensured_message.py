@@ -686,7 +686,6 @@ class EnsuredMessage:
         else:
             raise ValueError("Message sender undefined")
 
-
         if message.forward_origin:
             # forward_origin=MessageOriginChannel(
             #   chat=Chat(

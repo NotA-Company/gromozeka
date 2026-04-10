@@ -147,6 +147,52 @@ class TheBot:
         """
         return user.username in self.botOwnersUsername or user.id in self.botOwnersId
 
+    async def getChatAdmins(self, chat: MessageRecipient) -> Dict[int, Tuple[str, str]]:
+        """Retrieve chat administrators as a mapping of user IDs to display names.
+
+        Checks the cache first; fetches from the appropriate platform API if not cached,
+        then stores the result in cache before returning.
+
+        Args:
+            chat: The target chat to fetch administrators for.
+
+        Returns:
+            Dict mapping admin user IDs (int) to their username + display names (Tuple[str, str]).
+
+        Raises:
+            RuntimeError: If the configured bot provider is neither Telegram nor Max.
+        """
+        # If chat is passed, check if user is admin of given chat
+        chatAdmins: Optional[Dict[int, Tuple[str, str]]] = self.cache.getChatAdmins(chat.id)
+        if chatAdmins is not None:
+            return chatAdmins
+
+        chatAdmins = {}  # userID -> username
+        if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
+            for admin in await self.tgBot.get_chat_administrators(chat_id=chat.id):
+                adminUsername = admin.user.username or ""
+                if adminUsername:
+                    adminUsername = "@" + adminUsername
+                chatAdmins[admin.user.id] = (adminUsername, admin.user.full_name)
+
+        elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
+            maxChatAdmins = (await self.maxBot.getAdmins(chatId=chat.id)).members
+            for admin in maxChatAdmins:
+                adminFullName = admin.first_name
+                if admin.last_name:
+                    adminFullName += " " + admin.last_name
+                adminUsername = admin.username or ""
+                if adminUsername:
+                    adminUsername = "@" + adminUsername
+
+                chatAdmins[admin.user_id] = (adminUsername, adminFullName)
+
+        else:
+            raise RuntimeError(f"Unexpected platform: {self.botProvider}")
+
+        self.cache.setChatAdmins(chat.id, chatAdmins)
+        return chatAdmins
+
     async def isAdmin(
         self, user: MessageSender, chat: Optional[MessageRecipient] = None, allowBotOwners: bool = True
     ) -> bool:
@@ -186,32 +232,7 @@ class TheBot:
             return True
 
         # If chat is passed, check if user is admin of given chat
-        chatAdmins = self.cache.getChatAdmins(chat.id)
-        if chatAdmins is not None:
-            return user.id in chatAdmins
-
-        chatAdmins = {}  # userID -> username
-        if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
-            for admin in await self.tgBot.get_chat_administrators(chat_id=chat.id):
-                chatAdmins[admin.user.id] = admin.user.name
-
-        elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
-            maxChatAdmins = (await self.maxBot.getAdmins(chatId=chat.id)).members
-            for admin in maxChatAdmins:
-                adminName = admin.username
-                if adminName is None:
-                    adminName = admin.first_name
-                    if admin.last_name:
-                        adminName += " " + admin.last_name
-                else:
-                    adminName = f"@{adminName}"
-
-                chatAdmins[admin.user_id] = adminName
-
-        else:
-            raise RuntimeError(f"Unexpected platform: {self.botProvider}")
-
-        self.cache.setChatAdmins(chat.id, chatAdmins)
+        chatAdmins = await self.getChatAdmins(chat=chat)
         return user.id in chatAdmins
 
     def _keyboardToTelegram(self, keyboard: Sequence[Sequence[CallbackButton]]) -> telegram.InlineKeyboardMarkup:
