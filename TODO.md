@@ -61,7 +61,7 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 - [x] Add Per PR tests (make lint + make test)
 - [x] By default, use free openrouter models
 - [x] Add (if not) https://openrouter.ai/deepseek/deepseek-chat-v3.1:free and https://openrouter.ai/google/gemma-3-27b-it:free
-- [x] Drop\comment private-defaults and chat-defaults from default config
+- [x] Drop\comment private-defaults and group-defaults from default config
 - [x] Add User-data manipulation wizard
 - [x] Less granular command enabling\disabling (after extended command decorator)
 - [x] Add support json-logging of LLM responses for debug purposes (looks like it sometimes response with weird format)

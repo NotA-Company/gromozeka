@@ -201,20 +201,38 @@ class BaseBotHandler(CommandHandlerMixin):
         chatTier: Optional[ChatTier] = None,
     ) -> ChatSettingsDict:
         """
-        TODO: rewrite docstring
-        Get chat settings with optional default fallback, dood!
+        Get merged chat settings with tier-aware filtering and optional default fallback, dood!
 
-        Retrieves settings from cache, merging with defaults if requested.
-        If chatId is None, returns only default settings.
+        Retrieves per-chat settings from cache and merges them with global defaults and
+        tier-specific defaults when ``returnDefault`` is True. Settings that require a
+        higher tier than the chat currently holds are silently dropped unless they were
+        set by a bot owner. Model settings are additionally validated against the LLM
+        manager to ensure the selected model is still available for the chat's tier.
+
+        When ``chatId`` is not None and ``returnDefault`` is True the final merged
+        result is stored back in the cache so subsequent calls are served instantly.
 
         Args:
-            chatId: Telegram chat ID, or None for defaults only
-            returnDefault: If True, merge with default settings; if False, return only custom settings
-            chatType: Chat type to get defaults for (usefull only if chatId is None)
+            chatId: Chat ID to retrieve settings for, or None to return only default
+                settings (in which case ``chatType`` must be provided).
+            returnDefault: If True, merge per-chat settings on top of global and
+                tier-specific defaults; if False, return only the raw per-chat
+                settings without any defaults applied.
+            chatType: Chat type used to select the correct set of default settings.
+                Only meaningful when ``chatId`` is None; ignored otherwise because
+                the type is inferred from the sign of ``chatId``
+                (positive → PRIVATE, non-positive → GROUP).
+            chatTier: Explicit tier override. When None the tier is determined from
+                the chat settings (paid tier first, then base tier, then BANNED as
+                the fallback).
 
         Returns:
             Dictionary mapping [`ChatSettingsKey`](internal/bot/models/chat_settings.py)
-                            to [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
+            to [`ChatSettingsValue`](internal/bot/models/chat_settings.py) with all
+            applicable defaults and tier filtering applied.
+
+        Raises:
+            ValueError: If both ``chatId`` and ``chatType`` are None.
         """
         if chatId is not None and returnDefault:
             chatSettings = self.cache.getCachedChatSettings(chatId)
@@ -225,8 +243,7 @@ class BaseBotHandler(CommandHandlerMixin):
         if chatId is None and chatType is None:
             raise ValueError("Either chatId or chatType should be not None")
 
-        # TODO: Currently we support only Private and Groups
-        # In case of Channels support, we need to think something
+        # NOTE: We have no full support for Channels defaults, for details see comments in `updateChatInfo` method
         if chatId is not None:
             chatType = ChatType.PRIVATE if chatId > 0 else ChatType.GROUP
         if chatType != ChatType.PRIVATE:
@@ -303,6 +320,8 @@ class BaseBotHandler(CommandHandlerMixin):
             chatId: Telegram chat ID
             key: Setting key from [`ChatSettingsKey`](internal/bot/models/chat_settings.py) enum
             value: Setting value as [`ChatSettingsValue`](internal/bot/models/chat_settings.py)
+            user: The [`MessageSender`](internal/bot/models/message_sender.py) who is applying the
+                setting change; their ID is recorded as the author of the update.
 
         Note:
             This method directly updates the cache. Consider whether this setting
@@ -767,6 +786,24 @@ class BaseBotHandler(CommandHandlerMixin):
         if needChange:
             chatInfo = await self._bot.getChatInfo(message)
             self.cache.setChatInfo(chatId, chatInfo)
+            if message.recipient.chatType == ChatType.CHANNEL:
+                logger.debug(f"Channel info updated: {chatInfo}")
+                # In case of channel, copy defaults if any
+                # We do copying because in future iterations we usually can not properly
+                #  understand if it is group or chanel.
+                # In the same time, The main difference between the channels and groups for us
+                #  is that we do not need to use LLM-things as well as spam detection for channels.
+                # But allow admin to change it if (s)he really want it.
+                defaultSettings = self.cache.getDefaultChatSettings(ChatType.CHANNEL)
+                chatSettings = self.getChatSettings(chatId=chatId, returnDefault=False)
+                logger.debug(f"Channel defaults: {defaultSettings}")
+                logger.debug(f"Channel settings: {chatSettings}")
+                for k, v in defaultSettings.items():
+                    if k not in chatSettings:
+                        logger.debug(f"Setting {k} to {v}")
+                        self.setChatSetting(
+                            chatId=chatId, key=k, value=v, user=MessageSender(id=0, name="System", username="")
+                        )
 
         # Update topics info as well
         if self.botProvider == BotProvider.TELEGRAM:

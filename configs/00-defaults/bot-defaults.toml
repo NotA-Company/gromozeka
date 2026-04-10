@@ -19,7 +19,7 @@ detect-spam = false
 
 base-tier = "free-personal"
 
-[bot.chat-defaults]
+[bot.group-defaults]
 # Can chat admins change channel-specific bot settings?
 # admin-can-change-settings = true
 
@@ -42,8 +42,33 @@ base-tier = "free-personal"
 # Automatically detect and delete spam messages
 # detect-spam = false
 
+[bot.channel-defaults]
+# Channel defaults will be copied into channel settings instead of inheriting
+# In channel all interactions with bot are disabled by default
+
+use-tools = false
+# Should we parse attachments via LLM
+parse-attachments = false
+
+# Allow tools commands (/draw, /analyze, etc...)
+allow-tools-commands = false
+# Delete message with commands, which deniend in chat (for flood protection purposes)
+# delete-denied-commands = true
+
+# Allow reaction in bot mention (by username and by name)
+allow-mention = false
+# Allow reaction on reply of bot message
+allow-reply = false
+
+# Probability of random answer to any message (set 0 for disable, 1 for always)
+random-answer-probability = 0
+
+# Automatically detect and delete spam messages
+detect-spam = false
+bayes-enabled = false
+
 [bot.defaults]
-# Can chat admins change channel-specific bot settings?
+# Can chat admins change chat-specific bot settings?
 admin-can-change-settings = true
 # Bot nicknames for mention purposes. Comma-separated list
 bot-nicknames = "Громозека, Gro"
@@ -81,7 +106,7 @@ allow-mark-spam-old-users = false
 bayes-min-confedence-to-autolearn-spam = 0.6
 bayes-min-confedence-to-autolearn-ham = 0.9
 
-# DEleteing join\left messages - default False
+# Deleteing join\left messages - default False
 
 delete-join-messages = false
 delete-left-messages = false
