@@ -3,7 +3,7 @@ Cache: TypedDict models for handlers cache
 """
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, Tuple, TypeAlias, TypedDict
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
 from internal.models import MessageIdType
@@ -35,7 +35,7 @@ class HCChatAdminsDict(TypedDict):
     # When list was updated last time
     updatedAt: float
     # Dict[userId, username], Actually only iserId is needed, username is used for debug purposes only
-    admins: Dict[int, str]
+    admins: Dict[int, Tuple[str, str]]
 
 
 class HCChatCacheDict(TypedDict):
