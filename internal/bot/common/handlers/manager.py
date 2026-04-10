@@ -223,11 +223,12 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         for chatType in ChatType:
             self.cache.setDefaultChatSettings(
-                chatType, {
-                ChatSettingsKey(k): ChatSettingsValue(v)
-                for k, v in botConfig.get(f"{chatType.value}-defaults", {}).items()
-                if k in ChatSettingsKey
-            },
+                chatType,
+                {
+                    ChatSettingsKey(k): ChatSettingsValue(v)
+                    for k, v in botConfig.get(f"{chatType.value}-defaults", {}).items()
+                    if k in ChatSettingsKey
+                },
             )
 
         tierDefaultsDict = botConfig.get("tier-defaults", {})
