@@ -221,23 +221,14 @@ class HandlersManager(CommandHandlerGetterInterface):
         )
         self.cache.setDefaultChatSettings(None, defaultSettings)
 
-        self.cache.setDefaultChatSettings(
-            ChatType.PRIVATE,
-            {
+        for chatType in ChatType:
+            self.cache.setDefaultChatSettings(
+                chatType, {
                 ChatSettingsKey(k): ChatSettingsValue(v)
-                for k, v in botConfig.get("private-defaults", {}).items()
+                for k, v in botConfig.get(f"{chatType.value}-defaults", {}).items()
                 if k in ChatSettingsKey
             },
-        )
-
-        self.cache.setDefaultChatSettings(
-            ChatType.GROUP,
-            {
-                ChatSettingsKey(k): ChatSettingsValue(v)
-                for k, v in botConfig.get("chat-defaults", {}).items()
-                if k in ChatSettingsKey
-            },
-        )
+            )
 
         tierDefaultsDict = botConfig.get("tier-defaults", {})
         for chatTier in ChatTier:
@@ -673,8 +664,21 @@ class HandlersManager(CommandHandlerGetterInterface):
             await self.runAsync(self._processMessageRec(messageRec))
 
     async def _processMessageRec(self, messageRec: MessageQueueRecord) -> None:
-        """
-        TODO: write docstring
+        """Process a queued message record through command and handler pipelines.
+
+        Retrieves the chat state for the record, attempts to handle the message as
+        a command first, and if no command matches, iterates through all registered
+        handlers in order. Sequential handlers wait for the same step of the
+        previous message to finish before proceeding. Stops early when a handler
+        returns a final status. Always marks the record as handled and notifies the
+        chat state upon completion, even if an exception occurs.
+
+        Args:
+            messageRec: The queued message record containing the normalized message,
+                update object, and synchronization primitives for step tracking.
+
+        Returns:
+            None
         """
         async with self.stateLock:
             chatState = self.chatStates.get(messageRec.getStateId(), None)
