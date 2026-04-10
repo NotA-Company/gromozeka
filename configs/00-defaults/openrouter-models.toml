@@ -59,6 +59,18 @@ support_text = true
 support_images = false
 tier = "paid"
 
+[models.models."openrouter/qwen3.6-plus"]
+# https://openrouter.ai/qwen/qwen3.6-plus
+provider = "openrouter"
+model_id = "qwen/qwen3.6-plus"
+model_version = "latest"
+temparature = 0.3
+context = 1000000
+support_tools = true
+support_text = true
+support_images = false
+tier = "paid"
+
 # Image generation Models
 # https://openrouter.ai/models?fmt=table&output_modalities=image
 
