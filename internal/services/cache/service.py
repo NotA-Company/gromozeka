@@ -7,7 +7,7 @@ import logging
 import time
 from collections import OrderedDict
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
 from internal.models import MessageIdType
@@ -451,7 +451,7 @@ class CacheService:
         logger.debug(f"Updated topic info for {chatId}:{topicId}, dood!")
 
     # Chat admin list
-    def getChatAdmins(self, chatId: int, ttl: Optional[int] = 300) -> Optional[Dict[int, str]]:
+    def getChatAdmins(self, chatId: int, ttl: Optional[int] = 300) -> Optional[Dict[int, Tuple[str, str]]]:
         """Get chat info from cache or database"""
         chatCache = self.chats.get(chatId, {})
         admins = chatCache.get("admins", None)
@@ -466,7 +466,7 @@ class CacheService:
                 return None
         return admins["admins"]
 
-    def setChatAdmins(self, chatId: int, admins: Dict[int, str]) -> None:
+    def setChatAdmins(self, chatId: int, admins: Dict[int, Tuple[str, str]]) -> None:
         """Update chat info in cache"""
         chatCache = self.chats.get(chatId, {})
         adminsDict: HCChatAdminsDict = {
