@@ -305,6 +305,7 @@ class MediaHandler(BaseBotHandler):
             return HandlerResultStatus.ERROR
 
         ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
+        # logger.debug(f"ensuredReply: {ensuredReply}")
         if ensuredReply is None:
             logger.error("ensuredReply is None, but should be EnsuredMessage()")
             return HandlerResultStatus.ERROR
@@ -328,10 +329,18 @@ class MediaHandler(BaseBotHandler):
             if storedReply is None:
                 logger.error(f"Failed to get parent message #{ensuredReply.recipient.id}:{ensuredReply.messageId}")
             else:
+                # logger.debug(f"storedReply: {storedReply}")
                 eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
+                # logger.debug(f"eStoredMsg: {eStoredMsg}")
                 await eStoredMsg.updateMediaContent(self.db)
+                # logger.debug(f"eStoredMsg V2: {eStoredMsg}")
                 if isWhatThere:
-                    response = eStoredMsg.mediaContent
+                    if len(eStoredMsg.mediaList) == 1:
+                        response = eStoredMsg.mediaList[0].content
+                    elif eStoredMsg.mediaList:
+                        response = utils.jsonDumps([m.content for m in eStoredMsg.mediaList], compact=False)
+                    else:
+                        response = eStoredMsg.mediaContent
                 elif isGetPrompt:
                     response = eStoredMsg.mediaPrompt
                     if response:
