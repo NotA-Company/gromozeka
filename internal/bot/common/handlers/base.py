@@ -789,14 +789,15 @@ class BaseBotHandler(CommandHandlerMixin):
 
             # Update list of admins, so even if an admin hasn't written to the chat, they are marked as members
             # (Useful for anonymized admins and channels)
-            admins = await self._bot.getChatAdmins(chat=message.recipient)
-            for adminId, adminInfo in admins.items():
-                self.db.updateChatUser(
-                    chatId=chatId,
-                    userId=adminId,
-                    username=adminInfo[0],
-                    fullName=adminInfo[1],
-                )
+            if message.recipient.chatType != ChatType.PRIVATE:
+                admins = await self._bot.getChatAdmins(chat=message.recipient)
+                for adminId, adminInfo in admins.items():
+                    self.db.updateChatUser(
+                        chatId=chatId,
+                        userId=adminId,
+                        username=adminInfo[0],
+                        fullName=adminInfo[1],
+                    )
 
             if message.recipient.chatType == ChatType.CHANNEL:
                 logger.debug(f"Channel info updated: {chatInfo}")
