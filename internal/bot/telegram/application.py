@@ -130,6 +130,17 @@ class TelegramBotApplication:
                 return
 
             return await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
+        elif update.channel_post is not None:
+            logger.debug(f"Channel post: {update}")
+            ensuredMessage: Optional[EnsuredMessage] = None
+            try:
+                ensuredMessage = EnsuredMessage.fromTelegramMessage(update.channel_post)
+            except Exception as e:
+                logger.error(f"Error while ensuring message {update.channel_post}")
+                logger.exception(e)
+                return
+
+            return await self.handlerManager.handleNewMessage(ensuredMessage=ensuredMessage, updateObj=update)
         # elif ...
         else:
             logger.debug(f"Unsupported update: {update}, ignoring for now...")
