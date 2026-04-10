@@ -338,7 +338,9 @@ class MediaHandler(BaseBotHandler):
                     if len(eStoredMsg.mediaList) == 1:
                         response = eStoredMsg.mediaList[0].content
                     elif eStoredMsg.mediaList:
-                        response = "\n\n\n".join([str(m.content) for m in eStoredMsg.mediaList])
+                        response = "\n\n===========================\n\n".join(
+                            [str(m.content) for m in eStoredMsg.mediaList]
+                        )
                     else:
                         response = eStoredMsg.mediaContent
                 elif isGetPrompt:
@@ -418,7 +420,6 @@ class MediaHandler(BaseBotHandler):
             )
             return
 
-        message = ensuredMessage.getBaseMessage()
         parentEnsuredMessage: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
         parentMessage: Optional[Union[telegram.Message, maxModels.Message]] = None
         if parentEnsuredMessage:
@@ -505,7 +506,7 @@ class MediaHandler(BaseBotHandler):
             )
             return
 
-        maxMediaIdx = len(mediaDataList) -1
+        maxMediaIdx = len(mediaDataList) - 1
         for i, mediaData in enumerate(mediaDataList):
             if typingManager:
                 await typingManager.sendTypingAction()
@@ -558,7 +559,6 @@ class MediaHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 typingManager=typingManager if i == maxMediaIdx else None,
             )
-            
 
     @commandHandlerV2(
         commands=("draw",),
