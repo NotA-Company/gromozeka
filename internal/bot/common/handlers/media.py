@@ -338,7 +338,7 @@ class MediaHandler(BaseBotHandler):
                     if len(eStoredMsg.mediaList) == 1:
                         response = eStoredMsg.mediaList[0].content
                     elif eStoredMsg.mediaList:
-                        response = utils.jsonDumps([m.content for m in eStoredMsg.mediaList], compact=False)
+                        response = "\n\n\n".join([str(m.content) for m in eStoredMsg.mediaList])
                     else:
                         response = eStoredMsg.mediaContent
                 elif isGetPrompt:
