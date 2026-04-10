@@ -580,7 +580,7 @@ class EnsuredMessage:
         Raises:
             ValueError: If the message lacks required user or chat information, dood.
         """
-        if not message.from_user:
+        if not message.from_user and not message.sender_chat:
             raise ValueError("Message User undefined")
 
         if not message.chat:
@@ -681,8 +681,11 @@ class EnsuredMessage:
         sender: Optional[MessageSender] = None
         if message.sender_chat:
             sender = MessageSender.fromTelegramChat(message.sender_chat)
-        else:
+        elif message.from_user:
             sender = MessageSender.fromTelegramUser(message.from_user)
+        else:
+            raise ValueError("Message sender undefined")
+
 
         if message.forward_origin:
             # forward_origin=MessageOriginChannel(

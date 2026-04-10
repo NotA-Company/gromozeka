@@ -353,6 +353,10 @@ class LLMMessageHandler(BaseBotHandler):
         """
 
         chat = ensuredMessage.recipient
+        if chat.chatType == ChatType.CHANNEL:
+            # TODO: Should we support channels?
+            logger.debug(f"Channel are not suppored in LLM Handler for now")
+            return HandlerResultStatus.SKIPPED
         if chat.chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
             logger.error(f"Unsupported chat type: {chat.chatType}")
             return HandlerResultStatus.SKIPPED
