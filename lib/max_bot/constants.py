@@ -25,7 +25,8 @@ HTTP_DELETE: Final[str] = "DELETE"
 HTTP_PATCH: Final[str] = "PATCH"
 
 # API Limits
-MAX_MESSAGE_LENGTH: Final[int] = 4096
+# MAX_MESSAGE_LENGTH: Final[int] = 4096
+MAX_MESSAGE_LENGTH: Final[int] = 4000
 MAX_FILE_SIZE: Final[int] = 4 * 1024 * 1024 * 1024  # 4GB
 MAX_PHOTOS_PER_MESSAGE: Final[int] = 10
 MAX_BUTTONS_PER_ROW: Final[int] = 5

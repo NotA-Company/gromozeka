@@ -305,6 +305,7 @@ class MediaHandler(BaseBotHandler):
             return HandlerResultStatus.ERROR
 
         ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
+        # logger.debug(f"ensuredReply: {ensuredReply}")
         if ensuredReply is None:
             logger.error("ensuredReply is None, but should be EnsuredMessage()")
             return HandlerResultStatus.ERROR
@@ -328,10 +329,20 @@ class MediaHandler(BaseBotHandler):
             if storedReply is None:
                 logger.error(f"Failed to get parent message #{ensuredReply.recipient.id}:{ensuredReply.messageId}")
             else:
+                # logger.debug(f"storedReply: {storedReply}")
                 eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
+                # logger.debug(f"eStoredMsg: {eStoredMsg}")
                 await eStoredMsg.updateMediaContent(self.db)
+                # logger.debug(f"eStoredMsg V2: {eStoredMsg}")
                 if isWhatThere:
-                    response = eStoredMsg.mediaContent
+                    if len(eStoredMsg.mediaList) == 1:
+                        response = eStoredMsg.mediaList[0].content
+                    elif eStoredMsg.mediaList:
+                        response = "\n\n===========================\n\n".join(
+                            [str(m.content) for m in eStoredMsg.mediaList]
+                        )
+                    else:
+                        response = eStoredMsg.mediaContent
                 elif isGetPrompt:
                     response = eStoredMsg.mediaPrompt
                     if response:
@@ -409,24 +420,10 @@ class MediaHandler(BaseBotHandler):
             )
             return
 
-        message = ensuredMessage.getBaseMessage()
-        parentEnsuredMessage: Optional[EnsuredMessage] = None
+        parentEnsuredMessage: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
         parentMessage: Optional[Union[telegram.Message, maxModels.Message]] = None
-        if (
-            self.botProvider == BotProvider.TELEGRAM
-            and isinstance(message, telegram.Message)
-            and message.reply_to_message
-        ):
-            parentMessage = message.reply_to_message
-            parentEnsuredMessage = ensuredMessage.fromTelegramMessage(parentMessage)
-        elif self.botProvider == BotProvider.MAX and isinstance(message, maxModels.Message) and message.link:
-            parentMessage = maxModels.Message(
-                sender=message.link.sender or message.sender,
-                recipient=message.recipient,
-                timestamp=message.timestamp,
-                body=message.link.message,
-            )
-            parentEnsuredMessage = ensuredMessage.fromMaxMessage(parentMessage)
+        if parentEnsuredMessage:
+            parentMessage = parentEnsuredMessage.getBaseMessage()
 
         if parentEnsuredMessage is None or parentMessage is None:
             await self.sendMessage(
@@ -509,7 +506,10 @@ class MediaHandler(BaseBotHandler):
             )
             return
 
-        for mediaData in mediaDataList:
+        maxMediaIdx = len(mediaDataList) - 1
+        for i, mediaData in enumerate(mediaDataList):
+            if typingManager:
+                await typingManager.sendTypingAction()
             mimeType = magic.from_buffer(bytes(mediaData), mime=True)
             logger.debug(f"Mime type: {mimeType}")
             if not mimeType.startswith("image/"):
@@ -517,7 +517,7 @@ class MediaHandler(BaseBotHandler):
                     ensuredMessage,
                     messageText=f"Неподдерживаемый MIME-тип медиа: {mimeType}.",
                     messageCategory=MessageCategory.BOT_ERROR,
-                    typingManager=typingManager,
+                    typingManager=typingManager if i == maxMediaIdx else None,
                 )
                 continue
 
@@ -541,13 +541,15 @@ class MediaHandler(BaseBotHandler):
                 modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
                 fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
             )
+            if typingManager:
+                await typingManager.sendTypingAction()
             logger.debug(f"LLM result: {llmRet}")
             if llmRet.status != ModelResultStatus.FINAL:
                 await self.sendMessage(
                     ensuredMessage,
                     messageText=f"Не удалось проанализировать медиа:\n```\n{llmRet.status}\n{llmRet.error}\n```",
                     messageCategory=MessageCategory.BOT_ERROR,
-                    typingManager=typingManager,
+                    typingManager=typingManager if i == maxMediaIdx else None,
                 )
                 return
 
@@ -555,7 +557,7 @@ class MediaHandler(BaseBotHandler):
                 ensuredMessage,
                 messageText=llmRet.resultText,
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
+                typingManager=typingManager if i == maxMediaIdx else None,
             )
 
     @commandHandlerV2(
