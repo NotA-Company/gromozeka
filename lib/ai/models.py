@@ -238,6 +238,7 @@ class ModelImageMessage(ModelMessage):
         skipRole: bool = False,
     ) -> Dict[str, Any]:
         if content is None:
+            # TODO: YC AI does not support webp, think about converting it into PNG of JPEG
             mimeType = magic.from_buffer(bytes(self.image), mime=True)
             base64Image = base64.b64encode(self.image).decode("utf-8")
 
