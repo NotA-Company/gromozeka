@@ -9,29 +9,29 @@
 
 ## Summary Table
 
-| # | Title | Priority | Effort | Key Files |
-|---|-------|----------|--------|-----------|
-| 1 | [Split `DatabaseWrapper` into Domain Repositories](#1-split-databasewrapper-into-domain-repositories) | Critical | XL | [`wrapper.py`](../internal/database/wrapper.py) |
-| 2 | [Split `BaseBotHandler` into Focused Mixins](#2-split-basebothandler-into-focused-mixins) | Critical | L | [`base.py`](../internal/bot/common/handlers/base.py) |
-| 3 | [Extract Platform Abstraction Layer from `TheBot`](#3-extract-platform-abstraction-layer-from-thebot) | Critical | L | [`bot.py`](../internal/bot/common/bot.py) |
-| 4 | [Split `MaxBotClient` into API Domain Clients](#4-split-maxbotclient-into-api-domain-clients) | High | L | [`client.py`](../lib/max_bot/client.py) |
-| 5 | [Decompose `CacheService` Namespaces into Dedicated Cache Objects](#5-decompose-cacheservice-namespaces-into-dedicated-cache-objects) | High | M | [`service.py`](../internal/services/cache/service.py) |
-| 6 | [Introduce Handler Factory / Registry to Decouple `HandlersManager`](#6-introduce-handler-factory--registry-to-decouple-handlersmanager) | High | M | [`manager.py`](../internal/bot/common/handlers/manager.py) |
-| 7 | [Extract Queue Management from `HandlersManager` into `ChatQueueManager`](#7-extract-queue-management-from-handlersmanager-into-chatqueuemanager) | High | M | [`manager.py`](../internal/bot/common/handlers/manager.py) |
-| 8 | [Replace if/elif Platform Dispatch with Strategy Pattern in `TheBot`](#8-replace-ifelif-platform-dispatch-with-strategy-pattern-in-thebot) | High | M | [`bot.py`](../internal/bot/common/bot.py) |
-| 9 | [Extract `LLMContextBuilder` from `LLMMessageHandler`](#9-extract-llmcontextbuilder-from-llmmessagehandler) | High | M | [`llm_messages.py`](../internal/bot/common/handlers/llm_messages.py) |
-| 10 | [Eliminate Circular-Import Workaround in `CacheService`](#10-eliminate-circular-import-workaround-in-cacheservice) | High | S | [`service.py`](../internal/services/cache/service.py) |
-| 11 | [Extract `DatabaseRowValidator` from `DatabaseWrapper`](#11-extract-databaserowvalidator-from-databasewrapper) | Medium | S | [`wrapper.py`](../internal/database/wrapper.py) |
-| 12 | [Abstract Application Lifecycle into `BaseBotApplication`](#12-abstract-application-lifecycle-into-basebotapplication) | Medium | M | [`telegram/application.py`](../internal/bot/telegram/application.py), [`max/application.py`](../internal/bot/max/application.py) |
-| 13 | [Extract `BotOwnerResolver` from `HandlersManager.injectBot`](#13-extract-botownerresolver-from-handlersmanagerinjectbot) | Medium | S | [`manager.py`](../internal/bot/common/handlers/manager.py) |
-| 14 | [Make `QueueService` Shutdown Deterministic with Structured Concurrency](#14-make-queueservice-shutdown-deterministic-with-structured-concurrency) | Medium | M | [`queue_service/service.py`](../internal/services/queue_service/service.py) |
-| 15 | [Replace Magic `if/elif` in `getChatSettings` with Tier Policy Objects](#15-replace-magic-ifelif-in-getchatsettings-with-tier-policy-objects) | Medium | M | [`base.py`](../internal/bot/common/handlers/base.py) |
-| 16 | [Add `__slots__` to `TheBot` and High-Frequency Data Classes](#16-add-__slots__-to-thebot-and-high-frequency-data-classes) | Medium | S | [`bot.py`](../internal/bot/common/bot.py) |
-| 17 | [Extract `MarkdownRenderer` Platform Bridge from `TheBot`](#17-extract-markdownrenderer-platform-bridge-from-thebot) | Medium | S | [`bot.py`](../internal/bot/common/bot.py) |
-| 18 | [Unify Singleton Pattern with Generic `SingletonMixin`](#18-unify-singleton-pattern-with-generic-singletonmixin) | Medium | S | Multiple service files |
-| 19 | [Move Inline DB Schema DDL out of `_initDatabase`](#19-move-inline-db-schema-ddl-out-of-_initdatabase) | Low | S | [`wrapper.py`](../internal/database/wrapper.py) |
-| 20 | [Replace Bare `Dict[str, Any]` Config Passing with Typed Config Dataclasses](#20-replace-bare-dictstr-any-config-passing-with-typed-config-dataclasses) | Low | M | Multiple files |
-| 21 | [Extract `awaitStepDone` Polling into `asyncio.Condition`-Based Wait](#21-extract-awaitstepone-polling-into-asynciocondition-based-wait) | Low | S | [`manager.py`](../internal/bot/common/handlers/manager.py) |
+| # | Status | Title | Priority | Effort | Key Files |
+|---|--------|-------|----------|--------|-----------|
+| 1 | [ ] | [Split `DatabaseWrapper` into Domain Repositories](#1-split-databasewrapper-into-domain-repositories) | Critical | XL | [`wrapper.py`](../internal/database/wrapper.py) |
+| 2 | [ ] | [Split `BaseBotHandler` into Focused Mixins](#2-split-basebothandler-into-focused-mixins) | Critical | L | [`base.py`](../internal/bot/common/handlers/base.py) |
+| 3 | [ ] | [Extract Platform Abstraction Layer from `TheBot`](#3-extract-platform-abstraction-layer-from-thebot) | Critical | L | [`bot.py`](../internal/bot/common/bot.py) |
+| 4 | [ ] | [Split `MaxBotClient` into API Domain Clients](#4-split-maxbotclient-into-api-domain-clients) | High | L | [`client.py`](../lib/max_bot/client.py) |
+| 5 | [ ] | [Decompose `CacheService` Namespaces into Dedicated Cache Objects](#5-decompose-cacheservice-namespaces-into-dedicated-cache-objects) | High | M | [`service.py`](../internal/services/cache/service.py) |
+| 6 | [ ] | [Introduce Handler Factory / Registry to Decouple `HandlersManager`](#6-introduce-handler-factory--registry-to-decouple-handlersmanager) | High | M | [`manager.py`](../internal/bot/common/handlers/manager.py) |
+| 7 | [ ] | [Extract Queue Management from `HandlersManager` into `ChatQueueManager`](#7-extract-queue-management-from-handlersmanager-into-chatqueuemanager) | High | M | [`manager.py`](../internal/bot/common/handlers/manager.py) |
+| 8 | [ ] | [Replace if/elif Platform Dispatch with Strategy Pattern in `TheBot`](#8-replace-ifelif-platform-dispatch-with-strategy-pattern-in-thebot) | High | M | [`bot.py`](../internal/bot/common/bot.py) |
+| 9 | [ ] | [Extract `LLMContextBuilder` from `LLMMessageHandler`](#9-extract-llmcontextbuilder-from-llmmessagehandler) | High | M | [`llm_messages.py`](../internal/bot/common/handlers/llm_messages.py) |
+| 10 | [ ] | [Eliminate Circular-Import Workaround in `CacheService`](#10-eliminate-circular-import-workaround-in-cacheservice) | High | S | [`service.py`](../internal/services/cache/service.py) |
+| 11 | [ ] | [Extract `DatabaseRowValidator` from `DatabaseWrapper`](#11-extract-databaserowvalidator-from-databasewrapper) | Medium | S | [`wrapper.py`](../internal/database/wrapper.py) |
+| 12 | [ ] | [Abstract Application Lifecycle into `BaseBotApplication`](#12-abstract-application-lifecycle-into-basebotapplication) | Medium | M | [`telegram/application.py`](../internal/bot/telegram/application.py), [`max/application.py`](../internal/bot/max/application.py) |
+| 13 | [ ] | [Extract `BotOwnerResolver` from `HandlersManager.injectBot`](#13-extract-botownerresolver-from-handlersmanagerinjectbot) | Medium | S | [`manager.py`](../internal/bot/common/handlers/manager.py) |
+| 14 | [ ] | [Make `QueueService` Shutdown Deterministic with Structured Concurrency](#14-make-queueservice-shutdown-deterministic-with-structured-concurrency) | Medium | M | [`queue_service/service.py`](../internal/services/queue_service/service.py) |
+| 15 | [ ] | [Replace Magic `if/elif` in `getChatSettings` with Tier Policy Objects](#15-replace-magic-ifelif-in-getchatsettings-with-tier-policy-objects) | Medium | M | [`base.py`](../internal/bot/common/handlers/base.py) |
+| 16 | [ ] | [Add `__slots__` to `TheBot` and High-Frequency Data Classes](#16-add-__slots__-to-thebot-and-high-frequency-data-classes) | Medium | S | [`bot.py`](../internal/bot/common/bot.py) |
+| 17 | [ ] | [Extract `MarkdownRenderer` Platform Bridge from `TheBot`](#17-extract-markdownrenderer-platform-bridge-from-thebot) | Medium | S | [`bot.py`](../internal/bot/common/bot.py) |
+| 18 | [ ] | [Unify Singleton Pattern with Generic `SingletonMixin`](#18-unify-singleton-pattern-with-generic-singletonmixin) | Medium | S | Multiple service files |
+| 19 | [ ] | [Move Inline DB Schema DDL out of `_initDatabase`](#19-move-inline-db-schema-ddl-out-of-_initdatabase) | Low | S | [`wrapper.py`](../internal/database/wrapper.py) |
+| 20 | [ ] | [Replace Bare `Dict[str, Any]` Config Passing with Typed Config Dataclasses](#20-replace-bare-dictstr-any-config-passing-with-typed-config-dataclasses) | Low | M | Multiple files |
+| 21 | [ ] | [Extract `awaitStepDone` Polling into `asyncio.Condition`-Based Wait](#21-extract-awaitstepone-polling-into-asynciocondition-based-wait) | Low | S | [`manager.py`](../internal/bot/common/handlers/manager.py) |
 
 ---
 

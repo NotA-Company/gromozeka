@@ -8,35 +8,35 @@
 
 ## Summary Table
 
-| # | Title | Category | Priority | Effort |
-|---|-------|----------|----------|--------|
-| 1 | [Prometheus Metrics Endpoint](#1-prometheus-metrics-endpoint) | Observability | High | M |
-| 2 | [Structured JSON Request Tracing](#2-structured-json-request-tracing) | Observability | High | M |
-| 3 | [Health Check HTTP Endpoint](#3-health-check-http-endpoint) | Reliability | Critical | S |
-| 4 | [LLM Provider Circuit Breaker](#4-llm-provider-circuit-breaker) | Reliability | High | M |
-| 5 | [Graceful Degradation on DB Errors](#5-graceful-degradation-on-db-errors) | Reliability | High | M |
-| 6 | [Async SQLite Connection Pooling](#6-async-sqlite-connection-pooling) | Performance | High | L |
-| 7 | [Database Query Index Audit](#7-database-query-index-audit) | Performance | High | S |
-| 8 | [LLM Response Streaming](#8-llm-response-streaming) | Feature / UX | High | L |
-| 9 | [Per-User Rate Limiting](#9-per-user-rate-limiting) | Security | High | M |
-| 10 | [Admin Command Permission Hardening](#10-admin-command-permission-hardening) | Security | High | M |
-| 11 | [Secrets in Environment Variables](#11-secrets-in-environment-variables) | Security | Critical | S |
-| 12 | [User Preferences & Per-Chat Personas](#12-user-preferences--per-chat-personas) | Feature | Medium | L |
-| 13 | [Scheduled Messages & Reminders](#13-scheduled-messages--reminders) | Feature | Medium | M |
-| 14 | [Bot Usage Analytics Dashboard](#14-bot-usage-analytics-dashboard) | Observability | Medium | L |
-| 15 | [Hot-Reload Configuration](#15-hot-reload-configuration) | DX | Medium | M |
-| 16 | [Development Seed & Fixture Mode](#16-development-seed--fixture-mode) | DX | Medium | S |
-| 17 | [Performance / Load Tests](#17-performance--load-tests) | Testing | Medium | M |
-| 18 | [Chaos / Fault-Injection Tests](#18-chaos--fault-injection-tests) | Testing | Medium | M |
-| 19 | [End-to-End Integration Test Suite](#19-end-to-end-integration-test-suite) | Testing | Medium | L |
-| 20 | [Cache Hit-Rate Tracking](#20-cache-hit-rate-tracking) | Observability | Medium | S |
-| 21 | [LLM Cost Tracking & Budget Alerts](#21-llm-cost-tracking--budget-alerts) | Feature | Medium | M |
-| 22 | [Plugin / Custom Handler Hot-Load](#22-plugin--custom-handler-hot-load) | Scalability | Low | XL |
-| 23 | [Horizontal Scaling with Redis Queue Backend](#23-horizontal-scaling-with-redis-queue-backend) | Scalability | Low | XL |
-| 24 | [Admin Web Panel](#24-admin-web-panel) | Feature | Low | XL |
-| 25 | [Makefile: Watch Mode & Parallel CI Jobs](#25-makefile-watch-mode--parallel-ci-jobs) | DX | Low | S |
-| 26 | [Automated Dependency Updates via Renovate/Dependabot](#26-automated-dependency-updates-via-renovatedependabot) | DX | Low | S |
-| 27 | [Input Sanitization & Max Message Length Guard](#27-input-sanitization--max-message-length-guard) | Security | Medium | S |
+| # | Status | Title | Category | Priority | Effort |
+|---|--------|-------|----------|----------|--------|
+| 1 | [ ] | [Prometheus Metrics Endpoint](#1-prometheus-metrics-endpoint) | Observability | High | M |
+| 2 | [ ] | [Structured JSON Request Tracing](#2-structured-json-request-tracing) | Observability | High | M |
+| 3 | [ ] | [Health Check HTTP Endpoint](#3-health-check-http-endpoint) | Reliability | Critical | S |
+| 4 | [ ] | [LLM Provider Circuit Breaker](#4-llm-provider-circuit-breaker) | Reliability | High | M |
+| 5 | [ ] | [Graceful Degradation on DB Errors](#5-graceful-degradation-on-db-errors) | Reliability | High | M |
+| 6 | [ ] | [Async SQLite Connection Pooling](#6-async-sqlite-connection-pooling) | Performance | High | L |
+| 7 | [ ] | [Database Query Index Audit](#7-database-query-index-audit) | Performance | High | S |
+| 8 | [ ] | [LLM Response Streaming](#8-llm-response-streaming) | Feature / UX | High | L |
+| 9 | [ ] | [Per-User Rate Limiting](#9-per-user-rate-limiting) | Security | High | M |
+| 10 | [ ] | [Admin Command Permission Hardening](#10-admin-command-permission-hardening) | Security | High | M |
+| 11 | [ ] | [Secrets in Environment Variables](#11-secrets-in-environment-variables) | Security | Critical | S |
+| 12 | [ ] | [User Preferences & Per-Chat Personas](#12-user-preferences--per-chat-personas) | Feature | Medium | L |
+| 13 | [ ] | [Scheduled Messages & Reminders](#13-scheduled-messages--reminders) | Feature | Medium | M |
+| 14 | [ ] | [Bot Usage Analytics Dashboard](#14-bot-usage-analytics-dashboard) | Observability | Medium | L |
+| 15 | [ ] | [Hot-Reload Configuration](#15-hot-reload-configuration) | DX | Medium | M |
+| 16 | [ ] | [Development Seed & Fixture Mode](#16-development-seed--fixture-mode) | DX | Medium | S |
+| 17 | [ ] | [Performance / Load Tests](#17-performance--load-tests) | Testing | Medium | M |
+| 18 | [ ] | [Chaos / Fault-Injection Tests](#18-chaos--fault-injection-tests) | Testing | Medium | M |
+| 19 | [ ] | [End-to-End Integration Test Suite](#19-end-to-end-integration-test-suite) | Testing | Medium | L |
+| 20 | [ ] | [Cache Hit-Rate Tracking](#20-cache-hit-rate-tracking) | Observability | Medium | S |
+| 21 | [ ] | [LLM Cost Tracking & Budget Alerts](#21-llm-cost-tracking--budget-alerts) | Feature | Medium | M |
+| 22 | [ ] | [Plugin / Custom Handler Hot-Load](#22-plugin--custom-handler-hot-load) | Scalability | Low | XL |
+| 23 | [ ] | [Horizontal Scaling with Redis Queue Backend](#23-horizontal-scaling-with-redis-queue-backend) | Scalability | Low | XL |
+| 24 | [ ] | [Admin Web Panel](#24-admin-web-panel) | Feature | Low | XL |
+| 25 | [ ] | [Makefile: Watch Mode & Parallel CI Jobs](#25-makefile-watch-mode--parallel-ci-jobs) | DX | Low | S |
+| 26 | [ ] | [Automated Dependency Updates via Renovate/Dependabot](#26-automated-dependency-updates-via-renovatedependabot) | DX | Low | S |
+| 27 | [ ] | [Input Sanitization & Max Message Length Guard](#27-input-sanitization--max-message-length-guard) | Security | Medium | S |
 
 ---
 
