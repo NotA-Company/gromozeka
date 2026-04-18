@@ -135,7 +135,7 @@ class BaseSQLProvider(ABC):
         await self.disconnect()
         if exc_type is not None:
             logger.error(exc_type, exc, tb)
-            raise exc.with_traceback(tb)
+            raise
 
     @abstractmethod
     async def _execute(self, query: ParametrizedQuery) -> QueryResult:

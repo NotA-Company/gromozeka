@@ -122,6 +122,7 @@ class SQLinkProvider(BaseSQLProvider):
         if fetchType == FetchType.FETCH_ONE:
             # Actually only none can be returned here
             return ret[0] if ret else None
+
         return ret
 
     @asynccontextmanager
