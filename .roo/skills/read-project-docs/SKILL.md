@@ -5,7 +5,8 @@ description: >
   before making any changes. Use this skill when onboarding to the project,
   starting a new task, or when the agent needs to understand project architecture,
   conventions, patterns, and current state. Triggers: read docs, understand project,
-  build context, onboarding, project overview, learn codebase.
+  build context, onboarding, project overview, learn codebase, project structure,
+  how does this work, what patterns, get familiar.
 ---
 
 # Read Gromozeka Project Documentation
@@ -16,6 +17,10 @@ description: >
 - When you need to understand project architecture, conventions, or patterns
 - When starting a new task and you lack project context
 - When explicitly asked to "read the docs" or "understand the project"
+
+## Inputs required
+
+- None — this skill only reads documentation files
 
 ## When NOT to use
 

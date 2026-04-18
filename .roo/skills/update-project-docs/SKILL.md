@@ -114,7 +114,11 @@ Check whether any of these files need updating based on your changes:
 - `lib/rate_limiter/README.md`
 - `lib/openweathermap/README.md`
 - `lib/geocode_maps/README.md`
+- `lib/markdown/test/README.md`
+
+**Internal READMEs:**
 - `internal/services/storage/README.md`
+- `internal/database/migrations/README.md`
 
 **Database docs:**
 - `docs/database-schema.md`
