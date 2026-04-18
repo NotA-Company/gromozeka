@@ -1,4 +1,8 @@
 # Our TODO list
+- [ ] Subagent
+- [ ] Better compaction (drop toools result, more settings, drop userdata, use subagent for compaction)
+- [ ] Topic-level configs
+- [ ] Function for last messages, last discussion messages, user messages)
 - [ ] Support random-message sending function
 - [ ] Spam module refactoring
 - [ ] Do cache service refactoring
