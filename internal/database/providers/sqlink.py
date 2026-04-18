@@ -5,9 +5,9 @@ wraps the ``sqlink`` async client library to execute SQL queries against a
 remote database server.
 """
 
-from contextlib import asynccontextmanager
 import logging
 from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 import sqlink
@@ -116,14 +116,14 @@ class SQLinkProvider(BaseSQLProvider):
 
             if fetchType == FetchType.FETCH_ONE:
                 return rowRet
-            
+
             ret.append(rowRet)
 
         if fetchType == FetchType.FETCH_ONE:
             # Actually only none can be returned here
             return ret[0] if ret else None
         return ret
-    
+
     @asynccontextmanager
     async def _autoConnection(self) -> AsyncGenerator[sqlink.AsyncConnection, None]:
         """Open connection if needed, yield it, close if we opened it, dood!"""

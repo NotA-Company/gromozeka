@@ -6,11 +6,10 @@ that all concrete providers must implement.
 """
 
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from enum import Enum
 from typing import Any, Dict, Optional
-from abc import ABC, abstractmethod
-
 
 logger = logging.getLogger(__name__)
 
