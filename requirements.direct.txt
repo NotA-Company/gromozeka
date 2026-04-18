@@ -7,6 +7,7 @@ yandex-ai-studio-sdk==0.19.2
 html-to-markdown==2.30.0
 boto3==1.42.78
 httpx[http2]==0.28.1
+sqlink @ git+https://git@git.sourcecraft.dev/notacompany/py-sqlink-client.git
 
 # Formatters
 black==26.3.1
