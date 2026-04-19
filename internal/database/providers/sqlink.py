@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 
 import sqlink
 
+from . import utils
 from .base import BaseSQLProvider, FetchType, ParametrizedQuery, QueryResult
 
 logger = logging.getLogger(__name__)
@@ -161,7 +162,7 @@ class SQLinkProvider(BaseSQLProvider):
             Query result according to the query's fetch type.
         """
         async with self._autoConnection() as connection:
-            ret = await connection.execute(query.query, query.params)
+            ret = await connection.execute(query.query, utils.convertContainerElementsToSQLite(query.params))
             return self._makeQueryResult(ret, query.fetchType)
 
     async def batchExecute(self, queries: Sequence[ParametrizedQuery]) -> Sequence[QueryResult]:
@@ -177,5 +178,7 @@ class SQLinkProvider(BaseSQLProvider):
             A list of query results, one per input query, in the same order.
         """
         async with self._autoConnection() as connection:
-            ret = await connection.executeBatch([(query.query, query.params) for query in queries])
+            ret = await connection.executeBatch(
+                [(query.query, utils.convertContainerElementsToSQLite(query.params)) for query in queries]
+            )
             return [self._makeQueryResult(queryResult, query.fetchType) for queryResult, query in zip(ret, queries)]

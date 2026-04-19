@@ -7,7 +7,7 @@ that all concrete providers must implement.
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -31,8 +31,10 @@ class FetchType(Enum):
     """Fetch all rows as a list of dicts."""
 
 
-type QueryParams = Dict[str, Any] | Sequence[Any]
-type QueryResult = Dict[str, Any] | Sequence[Dict[str, Any]] | None
+type QueryParams = Dict[str, Any] | Sequence[Any] | Mapping[str, Any]
+type QueryResultFetchOne = Dict[str, Any] | None
+type QueryResultFetchAll = Sequence[Dict[str, Any]]
+type QueryResult = QueryResultFetchOne | QueryResultFetchAll | None
 
 
 class ParametrizedQuery:
@@ -173,6 +175,55 @@ class BaseSQLProvider(ABC):
         if not isinstance(query, ParametrizedQuery):
             query = ParametrizedQuery(query, params, fetchType)
         return await self._execute(query)
+
+    async def executeFetchOne(
+        self,
+        query: str,
+        params: Optional[QueryParams] = None,
+    ) -> QueryResultFetchOne:
+        """Execute a SQL query and return the first row.
+
+        Args:
+            query: Either a raw SQL string or a pre-built :class:`ParametrizedQuery`.
+
+        Returns:
+            The first row of the query result.
+        """
+        ret = await self._execute(ParametrizedQuery(query, params, FetchType.FETCH_ONE))
+        if not ret:
+            return None
+        if isinstance(ret, Sequence):
+            logger.warning(f"Query returned more than one row: {ret}")
+            ret = ret[0]
+
+        if not isinstance(ret, Mapping):
+            logger.error(f"Query returned non-mapping: {ret}")
+            return None
+
+        return ret
+
+    async def executeFetchAll(
+        self,
+        query: str,
+        params: Optional[QueryParams] = None,
+    ) -> QueryResultFetchAll:
+        """Execute a SQL query and return all rows.
+
+        Args:
+            query: Either a raw SQL string or a pre-built :class:`ParametrizedQuery`.
+
+        Returns:
+            All rows of the query result.
+        """
+        ret = await self._execute(ParametrizedQuery(query, params, FetchType.FETCH_ALL))
+        if not ret:
+            return []
+
+        if not isinstance(ret, Sequence):
+            logger.error(f"Query returned non-sequence: {ret}")
+            return []
+
+        return ret
 
     @abstractmethod
     async def batchExecute(self, queries: Sequence[ParametrizedQuery]) -> Sequence[QueryResult]:

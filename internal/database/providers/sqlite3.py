@@ -12,6 +12,7 @@ from typing import Optional, cast
 
 import aiosqlite
 
+from . import utils
 from .base import BaseSQLProvider, FetchType, ParametrizedQuery, QueryResult
 
 logger = logging.getLogger(__name__)
@@ -155,7 +156,7 @@ class SQLite3Provider(BaseSQLProvider):
             Query result according to the query's fetch type.
         """
         async with self.cursor() as cursor:
-            await cursor.execute(query.query, query.params)
+            await cursor.execute(query.query, utils.convertContainerElementsToSQLite(query.params))
             return await self._makeQueryResult(cursor, query.fetchType)
 
     async def batchExecute(self, queries: Sequence[ParametrizedQuery]) -> Sequence[QueryResult]:
@@ -173,7 +174,7 @@ class SQLite3Provider(BaseSQLProvider):
         ret: list[QueryResult] = []
         async with self.cursor() as cursor:
             for query in queries:
-                await cursor.execute(query.query, query.params)
+                await cursor.execute(query.query, utils.convertContainerElementsToSQLite(query.params))
                 ret.append(await self._makeQueryResult(cursor, query.fetchType))
 
         return ret
