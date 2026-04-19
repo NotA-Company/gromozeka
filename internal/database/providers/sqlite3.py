@@ -85,6 +85,11 @@ class SQLite3Provider(BaseSQLProvider):
             self._connection = None
             logger.debug(f"Disconnected from SQLite3 database at {self.dbPath}")
 
+    async def isReadOnly(self) -> bool:
+        """Return if this provider is in read only mode or not"""
+
+        return self.readOnly
+
     @asynccontextmanager
     async def cursor(self) -> AsyncGenerator[aiosqlite.Cursor, None]:
         """Async context manager that yields a database cursor within a transaction.

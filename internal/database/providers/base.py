@@ -46,7 +46,7 @@ class ParametrizedQuery:
 
     __slots__ = ("query", "params", "fetchType")
 
-    def __init__(self, query: str, params: Optional[QueryParams] = None, fetchType: FetchType = FetchType.FETCH_ALL):
+    def __init__(self, query: str, params: Optional[QueryParams] = None, fetchType: FetchType = FetchType.NO_FETCH):
         """Initialise a parametrized query.
 
         Args:
@@ -156,7 +156,7 @@ class BaseSQLProvider(ABC):
         self,
         query: str | ParametrizedQuery,
         params: Optional[QueryParams] = None,
-        fetchType: FetchType = FetchType.FETCH_ALL,
+        fetchType: FetchType = FetchType.NO_FETCH,
     ) -> QueryResult:
         """Execute a SQL query, wrapping a plain string in :class:`ParametrizedQuery` if needed.
 
@@ -187,4 +187,9 @@ class BaseSQLProvider(ABC):
         Raises:
             NotImplementedError: Must be overridden by subclasses.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def isReadOnly(self) -> bool:
+        """Return if this provider is in read only mode or not"""
         raise NotImplementedError

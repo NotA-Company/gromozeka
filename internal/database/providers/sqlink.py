@@ -89,6 +89,17 @@ class SQLinkProvider(BaseSQLProvider):
             self._connection = None
             logger.debug(f"Disconnected from SQLink database {self.url}/{self.database}")
 
+    async def isReadOnly(self) -> bool:
+        """Return if this provider is in read only mode or not"""
+        async with self._autoConnection() as connection:
+            databases = await connection.databases()
+            for db in databases:
+                if db.name == self.database:
+                    return db.access == "ro"
+
+            logger.warning(f"Database {self.database} not found in SQLink databases: {databases}")
+            return True
+
     def _makeQueryResult(self, queryResult: sqlink.QueryResult, fetchType: FetchType) -> QueryResult:
         """Convert a ``sqlink.QueryResult`` into the provider's :obj:`QueryResult` type.
 

@@ -4,8 +4,9 @@ Initial schema migration - creates all base tables, dood!
 This migration extracts all table creation from the original _initDatabase() method.
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
@@ -15,15 +16,19 @@ class Migration001InitialSchema(BaseMigration):
     version = 1
     description = "Create initial database schema"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
         """Create all initial tables, dood!
-        
+
         Args:
             cursor: SQLite cursor to execute SQL commands
         """
-        # Chat messages table for storing detailed chat message information
-        cursor.execute(
-            """
+        # Import CacheType here to avoid circular dependency
+        from ...models import CacheType
+
+        await sqlProvider.batchExecute(
+            [
+                # Chat messages table for storing detailed chat message information
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS chat_messages (
                 chat_id INTEGER NOT NULL,
                 message_id TEXT NOT NULL,
@@ -40,12 +45,9 @@ class Migration001InitialSchema(BaseMigration):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, message_id)
             )
-        """
-        )
-
-        # Chat-specific settings
-        cursor.execute(
-            """
+        """),
+                # Chat-specific settings
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS chat_settings (
                 chat_id INTEGER NOT NULL,
                 key TEXT NOT NULL,
@@ -54,12 +56,9 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, key)
             )
-        """
-        )
-
-        # Per-chat known users + some stats (messages count + last seen)
-        cursor.execute(
-            """
+        """),
+                # Per-chat known users + some stats (messages count + last seen)
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS chat_users (
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -71,11 +70,8 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, user_id)
             )
-        """
-        )
-
-        cursor.execute(
-            """
+        """),
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS chat_info (
                 chat_id INTEGER PRIMARY KEY,
                 title TEXT,
@@ -85,12 +81,9 @@ class Migration001InitialSchema(BaseMigration):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
-
-        # Chat stats (currently only messages count per date)
-        cursor.execute(
-            """
+        """),
+                # Chat stats (currently only messages count per date)
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS chat_stats (
                 chat_id INTEGER NOT NULL,
                 date TIMESTAMP NOT NULL,
@@ -99,12 +92,9 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, date)
             )
-        """
-        )
-
-        # Chat user stats (currently only messages count per date)
-        cursor.execute(
-            """
+        """),
+                # Chat user stats (currently only messages count per date)
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS chat_user_stats (
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -114,12 +104,9 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, user_id, date)
             )
-        """
-        )
-
-        # Table with saved Media info
-        cursor.execute(
-            """
+        """),
+                # Table with saved Media info
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS media_attachments (
                 file_unique_id TEXT PRIMARY KEY,
                 file_id TEXT,
@@ -134,12 +121,9 @@ class Migration001InitialSchema(BaseMigration):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
-
-        # Table for delayed tasks
-        cursor.execute(
-            """
+        """),
+                # Table for delayed tasks
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS delayed_tasks (
                 id TEXT PRIMARY KEY NOT NULL,
                 delayed_ts INTEGER NOT NULL,
@@ -149,12 +133,9 @@ class Migration001InitialSchema(BaseMigration):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
-
-        # Some knowledge about user, collected during discussion
-        cursor.execute(
-            """
+        """),
+                # Some knowledge about user, collected during discussion
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS user_data (
                 user_id INTEGER NOT NULL,
                 chat_id INTEGER NOT NULL,
@@ -164,12 +145,9 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, chat_id, key)
             )
-        """
-        )
-
-        # Spam messages for learning
-        cursor.execute(
-            """
+        """),
+                # Spam messages for learning
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS spam_messages (
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -181,12 +159,9 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, user_id, message_id)
             )
-        """
-        )
-
-        # Ham messages for learning
-        cursor.execute(
-            """
+        """),
+                # Ham messages for learning
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS ham_messages (
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -198,12 +173,9 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, user_id, message_id)
             )
-        """
-        )
-
-        # Chat Topics
-        cursor.execute(
-            """
+        """),
+                # Chat Topics
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS chat_topics (
                 chat_id INTEGER NOT NULL,
                 topic_id INTEGER NOT NULL,
@@ -214,12 +186,9 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, topic_id)
             )
-        """
-        )
-
-        # Chat Summarization Cache
-        cursor.execute(
-            """
+        """),
+                # Chat Summarization Cache
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS chat_summarization_cache (
                 csid TEXT PRIMARY KEY,
                 chat_id INTEGER NOT NULL,
@@ -231,20 +200,15 @@ class Migration001InitialSchema(BaseMigration):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
-        cursor.execute(
-            """
+        """),
+                ParametrizedQuery("""
             CREATE INDEX IF NOT EXISTS chat_summarization_cache_ctfl_index
             ON chat_summarization_cache
                 (chat_id, topic_id, first_message_id, last_message_id, prompt)
-        """
-        )
-
-        # Bayes filter tables for spam detection, dood!
-        # Token statistics for Bayes filter
-        cursor.execute(
-            """
+        """),
+                # Bayes filter tables for spam detection, dood!
+                # Token statistics for Bayes filter
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS bayes_tokens (
                 token TEXT NOT NULL,
                 chat_id INTEGER,
@@ -255,12 +219,9 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (token, chat_id)
             )
-        """
-        )
-
-        # Class statistics for Bayes filter
-        cursor.execute(
-            """
+        """),
+                # Class statistics for Bayes filter
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS bayes_classes (
                 chat_id INTEGER,
                 is_spam BOOLEAN NOT NULL,
@@ -270,49 +231,40 @@ class Migration001InitialSchema(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, is_spam)
             )
-        """
-        )
-
-        # Indexes for performance
-        cursor.execute(
-            """
+        """),
+                # Indexes for performance
+                ParametrizedQuery("""
             CREATE INDEX IF NOT EXISTS bayes_tokens_chat_idx ON bayes_tokens(chat_id)
-        """
-        )
-        cursor.execute(
-            """
+        """),
+                ParametrizedQuery("""
             CREATE INDEX IF NOT EXISTS bayes_tokens_total_idx ON bayes_tokens(total_count)
-        """
-        )
-        cursor.execute(
-            """
+        """),
+                ParametrizedQuery("""
             CREATE INDEX IF NOT EXISTS bayes_classes_chat_idx ON bayes_classes(chat_id)
-        """
-        )
-
-            # Cache tables (for OpenWeatherMap for now)
-        # Import CacheType here to avoid circular dependency
-        from ...models import CacheType
-
-        for cacheType in CacheType:
-            cursor.execute(
-                f"""
+        """),
+            ]
+            + [
+                # Cache tables (for OpenWeatherMap for now)
+                ParametrizedQuery(f"""
                 CREATE TABLE IF NOT EXISTS cache_{cacheType} (
                     key TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-                """
-            )
+                """)
+                for cacheType in CacheType
+            ]
+        )
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
         """Drop all tables created by this migration, dood!
-        
+
         Args:
             cursor: SQLite cursor to execute SQL commands
         """
-        # Drop all tables in reverse order
+        from ...models import CacheType
+
         tables = [
             "chat_messages",
             "chat_settings",
@@ -330,21 +282,25 @@ class Migration001InitialSchema(BaseMigration):
             "bayes_tokens",
             "bayes_classes",
         ]
-            
-        for table in tables:
-            cursor.execute(f"DROP TABLE IF EXISTS {table}")
-        
-        # Drop indexes
-        cursor.execute("DROP INDEX IF EXISTS chat_summarization_cache_ctfl_index")
-        cursor.execute("DROP INDEX IF EXISTS bayes_tokens_chat_idx")
-        cursor.execute("DROP INDEX IF EXISTS bayes_tokens_total_idx")
-        cursor.execute("DROP INDEX IF EXISTS bayes_classes_chat_idx")
-        
-        # Drop cache tables
-        from ...models import CacheType
-        
-        for cacheType in CacheType:
-            cursor.execute(f"DROP TABLE IF EXISTS cache_{cacheType}")
+        await sqlProvider.batchExecute(
+            [
+                # Drop all tables in reverse order
+                ParametrizedQuery(f"DROP TABLE IF EXISTS {table}")
+                for table in tables
+            ]
+            + [
+                # Drop indexes
+                ParametrizedQuery("DROP INDEX IF EXISTS chat_summarization_cache_ctfl_index"),
+                ParametrizedQuery("DROP INDEX IF EXISTS bayes_tokens_chat_idx"),
+                ParametrizedQuery("DROP INDEX IF EXISTS bayes_tokens_total_idx"),
+                ParametrizedQuery("DROP INDEX IF EXISTS bayes_classes_chat_idx"),
+            ]
+            + [
+                # Drop cache tables
+                ParametrizedQuery(f"DROP TABLE IF EXISTS cache_{cacheType}")
+                for cacheType in CacheType
+            ]
+        )
 
 
 def getMigration() -> Type[BaseMigration]:

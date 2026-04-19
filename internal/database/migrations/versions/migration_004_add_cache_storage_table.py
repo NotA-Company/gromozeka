@@ -4,8 +4,9 @@ Add_cache_storage_table, dood!
 TODO: Implement the migration logic below
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
@@ -15,14 +16,15 @@ class Migration004Add_cache_storage_table(BaseMigration):
     version = 4
     description = "add_cache_storage_table"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
         """Create cache_storage table for CacheService persistence, dood!
-        
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
         """
-        cursor.execute(
-            """
+        await sqlProvider.batchExecute(
+            [
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS cache_storage (
                 namespace TEXT NOT NULL,
                 key TEXT NOT NULL,
@@ -30,25 +32,27 @@ class Migration004Add_cache_storage_table(BaseMigration):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (namespace, key)
             )
-            """
-        )
-        
-        # Create index for faster lookups by namespace
-        cursor.execute(
-            """
+            """),
+                # Create index for faster lookups by namespace
+                ParametrizedQuery("""
             CREATE INDEX IF NOT EXISTS idx_cache_namespace
             ON cache_storage(namespace)
-            """
+            """),
+            ]
         )
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
         """Drop cache_storage table and its index, dood!
-        
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
         """
-        cursor.execute("DROP INDEX IF EXISTS idx_cache_namespace")
-        cursor.execute("DROP TABLE IF EXISTS cache_storage")
+        await sqlProvider.batchExecute(
+            [
+                ParametrizedQuery("DROP INDEX IF EXISTS idx_cache_namespace"),
+                ParametrizedQuery("DROP TABLE IF EXISTS cache_storage"),
+            ]
+        )
 
 
 def getMigration() -> Type[BaseMigration]:

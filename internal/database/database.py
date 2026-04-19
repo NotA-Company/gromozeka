@@ -7,10 +7,7 @@ with other database backends in the future.
 import datetime
 import hashlib
 import logging
-import sqlite3
-import threading
 from collections.abc import MutableSet, Sequence
-from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, cast
 
 import dateutil
@@ -20,6 +17,8 @@ from telegram import Chat
 from internal.models import MessageIdType, MessageType
 from lib import utils
 
+from .manager import DatabaseManager, DatabaseManagerConfig
+from .migrations import MigrationManager
 from .models import (
     CacheDict,
     CacheStorageDict,
@@ -36,89 +35,25 @@ from .models import (
     SpamMessageDict,
     SpamReason,
 )
+from .providers import BaseSQLProvider
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_THREAD_ID: int = 0
 
 
-def convert_timestamp(val: bytes | str) -> datetime.datetime:
-    if isinstance(val, bytes):
-        valStr = val.decode("utf-8")
-    else:
-        valStr = val
-    ret = dateutil.parser.parse(valStr)
-    # logger.debug(f"Converted {valStr} to {repr(ret)}")
-    return ret
-    # return datetime.datetime.strptime(valStr, '%Y-%m-%d %H:%M:%S')
-
-
-def convert_boolean(val: bytes) -> bool:
-    # logger.debug(f"Converting {val} (int: {int(val)}, {int(val[0])}) to {bool(int(val[0]))}")
-    if len(val) == 0:
-        return False
-    elif len(val) == 1:
-        return bool(int(val))
-    else:
-        raise ValueError(f"Invalid boolean value: {val}")
-
-
-def adapt_datetime(val: datetime.datetime) -> str:
-    """Adapt datetime.datetime to SQLite format string for sqlite3, dood!"""
-    # Use SQLite's datetime format (YYYY-MM-DD HH:MM:SS) for consistency with CURRENT_TIMESTAMP
-    # Strip microseconds to match SQLite's CURRENT_TIMESTAMP format exactly
-    return val.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
-
-
-# Register converters for reading from database
-sqlite3.register_converter("timestamp", convert_timestamp)
-sqlite3.register_converter("boolean", convert_boolean)
-
-# Register adapters for writing to database (Python 3.12+ requirement)
-sqlite3.register_adapter(datetime.datetime, adapt_datetime)
-
-
-class SourceConfig:
+class Database:
     """
-    Configuration for a single database source.
-    """
-
-    __slots__ = ("dbPath", "readonly", "timeout", "poolSize")
-
-    def __init__(
-        self,
-        *,
-        dbPath: str,
-        readonly: bool = False,
-        timeout: int = 10,
-        poolSize: int = 5,
-    ) -> None:
-        self.dbPath = dbPath
-        """Path do DB file"""
-        self.readonly = readonly
-        """Whether the database is read-only"""
-        self.timeout = timeout
-        """Connection timeout in seconds"""
-        self.poolSize = poolSize
-        """Maximum connections per source"""
-
-    def __repr__(self) -> str:
-        retList = []
-        for slot in self.__slots__:
-            retList.append(f"{slot}={getattr(self, slot)}")
-
-        return self.__class__.__name__ + "(" + ", ".join(retList) + ")"
-
-
-class DatabaseWrapper:
-    """
-    A wrapper around SQLite that provides a consistent interface
+    TODO: Update docstring
+    A wrapper around SQL that provides a consistent interface
     that can be easily replaced with other database backends.
     """
 
+    # _slots__ = ("_connections", "_sources", "_chatMapping", "_locks", "_defaultSource")
+
     def __init__(
         self,
-        config: Dict[str, Any],
+        config: DatabaseManagerConfig,
     ):
         """
         Initialize database wrapper with single or multi-source configuration, dood!
@@ -132,260 +67,40 @@ class DatabaseWrapper:
         Raises:
             ValueError: If neither or both dbPath and config provided
         """
-        logger.info("Initializing database wrapper in multi-source mode, dood!")
-        self._initializeMultiSource(config, 5, 30)
+        logger.info("Initializing database")
+        self.manager = DatabaseManager(config)
 
-        # Initialize database schema (works for both modes)
-        self._initDatabase()
-
-    def _initializeMultiSource(self, config: Dict[str, Any], defaultMaxConnections: int, defaultTimeout: float):
-        """
-        Initialize multi-source configuration and connection pools, dood!
-
-        Args:
-            config: Multi-source config dict with sources, chatMapping, default
-            defaultMaxConnections: Default max connections per source
-            defaultTimeout: Default timeout per source in seconds
-        """
-        # Initialize data structures for multi-source mode
-        self._connections: Dict[str, threading.local] = {}
-        self._sources: Dict[str, SourceConfig] = {}
-        self._chatMapping: Dict[int, str] = {}
-        self._locks: Dict[str, threading.Lock] = {}
-        self._defaultSource: str = config.get("default", "default")
-
-        # Parse and store source configurations
-        sources = config.get("sources", {})
-        if not sources:
-            raise ValueError("Multi-source config must contain at least one source, dood!")
-
-        for sourceName, sourceConfig in sources.items():
-            if "path" not in sourceConfig:
-                raise ValueError(f"Source '{sourceName}' missing required 'path' field, dood!")
-
-            # Store source configuration with defaults
-            self._sources[sourceName] = SourceConfig(
-                dbPath=sourceConfig["path"],
-                readonly=sourceConfig.get("readonly", False),
-                poolSize=sourceConfig.get("pool-size", defaultMaxConnections),
-                timeout=sourceConfig.get("timeout", defaultTimeout),
-            )
-
-            # Initialize thread-local storage for this source
-            self._connections[sourceName] = threading.local()
-
-            # Initialize lock for thread-safe connection management
-            self._locks[sourceName] = threading.Lock()
-
-            logger.info(f"Configured source '{sourceName}': {self._sources[sourceName]}, dood!")
-
-        # Validate default source exists
-        if self._defaultSource not in self._sources:
-            raise ValueError(f"Default source '{self._defaultSource}' not found in sources configuration, dood!")
-
-        # Parse chat-to-source mapping
-        chatMapping = config.get("chatMapping", {})
-        for chatId, sourceName in chatMapping.items():
-            # Convert chatId to int if it's a string
-            chatIdInt = int(chatId) if isinstance(chatId, str) else chatId
-
-            # Validate source exists
-            if sourceName not in self._sources:
-                logger.warning(
-                    f"Chat {chatIdInt} mapped to non-existent source '{sourceName}', "
-                    f"will fall back to default source '{self._defaultSource}', dood!"
-                )
-                continue
-
-            self._chatMapping[chatIdInt] = sourceName
-            logger.debug(f"Mapped chat {chatIdInt} to source '{sourceName}', dood!")
-
-        logger.info(
-            f"Multi-source initialization complete: {len(self._sources)} sources, "
-            f"{len(self._chatMapping)} chat mappings, default='{self._defaultSource}', dood!"
-        )
-
-    def _getConnection(
-        self,
-        *,
-        chatId: Optional[int] = None,
-        dataSource: Optional[str] = None,
-        readonly: bool = False,
-    ) -> sqlite3.Connection:
-        """
-        Get thread-local connection with 3-tier routing: dataSource → chatMapping → default, dood!
-
-        Args:
-            chatId: Chat ID for tier-2 routing via chatMapping
-            dataSource: Explicit source name for tier-1 routing (highest priority)
-            readonly: Request readonly connection (default: False = writable)
-
-        Returns:
-            sqlite3.Connection: Thread-local connection for selected source
-
-        Raises:
-            ValueError: If readonly=False on readonly source
-        """
-        # Multi-source mode - determine which source to use via 3-tier routing
-        sourceName: str
-
-        # Tier 1: Explicit dataSource parameter (highest priority)
-        if dataSource is not None:
-            if dataSource not in self._sources:
-                logger.warning(
-                    f"Explicit dataSource '{dataSource}' not found in configuration, "
-                    f"falling back to default source '{self._defaultSource}', dood!"
-                )
-                sourceName = self._defaultSource
-            else:
-                # logger.debug(f"Using explicit dataSource '{dataSource}' (tier 1 routing), dood!")
-                sourceName = dataSource
-
-        # Tier 2: ChatId mapping lookup (medium priority)
-        elif chatId is not None:
-            if chatId in self._chatMapping:
-                mappedSource = self._chatMapping[chatId]
-                # Validate mapped source still exists
-                if mappedSource not in self._sources:
-                    logger.warning(
-                        f"Chat {chatId} mapped to non-existent source '{mappedSource}', "
-                        f"falling back to default source '{self._defaultSource}', dood!"
-                    )
-                    sourceName = self._defaultSource
-                else:
-                    # logger.debug(f"Using chatId {chatId} mapping to source '{mappedSource}' (tier 2 routing), dood!")
-                    sourceName = mappedSource
-            else:
-                # logger.debug(
-                #     f"Chat {chatId} not in mapping, using default source "
-                #     f"'{self._defaultSource}' (tier 3 fallback), dood!"
-                # )
-                sourceName = self._defaultSource
-
-        # Tier 3: Default source fallback (lowest priority)
-        else:
-            # logger.debug(
-            #     "No routing parameters provided, using default source "
-            #     f"'{self._defaultSource}' (tier 3 fallback), dood!"
-            # )
-            sourceName = self._defaultSource
-
-        # Readonly validation - check before returning connection
-        sourceConfig = self._sources[sourceName]
-        if not readonly and sourceConfig.readonly:
-            raise ValueError(
-                f"Cannot perform write operation on readonly source '{sourceName}', dood! "
-                f"This source is configured as readonly."
-            )
-
-        # Get or create thread-local connection for this source
-        threadLocal = self._connections[sourceName]
-
-        if not hasattr(threadLocal, "connection"):
-            # Need to create new connection - acquire lock for thread safety
-            with self._locks[sourceName]:
-                # Double-check after acquiring lock (another thread might have created it)
-                if not hasattr(threadLocal, "connection"):
-                    logger.debug(
-                        f"Creating new connection for source '{sourceName}' "
-                        f"(path={sourceConfig.dbPath}, readonly={sourceConfig.readonly}), dood!"
-                    )
-
-                    # Create connection with source-specific configuration
-                    threadLocal.connection = sqlite3.connect(
-                        sourceConfig.dbPath,
-                        timeout=sourceConfig.timeout,
-                        check_same_thread=False,
-                        detect_types=sqlite3.PARSE_DECLTYPES,
-                    )
-                    threadLocal.connection.row_factory = sqlite3.Row
-
-                    # Enable query_only mode for readonly sources
-                    if sourceConfig.readonly:
-                        threadLocal.connection.execute("PRAGMA query_only = ON")
-                        logger.debug(f"Enabled query_only mode for readonly source '{sourceName}', dood!")
-
-        return threadLocal.connection
-
-    @contextmanager
-    def getCursor(
-        self,
-        *,
-        chatId: Optional[int] = None,
-        dataSource: Optional[str] = None,
-        readonly: bool = False,
-    ):
-        """
-        Context manager for database operations with routing support, dood!
-
-        Args:
-            chatId: Chat ID for routing
-            dataSource: Explicit source name for routing
-            readonly: Request readonly connection (default: False = writable)
-
-        Yields:
-            sqlite3.Cursor: Database cursor with auto-commit/rollback
-        """
-        conn = self._getConnection(chatId=chatId, dataSource=dataSource, readonly=readonly)
-        cursor = conn.cursor()
+        self._migrationManager = MigrationManager()
         try:
-            yield cursor
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Database operation failed: {e}")
-            logger.exception(e)
-            raise
-        finally:
-            cursor.close()
-
-    def close(self):
-        """Close all database connections across all sources, dood!"""
-        for sourceName, threadLocal in self._connections.items():
-            if hasattr(threadLocal, "connection"):
-                try:
-                    threadLocal.connection.close()
-                    logger.debug(f"Closed connection for source '{sourceName}', dood!")
-                except Exception as e:
-                    logger.error(f"Error closing connection for source '{sourceName}': {e}")
-
-    def _initDatabase(self):
-        """Initialize database schema and run migrations for all non-readonly sources, dood!"""
-        # Import here to avoid circular dependency, dood!
-        from .migrations import MigrationManager
-
-        migrationManager = MigrationManager(self)
-        try:
-            migrationManager.loadMigrationsFromVersions()
+            self._migrationManager.loadMigrationsFromVersions()
             logger.info("Loaded migrations, dood!")
         except Exception as e:
             logger.error(f"Migration auto-discovery failed: {e}")
             raise e
 
-        # Initialize each non-readonly datasource
-        for sourceName, sourceConfig in self._sources.items():
-            if sourceConfig.readonly:
-                logger.info(f"Skipping DB initialization for readonly source '{sourceName}', dood!")
-                continue
+        # This one should be last, so other modules will create it's tables already
+        self.manager.addProviderInitializationHook(self.migrateDatabase)
 
-            logger.info(f"Initializing database for source '{sourceName}', dood!")
+    async def migrateDatabase(self, sqlProvider: BaseSQLProvider, providerName: str, readOnly: bool) -> None:
+        """Migrate database schema and run migrations for all non-readonly sources, dood!"""
 
-            # Create settings table (needed before migrations for version tracking)
-            with self.getCursor(dataSource=sourceName) as cursor:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS settings (
-                        key TEXT PRIMARY KEY,
-                        value TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
+        if readOnly:
+            logger.debug(f"Skipping DB migration for readonly source {providerName}, dood")
+            return
 
-            # Run migrations for this source
-            migrationManager.migrate(sqlProvider=sourceName)
-            logger.info(f"Database initialization complete for source '{sourceName}', dood!")
+        # Create settings table (needed before migrations for version tracking)
+        await sqlProvider.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        logger.info("All non-readonly databases initialized, dood!")
+        # Run migrations for this source
+        self._migrationManager.migrate(sqlProvider=sqlProvider)
+        logger.info(f"Database initialization complete for provider '{providerName}', dood!")
 
     ###
     # TypedDict validation and conversion helpers

@@ -4,8 +4,9 @@ Add metadata column to chat_users table, dood!
 This migration adds a text column to store metadata for chat users.
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
@@ -15,32 +16,28 @@ class Migration003AddMetadataToChatUsers(BaseMigration):
     version = 3
     description = "Add metadata column to chat_users table"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
         """Apply the migration - add metadata column to chat_users, dood!
-        
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
         """
         # Add metadata column to chat_users table
-        cursor.execute(
-            """
+        await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
             ADD COLUMN metadata TEXT DEFAULT '' NOT NULL
-        """
-        )
+        """))
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
         """Rollback the migration - remove metadata column, dood!
-        
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
         """
-        cursor.execute(
-            """
+        await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
             DROP COLUMN metadata
-        """
-        )
+        """))
 
 
 def getMigration() -> Type[BaseMigration]:

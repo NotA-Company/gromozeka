@@ -2,8 +2,13 @@
 Base migration class for database migrations, dood!
 """
 
-import sqlite3
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..providers import BaseSQLProvider
 
 
 class BaseMigration(ABC):
@@ -14,20 +19,20 @@ class BaseMigration(ABC):
     description: str
 
     @abstractmethod
-    def up(self, cursor: sqlite3.Cursor) -> None:
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
         """
         Apply the migration, dood!
-        
+
         Args:
             cursor: SQLite cursor to execute SQL commands
         """
         pass
 
     @abstractmethod
-    def down(self, cursor: sqlite3.Cursor) -> None:
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
         """
         Rollback the migration, dood!
-        
+
         Args:
             cursor: SQLite cursor to execute SQL commands
         """

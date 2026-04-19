@@ -4,8 +4,9 @@ Add is_spammer column to chat_users table, dood!
 This migration adds a boolean flag to track potential spammers in chats.
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
@@ -15,32 +16,28 @@ class Migration002AddIsSpammerToChatUsers(BaseMigration):
     version = 2
     description = "Add is_spammer column to chat_users table"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
         """Apply the migration - add is_spammer column to chat_users, dood!
-        
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
         """
         # Add is_spammer column to chat_users table
-        cursor.execute(
-            """
+        await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
             ADD COLUMN is_spammer BOOLEAN DEFAULT FALSE NOT NULL
-        """
-        )
+        """))
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
         """Rollback the migration - remove is_spammer column, dood!
-        
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
         """
-        cursor.execute(
-            """
+        await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
             DROP COLUMN is_spammer
-        """
-        )
+        """))
 
 
 def getMigration() -> Type[BaseMigration]:

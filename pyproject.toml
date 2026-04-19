@@ -16,7 +16,6 @@ extend-exclude = '''
   | buck-out
   | build
   | dist
-  | migrations
 )/
 '''
 
@@ -45,7 +44,6 @@ exclude = [
     "old",
     "build",
     "dist",
-    "migrations",
     "venv",
     "ext",
 ]
@@ -76,7 +74,7 @@ markers = [
 profile = "black"
 line_length = 120
 skip_gitignore = true
-extend_skip = ["venv", ".venv", "migrations", ".git"]
+extend_skip = ["venv", ".venv", ".git"]
 known_first_party = ["internal", "lib"]
 sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 multi_line_output = 3
