@@ -89,7 +89,7 @@ class ResendJob:
             messageSuffix: Optional suffix to add to resent messages
             lastMessageDate: Optional last message timestamp processed (datetime or ISO string)
             notification: Optional notification flag (True/False/None for system default)
-            mediaGroupDelaySecs: Delay in seconds to wait for media group completion (default: 5.0)
+            mediaGroupDelaySecs: Delay in seconds to wait for media group completion (default: 10.0)
         """
         self.id = id
         """id of the resend job, used for persisting the job state"""
@@ -233,10 +233,6 @@ class ResenderHandler(BaseBotHandler):
             if not isinstance(job, dict):
                 raise ValueError(f"each job must be a dictionary, but got {type(job)}")
             newJob = ResendJob(**job)
-            dataKey = f"resender:{newJob.id}:lastMessageDate"
-            storedData = await self.db.common.getSetting(dataKey)
-            if storedData:
-                newJob.setLastMessageDate(storedData)
             logger.info(f"Loaded resender job {newJob}")
             self.jobs.append(newJob)
 
@@ -245,7 +241,34 @@ class ResenderHandler(BaseBotHandler):
 
         self.isExiting = False
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
+
+        self._initialized = False
+        """Flag to track if job states have been loaded from database"""
+
         logger.debug(f"ResenderHandler initialized with {len(self.jobs)} jobs")
+
+    async def _initializeJobs(self) -> None:
+        """
+        Initialize job states by loading last message dates from database.
+
+        This method loads the last processed message timestamp for each job
+        from the database to resume from where we left off.
+        """
+        if self._initialized:
+            return
+
+        for job in self.jobs:
+            dataKey = f"resender:{job.id}:lastMessageDate"
+            try:
+                storedData = await self.db.common.getSetting(dataKey)
+                if storedData:
+                    job.setLastMessageDate(storedData)
+                    logger.debug(f"Loaded lastMessageDate for job {job.id}: {storedData}")
+            except Exception as e:
+                logger.error(f"Failed to load lastMessageDate for job {job.id}: {e}")
+
+        self._initialized = True
+        logger.debug("ResenderHandler jobs initialized from database")
 
     async def _dtOnExit(self, task: DelayedTask) -> None:
         """
@@ -283,6 +306,9 @@ class ResenderHandler(BaseBotHandler):
         messages that match any configured resend job criteria and resend them
         to their target chats.
         """
+        # Initialize job states on first run
+        await self._initializeJobs()
+
         logger.debug("Cron job started")
         for job in self.jobs:
             if job.isLocked():
@@ -397,6 +423,8 @@ class ResenderHandler(BaseBotHandler):
                             await asyncio.sleep(messageSendDelay)
                             messageSendDelay = min(messageSendDelay * 2, 10)
 
+                        # Update last message date regardless of whether message was sent
+                        # This prevents reprocessing the same message
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
                             job.lastMessageDate = message["date"]
                         await self.db.common.setSetting(

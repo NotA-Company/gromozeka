@@ -241,7 +241,7 @@ class TelegramBotApplication:
         if self.application is None:
             raise RuntimeError("Application not initialized")
 
-        await self.handlerManager.injectBot(application.bot)
+        await self.handlerManager.initialize(application.bot)
         self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # Configure Commands

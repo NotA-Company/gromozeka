@@ -30,8 +30,8 @@ def discoverMigrations() -> List[Type[BaseMigration]]:
 
     # Sort by version number
     migrationFiles.sort(
-        key=lambda f: int(re.match(r"migration_(\d+)_", f).group(1)) # pyright: ignore[reportOptionalMemberAccess]
-    )  
+        key=lambda f: int(re.match(r"migration_(\d+)_", f).group(1))  # pyright: ignore[reportOptionalMemberAccess]
+    )
 
     for filename in migrationFiles:
         migrationClass = _importMigrationModule(filename)

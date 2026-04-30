@@ -203,8 +203,6 @@ class HandlersManager(CommandHandlerGetterInterface):
         self._commands: Dict[str, CommandHandlerInfoV2] = {}
 
         self.cache = CacheService.getInstance()
-        self.cache.injectDatabase(self.db)
-
         self.storage = StorageService.getInstance()
         self.storage.injectConfig(self.configManager)
 
@@ -386,8 +384,12 @@ class HandlersManager(CommandHandlerGetterInterface):
         # Also drop completed tasks older than a month
         await self.db.delayedTasks.cleanupOldCompletedDelayedTasks(ttl=60 * 60 * 24 * 30)
 
-    async def injectBot(self, bot: ExtBot | libMax.MaxBotClient) -> None:
-        """Inject bot instance into all registered handlers.
+    async def initialize(self, bot: ExtBot | libMax.MaxBotClient) -> None:
+        """Initialize the handlers manager by injecting bot instance into all registered handlers.
+
+        Creates a TheBot wrapper with the provided bot client, validates that the bot type
+        matches the configured bot provider, enriches bot owner information with user IDs
+        from the database, and injects the bot instance into all registered handlers.
 
         Args:
             bot: Bot client instance (ExtBot for Telegram or MaxBotClient for Max Messenger)
@@ -398,6 +400,8 @@ class HandlersManager(CommandHandlerGetterInterface):
         Raises:
             ValueError: If bot type doesn't match the configured bot provider
         """
+        await self.cache.injectDatabase(self.db)
+
         theBot: Optional[TheBot] = None
         if self.botProvider == BotProvider.TELEGRAM and isinstance(bot, ExtBot):
             theBot = TheBot(botProvider=self.botProvider, config=self.configManager.getBotConfig(), tgBot=bot)
@@ -454,8 +458,18 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def addMessageToChatQueue(
         self, message: EnsuredMessage, updateObj: UpdateObjectType
     ) -> Optional[MessageQueueRecord]:
-        """
-        TODO: Write docstring
+        """Add a message to the chat's processing queue.
+
+        Creates a new chat state if one doesn't exist, checks if the queue is full,
+        and adds the message to the queue for processing.
+
+        Args:
+            message: The ensured message to add to the queue
+            updateObj: The original update object from the platform
+
+        Returns:
+            MessageQueueRecord if the message was successfully added to the queue,
+            None if the queue is full
         """
         chatId = message.recipient.id
         threadId = message.threadId
