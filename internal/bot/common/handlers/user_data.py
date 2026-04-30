@@ -25,8 +25,8 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType
 from internal.services.cache import UserActiveActionEnum
 from internal.services.llm import LLMService
@@ -50,14 +50,14 @@ class UserDataHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """
         Initialize handler and register 'add_user_data' LLM tool, dood!
 
         Args:
             configManager (ConfigManager): Configuration manager instance.
-            database (DatabaseWrapper): Database wrapper for data persistence.
+            database (Database): Database object for data persistence.
             llmManager (LLMManager): LLM manager for AI model interactions.
         """
         # Initialize the mixin (discovers handlers)
@@ -125,7 +125,7 @@ class UserDataHandler(BaseBotHandler):
         if not isinstance(ensuredMessage, EnsuredMessage):
             raise RuntimeError("ensuredMessage should be instance of EnsuredMessage")
 
-        self.cache.setChatUserData(
+        await self.cache.setChatUserData(
             chatId=ensuredMessage.recipient.id,
             userId=ensuredMessage.sender.id,
             key=key,
@@ -161,7 +161,7 @@ class UserDataHandler(BaseBotHandler):
         if userDataConfig is None:
             return HandlerResultStatus.SKIPPED
 
-        self.db.updateChatMessageCategory(
+        await self.db.chatMessages.updateChatMessageCategory(
             chatId=ensuredMessage.recipient.id,
             messageId=ensuredMessage.messageId,
             messageCategory=MessageCategory.USER_CONFIG_ANSWER,
@@ -203,7 +203,7 @@ class UserDataHandler(BaseBotHandler):
         )
         keyboard: List[List[CallbackButton]] = []
 
-        for chat in self.getUserChats(user.id):
+        for chat in await self.getUserChats(user.id):
             keyboard.append(
                 [
                     CallbackButton(
@@ -265,7 +265,7 @@ class UserDataHandler(BaseBotHandler):
             )
             return
 
-        chatInfo = self.getChatInfo(chatId)
+        chatInfo = await self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ChatSelected: chatInfo is None in {chatId}")
             await self.editMessage(
@@ -290,7 +290,7 @@ class UserDataHandler(BaseBotHandler):
             ]
         ]
 
-        userData = self.cache.getChatUserData(chatId=chatId, userId=user.id)
+        userData = await self.cache.getChatUserData(chatId=chatId, userId=user.id)
         for k, v in userData.items():
             resp += f"**Ключ**: `{k}`:\n```{k}\n{v}\n```\n\n"
             keyboard.append(
@@ -369,7 +369,7 @@ class UserDataHandler(BaseBotHandler):
             return
 
         # TODO: Check if user is present in given chat
-        self.cache.clearChatUserData(chatId=chatId, userId=user.id)
+        await self.cache.clearChatUserData(chatId=chatId, userId=user.id)
         keyboard: List[List[CallbackButton]] = [
             [
                 CallbackButton(
@@ -426,7 +426,7 @@ class UserDataHandler(BaseBotHandler):
         # But I don't care
         key = str(data.get(ButtonDataKey.Key, None))
 
-        self.cache.unsetChatUserData(chatId=chatId, userId=user.id, key=key)
+        await self.cache.unsetChatUserData(chatId=chatId, userId=user.id, key=key)
         keyboard: List[List[CallbackButton]] = [
             [
                 CallbackButton(
@@ -495,7 +495,7 @@ class UserDataHandler(BaseBotHandler):
             },
         )
 
-        userData = self.cache.getChatUserData(chatId=chatId, userId=user.id)
+        userData = await self.cache.getChatUserData(chatId=chatId, userId=user.id)
         if userData is None:
             userData = {}
 
@@ -587,7 +587,7 @@ class UserDataHandler(BaseBotHandler):
         if key is None:
             key, value = str(value).split(" ", 1)
 
-        self.cache.setChatUserData(chatId=chatId, userId=user.id, key=str(key), value=str(value))
+        await self.cache.setChatUserData(chatId=chatId, userId=user.id, key=str(key), value=str(value))
 
         keyboard: List[List[CallbackButton]] = [
             [
@@ -739,7 +739,7 @@ class UserDataHandler(BaseBotHandler):
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
 
-        userData = self.cache.getChatUserData(chatId=targetChatId, userId=ensuredMessage.sender.id)
+        userData = await self.cache.getChatUserData(chatId=targetChatId, userId=ensuredMessage.sender.id)
 
         await self.sendMessage(
             ensuredMessage,

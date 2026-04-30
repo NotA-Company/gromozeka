@@ -26,7 +26,9 @@ exclude = [
     "**/__pycache__",
     "**/.pytest_cache",
     ".git",
-    "ext",
+    "ext", 
+    "**/node_modules", 
+    "**/.*",
 ]
 venvPath = "."
 venv = "venv"
@@ -46,6 +48,10 @@ exclude = [
     "dist",
     "venv",
     "ext",
+    "internal/database/migrations/test_migrations.py",
+    "lib/bayes_filter/test_bayes_filter.py",
+    "tests/",
+    "internal/bot/common/handlers/test_module_loader.py",
 ]
 per-file-ignores = [
     "__init__.py:F401"

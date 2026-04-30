@@ -30,8 +30,8 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from ...bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
-    from ...database.wrapper import DatabaseWrapper
+    from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
+    from internal.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class CacheService:
         - Database wrapper placeholder
         """
         if not hasattr(self, "initialized"):
-            self.dbWrapper: Optional["DatabaseWrapper"] = None
+            self.database: Optional["Database"] = None
             self.maxCacheSize = 1000  # Per namespace
 
             # Initialize namespaces with LRU caches
@@ -182,18 +182,18 @@ class CacheService:
         """Access chatPersistent namespace"""
         return self._caches[CacheNamespace.CHAT_PERSISTENT]  # pyright: ignore[reportReturnType]
 
-    def injectDatabase(self, dbWrapper: "DatabaseWrapper") -> None:
+    async def injectDatabase(self, database: "Database") -> None:
         """Inject database wrapper for persistence"""
-        self.dbWrapper = dbWrapper
+        self.database = database
         # Load persisted data on injection
-        self.loadFromDatabase()
+        await self.loadFromDatabase()
         logger.info("Database injected into CacheService, dood!")
 
     async def _doExitHandler(self, task: DelayedTask) -> None:
         """Handle delayed exit task"""
         logger.info("doExit: persisting cache to database")
-        if self.dbWrapper:
-            self.persistAll()
+        if self.database:
+            await self.persistAll()
         else:
             logger.error("doExit: database wrapper not injected, dood!")
 
@@ -243,7 +243,7 @@ class CacheService:
         # TODO: Should I add loading from DB?
         return chatCache.get("settings", {}).copy()
 
-    def getChatSettings(self, chatId: int) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
+    async def getChatSettings(self, chatId: int) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
         """Get chat settings with cache"""
         # Preventing circullar dependencies TODO: Do something with it
         from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
@@ -251,11 +251,11 @@ class CacheService:
         chatCache = self.chats.get(chatId, {})
 
         if "settings" not in chatCache:
-            if self.dbWrapper:
+            if self.database:
                 # Load from DB
                 settings = {
                     ChatSettingsKey(k): ChatSettingsValue(v1, v2)
-                    for k, (v1, v2) in self.dbWrapper.getChatSettings(chatId).items()
+                    for k, (v1, v2) in (await self.database.chatSettings.getChatSettings(chatId)).items()
                 }
                 chatCache["settings"] = settings
                 self.chats.set(chatId, chatCache)
@@ -263,7 +263,9 @@ class CacheService:
 
         return chatCache.get("settings", {})
 
-    def setChatSetting(self, chatId: int, key: "ChatSettingsKey", value: "ChatSettingsValue", *, userId: int) -> None:
+    async def setChatSetting(
+        self, chatId: int, key: "ChatSettingsKey", value: "ChatSettingsValue", *, userId: int
+    ) -> None:
         """Update a single chat setting for a specific chat, dood!
 
         Updates one setting key-value pair in the cache and persists it to the database
@@ -290,7 +292,7 @@ class CacheService:
         self.clearCachedChatSettings(chatId)
 
         # Populate chat settings from db if any
-        self.getChatSettings(chatId)
+        await self.getChatSettings(chatId)
         chatCache = self.chats.get(chatId, {})
         if "settings" not in chatCache:
             chatCache["settings"] = {}
@@ -298,27 +300,27 @@ class CacheService:
         self.chats.set(chatId, chatCache)
 
         # For critical settings, persist in DB
-        if self.dbWrapper:
-            self.dbWrapper.setChatSetting(chatId, key, value.toStr(), updatedBy=userId)
+        if self.database:
+            await self.database.chatSettings.setChatSetting(chatId, key, value.toStr(), updatedBy=userId)
         else:
             logger.error(f"No dbWrapper found, can't save chatSettings for {chatId}")
 
         logger.debug(f"Updated chat settings for {chatId}, dood!")
 
-    def unsetChatSetting(self, chatId: int, key: "ChatSettingsKey") -> None:
+    async def unsetChatSetting(self, chatId: int, key: "ChatSettingsKey") -> None:
         """Unset specified chat setting for a specific chat, dood!"""
 
         self.clearCachedChatSettings(chatId)
 
         # Populate chat settings from db if any
-        self.getChatSettings(chatId)
+        await self.getChatSettings(chatId)
         chatCache = self.chats.get(chatId, {})
         if "settings" in chatCache:
             # Use pop to safely remove key, even if it doesn't exist
             chatCache["settings"].pop(key, None)
             self.chats.set(chatId, chatCache)
-            if self.dbWrapper:
-                self.dbWrapper.unsetChatSetting(chatId, key)
+            if self.database:
+                await self.database.chatSettings.unsetChatSetting(chatId, key)
             else:
                 logger.error(f"No dbWrapper found, can't unset chatSettings for {chatId}")
 
@@ -370,14 +372,14 @@ class CacheService:
 
     # # Chat Info
 
-    def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
+    async def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """Get chat info from cache or database"""
         chatCache = self.chats.get(chatId, {})
         info = chatCache.get("info", None)
 
         # If not in cache, try loading from database
-        if info is None and self.dbWrapper:
-            info = self.dbWrapper.getChatInfo(chatId)
+        if info is None and self.database:
+            info = await self.database.chatInfo.getChatInfo(chatId)
             if info:
                 # Cache it for future use
                 chatCache["info"] = info
@@ -385,13 +387,13 @@ class CacheService:
 
         return info
 
-    def setChatInfo(self, chatId: int, info: ChatInfoDict) -> None:
+    async def setChatInfo(self, chatId: int, info: ChatInfoDict) -> None:
         """Update chat info in cache"""
         chatCache = self.chats.get(chatId, {})
         chatCache["info"] = info
         self.chats.set(chatId, chatCache)
-        if self.dbWrapper:
-            self.dbWrapper.updateChatInfo(
+        if self.database:
+            await self.database.chatInfo.updateChatInfo(
                 chatId=chatId,
                 type=info["type"],
                 title=info["title"],
@@ -404,14 +406,14 @@ class CacheService:
 
     # # Chat Topics Info
 
-    def getChatTopicsInfo(self, chatId: int) -> Dict[int, ChatTopicInfoDict]:
+    async def getChatTopicsInfo(self, chatId: int) -> Dict[int, ChatTopicInfoDict]:
         """Get all known topics info from cache or DB"""
         chatCache = self.chats.get(chatId, {})
 
         if "topicInfo" not in chatCache:
             chatCache["topicInfo"] = {}
-            if self.dbWrapper:
-                chatTopics = self.dbWrapper.getChatTopics(chatId)
+            if self.database:
+                chatTopics = await self.database.chatInfo.getChatTopics(chatId)
                 for topicInfo in chatTopics:
                     chatCache["topicInfo"][topicInfo["topic_id"]] = topicInfo
                 self.chats.set(chatId, chatCache)
@@ -422,24 +424,24 @@ class CacheService:
 
         return chatCache["topicInfo"]
 
-    def getChatTopicInfo(self, chatId: int, topicId: int) -> Optional[ChatTopicInfoDict]:
+    async def getChatTopicInfo(self, chatId: int, topicId: int) -> Optional[ChatTopicInfoDict]:
         """Get topic info from cache"""
         # Populate given chat topics from DB if any
-        allTopicsInfo = self.getChatTopicsInfo(chatId)
+        allTopicsInfo = await self.getChatTopicsInfo(chatId)
         return allTopicsInfo.get(topicId, None)
 
-    def setChatTopicInfo(self, chatId: int, topicId: int, info: ChatTopicInfoDict) -> None:
+    async def setChatTopicInfo(self, chatId: int, topicId: int, info: ChatTopicInfoDict) -> None:
         """Update topic info in cache"""
         # Populate topics info from db if any
-        self.getChatTopicsInfo(chatId)
+        await self.getChatTopicsInfo(chatId)
         chatCache = self.chats.get(chatId, {})
         if "topicInfo" not in chatCache:
             chatCache["topicInfo"] = {}
 
         chatCache["topicInfo"][topicId] = info
         self.chats.set(chatId, chatCache)
-        if self.dbWrapper:
-            self.dbWrapper.updateChatTopicInfo(
+        if self.database:
+            await self.database.chatInfo.updateChatTopicInfo(
                 chatId=chatId,
                 topicId=topicId,
                 iconColor=info["icon_color"],
@@ -482,16 +484,17 @@ class CacheService:
         """Get key for chat user data"""
         return f"{chatId}:{userId}"
 
-    def getChatUserData(self, chatId: int, userId: int) -> UserDataType:
+    async def getChatUserData(self, chatId: int, userId: int) -> UserDataType:
         """Get user data for a specific chat"""
         userKey = self._getChatUserKey(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
 
         if "data" not in userCache:
-            if self.dbWrapper:
+            if self.database:
                 # Load from DB
                 userData = {
-                    k: json.loads(v) for k, v in self.dbWrapper.getUserData(userId=userId, chatId=chatId).items()
+                    k: json.loads(v)
+                    for k, v in (await self.database.userData.getUserData(userId=userId, chatId=chatId)).items()
                 }
                 userCache["data"] = userData
                 self.chatUsers.set(userKey, userCache)
@@ -503,12 +506,12 @@ class CacheService:
 
         return userCache.get("data", {})
 
-    def setChatUserData(self, chatId: int, userId: int, key: str, value: UserDataValueType) -> None:
+    async def setChatUserData(self, chatId: int, userId: int, key: str, value: UserDataValueType) -> None:
         """Set user data for a specific chat"""
         userKey = self._getChatUserKey(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
         # load userData from DB or initialise as empty dict
-        self.getChatUserData(chatId, userId)
+        await self.getChatUserData(chatId, userId)
 
         if "data" not in userCache:
             userCache["data"] = {}
@@ -520,18 +523,18 @@ class CacheService:
         self.dirtyKeys[CacheNamespace.CHAT_USERS].add(userKey)
 
         # Persist to DB immediately for user data
-        if self.dbWrapper:
-            self.dbWrapper.addUserData(userId=userId, chatId=chatId, key=key, data=utils.jsonDumps(value))
+        if self.database:
+            await self.database.userData.addUserData(userId=userId, chatId=chatId, key=key, data=utils.jsonDumps(value))
         else:
             logger.error(f"No dbWrapper found, can't save user data for {userKey} ({key}->{value})")
 
         logger.debug(f"Updated user data for {userKey}, key={key}, dood!")
 
-    def unsetChatUserData(self, chatId: int, userId: int, key: str) -> None:
+    async def unsetChatUserData(self, chatId: int, userId: int, key: str) -> None:
         """Unset user data for a specific chat"""
         userKey = self._getChatUserKey(chatId, userId)
         # Populate UserData from DB if any
-        self.getChatUserData(chatId, userId)
+        await self.getChatUserData(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
         if "data" not in userCache:
             return
@@ -540,18 +543,18 @@ class CacheService:
         userData.pop(key, None)
         self.chatUsers.set(userKey, userCache)
 
-        if self.dbWrapper:
-            self.dbWrapper.deleteUserData(userId=userId, chatId=chatId, key=key)
+        if self.database:
+            await self.database.userData.deleteUserData(userId=userId, chatId=chatId, key=key)
         else:
             logger.error(f"No dbWrapper found, can't delete user data for {userKey} ({key})")
         logger.debug(f"Unset user data for {userKey}, key={key}, dood!")
 
-    def clearChatUserData(self, chatId: int, userId: int) -> None:
+    async def clearChatUserData(self, chatId: int, userId: int) -> None:
         """Clear user data for a specific chat"""
         userKey = self._getChatUserKey(chatId, userId)
 
-        if self.dbWrapper:
-            self.dbWrapper.clearUserData(userId=userId, chatId=chatId)
+        if self.database:
+            await self.database.userData.clearUserData(userId=userId, chatId=chatId)
         else:
             logger.error(f"No dbWrapper found, can't clear user data for {userKey}")
 
@@ -664,9 +667,9 @@ class CacheService:
         self._caches[namespace].clear()
         logger.info(f"Cleared namespace {namespace.value}, dood!")
 
-    def persistAll(self) -> None:
+    async def persistAll(self) -> None:
         """Persist all dirty entries to database"""
-        if not self.dbWrapper:
+        if not self.database:
             logger.error("Cannot persist: no database wrapper, dood!")
             return
 
@@ -690,11 +693,11 @@ class CacheService:
             for key in list(dirtyKeys):
                 data = cache.get(key, {})  # pyright: ignore[reportArgumentType]
                 if data:
-                    self._persistCacheEntry(namespace, str(key), data)  # pyright: ignore[reportArgumentType]
+                    await self._persistCacheEntry(namespace, str(key), data)  # pyright: ignore[reportArgumentType]
                     totalPersisted += 1
                 else:
                     # If there is no data, drop it from DB as well to not load outdated cache from DB
-                    self.dbWrapper.unsetCacheStorage(namespace, str(key))
+                    await self.database.cache.unsetCacheStorage(namespace, str(key))
                     totalDropped += 1
 
             # Clear dirty markers
@@ -702,14 +705,14 @@ class CacheService:
 
         logger.info(f"Persisted {totalPersisted} and dropped {totalDropped} cache entries, dood!")
 
-    def loadFromDatabase(self) -> None:
+    async def loadFromDatabase(self) -> None:
         """Load persisted cache from database on startup"""
-        if not self.dbWrapper:
+        if not self.database:
             logger.warning("Cannot load: no database wrapper, dood!")
             return
 
         try:
-            cachedData = self.dbWrapper.getCacheStorage()
+            cachedData = await self.database.cache.getCacheStorage()
             loadedCount = 0
             ignoredCount = 0
 
@@ -764,14 +767,14 @@ class CacheService:
             logger.error(f"Error loading cache from database: {e}, dood!")
             logger.exception(e)
 
-    def _persistCacheEntry(self, namespace: CacheNamespace, key: str, value: Dict[str, Any]) -> None:
+    async def _persistCacheEntry(self, namespace: CacheNamespace, key: str, value: Dict[str, Any]) -> None:
         """Persist a single cache entry"""
-        if not self.dbWrapper:
+        if not self.database:
             return
 
         try:
             serialized = utils.jsonDumps(value)
-            self.dbWrapper.setCacheStorage(
+            await self.database.cache.setCacheStorage(
                 namespace=namespace.value,
                 key=key,
                 value=serialized,

@@ -721,7 +721,7 @@ async def test_real_api():
 ```python
 from lib.openweathermap.client import OpenWeatherMapClient
 from lib.openweathermap.database_cache import DatabaseWeatherCache
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 
 # Initialize
 db = DatabaseWrapper("gromozeka.db")

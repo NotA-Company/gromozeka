@@ -38,8 +38,8 @@ from internal.bot.models import (
     getChatSettingsInfo,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.models.types import MessageIdType
 from internal.services.cache.types import UserActiveActionEnum
 from lib.ai.manager import LLMManager
@@ -69,7 +69,7 @@ class ConfigureCommandHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """
         Initialize the configuration handler with required dependencies, dood!
@@ -137,7 +137,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         messageText = ensuredMessage.formatMessageText()
-        self.db.updateChatMessageCategory(
+        await self.db.chatMessages.updateChatMessageCategory(
             chatId=ensuredMessage.recipient.id,
             messageId=ensuredMessage.messageId,
             messageCategory=MessageCategory.USER_CONFIG_ANSWER,
@@ -194,14 +194,14 @@ class ConfigureCommandHandler(BaseBotHandler):
             "Закончить настройку",
             {ButtonDataKey.ConfigureAction: ButtonConfigureAction.Cancel},
         )
-        userChats = self.getUserChats(user.id)
+        userChats = await self.getUserChats(user.id)
         keyboard: List[List[CallbackButton]] = []
         isBotOwner = self.isBotOwner(user=user)
 
         for chat in userChats:
             chatObj = MessageRecipient(id=chat["chat_id"], chatType=ChatType(chat["type"]))
 
-            targetChatSettings = self.getChatSettings(chat["chat_id"])
+            targetChatSettings = await self.getChatSettings(chat["chat_id"])
             # Show chat only if:
             # User is Bot Owner (so can do anything)
             # Or chat settings can be changed AND user is Admin in chat
@@ -279,7 +279,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
             return
 
-        chatInfo = self.getChatInfo(chatId)
+        chatInfo = await self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ConfigureChat: chatInfo is None in {chatId}")
             await self.editMessage(
@@ -290,13 +290,13 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
         logger.debug(f"ConfigureChat: chatInfo: {chatInfo}")
-        chatSettings = self.getChatSettings(chatId)
+        chatSettings = await self.getChatSettings(chatId)
         chatTier = self.getChatTier(chatSettings)
         if self.isBotOwner(user):
             chatTier = ChatTier.BOT_OWNER
         if chatTier is None:
             chatTier = ChatTier.FREE  # By default treat user as free user
-        defaultChatSettings = self.getChatSettings(None, chatType=ChatType(chatInfo["type"]), chatTier=chatTier)
+        defaultChatSettings = await self.getChatSettings(None, chatType=ChatType(chatInfo["type"]), chatTier=chatTier)
 
         page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
         while not chatTier.isBetterOrEqualThan(page.minTier()):
@@ -438,7 +438,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
             return
 
-        chatInfo = self.getChatInfo(chatId)
+        chatInfo = await self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"ConfigureKey: chatInfo is None in {chatId}")
             await self.editMessage(
@@ -448,11 +448,11 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
             return
 
-        chatSettings = self.getChatSettings(chatId)
+        chatSettings = await self.getChatSettings(chatId)
 
         chatOptions = getChatSettingsInfo()
         chatTier = self.getChatTier(chatSettings)
-        defaultChatSettings = self.getChatSettings(
+        defaultChatSettings = await self.getChatSettings(
             None,
             chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP,
             chatTier=chatTier,
@@ -673,7 +673,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             )
             return
 
-        chatInfo = self.getChatInfo(chatId)
+        chatInfo = await self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"[Re]SetValue: chatInfo is None for {chatId}")
             await self.editMessage(
@@ -684,7 +684,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             return
 
         chatOptions = getChatSettingsInfo()
-        chatSettings = self.getChatSettings(chatId)
+        chatSettings = await self.getChatSettings(chatId)
         chatTier = self.getChatTier(chatSettings)
         if self.isBotOwner(user):
             # BotOwner can set any setting
@@ -719,11 +719,11 @@ class ConfigureCommandHandler(BaseBotHandler):
         resp = ""
 
         if action == ButtonConfigureAction.SetTrue:
-            self.setChatSetting(chatId, key, ChatSettingsValue(True), user=user)
+            await self.setChatSetting(chatId, key, ChatSettingsValue(True), user=user)
         elif action == ButtonConfigureAction.SetFalse:
-            self.setChatSetting(chatId, key, ChatSettingsValue(False), user=user)
+            await self.setChatSetting(chatId, key, ChatSettingsValue(False), user=user)
         elif action == ButtonConfigureAction.ResetValue:
-            self.unsetChatSetting(chatId, key)
+            await self.unsetChatSetting(chatId, key)
         elif action == ButtonConfigureAction.SetValue:
             value = data.get(ButtonDataKey.Value, None)
             currentValue = chatSettings[key].toStr()
@@ -743,12 +743,12 @@ class ConfigureCommandHandler(BaseBotHandler):
                     value = currentValue
             # TODO: Validate other ChatSettingsType as well
 
-            self.setChatSetting(chatId, key, ChatSettingsValue(value), user=user)
+            await self.setChatSetting(chatId, key, ChatSettingsValue(value), user=user)
         else:
             logger.error(f"[Re]SetValue: wrong action: {action}")
             raise RuntimeError(f"[Re]SetValue: wrong action: {action}")
 
-        chatSettings = self.getChatSettings(chatId)
+        chatSettings = await self.getChatSettings(chatId)
 
         resp = (
             f"Параметр **{chatOptions[key]['short']}** (`{key}`) в чате\n"
@@ -844,7 +844,7 @@ class ConfigureCommandHandler(BaseBotHandler):
             # TODO: get proper chatType
             chatObj = MessageRecipient(id=chatId, chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP)
 
-            targetChatSettings = self.getChatSettings(chatId)
+            targetChatSettings = await self.getChatSettings(chatId)
             # Allow to configure only if:
             # User is Bot Owner (so can do anything)
             # Or chat settings can be changed AND user is Admin in chat

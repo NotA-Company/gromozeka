@@ -17,13 +17,13 @@ import threading
 
 import pytest
 
+from internal.database import Database
 from internal.database.models import (
     CacheType,
     MediaStatus,
     MessageCategory,
     SpamReason,
 )
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageType
 
 

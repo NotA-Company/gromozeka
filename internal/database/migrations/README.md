@@ -73,7 +73,7 @@ Manages migration execution, version tracking, and rollbacks, dood!
 Migrations run automatically when [`DatabaseWrapper`](../wrapper.py:77) is initialized, dood!
 
 ```python
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 
 # Migrations run automatically during initialization
 db = DatabaseWrapper("path/to/database.db")

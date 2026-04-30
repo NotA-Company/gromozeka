@@ -25,8 +25,8 @@ from internal.bot.models import (
 )
 from internal.bot.models.text_formatter import FormatEntity, OutputFormat
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageType
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from lib.ai import LLMManager
@@ -201,7 +201,7 @@ class ResenderHandler(BaseBotHandler):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):
@@ -234,7 +234,7 @@ class ResenderHandler(BaseBotHandler):
                 raise ValueError(f"each job must be a dictionary, but got {type(job)}")
             newJob = ResendJob(**job)
             dataKey = f"resender:{newJob.id}:lastMessageDate"
-            storedData = self.db.getSetting(dataKey)
+            storedData = await self.db.common.getSetting(dataKey)
             if storedData:
                 newJob.setLastMessageDate(storedData)
             logger.info(f"Loaded resender job {newJob}")
@@ -295,7 +295,7 @@ class ResenderHandler(BaseBotHandler):
                 logger.debug(f"Processing job {job}")
 
                 # Get new messages if any
-                newData = self.db.getChatMessagesSince(
+                newData = await self.db.chatMessages.getChatMessagesSince(
                     chatId=job.sourceChatId,
                     sinceDateTime=job.lastMessageDate,
                     messageCategory=job.messageTypes,
@@ -315,7 +315,7 @@ class ResenderHandler(BaseBotHandler):
                                 continue
 
                             # Get the last updated timestamp for this media group
-                            lastUpdated = self.db.getMediaGroupLastUpdatedAt(
+                            lastUpdated = await self.db.mediaAttachments.getMediaGroupLastUpdatedAt(
                                 message["media_group_id"],
                                 dataSource=job.dataSource,
                             )
@@ -338,7 +338,7 @@ class ResenderHandler(BaseBotHandler):
                         attachmentList: List[Tuple[bytes, MessageType, Optional[str]]] = []
                         if message["media_group_id"]:
                             logger.debug(f"Processing media group {message['media_group_id']}")
-                            for media in self.db.getMediaAttachmentsByGroupId(
+                            for media in await self.db.mediaAttachments.getMediaAttachmentsByGroupId(
                                 message["media_group_id"],
                                 dataSource=job.dataSource,
                             ):
@@ -399,7 +399,9 @@ class ResenderHandler(BaseBotHandler):
 
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
                             job.lastMessageDate = message["date"]
-                        self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
+                        await self.db.common.setSetting(
+                            f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat()
+                        )
 
                         if self.isExiting:
                             logger.info("Exiting resender loop as bot is exiting...")

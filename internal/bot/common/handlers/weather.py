@@ -22,12 +22,12 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
     CacheType,
     MessageCategory,
 )
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
@@ -55,7 +55,7 @@ class WeatherHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """Initialize weather handler with dependencies.
 
@@ -455,7 +455,7 @@ class WeatherHandler(BaseBotHandler):
             )
             return
         chatId = ensuredMessage.recipient.id
-        chatSettings = self.getChatSettings(chatId=chatId)
+        chatSettings = await self.getChatSettings(chatId=chatId)
         # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
         await self.llmService.rateLimit(chatId, chatSettings)
         try:
@@ -581,7 +581,7 @@ class WeatherHandler(BaseBotHandler):
             return
 
         chatId = ensuredMessage.recipient.id
-        chatSettings = self.getChatSettings(chatId=chatId)
+        chatSettings = await self.getChatSettings(chatId=chatId)
         # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
         await self.llmService.rateLimit(chatId, chatSettings)
         try:

@@ -262,7 +262,7 @@ class Migration{version}_{name}(BaseMigration):
 ```python
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from internal.database.wrapper import DatabaseWrapper
+    from internal.database import Database
 
 class SomeMigration(BaseMigration):
     def up(self, db: "DatabaseWrapper") -> None:
@@ -300,7 +300,7 @@ class SomeMigration(BaseMigration):
 
 **Removed:**
 - `from typing import TYPE_CHECKING`
-- `if TYPE_CHECKING: from internal.database.wrapper import DatabaseWrapper`
+- `if TYPE_CHECKING: from internal.database import Database`
 
 **Added:**
 - `import sqlite3`

@@ -82,7 +82,7 @@ The bot creates three tables:
 
 ### Changing Database Backend
 
-The `DatabaseWrapper` class in `database.py` provides an abstraction layer. To switch to a different database:
+The `Database` class in `database.py` provides an abstraction layer. To switch to a different database:
 
 1. Implement the same interface in a new wrapper class
 2. Replace the import in `main.py`

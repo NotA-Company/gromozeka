@@ -30,8 +30,8 @@ import telegram.constants
 import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 import lib.utils as utils
+from internal.database import Database
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType, MessageType
 from lib.ai.models import ModelMessage
 
@@ -785,8 +785,8 @@ class EnsuredMessage:
         return ensuredMessage
 
     @classmethod
-    def fromDBChatMessage(
-        cls, data: ChatMessageDict, db: DatabaseWrapper, forceGetAllMedia: bool = False
+    async def fromDBChatMessage(
+        cls, data: ChatMessageDict, db: Database, forceGetAllMedia: bool = False
     ) -> "EnsuredMessage":
         """
         Create an EnsuredMessage from a database ChatMessageDict, dood!
@@ -847,7 +847,7 @@ class EnsuredMessage:
         ensuredMessage.mediaId = data["media_id"]
 
         if data["media_group_id"] is not None and (not data["media_id"] or forceGetAllMedia):
-            for media in db.getMediaAttachmentsByGroupId(data["media_group_id"]):
+            for media in await db.mediaAttachments.getMediaAttachmentsByGroupId(data["media_group_id"]):
                 ensuredMessage.addMedia(
                     mediaId=media["file_unique_id"],
                     mediaContent=media["description"],
@@ -947,7 +947,7 @@ class EnsuredMessage:
         if setMediaId:
             self.mediaId = mediaProcessingInfo.id
 
-    async def updateMediaContent(self, db: DatabaseWrapper) -> None:
+    async def updateMediaContent(self, db: Database) -> None:
         """
         Update the media content description from the database, dood!
 
@@ -983,7 +983,7 @@ class EnsuredMessage:
         self.metadata["messagePrefix"] = messagePrefix
 
     @classmethod
-    async def _awaitMedia(cls, db: DatabaseWrapper, mediaId: str) -> Optional[MediaAttachmentDict]:
+    async def _awaitMedia(cls, db: Database, mediaId: str) -> Optional[MediaAttachmentDict]:
         """
         Wait for media processing to complete and retrieve media attachment, dood!
 
@@ -1000,7 +1000,7 @@ class EnsuredMessage:
         startTime = time.time()
         mediaAttachment: Optional[MediaAttachmentDict] = None
         while time.time() - startTime < MAX_MEDIA_AWAIT_SECS:
-            mediaAttachment = db.getMediaAttachment(mediaId)
+            mediaAttachment = await db.mediaAttachments.getMediaAttachment(mediaId)
             if mediaAttachment is None:
                 logger.error(f"Media#{mediaId} not found")
                 return None
@@ -1037,7 +1037,7 @@ class EnsuredMessage:
 
     async def formatForLLM(
         self,
-        db: DatabaseWrapper,
+        db: Database,
         format: LLMMessageFormat = LLMMessageFormat.JSON,
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
@@ -1112,7 +1112,7 @@ class EnsuredMessage:
 
     async def toModelMessageList(
         self,
-        db: DatabaseWrapper,
+        db: Database,
         format: LLMMessageFormat = LLMMessageFormat.JSON,
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
@@ -1147,7 +1147,7 @@ class EnsuredMessage:
 
     async def toModelMessage(
         self,
-        db: DatabaseWrapper,
+        db: Database,
         format: LLMMessageFormat = LLMMessageFormat.JSON,
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,

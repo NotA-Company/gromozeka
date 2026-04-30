@@ -178,7 +178,7 @@ class BayesStorageInterface(ABC):
         pass
 
     @abstractmethod
-    async def cleanupRareTokens(self, min_count: int = 2, chat_id: Optional[int] = None) -> int:
+    async def cleanupRareTokens(self, min_count: int = 2, chat_id: Optional[int] = None) -> None:
         """
         Remove tokens that appear less than min_count times
 

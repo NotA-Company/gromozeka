@@ -23,11 +23,11 @@ Exports:
 Example:
     >>> from internal.bot.handlers import HandlersManager
     >>> from internal.config.manager import ConfigManager
-    >>> from internal.database.wrapper import DatabaseWrapper
+    >>> from internal.database import Database
     >>> from lib.ai.manager import LLMManager
     >>>
     >>> configManager = ConfigManager()
-    >>> database = DatabaseWrapper(configManager)
+    >>> database = Database(configManager.getDatabaseConfig())
     >>> llmManager = LLMManager(configManager)
     >>>
     >>> manager = HandlersManager(configManager, database, llmManager)

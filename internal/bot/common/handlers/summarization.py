@@ -89,7 +89,7 @@ class SummarizationHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         messageText = ensuredMessage.formatMessageText()
-        self.db.updateChatMessageCategory(
+        await self.db.chatMessages.updateChatMessageCategory(
             chatId=ensuredMessage.recipient.id,
             messageId=ensuredMessage.messageId,
             messageCategory=MessageCategory.USER_CONFIG_ANSWER,
@@ -167,7 +167,7 @@ class SummarizationHandler(BaseBotHandler):
         else:
             typingManager.maxTimeout = typingManager.maxTimeout + 600
 
-        messages = self.db.getChatMessagesSince(
+        messages = await self.db.chatMessages.getChatMessagesSince(
             chatId=chatId,
             sinceDateTime=sinceDT if maxMessages is None else None,
             tillDateTime=tillDT if maxMessages is None else None,
@@ -187,7 +187,7 @@ class SummarizationHandler(BaseBotHandler):
             summarizationPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
 
         if useCache and len(messages) > 1:
-            cache = self.db.getChatSummarization(
+            cache = await self.db.chatSummarization.getChatSummarization(
                 chatId=chatId,
                 topicId=None,
                 firstMessageId=messages[-1]["message_id"],
@@ -217,7 +217,7 @@ class SummarizationHandler(BaseBotHandler):
             parsedMessages.append(
                 {
                     "role": "user",
-                    "content": await EnsuredMessage.fromDBChatMessage(msg, self.db).formatForLLM(
+                    "content": await (await EnsuredMessage.fromDBChatMessage(msg, self.db)).formatForLLM(
                         self.db, LLMMessageFormat.JSON, stripAtsign=True
                     ),
                 }
@@ -315,7 +315,7 @@ class SummarizationHandler(BaseBotHandler):
         resMessages = tmpResMessages
 
         if useCache and len(messages) > 1:
-            self.db.addChatSummarization(
+            await self.db.chatSummarization.addChatSummarization(
                 chatId=chatId,
                 topicId=threadId,
                 firstMessageId=messages[-1]["message_id"],
@@ -355,7 +355,7 @@ class SummarizationHandler(BaseBotHandler):
             bot: Telegram bot instance for sending messages
         """
 
-        chatSettings = self.getChatSettings(messageChatId)
+        chatSettings = await self.getChatSettings(messageChatId)
         self.cache.clearUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
 
         exitButton = CallbackButton(
@@ -380,7 +380,7 @@ class SummarizationHandler(BaseBotHandler):
         if not isinstance(maxMessages, int):
             maxMessages = 0
 
-        userChats = self.getUserChats(user.id)
+        userChats = await self.getUserChats(user.id)
 
         chatId = data.get(ButtonDataKey.ChatId, None)
         # Choose chatID
@@ -444,7 +444,7 @@ class SummarizationHandler(BaseBotHandler):
             topicId = None
         # Choose TopicID if needed
         if isToticSummary and topicId is None:
-            topics = list(self.cache.getChatTopicsInfo(chatId=chatId).values())
+            topics = list((await self.cache.getChatTopicsInfo(chatId=chatId)).values())
             if not topics:
                 topics.append(
                     {
@@ -500,7 +500,7 @@ class SummarizationHandler(BaseBotHandler):
         # TopicID Choosen or not needed
         topicTitle = ""
         if topicId is not None and isToticSummary:
-            topics = self.cache.getChatTopicsInfo(chatId=chatId)
+            topics = await self.cache.getChatTopicsInfo(chatId=chatId)
             if topicId in topics:
                 topicTitle = f", топик **{topics[int(topicId)]["name"]}**"
             else:
@@ -660,7 +660,7 @@ class SummarizationHandler(BaseBotHandler):
 
         # We need to Make Message object manually here
         #  as only messageId could be properly preserver across bot restarts
-        dbMessage = self.db.getChatMessageByMessageId(chatId=messageChatId, messageId=messageId)
+        dbMessage = await self.db.chatMessages.getChatMessageByMessageId(chatId=messageChatId, messageId=messageId)
         if dbMessage is None:
             logger.error(f"summarization: Message #{messageChatId}:{messageId} not found in Database")
             await self.editMessage(
@@ -673,12 +673,15 @@ class SummarizationHandler(BaseBotHandler):
         dbRepliedMessage: Optional[ChatMessageDict] = None
         ensuredMessage: Optional[EnsuredMessage] = None
         if dbMessage["reply_id"]:
-            dbRepliedMessage = self.db.getChatMessageByMessageId(chatId=messageChatId, messageId=dbMessage["reply_id"])
+            dbRepliedMessage = await self.db.chatMessages.getChatMessageByMessageId(
+                chatId=messageChatId,
+                messageId=dbMessage["reply_id"],
+            )
             if dbRepliedMessage is not None:
-                ensuredMessage = EnsuredMessage.fromDBChatMessage(dbRepliedMessage, self.db)
+                ensuredMessage = await EnsuredMessage.fromDBChatMessage(dbRepliedMessage, self.db)
 
         if ensuredMessage is None:
-            ensuredMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
+            ensuredMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
 
         await self._doSummarization(
             ensuredMessage=ensuredMessage,
@@ -794,7 +797,7 @@ class SummarizationHandler(BaseBotHandler):
                 if isTopicSummary:
                     threadId = ensuredMessage.threadId if ensuredMessage.threadId else 0
 
-                chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
+                chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
                 return await self._doSummarization(
                     ensuredMessage=ensuredMessage,
                     chatId=ensuredMessage.recipient.id,

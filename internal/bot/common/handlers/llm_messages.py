@@ -44,8 +44,8 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMManager,
@@ -73,14 +73,14 @@ class LLMMessageHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """
         Initialize the LLM message handler, dood!
 
         Args:
             configManager (ConfigManager): Configuration manager for bot settings
-            database (DatabaseWrapper): Database wrapper for message storage and retrieval
+            database (Database): Database object for message storage and retrieval
             llmManager (LLMManager): Manager for LLM model instances and operations
         """
         super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
@@ -206,7 +206,7 @@ class LLMMessageHandler(BaseBotHandler):
             messageHistoryStr += f"\t{repr(msg)}\n"
         logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
         mlRet: Optional[ModelRunResult] = None
 
@@ -422,7 +422,7 @@ class LLMMessageHandler(BaseBotHandler):
         if not ensuredMessage.isReply or ensuredMessage.replyId is None:
             return False
 
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_REPLY].toBool():
             return False
 
@@ -503,7 +503,7 @@ class LLMMessageHandler(BaseBotHandler):
                 or if mention handling is disabled in chat settings
         """
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
 
@@ -526,7 +526,7 @@ class LLMMessageHandler(BaseBotHandler):
 
                 today = datetime.datetime.now(datetime.timezone.utc)
                 today = today.replace(hour=0, minute=0, second=0, microsecond=0)
-                users = self.db.getChatUsers(
+                users = await self.db.chatUsers.getChatUsers(
                     chatId=ensuredMessage.recipient.id,
                     limit=100,
                     seenSince=today,
@@ -566,7 +566,7 @@ class LLMMessageHandler(BaseBotHandler):
                 # TODO: Shoiuld we add whole discussion?
                 ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
                 if ensuredReply is not None:
-                    self._updateEMessageUserData(ensuredReply)
+                    await self._updateEMessageUserData(ensuredReply)
                     if ensuredReply.messageType == MessageType.TEXT:
                         reqMessages.append(
                             await ensuredReply.toModelMessage(
@@ -577,7 +577,7 @@ class LLMMessageHandler(BaseBotHandler):
                         )
                     else:
                         # Not text message, try to get it's content from DB
-                        storedReply = self.db.getChatMessageByMessageId(
+                        storedReply = await self.db.chatMessages.getChatMessageByMessageId(
                             chatId=ensuredReply.recipient.id,
                             messageId=ensuredReply.messageId,
                         )
@@ -587,8 +587,8 @@ class LLMMessageHandler(BaseBotHandler):
                                 f"MessageId: {ensuredReply.messageId})"
                             )
                         else:
-                            eStoredReply = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
-                            self._updateEMessageUserData(eStoredReply)
+                            eStoredReply = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
+                            await self._updateEMessageUserData(eStoredReply)
                             reqMessages.append(
                                 await eStoredReply.toModelMessage(
                                     self.db,
@@ -646,7 +646,7 @@ class LLMMessageHandler(BaseBotHandler):
                 to skip admins)
         """
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
             # logger.debug(
@@ -699,7 +699,7 @@ class LLMMessageHandler(BaseBotHandler):
                 # And we do not want to reverse db result as we do not want to process ALL retrieved
                 # messages if some message already has summarized context (i.e. metadata["randomContext"])
                 contextMessages = deque[ModelMessage]()
-                for storedMsg in self.db.getChatMessagesSince(
+                for storedMsg in await self.db.chatMessages.getChatMessagesSince(
                     chatId=chatId,
                     threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
                     limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
@@ -708,8 +708,8 @@ class LLMMessageHandler(BaseBotHandler):
                     if storedMsg["message_id"] == ensuredMessage.messageId:
                         # Skip current message from context
                         continue
-                    eMsg = EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
-                    self._updateEMessageUserData(eMsg)
+                    eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
+                    await self._updateEMessageUserData(eMsg)
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list
@@ -755,7 +755,7 @@ class LLMMessageHandler(BaseBotHandler):
                         # No need to add to context as it will be added later
                         # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
                         ensuredMessage.metadata["randomContext"] = mlRet.resultText
-                        self.db.updateChatMessageMetadata(
+                        await self.db.chatMessages.updateChatMessageMetadata(
                             chatId=ensuredMessage.recipient.id,
                             messageId=ensuredMessage.messageId,
                             metadata=ensuredMessage.metadata,
@@ -804,7 +804,7 @@ class LLMMessageHandler(BaseBotHandler):
         ]
         mReq = ModelMessage.fromDictList(request)
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
         async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
             try:

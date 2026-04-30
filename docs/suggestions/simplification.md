@@ -272,7 +272,7 @@ Every single handler class has the **exact same constructor signature** with the
 ```python
 # internal/bot/common/handlers/llm_messages.py:75-86
 def __init__(
-    self, configManager: ConfigManager, database: DatabaseWrapper,
+    self, configManager: ConfigManager, database: Database,
     llmManager: LLMManager, botProvider: BotProvider
 ):
     super().__init__(configManager=configManager, database=database,

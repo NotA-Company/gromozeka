@@ -25,7 +25,7 @@ class DatabaseManagerConfig(TypedDict):
 class DatabaseManager:
     """Manages database initialization and configuration.
 
-    Initializes DatabaseWrapper with provided configuration and handles database setup.
+    Initializes DatabaseManager with provided configuration and handles database setup.
     """
 
     __slots__ = ("config", "_providers", "_initializationHooks")

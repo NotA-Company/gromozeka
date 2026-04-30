@@ -2,7 +2,7 @@
 Generic database cache implementation for the Telegram bot, dood!
 
 This module provides a database-backed cache implementation that uses the
-DatabaseWrapper to store and retrieve cached data. It supports different
+Database to store and retrieve cached data. It supports different
 cache namespaces and configurable key/value conversion strategies, dood!
 """
 
@@ -11,8 +11,8 @@ from typing import Any, Dict, Optional
 
 from lib.cache import CacheInterface, HashKeyGenerator, JsonValueConverter, K, KeyGenerator, V, ValueConverter
 
+from .database import Database
 from .models import CacheType
-from .wrapper import DatabaseWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
     """
     Database-backed cache implementation, dood!
 
-    This cache implementation stores data in the database using the DatabaseWrapper.
+    This cache implementation stores data in the database using the Database.
     It supports different cache namespaces for organizing data and uses configurable
     key generators and value converters for flexible data handling, dood!
 
@@ -30,17 +30,17 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         V: The value type (any type)
 
     Attributes:
-        db: DatabaseWrapper instance for database operations
+        db: Database instance for database operations
         namespace: CacheType enum value for organizing cache data
         keyGenerator: KeyGenerator instance for converting keys to strings
         valueConverter: ValueConverter instance for serializing/deserializing values
 
     Example:
-        >>> from internal.database.wrapper import DatabaseWrapper
+        >>> from internal.database import Database
         >>> from internal.database.models import CacheType
         >>> from lib.cache import StringKeyGenerator
         >>>
-        >>> db = DatabaseWrapper("path/to/db.sqlite")
+        >>> db = Database(...)
         >>> cache = GenericDatabaseCache[str, dict](
         ...     db=db,
         ...     namespace=CacheType.WEATHER,
@@ -54,7 +54,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
 
     def __init__(
         self,
-        db: DatabaseWrapper,
+        db: Database,
         namespace: CacheType,
         keyGenerator: Optional[KeyGenerator[K]] = None,
         valueConverter: Optional[ValueConverter[V]] = None,
@@ -65,7 +65,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         Initialize cache with database wrapper
 
         Args:
-            db: DatabaseWrapper instance from internal.database.wrapper
+            db: Database instance from internal.database.database
             namespace: CacheType enum value for organizing cache data
             keyGenerator: Optional KeyGenerator instance for converting keys to strings.
                          If None, uses HashKeyGenerator by default.
@@ -84,7 +84,9 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         """Get cached data if exists and not expired"""
         try:
             _key = self.keyGenerator.generateKey(key)
-            cacheEntry = self.db.getCacheEntry(_key, cacheType=self.namespace, ttl=ttl, dataSource=self.dataSource)
+            cacheEntry = await self.db.cache.getCacheEntry(
+                _key, cacheType=self.namespace, ttl=ttl, dataSource=self.dataSource
+            )
             if cacheEntry is not None:
                 return self.valueConverter.decode(cacheEntry["data"])
             return None
@@ -97,14 +99,16 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         try:
             _key = self.keyGenerator.generateKey(key)
             data = self.valueConverter.encode(value)
-            return self.db.setCacheEntry(_key, data=data, cacheType=self.namespace, dataSource=self.dataSource)
+            return await self.db.cache.setCacheEntry(
+                _key, data=data, cacheType=self.namespace, dataSource=self.dataSource
+            )
         except Exception as e:
             logger.error(f"Failed to set cache entry {key}: {e}")
             return False
 
     async def clear(self) -> None:
         """Clear all cache entries in this namespace."""
-        self.db.clearCache(self.namespace, dataSource=self.dataSource)
+        await self.db.cache.clearCache(self.namespace, dataSource=self.dataSource)
 
     def getStats(self) -> Dict[str, Any]:
         """

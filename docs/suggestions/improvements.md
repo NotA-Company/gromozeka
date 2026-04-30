@@ -222,7 +222,7 @@ Add an analytics module that queries the read-only DB source and produces a JSON
 class AnalyticsReport:
     """Generates usage analytics from the database, dood!"""
 
-    async def generateDailyReport(self, database: DatabaseWrapper, days: int = 7) -> AnalyticsReportDict:
+    async def generateDailyReport(self, database: Database, days: int = 7) -> AnalyticsReportDict:
         """Generate daily active users, top commands, top chats, dood!"""
 ```
 
@@ -984,7 +984,7 @@ Add a `make seed` target that populates a dev DB with realistic fixture data, do
 # scripts/seed_dev_db.py
 """Seed development database with realistic test data, dood!"""
 
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from tests.fixtures.seed_data import SEED_CHATS, SEED_USERS, SEED_MESSAGES
 
 def seedDatabase(dbPath: str = "./dev_data.db") -> None:

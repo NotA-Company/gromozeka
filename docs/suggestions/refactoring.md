@@ -483,7 +483,7 @@ class HandlerFactory:
         self,
         registrations: List[HandlerRegistration],
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> List[HandlerTuple]: ...
@@ -811,7 +811,7 @@ class BaseBotApplication(ABC):
         self,
         configManager: ConfigManager,
         botToken: str,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> None:

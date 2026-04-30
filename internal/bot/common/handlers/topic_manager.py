@@ -77,7 +77,7 @@ class TopicManagerHandler(BaseBotHandler):
             "Закончить настройку",
             {ButtonDataKey.TopicManagementAction: ButtonTopicManagementAction.Cancel},
         )
-        userChats = self.getUserChats(user.id)
+        userChats = await self.getUserChats(user.id)
         keyboard: List[List[CallbackButton]] = []
         isBotOwner = self.isBotOwner(user=user)
 
@@ -136,7 +136,7 @@ class TopicManagerHandler(BaseBotHandler):
             )
             return
 
-        chatInfo = self.getChatInfo(chatId)
+        chatInfo = await self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"Unknown chatId in {data} for user {user}")
             await self.editMessage(
@@ -153,7 +153,7 @@ class TopicManagerHandler(BaseBotHandler):
         )
         keyboard: List[List[CallbackButton]] = []
 
-        topicList = list(self.cache.getChatTopicsInfo(chatId=chatId).values())
+        topicList = list((await self.cache.getChatTopicsInfo(chatId=chatId)).values())
         if not topicList:
             topicList.append(
                 {
@@ -218,7 +218,7 @@ class TopicManagerHandler(BaseBotHandler):
             )
             return
 
-        chatInfo = self.getChatInfo(chatId)
+        chatInfo = await self.getChatInfo(chatId)
         if chatInfo is None:
             logger.error(f"Unknown chatId in {data} for user {user}")
             await self.editMessage(
@@ -240,7 +240,7 @@ class TopicManagerHandler(BaseBotHandler):
             return
 
         topicInfo = None
-        topicDict = self.cache.getChatTopicsInfo(chatId=chatId)
+        topicDict = await self.cache.getChatTopicsInfo(chatId=chatId)
         if topicId in topicDict:
             topicInfo = topicDict[topicId]
         else:
@@ -260,7 +260,7 @@ class TopicManagerHandler(BaseBotHandler):
         value = data.get(ButtonDataKey.Value, None)
 
         if isinstance(value, str) and value:
-            self.updateTopicInfo(
+            await self.updateTopicInfo(
                 chatId=chatId,
                 topicId=topicId,
                 iconColor=topicInfo["icon_color"],

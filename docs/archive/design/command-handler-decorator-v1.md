@@ -185,7 +185,7 @@ Update the [`BotHandlers`](internal/bot/handlers.py:88) class to use the mixin:
 class BotHandlers(CommandHandlerMixin):
     """Contains all bot command and message handlers, dood!"""
     
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         # Initialize the mixin (discovers handlers)
         super().__init__()
         
@@ -258,7 +258,7 @@ allHandlers.extend(userHandlers.getCommandHandlers())
 
 ```python
 class BotHandlers(CommandHandlerMixin):
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         super().__init__()
         self.configManager = configManager
         self.database = database
@@ -350,7 +350,7 @@ async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE)
 **Before:**
 ```python
 class BotHandlers:
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         self.configManager = configManager
         self.database = database
         self.llmManager = llmManager
@@ -374,7 +374,7 @@ class BotHandlers:
 **After:**
 ```python
 class BotHandlers(CommandHandlerMixin):
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         super().__init__()  # Discovers handlers
         self.configManager = configManager
         self.database = database

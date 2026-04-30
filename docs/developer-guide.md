@@ -499,7 +499,7 @@ The database layer provides SQLite access via [`DatabaseWrapper`](internal/datab
 [`DatabaseWrapper`](internal/database/wrapper.py:113) is the main interface to the SQLite database, dood! It supports multiple named database sources, with per-chat routing so different chats can use different database files, dood!
 
 ```python
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 
 db = DatabaseWrapper(config={
     "default": "default",
@@ -774,7 +774,7 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from lib.ai import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -788,7 +788,7 @@ class MyNewHandler(BaseBotHandler):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):
@@ -1414,7 +1414,7 @@ async def test_skipsIrrelevantMessages(myHandler):
 import pytest
 import tempfile
 import os
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 
 
 @pytest.fixture

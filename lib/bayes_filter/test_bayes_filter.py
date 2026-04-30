@@ -22,8 +22,8 @@ import pytest
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from internal.database import Database  # noqa:E402
 from internal.database.bayes_storage import DatabaseBayesStorage  # noqa:E402
-from internal.database.wrapper import DatabaseWrapper  # noqa:E402
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter  # noqa:E402
 from lib.bayes_filter.models import BayesModelStats, ClassStats, TokenStats  # noqa:E402
 from lib.bayes_filter.storage_interface import BayesStorageInterface  # noqa:E402

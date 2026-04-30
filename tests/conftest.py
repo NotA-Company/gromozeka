@@ -74,7 +74,7 @@ def mockDatabaseWrapper():
             mockDatabaseWrapper.getChatSettings.return_value = {"model": "gpt-4"}
             # Test code here
     """
-    from internal.database.wrapper import DatabaseWrapper
+    from internal.database import Database
 
     mock = Mock(spec=DatabaseWrapper)
 
@@ -109,7 +109,7 @@ async def testDatabase(inMemoryDbPath) -> AsyncGenerator:
             messages = testDatabase.getChatMessages(...)
             assert len(messages) == 1
     """
-    from internal.database.wrapper import DatabaseWrapper
+    from internal.database import Database
 
     db = DatabaseWrapper(inMemoryDbPath)
     yield db

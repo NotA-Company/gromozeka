@@ -12,7 +12,7 @@ import pytest
 
 from internal.bot.models import BotProvider
 from internal.config.manager import ConfigManager
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from lib.ai import LLMManager
 
 from .base import BaseBotHandler
@@ -26,7 +26,7 @@ class MockValidHandler(BaseBotHandler):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):
@@ -52,7 +52,7 @@ class MockInvalidHandler:
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):
@@ -74,7 +74,7 @@ class MockBrokenHandler(BaseBotHandler):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):

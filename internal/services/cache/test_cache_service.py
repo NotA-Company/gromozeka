@@ -162,7 +162,7 @@ class TestCacheServiceBasics(unittest.TestCase):
 
     def testDatabaseInjection(self):
         """Test database injection"""
-        self.assertIs(self.cache.dbWrapper, self.mockDb)
+        self.assertIs(self.cache.database, self.mockDb)
         self.mockDb.getCacheStorage.assert_called_once()
 
 
@@ -278,8 +278,8 @@ class TestChatUserData(unittest.TestCase):
     def tearDown(self):
         """Clean up after tests"""
         # Clear the database reference to avoid resource warnings
-        if hasattr(self.cache, "dbWrapper") and self.cache.dbWrapper is not None:
-            self.cache.dbWrapper = None
+        if hasattr(self.cache, "dbWrapper") and self.cache.database is not None:
+            self.cache.database = None
         if hasattr(self, "mockDb"):
             # Reset the mock to release any held references
             self.mockDb.reset_mock()
@@ -413,7 +413,7 @@ class TestPersistence(unittest.TestCase):
 
     def testPersistAllWithoutDb(self):
         """Test that persist fails gracefully without database"""
-        self.cache.dbWrapper = None
+        self.cache.database = None
         self.cache.dirtyKeys[CacheNamespace.USERS].add(123)
 
         # Should not raise exception
@@ -586,7 +586,7 @@ class TestEdgeCases(unittest.TestCase):
 
     def testSetChatSettingWithoutDb(self):
         """Test setting chat settings without database"""
-        self.cache.dbWrapper = None
+        self.cache.database = None
         key = ChatSettingsKey.BAYES_ENABLED
         value = ChatSettingsValue("true")
 
@@ -599,7 +599,7 @@ class TestEdgeCases(unittest.TestCase):
 
     def testSetChatUserDataWithoutDb(self):
         """Test setting user data without database"""
-        self.cache.dbWrapper = None
+        self.cache.database = None
 
         # Should not raise exception
         self.cache.setChatUserData(123, 456, "key", "value")

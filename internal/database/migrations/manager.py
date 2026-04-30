@@ -42,7 +42,7 @@ class MigrationManager:
         Initialize migration manager, dood!
 
         Args:
-            db: DatabaseWrapper instance
+            db: Database instance
         """
         self.migrations: List[Type[BaseMigration]] = []
 

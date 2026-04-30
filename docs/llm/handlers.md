@@ -136,7 +136,7 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from lib.ai import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -157,7 +157,7 @@ class MyNewHandler(BaseBotHandler):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):

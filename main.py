@@ -16,7 +16,7 @@ from internal.bot.max.application import MaxBotApplication
 from internal.bot.models.enums import BotProvider
 from internal.bot.telegram.application import TelegramBotApplication
 from internal.config.manager import ConfigManager
-from internal.database.manager import DatabaseManager
+from internal.database import Database
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
 from lib.rate_limiter import RateLimiterManager
@@ -40,7 +40,7 @@ class GromozekBot:
         initLogging(self.configManager.getLoggingConfig())
 
         # Initialize database
-        self.database_manager = DatabaseManager(self.configManager.getDatabaseConfig())
+        self.database = Database(self.configManager.getDatabaseConfig())  # pyright: ignore[reportArgumentType]
 
         # Initialize LLM Manager
         self.llmManager = LLMManager(self.configManager.getModelsConfig())
@@ -58,14 +58,14 @@ class GromozekBot:
                 self.botApp = TelegramBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
-                    database=self.database_manager.getDatabase(),
+                    database=self.database,
                     llmManager=self.llmManager,
                 )
             case BotProvider.MAX:
                 self.botApp = MaxBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
-                    database=self.database_manager.getDatabase(),
+                    database=self.database,
                     llmManager=self.llmManager,
                 )
             case _:

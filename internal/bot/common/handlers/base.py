@@ -60,8 +60,8 @@ from internal.bot.models import (
     getChatSettingsInfo,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
@@ -117,7 +117,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     The class integrates with:
     - [`ConfigManager`](internal/config/manager.py): For bot configuration
-    - [`DatabaseWrapper`](internal/database/wrapper.py): For data persistence
+    - [`Database`](internal/database/database.py): For data persistence
     - [`LLMManager`](lib/ai/manager.py): For AI model interactions
     - [`CacheService`](internal/services/cache/service.py): For performance optimization
     - [`QueueService`](internal/services/queue/service.py): For background task management
@@ -125,7 +125,7 @@ class BaseBotHandler(CommandHandlerMixin):
     Attributes:
         configManager: Configuration manager instance
         config: Bot configuration dictionary
-        db: Database wrapper for data operations
+        db: Database object for data operations
         llmManager: LLM manager for AI model access
         botOwners: List of bot owner usernames (lowercase)
         chatDefaults: Default settings for all chats
@@ -136,7 +136,7 @@ class BaseBotHandler(CommandHandlerMixin):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):
@@ -192,7 +192,7 @@ class BaseBotHandler(CommandHandlerMixin):
     # Chat settings Managenent
     ###
 
-    def getChatSettings(
+    async def getChatSettings(
         self,
         chatId: Optional[int],
         *,
@@ -256,7 +256,7 @@ class BaseBotHandler(CommandHandlerMixin):
         if chatId is None:
             chatSettings: Optional[ChatSettingsDict] = {}
         else:
-            chatSettings = self.cache.getChatSettings(chatId)
+            chatSettings = await self.cache.getChatSettings(chatId)
 
         if chatTier is None:
             chatTier = self.getChatTier(chatSettings)
@@ -308,7 +308,7 @@ class BaseBotHandler(CommandHandlerMixin):
             self.cache.cacheChatSettings(chatId, retSettings)
         return retSettings
 
-    def setChatSetting(
+    async def setChatSetting(
         self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue, *, user: MessageSender
     ) -> None:
         """
@@ -327,9 +327,9 @@ class BaseBotHandler(CommandHandlerMixin):
             This method directly updates the cache. Consider whether this setting
             should be validated before being applied.
         """
-        self.cache.setChatSetting(chatId, key, value, userId=user.id)
+        await self.cache.setChatSetting(chatId, key, value, userId=user.id)
 
-    def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:
+    async def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:
         """
         Remove a specific chat setting, reverting to default, dood!
 
@@ -337,7 +337,7 @@ class BaseBotHandler(CommandHandlerMixin):
             chatId: Telegram chat ID
             key: Setting key from [`ChatSettingsKey`](internal/bot/models/chat_settings.py) enum to remove
         """
-        self.cache.unsetChatSetting(chatId=chatId, key=key)
+        await self.cache.unsetChatSetting(chatId=chatId, key=key)
 
     def getChatTier(self, chatSettings: ChatSettingsDict) -> Optional[ChatTier]:
         """
@@ -363,7 +363,7 @@ class BaseBotHandler(CommandHandlerMixin):
     # User Data Management
     ###
 
-    def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
+    async def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
         """
         Update an [`EnsuredMessage`](internal/bot/models/ensured_message.py) with current user data, dood!
 
@@ -373,7 +373,7 @@ class BaseBotHandler(CommandHandlerMixin):
             ensuredMessage: Message object to update with user data
         """
         ensuredMessage.setUserData(
-            self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
+            await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
         )
 
     async def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
@@ -388,7 +388,7 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             [`MentionCheckResult`](internal/bot/models/ensured_message.py) indicating if bot was mentioned
         """
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
         username: Optional[str] = await self.getBotUserName()
         if username is not None:
@@ -540,7 +540,7 @@ class BaseBotHandler(CommandHandlerMixin):
             raise ValueError("Bot is not initialized")
 
         if setMessageCategory is not None:
-            self.db.updateChatMessageCategory(
+            await self.db.chatMessages.updateChatMessageCategory(
                 ensuredMessage.recipient.id,
                 ensuredMessage.messageId,
                 setMessageCategory,
@@ -568,7 +568,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
         if setMessageCategory is not None:
             for messageId in messageIds:
-                self.db.updateChatMessageCategory(
+                await self.db.chatMessages.updateChatMessageCategory(
                     chatId,
                     messageId,
                     setMessageCategory,
@@ -585,12 +585,14 @@ class BaseBotHandler(CommandHandlerMixin):
         condenseThread: bool = True,
     ) -> Sequence[ModelMessage]:
 
-        dbMessage = self.db.getChatMessageByMessageId(ensuredMessage.recipient.id, ensuredMessage.messageId)
+        dbMessage = await self.db.chatMessages.getChatMessageByMessageId(
+            ensuredMessage.recipient.id, ensuredMessage.messageId
+        )
         if dbMessage is None:
             return []
 
         chatId = dbMessage["chat_id"]
-        chatSettings = self.getChatSettings(chatId, chatType=ensuredMessage.recipient.chatType)
+        chatSettings = await self.getChatSettings(chatId, chatType=ensuredMessage.recipient.chatType)
         llmMFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
 
         outputFormat = OutputFormat.MARKDOWN
@@ -611,8 +613,8 @@ class BaseBotHandler(CommandHandlerMixin):
         ]
 
         if dbMessage["root_message_id"] is None:
-            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
-            self._updateEMessageUserData(eMessage)
+            eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
+            await self._updateEMessageUserData(eMessage)
             return ret + await eMessage.toModelMessageList(
                 self.db,
                 format=llmMFormat,
@@ -620,7 +622,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
             )
 
-        dbMessageList = self.db.getChatMessagesByRootId(
+        dbMessageList = await self.db.chatMessages.getChatMessagesByRootId(
             dbMessage["chat_id"],
             rootMessageId=dbMessage["root_message_id"],
             threadId=dbMessage["thread_id"],
@@ -634,16 +636,16 @@ class BaseBotHandler(CommandHandlerMixin):
         keepFirstN = 1
         keepLastN = 1
 
-        eRootMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[0], self.db)
-        self._updateEMessageUserData(eRootMessage)
+        eRootMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[0], self.db)
+        await self._updateEMessageUserData(eRootMessage)
         condenseCache = eRootMessage.metadata.get("condensedThread", [])
         condenseCacheMessages: List[ModelMessage] = []
         if condenseCache and condenseThread:
             # First - add skipped messages to result.
             # It should be ony starting message
             for i in range(min(keepFirstN, len(dbMessageList))):
-                eMessage = EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
-                self._updateEMessageUserData(eMessage)
+                eMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
+                await self._updateEMessageUserData(eMessage)
                 ret.extend(
                     await eMessage.toModelMessageList(
                         self.db,
@@ -671,8 +673,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 dbMessageList = dbMessageList[skippedMessages:]
 
         for dbMessage in dbMessageList:
-            eMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
-            self._updateEMessageUserData(eMessage)
+            eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
+            await self._updateEMessageUserData(eMessage)
             ret.extend(
                 await eMessage.toModelMessageList(
                     self.db,
@@ -742,7 +744,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # logger.debug(f"cache2 = {condenseCache}")
         eRootMessage.metadata["condensedThread"] = condenseCache
-        self.db.updateChatMessageMetadata(
+        await self.db.chatMessages.updateChatMessageMetadata(
             chatId=eRootMessage.recipient.id,
             messageId=eRootMessage.messageId,
             metadata=eRootMessage.metadata,
@@ -750,7 +752,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
         return condensedRet
 
-    def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
+    async def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """
         Get chat information from cache or database, dood!
 
@@ -760,7 +762,7 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             Chat info dictionary as [`ChatInfoDict`](internal/database/models.py), or None if not found
         """
-        return self.cache.getChatInfo(chatId)
+        return await self.cache.getChatInfo(chatId)
 
     async def updateChatInfo(self, message: EnsuredMessage) -> None:
         """
@@ -776,7 +778,7 @@ class BaseBotHandler(CommandHandlerMixin):
             raise ValueError("Bot is not initialized")
 
         chatId = message.recipient.id
-        storedChatInfo = self.getChatInfo(chatId=chatId)
+        storedChatInfo = await self.getChatInfo(chatId=chatId)
         needChange = True
         now = datetime.datetime.now()
         if storedChatInfo is not None:
@@ -785,14 +787,14 @@ class BaseBotHandler(CommandHandlerMixin):
 
         if needChange:
             chatInfo = await self._bot.getChatInfo(message)
-            self.cache.setChatInfo(chatId, chatInfo)
+            await self.cache.setChatInfo(chatId, chatInfo)
 
             # Update list of admins, so even if an admin hasn't written to the chat, they are marked as members
             # (Useful for anonymized admins and channels)
             if message.recipient.chatType != ChatType.PRIVATE:
                 admins = await self._bot.getChatAdmins(chat=message.recipient)
                 for adminId, adminInfo in admins.items():
-                    self.db.updateChatUser(
+                    await self.db.chatUsers.updateChatUser(
                         chatId=chatId,
                         userId=adminId,
                         username=adminInfo[0],
@@ -808,13 +810,13 @@ class BaseBotHandler(CommandHandlerMixin):
                 #  is that we do not need to use LLM-things as well as spam detection for channels.
                 # But allow admin to change it if (s)he really want it.
                 defaultSettings = self.cache.getDefaultChatSettings(ChatType.CHANNEL)
-                chatSettings = self.getChatSettings(chatId=chatId, returnDefault=False)
+                chatSettings = await self.getChatSettings(chatId=chatId, returnDefault=False)
                 logger.debug(f"Channel defaults: {defaultSettings}")
                 logger.debug(f"Channel settings: {chatSettings}")
                 for k, v in defaultSettings.items():
                     if k not in chatSettings:
                         logger.debug(f"Setting {k} to {v}")
-                        self.setChatSetting(
+                        await self.setChatSetting(
                             chatId=chatId, key=k, value=v, user=MessageSender(id=0, name="System", username="")
                         )
 
@@ -831,7 +833,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         raise ValueError("Base message is not a telegram.Message")
                     repliedMessage = baseMessage.reply_to_message
                     if repliedMessage and repliedMessage.forum_topic_created:
-                        self.updateTopicInfo(
+                        await self.updateTopicInfo(
                             chatId=message.recipient.id,
                             topicId=message.threadId,
                             iconColor=repliedMessage.forum_topic_created.icon_color,
@@ -839,17 +841,17 @@ class BaseBotHandler(CommandHandlerMixin):
                             name=repliedMessage.forum_topic_created.name,
                         )
                 else:
-                    self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
+                    await self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
             except Exception as e:
                 logger.error(f"Error updating chat info: {e}")
         elif self.botProvider == BotProvider.MAX:
             # No topics in Max, but for consistency assume there is one default topic
-            self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
+            await self.updateTopicInfo(chatId=message.recipient.id, topicId=message.threadId)
 
         else:
             logger.error(f"Updating chat info for {self.botProvider} is not implemented yet")
 
-    def updateTopicInfo(
+    async def updateTopicInfo(
         self,
         chatId: int,
         topicId: Optional[int],
@@ -873,14 +875,14 @@ class BaseBotHandler(CommandHandlerMixin):
             force: If True, update even if already in DB
         """
         _topicId = topicId if topicId is not None else 0
-        storedTopicInfo = self.cache.getChatTopicInfo(chatId=chatId, topicId=_topicId)
+        storedTopicInfo = await self.cache.getChatTopicInfo(chatId=chatId, topicId=_topicId)
 
         if not force and storedTopicInfo:
             # No need to rewrite topic info as for Telegram
             #  we always get initial topic info, not current one
             return
 
-        self.cache.setChatTopicInfo(
+        await self.cache.setChatTopicInfo(
             chatId=chatId,
             topicId=_topicId,
             info={
@@ -919,7 +921,7 @@ class BaseBotHandler(CommandHandlerMixin):
         replyId = message.replyId
         rootMessageId = message.messageId
         if message.isReply and replyId:
-            parentMsg = self.db.getChatMessageByMessageId(
+            parentMsg = await self.db.chatMessages.getChatMessageByMessageId(
                 chatId=chat.id,
                 messageId=replyId,
             )
@@ -928,14 +930,14 @@ class BaseBotHandler(CommandHandlerMixin):
 
         await self.updateChatInfo(message)
 
-        self.db.updateChatUser(
+        await self.db.chatUsers.updateChatUser(
             chatId=chat.id,
             userId=sender.id,
             username=sender.username,
             fullName=sender.name,
         )
 
-        self.db.saveChatMessage(
+        await self.db.chatMessages.saveChatMessage(
             date=message.date,
             chatId=chat.id,
             userId=sender.id,
@@ -973,7 +975,9 @@ class BaseBotHandler(CommandHandlerMixin):
             return json.loads(metadataStr)
         return {}
 
-    def setUserMetadata(self, chatId: int, userId: int, metadata: UserMetadataDict, isUpdate: bool = False) -> None:
+    async def setUserMetadata(
+        self, chatId: int, userId: int, metadata: UserMetadataDict, isUpdate: bool = False
+    ) -> None:
         """
         Set or update user metadata in database, dood!
 
@@ -984,11 +988,11 @@ class BaseBotHandler(CommandHandlerMixin):
             isUpdate: If True, merge with existing metadata; if False, replace completely
         """
         if isUpdate:
-            userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
+            userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
             metadata = {**self.parseUserMetadata(userInfo), **metadata}
 
         metadataStr = utils.jsonDumps(metadata)
-        self.db.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
+        await self.db.chatUsers.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
 
     async def startTyping(
         self,
@@ -1089,15 +1093,17 @@ class BaseBotHandler(CommandHandlerMixin):
                 chatTitle = f"#{chatInfo['chat_id']} {chatTitle}"
         return chatTitle
 
-    def getUserChats(self, userId: int) -> List[ChatInfoDict]:
+    async def getUserChats(self, userId: int) -> List[ChatInfoDict]:
         """
         Get chats for the given user.
         Skip chats that the user has left.
         """
-        userChats = self.db.getUserChats(userId)
+        userChats = await self.db.chatUsers.getUserChats(userId)
         ret: List[ChatInfoDict] = []
         for chatInfo in userChats:
-            userInfo: Optional[ChatUserDict] = self.db.getChatUser(chatId=chatInfo["chat_id"], userId=userId)
+            userInfo: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(
+                chatId=chatInfo["chat_id"], userId=userId
+            )
             if userInfo is None:
                 logger.warning(f"User {userId} not found in chat {chatInfo['chat_id']}")
                 continue
@@ -1106,7 +1112,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 # User has left the chat, do not show
                 continue
             ret.append(chatInfo)
-        return userChats
+        return ret
 
     ###
     # Processing media
@@ -1133,7 +1139,7 @@ class BaseBotHandler(CommandHandlerMixin):
             True if parsing succeeded, False if failed
         """
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
         try:
             logger.debug(f"Prompting Image {ensuredMessage.mediaId} LLM for image with prompt: {messages[:1]}")
@@ -1151,7 +1157,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 raise RuntimeError(f"Image LLM Response status is not FINAL: {llmRet.status}")
 
             description = llmRet.resultText
-            self.db.updateMediaAttachment(
+            await self.db.mediaAttachments.updateMediaAttachment(
                 mediaId=fileUniqueId,
                 status=MediaStatus.DONE,
                 description=description,
@@ -1160,7 +1166,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
         except Exception as e:
             logger.error(f"Failed to parse image: {e}")
-            self.db.updateMediaAttachment(
+            await self.db.mediaAttachments.updateMediaAttachment(
                 mediaId=fileUniqueId,
                 status=MediaStatus.FAILED,
             )
@@ -1423,9 +1429,9 @@ class BaseBotHandler(CommandHandlerMixin):
                     # It is not real sticker image, just stub for all(?) animated stickers.
                     # We should'nt process it as it will put wrong data into context
                     logger.info(f"Sticker {attachment} looks like animated sticker")
-                    if self.db.getMediaAttachment(mediaId=mediaId) is None:
+                    if await self.db.mediaAttachments.getMediaAttachment(mediaId=mediaId) is None:
                         logger.debug("Putting fake db entry for it...")
-                        self.db.addMediaAttachment(
+                        await self.db.mediaAttachments.addMediaAttachment(
                             fileUniqueId=mediaId,
                             fileId=url,
                             mediaType=MessageType.STICKER,
@@ -1534,10 +1540,10 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # We are ensuring it here to properly handle case, when this media already in database
         # But for different message
-        self.db.ensureMediaInGroup(mediaId=ret.id, mediaGroupId=ensuredMessage.mediaGroupId)
+        await self.db.mediaAttachments.ensureMediaInGroup(mediaId=ret.id, mediaGroupId=ensuredMessage.mediaGroupId)
 
         # First check if we have the photo in the database already
-        mediaAttachment = self.db.getMediaAttachment(ret.id)
+        mediaAttachment = await self.db.mediaAttachments.getMediaAttachment(ret.id)
         hasMediaAttachment = mediaAttachment is not None
         if mediaAttachment is not None:
             logger.debug(f"Media#{ret.id} already in database")
@@ -1587,7 +1593,7 @@ class BaseBotHandler(CommandHandlerMixin):
                         ret.task = makeEmptyAsyncTask()
                         return ret
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         mediaData: Optional[bytes] = None
         if chatSettings[ChatSettingsKey.SAVE_ATTACHMENTS].toBool():
             if self._bot is None:
@@ -1610,7 +1616,7 @@ class BaseBotHandler(CommandHandlerMixin):
             mediaStatus = MediaStatus.DONE
 
         if hasMediaAttachment:
-            self.db.updateMediaAttachment(
+            await self.db.mediaAttachments.updateMediaAttachment(
                 mediaId=ret.id,
                 status=mediaStatus,
                 metadata=utils.jsonDumps(metadata),
@@ -1619,7 +1625,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 prompt=prompt,
             )
         else:
-            self.db.addMediaAttachment(
+            await self.db.mediaAttachments.addMediaAttachment(
                 fileUniqueId=ret.id,
                 fileId=fileId,
                 mediaType=mediaType,
@@ -1642,7 +1648,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
             if mediaData is None:
                 logger.error(f"{ret.type}#{ret.id} is None, cannot parse it")
-                self.db.updateMediaAttachment(
+                await self.db.mediaAttachments.updateMediaAttachment(
                     mediaId=ret.id,
                     status=MediaStatus.FAILED,
                 )
@@ -1652,7 +1658,7 @@ class BaseBotHandler(CommandHandlerMixin):
             mimeType = magic.from_buffer(mediaData, mime=True)
             logger.debug(f"{ret.type}#{ret.id} Mimetype: {mimeType}")
 
-            self.db.updateMediaAttachment(
+            await self.db.mediaAttachments.updateMediaAttachment(
                 mediaId=ret.id,
                 mimeType=mimeType,
                 fileSize=len(mediaData),
@@ -1663,7 +1669,7 @@ class BaseBotHandler(CommandHandlerMixin):
             else:
                 logger.warning(f"{ret.type}#{ret.id} is not an image, skipping parsing")
                 ret.task = makeEmptyAsyncTask()
-                self.db.updateMediaAttachment(
+                await self.db.mediaAttachments.updateMediaAttachment(
                     mediaId=ret.id,
                     status=MediaStatus.NEW,
                 )
