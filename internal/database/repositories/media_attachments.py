@@ -7,7 +7,7 @@ videos, documents, and other file types with associated metadata.
 
 import datetime
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from internal.models import MessageType
 
@@ -78,7 +78,7 @@ class MediaAttachmentsRepository(BaseRepository):
         fileSize: Optional[int] = None,
         mediaType: MessageType = MessageType.IMAGE,
         mimeType: Optional[str] = None,
-        metadata: str = "{}",
+        metadata: str | dict = "{}",
         status: MediaStatus = MediaStatus.NEW,
         localUrl: Optional[str] = None,
         prompt: Optional[str] = None,
@@ -145,7 +145,7 @@ class MediaAttachmentsRepository(BaseRepository):
         *,
         fileSize: Optional[int] = None,
         status: Optional[MediaStatus] = None,
-        metadata: Optional[str] = None,
+        metadata: Optional[str | dict] = None,
         mimeType: Optional[str] = None,
         localUrl: Optional[str] = None,
         description: Optional[str] = None,
@@ -172,7 +172,7 @@ class MediaAttachmentsRepository(BaseRepository):
         """
         try:
             query = ""
-            values: Dict[str, str | int] = {"fileUniqueId": mediaId}
+            values: Dict[str, Any] = {"fileUniqueId": mediaId}
 
             if status is not None:
                 query += "status = :status, "
@@ -296,7 +296,10 @@ class MediaAttachmentsRepository(BaseRepository):
             )
 
             if row and row["last_updated"]:
-                return dbUtils.sqlToDatetime(row["last_updated"])
+                ok, ret = dbUtils.sqlToCustomType(row["last_updated"], datetime.datetime)
+                if not ok:
+                    logger.error(f"Failed to convert last_updated to datetime: {row['last_updated']}")
+                return ret
             return None
         except Exception as e:
             logger.error(f"Failed to get media group last updated timestamp: {e}")

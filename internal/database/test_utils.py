@@ -16,10 +16,7 @@ import pytest
 
 from internal.database.utils import (
     _checkType,
-    datetimeToSql,
-    sqlToBoolean,
     sqlToCustomType,
-    sqlToDatetime,
 )
 
 
@@ -378,78 +375,3 @@ class TestConvertSqlResponseToTypeEdgeCases:
         success, value = sqlToCustomType(inputData, dict)
         assert success is True
         assert value == {"key": "value"}
-
-
-class TestSqlToDatetime:
-    """Test suite for sqlToDatetime function.
-
-    Tests conversion of SQL datetime strings/bytes to datetime objects.
-    """
-
-    def testBytesInput(self) -> None:
-        """Test that sqlToDatetime converts bytes datetime to datetime object."""
-        result = sqlToDatetime(b"2024-01-15 10:30:00")
-        assert isinstance(result, datetime.datetime)
-        assert result.year == 2024
-        assert result.month == 1
-        assert result.day == 15
-
-    def testStrInput(self) -> None:
-        """Test that sqlToDatetime converts str datetime to datetime object."""
-        result = sqlToDatetime("2024-06-20T08:00:00")
-        assert isinstance(result, datetime.datetime)
-        assert result.year == 2024
-        assert result.month == 6
-
-
-class TestSqlToBoolean:
-    """Test suite for sqlToBoolean function.
-
-    Tests conversion of SQL boolean bytes to Python bool.
-    """
-
-    def testEmptyBytesReturnsFalse(self) -> None:
-        """Test that sqlToBoolean returns False for empty bytes."""
-        result = sqlToBoolean(b"")
-        assert result is False
-
-    def testSingleByteOne(self) -> None:
-        """Test that sqlToBoolean returns True for single byte '1'."""
-        result = sqlToBoolean(b"1")
-        assert result is True
-
-    def testSingleByteZero(self) -> None:
-        """Test that sqlToBoolean returns False for single byte '0'."""
-        result = sqlToBoolean(b"0")
-        assert result is False
-
-    def testMultiBytesRaisesValueError(self) -> None:
-        """Test that sqlToBoolean raises ValueError for multi-byte input."""
-        with pytest.raises(ValueError):
-            sqlToBoolean(b"12")
-
-
-class TestDatetimeToSql:
-    """Test suite for datetimeToSql function.
-
-    Tests conversion of datetime objects to SQL-compatible strings.
-    """
-
-    def testDefaultStripTimezone(self) -> None:
-        """Test that datetimeToSql returns SQLite-compatible datetime string without timezone."""
-        dt = datetime.datetime(2024, 3, 10, 14, 30, 45, 123456)
-        result = datetimeToSql(dt)
-        assert result == "2024-03-10 14:30:45"
-
-    def testStripTimezoneAlsoStripsMicroseconds(self) -> None:
-        """Test that datetimeToSql strips microseconds when stripTimezone=True."""
-        dt = datetime.datetime(2024, 3, 10, 14, 30, 45, 999999)
-        result = datetimeToSql(dt, stripTimezone=True)
-        assert "999999" not in result
-        assert result == "2024-03-10 14:30:45"
-
-    def testNoStripTimezoneReturnsIso(self) -> None:
-        """Test that datetimeToSql returns ISO format without microseconds when stripTimezone=False."""
-        dt = datetime.datetime(2024, 3, 10, 14, 30, 45, 123456)
-        result = datetimeToSql(dt, stripTimezone=False)
-        assert result == "2024-03-10T14:30:45"
