@@ -1,5 +1,5 @@
 """
-Add metadata column to chat_users table, dood!
+Add metadata column to chat_users table.
 
 This migration adds a text column to store metadata for chat users.
 """
@@ -11,16 +11,19 @@ from ..base import BaseMigration
 
 
 class Migration003AddMetadataToChatUsers(BaseMigration):
-    """Add metadata column to chat_users table, dood!"""
+    """Add metadata column to chat_users table."""
 
     version = 3
     description = "Add metadata column to chat_users table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Apply the migration - add metadata column to chat_users, dood!
+        """Apply the migration - add metadata column to chat_users.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Add metadata column to chat_users table
         await sqlProvider.execute(ParametrizedQuery("""
@@ -29,10 +32,13 @@ class Migration003AddMetadataToChatUsers(BaseMigration):
         """))
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Rollback the migration - remove metadata column, dood!
+        """Rollback the migration - remove metadata column.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
@@ -41,5 +47,9 @@ class Migration003AddMetadataToChatUsers(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration003AddMetadataToChatUsers

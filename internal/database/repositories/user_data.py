@@ -1,4 +1,10 @@
-"""TODO: write docstring"""
+"""User data repository module for database operations.
+
+This module provides the UserDataRepository class for managing user-specific
+data storage and retrieval. It handles CRUD operations for user data entries
+that are keyed by user ID, chat ID, and data key, supporting the bot's
+knowledge management and user context persistence features.
+"""
 
 import logging
 from typing import Dict, Optional
@@ -10,11 +16,24 @@ logger = logging.getLogger(__name__)
 
 
 class UserDataRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing user data in the database.
+
+    Provides methods to add, retrieve, delete, and clear user-specific data
+    entries. User data is stored with a composite key of user_id, chat_id,
+    and key, allowing for context-aware data storage across different
+    conversations and users.
+    """
 
     __slots__ = ()
+    """Restricts instance attributes to only those inherited from BaseRepository."""
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the user data repository with a database manager.
+
+        Args:
+            manager: DatabaseManager instance for accessing database providers
+                    and executing database operations
+        """
         super().__init__(manager)
 
     ###

@@ -1,4 +1,10 @@
-"""TODO: write docstring"""
+"""Common functions repository module for database operations.
+
+This module provides the CommonFunctionsRepository class that implements
+common utility functions for managing configuration settings in the database.
+These functions allow storing and retrieving key-value configuration settings
+that can be used across the application.
+"""
 
 import logging
 from typing import Dict, Optional
@@ -10,11 +16,23 @@ logger = logging.getLogger(__name__)
 
 
 class CommonFunctionsRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for common database utility functions.
+
+    Provides methods for managing configuration settings stored in the database.
+    Settings are stored as key-value pairs and can be used for application-wide
+    configuration that needs to persist across restarts.
+    """
 
     __slots__ = ()
+    """Restricts instance attributes to prevent dynamic attribute creation."""
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the common functions repository.
+
+        Args:
+            manager: DatabaseManager instance for accessing database providers
+                    and executing database operations
+        """
         super().__init__(manager)
 
     ###

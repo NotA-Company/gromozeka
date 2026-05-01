@@ -1,7 +1,8 @@
 """
-Add_cache_storage_table, dood!
+Add cache_storage table for CacheService persistence.
 
-TODO: Implement the migration logic below
+This migration creates a cache_storage table to support persistent caching
+with namespace-based key-value storage.
 """
 
 from typing import Type
@@ -10,17 +11,20 @@ from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
-class Migration004Add_cache_storage_table(BaseMigration):
-    """Add_cache_storage_table, dood!"""
+class Migration004AddCacheStorageTable(BaseMigration):
+    """Add cache_storage table for CacheService persistence."""
 
     version = 4
-    description = "add_cache_storage_table"
+    description = "Add cache_storage table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create cache_storage table for CacheService persistence, dood!
+        """Create cache_storage table for CacheService persistence.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         await sqlProvider.batchExecute(
             [
@@ -42,10 +46,13 @@ class Migration004Add_cache_storage_table(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Drop cache_storage table and its index, dood!
+        """Drop cache_storage table and its index.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         await sqlProvider.batchExecute(
             [
@@ -56,5 +63,9 @@ class Migration004Add_cache_storage_table(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
-    return Migration004Add_cache_storage_table
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
+    return Migration004AddCacheStorageTable

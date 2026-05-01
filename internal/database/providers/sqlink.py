@@ -62,6 +62,7 @@ class SQLinkProvider(BaseSQLProvider):
         """Seconds to wait for a query response before raising an error."""
 
         self._connection: Optional[sqlink.AsyncConnection] = None
+        """Active SQLink connection, or ``None`` if not connected."""
 
     async def connect(self) -> None:
         """Open the SQLink connection if not already open.
@@ -91,7 +92,11 @@ class SQLinkProvider(BaseSQLProvider):
             logger.debug(f"Disconnected from SQLink database {self.url}/{self.database}")
 
     async def isReadOnly(self) -> bool:
-        """Return if this provider is in read only mode or not"""
+        """Check if the database is in read-only mode.
+
+        Returns:
+            ``True`` if the database access mode is read-only, ``False`` otherwise.
+        """
         async with self._autoConnection() as connection:
             databases = await connection.databases()
             for db in databases:
@@ -139,7 +144,15 @@ class SQLinkProvider(BaseSQLProvider):
 
     @asynccontextmanager
     async def _autoConnection(self) -> AsyncGenerator[sqlink.AsyncConnection, None]:
-        """Open connection if needed, yield it, close if we opened it, dood!"""
+        """Context manager that provides a SQLink connection.
+
+        Opens a connection if one is not already active, yields it for use,
+        and closes the connection after the context exits if it was opened
+        by this context manager.
+
+        Yields:
+            An active ``sqlink.AsyncConnection`` instance.
+        """
         needDisconnect = self._connection is None
         await self.connect()
         assert self._connection is not None

@@ -1,9 +1,9 @@
 """
-Generic database cache implementation for the Telegram bot, dood!
+Generic database cache implementation.
 
-This module provides a database-backed cache implementation that uses the
-Database to store and retrieve cached data. It supports different
-cache namespaces and configurable key/value conversion strategies, dood!
+Provides a database-backed cache implementation that uses the Database
+to store and retrieve cached data. Supports different cache namespaces
+and configurable key/value conversion strategies.
 """
 
 import logging
@@ -19,11 +19,11 @@ logger = logging.getLogger(__name__)
 
 class GenericDatabaseCache(CacheInterface[K, V]):
     """
-    Database-backed cache implementation, dood!
+    Database-backed cache implementation.
 
-    This cache implementation stores data in the database using the Database.
-    It supports different cache namespaces for organizing data and uses configurable
-    key generators and value converters for flexible data handling, dood!
+    Stores data in the database using the Database. Supports different cache
+    namespaces for organizing data and uses configurable key generators and
+    value converters for flexible data handling.
 
     Type Parameters:
         K: The key type (any hashable type)
@@ -31,6 +31,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
 
     Attributes:
         db: Database instance for database operations
+        dataSource: Optional data source identifier for multi-source configurations
         namespace: CacheType enum value for organizing cache data
         keyGenerator: KeyGenerator instance for converting keys to strings
         valueConverter: ValueConverter instance for serializing/deserializing values
@@ -62,7 +63,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         dataSource: Optional[str] = None,
     ):
         """
-        Initialize cache with database wrapper
+        Initialize cache with database wrapper.
 
         Args:
             db: Database instance from internal.database.database
@@ -71,6 +72,7 @@ class GenericDatabaseCache(CacheInterface[K, V]):
                          If None, uses HashKeyGenerator by default.
             valueConverter: Optional ValueConverter instance for serializing/deserializing values.
                            If None, uses JsonValueConverter by default.
+            dataSource: Optional data source identifier for multi-source configurations.
         """
         self.db = db
         self.dataSource = dataSource
@@ -81,7 +83,17 @@ class GenericDatabaseCache(CacheInterface[K, V]):
         )
 
     async def get(self, key: K, ttl: Optional[int] = None) -> Optional[V]:
-        """Get cached data if exists and not expired"""
+        """
+        Get cached data if exists and not expired.
+
+        Args:
+            key: Cache key to retrieve
+            ttl: Optional time-to-live in seconds. If provided, only returns entries
+                 that are not older than this value.
+
+        Returns:
+            Optional[V]: Cached value if found and not expired, None otherwise.
+        """
         try:
             _key = self.keyGenerator.generateKey(key)
             cacheEntry = await self.db.cache.getCacheEntry(
@@ -95,7 +107,16 @@ class GenericDatabaseCache(CacheInterface[K, V]):
             return None
 
     async def set(self, key: K, value: V) -> bool:
-        """Store data in cache"""
+        """
+        Store data in cache.
+
+        Args:
+            key: Cache key to store
+            value: Value to cache
+
+        Returns:
+            bool: True if successfully stored, False on error.
+        """
         try:
             _key = self.keyGenerator.generateKey(key)
             data = self.valueConverter.encode(value)
@@ -107,19 +128,29 @@ class GenericDatabaseCache(CacheInterface[K, V]):
             return False
 
     async def clear(self) -> None:
-        """Clear all cache entries in this namespace."""
+        """
+        Clear all cache entries in this namespace.
+
+        Returns:
+            None
+        """
         await self.db.cache.clearCache(self.namespace, dataSource=self.dataSource)
 
     def getStats(self) -> Dict[str, Any]:
         """
-        Get cache statistics, dood!
+        Get cache statistics.
 
         Returns basic statistics about the cache state including the namespace
         and enabled status. Additional statistics could be added in the future
-        such as entry count, hit/miss ratios, and size information, dood!
+        such as entry count, hit/miss ratios, and size information.
 
         Returns:
-            Dict[str, Any]: Dictionary containing cache statistics
+            Dict[str, Any]: Dictionary containing cache statistics with keys:
+                - enabled: bool indicating if cache is enabled
+                - namespace: str namespace identifier
+                - backend: str backend type identifier
+                - keyGenerator: str key generator class name
+                - valueConverter: str value converter class name
         """
         return {
             "enabled": True,

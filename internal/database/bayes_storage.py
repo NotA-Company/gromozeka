@@ -1,5 +1,5 @@
 """
-Database implementation of Bayes storage interface, dood!
+Database implementation of Bayes storage interface.
 
 This module provides a concrete implementation of the BayesStorageInterface
 using the existing Database from the Gromozeka project.
@@ -19,10 +19,14 @@ logger = logging.getLogger(__name__)
 
 class DatabaseBayesStorage(BayesStorageInterface):
     """
-    Database implementation of Bayes storage interface
+    Database implementation of Bayes storage interface.
 
     Uses the existing Database to store and retrieve Bayes filter
     statistics in SQLite database tables.
+
+    Attributes:
+        db: Database instance for executing queries
+        dataSource: Optional data source identifier for multi-database support
     """
 
     __slots__ = ("db", "dataSource")
@@ -34,17 +38,28 @@ class DatabaseBayesStorage(BayesStorageInterface):
         dataSource: Optional[str] = None,
     ):
         """
-        Initialize database storage
+        Initialize database storage.
 
         Args:
-            db: Database instance
+            db: Database instance for executing queries
+            dataSource: Optional data source identifier for multi-database support
         """
         self.db = db
         self.dataSource = dataSource
         logger.info("Initialized DatabaseBayesStorage, dood!")
 
     async def getTokenStats(self, tokens: Iterable[str], chatId: Optional[int] = None) -> Dict[str, TokenStats]:
-        """Get statistics for a specific tokens"""
+        """
+        Get statistics for specific tokens.
+
+        Args:
+            tokens: Iterable of token strings to retrieve statistics for
+            chatId: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            Dictionary mapping token strings to TokenStats objects containing
+            spamCount, hamCount, and totalCount for each token
+        """
         params: Dict[str, Any] = {"chatId": chatId}
         placeholders = []
         for i, token in enumerate(tokens):
@@ -80,7 +95,16 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return {}
 
     async def getClassStats(self, is_spam: bool, chat_id: Optional[int] = None) -> ClassStats:
-        """Get statistics for spam or ham class"""
+        """
+        Get statistics for spam or ham class.
+
+        Args:
+            is_spam: True for spam class statistics, False for ham class
+            chat_id: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            ClassStats object containing messageCount and tokenCount
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=True)
             row = await sqlProvider.executeFetchOne(
@@ -106,7 +130,18 @@ class DatabaseBayesStorage(BayesStorageInterface):
         increment: int = 1,
         chat_id: Optional[int] = None,
     ) -> bool:
-        """Update token statistics after learning"""
+        """
+        Update token statistics after learning.
+
+        Args:
+            token: Token string to update
+            is_spam: True if token appeared in spam message, False for ham
+            increment: Amount to increment counters by (default: 1)
+            chat_id: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
             await sqlProvider.execute(
@@ -144,7 +179,18 @@ class DatabaseBayesStorage(BayesStorageInterface):
     async def updateClassStats(
         self, isSpam: bool, messageIncrement: int = 1, tokenIncrement: int = 0, chatId: Optional[int] = None
     ) -> bool:
-        """Update class statistics after learning"""
+        """
+        Update class statistics after learning.
+
+        Args:
+            isSpam: True for spam class, False for ham class
+            messageIncrement: Amount to increment message count by (default: 1)
+            tokenIncrement: Amount to increment token count by (default: 0)
+            chatId: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
             await sqlProvider.execute(
@@ -172,7 +218,15 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return False
 
     async def getAllTokens(self, chatId: Optional[int] = None) -> List[str]:
-        """Get all known tokens (for vocabulary)"""
+        """
+        Get all known tokens for vocabulary.
+
+        Args:
+            chatId: Optional chat ID for chat-specific tokens, None for global
+
+        Returns:
+            List of all token strings in the vocabulary, sorted alphabetically
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(
@@ -189,7 +243,15 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return []
 
     async def getVocabularySize(self, chatId: Optional[int] = None) -> int:
-        """Get the size of the vocabulary (number of unique tokens)"""
+        """
+        Get the size of the vocabulary (number of unique tokens).
+
+        Args:
+            chatId: Optional chat ID for chat-specific vocabulary, None for global
+
+        Returns:
+            Number of unique tokens in the vocabulary
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
             row = await sqlProvider.executeFetchOne(
@@ -205,7 +267,16 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return 0
 
     async def getModelStats(self, chatId: Optional[int] = None) -> BayesModelStats:
-        """Get overall model statistics"""
+        """
+        Get overall model statistics.
+
+        Args:
+            chatId: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            BayesModelStats object containing totalSpamMessages, totalHamMessages,
+            totalTokens, vocabularySize, and chatId
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
             # Get class statistics
@@ -245,7 +316,15 @@ class DatabaseBayesStorage(BayesStorageInterface):
             )
 
     async def clearStats(self, chatId: Optional[int] = None) -> bool:
-        """Clear all statistics (reset learning)"""
+        """
+        Clear all statistics (reset learning).
+
+        Args:
+            chatId: Optional chat ID to clear statistics for, None for global
+
+        Returns:
+            True if clear succeeded, False otherwise
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=False)
             if chatId is None:
@@ -272,7 +351,17 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return False
 
     async def batchUpdateTokens(self, tokenUpdates: List[Dict[str, Any]], chatId: Optional[int] = None) -> bool:
-        """Update multiple tokens in a single batch operation for performance"""
+        """
+        Update multiple tokens in a single batch operation for performance.
+
+        Args:
+            tokenUpdates: List of dictionaries, each containing 'token', 'is_spam',
+                         and 'increment' keys
+            chatId: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            True if batch update succeeded, False otherwise
+        """
         if not tokenUpdates:
             return True
 
@@ -319,7 +408,17 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return False
 
     async def getTopSpamTokens(self, limit: int = 10, chatId: Optional[int] = None) -> List[TokenStats]:
-        """Get the top spam-indicating tokens"""
+        """
+        Get the top spam-indicating tokens.
+
+        Args:
+            limit: Maximum number of tokens to return (default: 10)
+            chatId: Optional chat ID for chat-specific tokens, None for global
+
+        Returns:
+            List of TokenStats objects for tokens with highest spam ratio,
+            ordered by spam ratio descending
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(
@@ -351,7 +450,17 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return []
 
     async def getTopHamTokens(self, limit: int = 10, chatId: Optional[int] = None) -> List[TokenStats]:
-        """Get the top ham-indicating tokens"""
+        """
+        Get the top ham-indicating tokens.
+
+        Args:
+            limit: Maximum number of tokens to return (default: 10)
+            chatId: Optional chat ID for chat-specific tokens, None for global
+
+        Returns:
+            List of TokenStats objects for tokens with highest ham ratio,
+            ordered by ham ratio descending
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(
@@ -383,7 +492,16 @@ class DatabaseBayesStorage(BayesStorageInterface):
             return []
 
     async def cleanupRareTokens(self, minCount: int = 2, chatId: Optional[int] = None) -> None:
-        """Remove tokens that appear less than min_count times"""
+        """
+        Remove tokens that appear less than min_count times.
+
+        Args:
+            minCount: Minimum total count threshold (default: 2)
+            chatId: Optional chat ID for chat-specific cleanup, None for global
+
+        Returns:
+            None
+        """
         try:
             sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=False)
             await sqlProvider.execute(

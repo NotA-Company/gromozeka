@@ -32,9 +32,13 @@ class FetchType(Enum):
 
 
 type QueryParams = Dict[str, Any] | Sequence[Any] | Mapping[str, Any]
+"""Type alias for query parameters: dict, sequence, or mapping."""
 type QueryResultFetchOne = Dict[str, Any] | None
+"""Type alias for query result when fetching a single row."""
 type QueryResultFetchAll = Sequence[Dict[str, Any]]
+"""Type alias for query result when fetching all rows."""
 type QueryResult = QueryResultFetchOne | QueryResultFetchAll | None
+"""Type alias for query result, which can be None, a single row, or all rows."""
 
 
 class ParametrizedQuery:
@@ -57,6 +61,7 @@ class ParametrizedQuery:
             fetchType: Row-fetch strategy; defaults to :attr:`FetchType.FETCH_ALL`.
         """
         self.query: str = query
+        """Raw SQL query string."""
 
         if params is None:
             params = []
@@ -184,10 +189,11 @@ class BaseSQLProvider(ABC):
         """Execute a SQL query and return the first row.
 
         Args:
-            query: Either a raw SQL string or a pre-built :class:`ParametrizedQuery`.
+            query: Raw SQL query string.
+            params: Parameters to bind to the query; defaults to None.
 
         Returns:
-            The first row of the query result.
+            The first row as a dict, or None if no rows were returned.
         """
         ret = await self._execute(ParametrizedQuery(query, params, FetchType.FETCH_ONE))
         if not ret:
@@ -210,10 +216,11 @@ class BaseSQLProvider(ABC):
         """Execute a SQL query and return all rows.
 
         Args:
-            query: Either a raw SQL string or a pre-built :class:`ParametrizedQuery`.
+            query: Raw SQL query string.
+            params: Parameters to bind to the query; defaults to None.
 
         Returns:
-            All rows of the query result.
+            All rows as a list of dicts, or an empty list if no rows were returned.
         """
         ret = await self._execute(ParametrizedQuery(query, params, FetchType.FETCH_ALL))
         if not ret:
@@ -242,5 +249,9 @@ class BaseSQLProvider(ABC):
 
     @abstractmethod
     async def isReadOnly(self) -> bool:
-        """Return if this provider is in read only mode or not"""
+        """Check if this provider is in read-only mode.
+
+        Returns:
+            True if the provider is in read-only mode, False otherwise.
+        """
         raise NotImplementedError

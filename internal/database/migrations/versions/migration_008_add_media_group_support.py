@@ -1,5 +1,5 @@
 """
-Add media group support, dood!
+Add media group support.
 
 This migration adds support for media groups by:
 - Adding media_group_id column to chat_messages table
@@ -13,14 +13,13 @@ from ..base import BaseMigration
 
 
 class Migration008AddMediaGroupSupport(BaseMigration):
-    """Add media group support, dood!"""
+    """Add media group support."""
 
     version = 8
-    description = "add media group support"
+    description = "Add media group support"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """
-        Apply the migration, dood!
+        """Apply the migration to add media group support.
 
         Adds media group support by:
         1. Adding media_group_id column to chat_messages table
@@ -28,6 +27,9 @@ class Migration008AddMediaGroupSupport(BaseMigration):
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         await sqlProvider.batchExecute(
             [
@@ -49,8 +51,7 @@ class Migration008AddMediaGroupSupport(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """
-        Rollback the migration, dood!
+        """Rollback the migration to remove media group support.
 
         Removes media group support by:
         1. Dropping the media_group table
@@ -58,6 +59,9 @@ class Migration008AddMediaGroupSupport(BaseMigration):
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         await sqlProvider.batchExecute(
             [
@@ -73,5 +77,9 @@ class Migration008AddMediaGroupSupport(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration008AddMediaGroupSupport

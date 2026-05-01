@@ -1,7 +1,8 @@
 """
-Initial schema migration - creates all base tables, dood!
+Add Yandex Search cache tables.
 
-This migration extracts all table creation from the original _initDatabase() method.
+This migration creates cache tables for Yandex Search results to improve
+performance by storing search results locally.
 """
 
 from typing import Type
@@ -11,16 +12,19 @@ from ..base import BaseMigration
 
 
 class Migration005YandexSearchCache(BaseMigration):
-    """Initial database schema migration, dood!"""
+    """Add Yandex Search cache tables."""
 
     version = 5
     description = "Add Yandex Search Cache"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create all initial tables, dood!
+        """Create Yandex Search cache tables.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Create all Cache Tables
         # Import CacheType here to avoid circular dependency
@@ -36,10 +40,13 @@ class Migration005YandexSearchCache(BaseMigration):
                 """) for cacheType in CacheType])
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Drop all tables created by this migration, dood!
+        """Drop Yandex Search cache tables.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Drop cache tables
         from ...models import CacheType
@@ -50,5 +57,9 @@ class Migration005YandexSearchCache(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration005YandexSearchCache

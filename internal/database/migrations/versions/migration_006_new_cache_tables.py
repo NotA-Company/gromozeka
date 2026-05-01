@@ -1,7 +1,8 @@
 """
-Initial schema migration - creates all base tables, dood!
+Add new cache tables for all cache types.
 
-This migration extracts all table creation from the original _initDatabase() method.
+This migration creates cache tables for all defined cache types to support
+persistent caching across different services.
 """
 
 from typing import Type
@@ -11,16 +12,19 @@ from ..base import BaseMigration
 
 
 class Migration006NewCacheTables(BaseMigration):
-    """Initial database schema migration, dood!"""
+    """Add new cache tables for all cache types."""
 
     version = 6
     description = "Add New Cache Tables"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create all initial tables, dood!
+        """Create cache tables for all cache types.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Create all Cache Tables
         # Import CacheType here to avoid circular dependency
@@ -36,14 +40,24 @@ class Migration006NewCacheTables(BaseMigration):
                 """) for cacheType in CacheType])
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Do not want to
+        """Rollback is not supported for this migration.
+
+        This migration creates cache tables that should not be dropped
+        as they may contain important cached data.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         pass
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration006NewCacheTables

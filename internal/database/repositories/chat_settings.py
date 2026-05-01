@@ -1,4 +1,9 @@
-"""TODO: write docstring"""
+"""Chat settings repository module for database operations.
+
+This module provides the ChatSettingsRepository class for managing chat-specific
+settings in the database. It handles CRUD operations for chat settings including
+setting, unsetting, clearing, and retrieving settings for individual chats.
+"""
 
 import logging
 from typing import Any, Dict, Optional
@@ -10,11 +15,23 @@ logger = logging.getLogger(__name__)
 
 
 class ChatSettingsRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing chat-specific settings in the database.
+
+    Provides methods to set, unset, clear, and retrieve settings for individual
+    chats. All write operations are routed based on chatId mapping to the
+    appropriate data source. Settings are stored as key-value pairs with
+    tracking of which user last updated each setting.
+    """
 
     __slots__ = ()
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the chat settings repository with a database manager.
+
+        Args:
+            manager: DatabaseManager instance for accessing database providers
+                    and executing database operations
+        """
         super().__init__(manager)
 
     ###
@@ -124,7 +141,7 @@ class ChatSettingsRepository(BaseRepository):
             dataSource: Optional data source name for explicit routing
 
         Returns:
-            Setting value or None if not found
+            Optional[str]: Setting value or None if not found
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)

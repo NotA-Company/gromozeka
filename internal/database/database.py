@@ -27,29 +27,81 @@ logger = logging.getLogger(__name__)
 
 class Database:
     """
-    TODO: Update docstring
-    A wrapper around SQL that provides a consistent interface
-    that can be easily replaced with other database backends.
+    Database wrapper providing a consistent interface for multi-source database operations.
+
+    This class manages database connections, repositories, and migrations across multiple
+    data sources. It supports both single-source and multi-source configurations with
+    automatic schema migration and connection pooling.
     """
 
-    # TODO: populate slots
-    # _slots__ = ("_connections", "_sources", "_chatMapping", "_locks", "_defaultSource")
+    __slots__ = (
+        "manager",
+        "common",
+        "chatMessages",
+        "chatUsers",
+        "chatSettings",
+        "chatInfo",
+        "chatSummarization",
+        "userData",
+        "mediaAttachments",
+        "spam",
+        "delayedTasks",
+        "cache",
+        "_migrationManager",
+    )
+
+    manager: DatabaseManager
+    """Database manager handling connections and multi-source operations."""
+
+    common: CommonFunctionsRepository
+    """Repository for common database functions and utilities."""
+
+    chatMessages: ChatMessagesRepository
+    """Repository for chat message storage and retrieval."""
+
+    chatUsers: ChatUsersRepository
+    """Repository for chat user management and associations."""
+
+    chatSettings: ChatSettingsRepository
+    """Repository for chat-specific settings and configurations."""
+
+    chatInfo: ChatInfoRepository
+    """Repository for chat metadata and information."""
+
+    chatSummarization: ChatSummarizationRepository
+    """Repository for chat summarization data."""
+
+    userData: UserDataRepository
+    """Repository for user-specific data and preferences."""
+
+    mediaAttachments: MediaAttachmentsRepository
+    """Repository for media attachment storage and management."""
+
+    spam: SpamRepository
+    """Repository for spam detection and filtering data."""
+
+    delayedTasks: DelayedTasksRepository
+    """Repository for delayed task scheduling and management."""
+
+    cache: CacheRepository
+    """Repository for caching operations."""
+
+    _migrationManager: MigrationManager
+    """Internal migration manager for schema versioning and updates."""
 
     def __init__(
         self,
         config: DatabaseManagerConfig,
     ):
         """
-        Initialize database wrapper with single or multi-source configuration, dood!
+        Initialize database wrapper with multi-source configuration.
 
         Args:
-            dbPath: Single database path (legacy mode, mutually exclusive with config)
-            maxConnections: Max connections per source (default: 5)
-            timeout: Connection timeout in seconds (default: 30.0)
-            config: Multi-source config dict with 'sources', 'chatMapping', 'defaultSource'
+            config: DatabaseManagerConfig containing sources configuration, chat mapping,
+                   and default source settings.
 
         Raises:
-            ValueError: If neither or both dbPath and config provided
+            Exception: If migration auto-discovery fails.
         """
         logger.info("Initializing database")
         self.manager = DatabaseManager(config)
@@ -79,7 +131,20 @@ class Database:
         self.manager.addProviderInitializationHook(self.migrateDatabase)
 
     async def migrateDatabase(self, sqlProvider: BaseSQLProvider, providerName: str, readOnly: bool) -> None:
-        """Migrate database schema and run migrations for all non-readonly sources, dood!"""
+        """
+        Migrate database schema and run migrations for non-readonly sources.
+
+        Creates the settings table for version tracking and executes all pending
+        migrations for the specified database provider.
+
+        Args:
+            sqlProvider: SQL provider instance for database operations.
+            providerName: Name of the database provider being migrated.
+            readOnly: Whether the provider is in read-only mode (skips migration if True).
+
+        Returns:
+            None
+        """
 
         if readOnly:
             logger.debug(f"Skipping DB migration for readonly source {providerName}, dood")

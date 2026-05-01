@@ -1,4 +1,9 @@
-"""TODO: write docstring"""
+"""Cache repository for managing cache storage and cache entries.
+
+This module provides the CacheRepository class which handles all cache-related
+database operations including storing, retrieving, and clearing cache entries
+from both the cache_storage and cache tables.
+"""
 
 import datetime
 import logging
@@ -13,11 +18,21 @@ logger = logging.getLogger(__name__)
 
 
 class CacheRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing cache storage and cache entries in the database.
+
+    Provides methods to interact with both the cache_storage table (for
+    general cache storage) and the cache table (for typed cache entries with
+    TTL support). All methods support multi-source database routing.
+    """
 
     __slots__ = ()
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the cache repository.
+
+        Args:
+            manager: Database manager instance for provider access
+        """
         super().__init__(manager)
 
     ###
@@ -244,10 +259,10 @@ class CacheRepository(BaseRepository):
         dataSource: Optional[str] = None,
     ) -> bool:
         """
-        Clear cache entries older than the specified age, dood!
+        Clear cache entries older than the specified age.
 
         Args:
-            olderThanSeconds: Remove entries older than this many seconds
+            ttl: Remove entries older than this many seconds. If None or 0, removes all entries.
             cacheType: Optional cache type to filter by. If None, clears old entries from all caches.
             dataSource: Optional data source name for explicit routing
 

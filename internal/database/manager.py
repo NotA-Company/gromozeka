@@ -9,34 +9,62 @@ from .providers import BaseSQLProvider, SQLProviderConfig, getSqlProvider
 logger = logging.getLogger(__name__)
 
 SQLProviderInitializationHook = Callable[[BaseSQLProvider, str, bool], Awaitable[None]]
+"""Async hook function called after SQL provider initialization.
+
+Args:
+    provider: The initialized SQL provider instance
+    providerName: Name of the provider being initialized
+    isReadOnly: Whether the provider is in read-only mode
+
+Returns:
+    None
+"""
 
 
 class DatabaseManagerConfig(TypedDict):
-    """TODO: write docstring"""
+    """Configuration for DatabaseManager.
+
+    Defines the structure for database manager configuration including
+    default provider, chat-to-provider mappings, and provider configurations.
+    """
 
     default: str
-    """TODO: write docstring"""
+    """Name of the default data source provider."""
     chatMapping: Dict[int, str]
-    """TODO: write docstring"""
+    """Mapping of chat IDs to data source provider names."""
     providers: Dict[str, SQLProviderConfig]
-    """TODO: write docstring"""
+    """Dictionary of provider configurations keyed by provider name."""
 
 
 class DatabaseManager:
     """Manages database initialization and configuration.
 
-    Initializes DatabaseManager with provided configuration and handles database setup.
+    Handles multiple SQL providers, chat-to-provider routing, and provider
+    lifecycle management including initialization and cleanup.
     """
 
     __slots__ = ("config", "_providers", "_initializationHooks")
+
+    config: DatabaseManagerConfig
+    """Database configuration containing providers, default source, and chat mappings."""
+
+    _providers: Dict[str, BaseSQLProvider]
+    """Cache of initialized SQL provider instances keyed by provider name."""
+
+    _initializationHooks: List[SQLProviderInitializationHook]
+    """List of hooks to call after provider initialization."""
 
     def __init__(self, config: DatabaseManagerConfig):
         """Initialize DatabaseManager with configuration.
 
         Args:
-            config: Database configuration dict
+            config: Database configuration dict containing providers, default source,
+                   and chat mappings
+
+        Raises:
+            ValueError: If no providers, no default source, or default source not found
         """
-        
+
         self.config = config.copy()
         if "providers" not in self.config:
             raise ValueError("No providers found in configuration, dood")
@@ -60,7 +88,11 @@ class DatabaseManager:
         """Add a hook to be called after provider initialization.
 
         Args:
-            hook: Hook to be called
+            hook: Async function to call after provider initialization, receiving
+                  the provider, its name, and readonly status
+
+        Returns:
+            None
         """
         self._initializationHooks.append(hook)
 
@@ -71,10 +103,21 @@ class DatabaseManager:
         dataSource: Optional[str] = None,
         readonly: bool = False,
     ) -> BaseSQLProvider:
-        """Get the SQL provider instance.
+        """Get the SQL provider instance based on routing parameters.
+
+        Provider selection priority: dataSource > chatId mapping > default source.
+        Initializes provider on first access and validates readonly constraints.
+
+        Args:
+            chatId: Optional chat ID for provider mapping lookup
+            dataSource: Optional explicit data source name to use
+            readonly: Whether the operation is read-only (default: False)
 
         Returns:
-            SQL provider instance for database operations
+            BaseSQLProvider: The SQL provider instance for database operations
+
+        Raises:
+            ValueError: If write operation attempted on readonly provider
         """
 
         providerName: str
@@ -142,9 +185,11 @@ class DatabaseManager:
     async def closeAll(self) -> None:
         """Close all database connections and cleanup resources.
 
-        This method disconnects all providers and clears the provider cache.
-        It should be called when shutting down the database manager to ensure
-        proper resource cleanup.
+        Disconnects all initialized providers and clears the provider cache.
+        Should be called during application shutdown to ensure proper resource cleanup.
+
+        Returns:
+            None
         """
         logger.info("Closing all database connections...")
         for providerName, provider in self._providers.items():

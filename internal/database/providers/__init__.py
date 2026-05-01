@@ -43,7 +43,7 @@ def getSqlProvider(config: SQLProviderConfig) -> BaseSQLProvider:
     parameters = config.get("parameters", {})
 
     if not provider:
-        raise ValueError("SQLProviderConfig is missing the required 'provider' key, dood!")
+        raise ValueError("SQLProviderConfig is missing the required 'provider' key")
     match provider:
         case "sqlite3":
             return SQLite3Provider(**parameters)

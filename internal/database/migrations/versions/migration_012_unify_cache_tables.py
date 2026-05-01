@@ -1,5 +1,5 @@
 """
-Unify cache tables migration - consolidates all cache tables into one, dood!
+Unify cache tables migration - consolidates all cache tables into one.
 
 This migration replaces the 6 separate cache_{type} tables with a single
 unified_cache table that uses a namespace column to distinguish cache types.
@@ -12,16 +12,19 @@ from ..base import BaseMigration
 
 
 class Migration012UnifyCacheTables(BaseMigration):
-    """Unify all cache tables into a single unified_cache table, dood!"""
+    """Unify all cache tables into a single unified_cache table."""
 
     version = 12
     description = "Unify cache tables into single unified_cache table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create unified_cache table and drop old cache tables, dood!
+        """Create unified_cache table and drop old cache tables.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         from ...models import CacheType
 
@@ -54,10 +57,13 @@ class Migration012UnifyCacheTables(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Revert to separate cache tables, dood!
+        """Revert to separate cache tables.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         from ...models import CacheType
 
@@ -79,5 +85,9 @@ class Migration012UnifyCacheTables(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration012UnifyCacheTables

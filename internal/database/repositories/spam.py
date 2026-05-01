@@ -1,4 +1,9 @@
-"""TODO: write docstring"""
+"""Repository for managing spam and ham message storage and retrieval.
+
+This module provides the SpamRepository class which handles database operations
+for storing and retrieving spam and ham messages, including their classification
+scores, confidence levels, and reasons.
+"""
 
 import logging
 from typing import List, Optional
@@ -14,11 +19,20 @@ logger = logging.getLogger(__name__)
 
 
 class SpamRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing spam and ham message database operations.
+
+    Provides methods to add, retrieve, and delete spam and ham messages
+    with support for multi-source database routing based on chat IDs.
+    """
 
     __slots__ = ()
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the SpamRepository.
+
+        Args:
+            manager: DatabaseManager instance for database operations
+        """
         super().__init__(manager)
 
     ###
@@ -45,6 +59,7 @@ class SpamRepository(BaseRepository):
             messageText: Message text
             spamReason: Reason for spam classification
             score: Spam score
+            confidence: Confidence level of the classification
 
         Returns:
             bool: True if successful, False otherwise
@@ -97,6 +112,7 @@ class SpamRepository(BaseRepository):
             messageText: Message text
             spamReason: Reason for ham classification
             score: Ham score
+            confidence: Confidence level of the classification
 
         Returns:
             bool: True if successful, False otherwise
@@ -130,7 +146,16 @@ class SpamRepository(BaseRepository):
             return False
 
     async def getSpamMessagesByText(self, text: str, *, dataSource: Optional[str] = None) -> List[SpamMessageDict]:
-        """Get spam messages by text."""
+        """
+        Get spam messages by text.
+
+        Args:
+            text: Message text to search for
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            List of SpamMessageDict matching the text, empty list on error
+        """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(
@@ -149,7 +174,16 @@ class SpamRepository(BaseRepository):
             return []
 
     async def getSpamMessages(self, limit: int = 1000, *, dataSource: Optional[str] = None) -> List[SpamMessageDict]:
-        """Get spam messages."""
+        """
+        Get spam messages.
+
+        Args:
+            limit: Maximum number of messages to retrieve
+            dataSource: Optional data source name for explicit routing
+
+        Returns:
+            List of SpamMessageDict, empty list on error
+        """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(

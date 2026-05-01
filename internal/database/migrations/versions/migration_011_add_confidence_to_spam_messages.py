@@ -1,8 +1,8 @@
 """
-Add confidence column to spam_messages table, dood!
+Add confidence column to spam_messages and ham_messages tables.
 
 This migration adds a confidence column to track the confidence level
-of spam detection.
+of spam detection for both spam and ham messages.
 """
 
 from typing import Type
@@ -12,20 +12,22 @@ from ..base import BaseMigration
 
 
 class Migration011AddConfidenceToSpamMessages(BaseMigration):
-    """Add confidence column to spam_messages table, dood!"""
+    """Add confidence column to spam_messages and ham_messages tables."""
 
     version = 11
     description = "Add confidence column to spam_messages table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """
-        Apply the migration, dood!
+        """Apply the migration to add confidence column.
 
-        Adds confidence column to spam_messages table:
+        Adds confidence column to spam_messages and ham_messages tables:
         - FLOAT type, NOT NULL with DEFAULT 1.0
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Add column with default value (SQLite requires default for NOT NULL)
         await sqlProvider.batchExecute(
@@ -42,13 +44,15 @@ class Migration011AddConfidenceToSpamMessages(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """
-        Rollback the migration, dood!
+        """Rollback the migration to remove confidence column.
 
-        Removes the confidence column from spam_messages table.
+        Removes the confidence column from spam_messages and ham_messages tables.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # SQLite 3.35.0+ supports DROP COLUMN
         # For older versions, this will fail and require table recreation
@@ -61,5 +65,9 @@ class Migration011AddConfidenceToSpamMessages(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration011AddConfidenceToSpamMessages

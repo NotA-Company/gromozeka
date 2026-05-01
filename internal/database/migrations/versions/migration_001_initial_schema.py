@@ -1,5 +1,5 @@
 """
-Initial schema migration - creates all base tables, dood!
+Initial schema migration - creates all base tables.
 
 This migration extracts all table creation from the original _initDatabase() method.
 """
@@ -11,16 +11,19 @@ from ..base import BaseMigration
 
 
 class Migration001InitialSchema(BaseMigration):
-    """Initial database schema migration, dood!"""
+    """Initial database schema migration."""
 
     version = 1
     description = "Create initial database schema"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create all initial tables, dood!
+        """Create all initial tables.
 
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider to execute database commands
+
+        Returns:
+            None
         """
         # Import CacheType here to avoid circular dependency
         from ...models import CacheType
@@ -258,10 +261,13 @@ class Migration001InitialSchema(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Drop all tables created by this migration, dood!
+        """Drop all tables created by this migration.
 
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider to execute database commands
+
+        Returns:
+            None
         """
         from ...models import CacheType
 
@@ -304,5 +310,9 @@ class Migration001InitialSchema(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration001InitialSchema

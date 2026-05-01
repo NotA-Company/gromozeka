@@ -1,4 +1,9 @@
-"""TODO: write docstring"""
+"""Repository for managing chat information and topic data.
+
+This module provides the ChatInfoRepository class for storing and retrieving
+chat metadata including chat type, title, username, and forum status, as well
+as managing forum topic information.
+"""
 
 import logging
 from typing import List, Optional
@@ -12,11 +17,22 @@ logger = logging.getLogger(__name__)
 
 
 class ChatInfoRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing chat information and topic data.
+
+    Provides methods to store and retrieve chat metadata including type, title,
+    username, and forum status, as well as managing forum topic information
+    such as icon colors, custom emojis, and topic names.
+    """
 
     __slots__ = ()
+    """Empty slots tuple to prevent dynamic attribute creation."""
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the ChatInfoRepository.
+
+        Args:
+            manager: DatabaseManager instance for database operations
+        """
         super().__init__(manager)
 
     ###
@@ -30,7 +46,22 @@ class ChatInfoRepository(BaseRepository):
         username: Optional[str] = None,
         isForum: Optional[bool] = False,
     ) -> bool:
-        """Add chat info to the database."""
+        """Add or update chat information in the database.
+
+        Args:
+            chatId: Chat identifier
+            type: Chat type (e.g., 'private', 'group', 'supergroup', 'channel')
+            title: Optional chat title
+            username: Optional chat username
+            isForum: Whether the chat is a forum (default: False)
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            Uses UPSERT logic - inserts new record or updates existing one.
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
+        """
         if isForum is None:
             isForum = False
         try:

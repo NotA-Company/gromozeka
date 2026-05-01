@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Test script for database migrations, dood!
+Test script for database migrations.
 
 This script tests:
 - Fresh database initialization
 - Migration execution
 - Version tracking
 - Rollback functionality
+- Auto-discovery of migrations
+- Migration status reporting
 """
 
 import logging
@@ -31,7 +33,15 @@ logger = logging.getLogger(__name__)
 
 
 async def test_fresh_database():
-    """Test fresh database initialization, dood!"""
+    """Test fresh database initialization.
+
+    Creates a temporary database, initializes it with migrations,
+    and verifies that all expected tables and the correct migration
+    version are present.
+
+    Returns:
+        None
+    """
     logger.info("=" * 60)
     logger.info("TEST: Fresh Database Initialization")
     logger.info("=" * 60)
@@ -85,7 +95,7 @@ async def test_fresh_database():
         for table in expectedTables:
             assert table in tableNames, f"Table {table} not found"
 
-        logger.info("✅ Fresh database test PASSED, dood!")
+        logger.info("✅ Fresh database test PASSED")
 
     finally:
         # Cleanup
@@ -96,7 +106,15 @@ async def test_fresh_database():
 
 
 async def test_migration_status():
-    """Test migration status reporting, dood!"""
+    """Test migration status reporting.
+
+    Creates a temporary database, initializes it with migrations,
+    and verifies that the migration status correctly reports the
+    current version, latest version, and pending migrations.
+
+    Returns:
+        None
+    """
     logger.info("=" * 60)
     logger.info("TEST: Migration Status")
     logger.info("=" * 60)
@@ -129,7 +147,7 @@ async def test_migration_status():
         assert status["current_version"] == status["latest_version"], "Current version should equal latest version"
         assert status["pending_count"] == 0, "Should have no pending migrations"
 
-        logger.info("✅ Migration status test PASSED, dood!")
+        logger.info("✅ Migration status test PASSED")
 
     finally:
         if db is not None:
@@ -139,7 +157,16 @@ async def test_migration_status():
 
 
 async def test_rollback():
-    """Test migration rollback, dood!"""
+    """Test migration rollback functionality.
+
+    Creates a temporary database, initializes it with migrations,
+    rolls back to a specific version, and verifies that the
+    rollback correctly removes schema changes (e.g., the metadata
+    column from migration 003).
+
+    Returns:
+        None
+    """
     logger.info("=" * 60)
     logger.info("TEST: Migration Rollback")
     logger.info("=" * 60)
@@ -189,7 +216,7 @@ async def test_rollback():
         columns = [row["name"] for row in rows]  # type: ignore[index]
         assert "metadata" not in columns, "metadata column should be dropped"
 
-        logger.info("✅ Rollback test PASSED, dood!")
+        logger.info("✅ Rollback test PASSED")
 
     finally:
         if db is not None:
@@ -199,7 +226,15 @@ async def test_rollback():
 
 
 async def test_existing_database():
-    """Test upgrading existing database, dood!"""
+    """Test upgrading existing database.
+
+    Creates a temporary database and verifies that migrations
+    run automatically during initialization, bringing the database
+    to the latest version.
+
+    Returns:
+        None
+    """
     logger.info("=" * 60)
     logger.info("TEST: Existing Database Upgrade")
     logger.info("=" * 60)
@@ -237,7 +272,7 @@ async def test_existing_database():
             MIGRATIONS
         ), f"Expected version {len(MIGRATIONS)} (auto-migrated), got {currentVersion}"
 
-        logger.info("✅ Existing database upgrade test PASSED, dood!")
+        logger.info("✅ Existing database upgrade test PASSED")
 
     finally:
         if db is not None:
@@ -247,7 +282,15 @@ async def test_existing_database():
 
 
 async def test_auto_discovery():
-    """Test migration auto-discovery functionality, dood!"""
+    """Test migration auto-discovery functionality.
+
+    Verifies that DISCOVERED_MIGRATIONS is properly populated,
+    matches the manual migrations list, and that all migration
+    versions and descriptions are correct.
+
+    Returns:
+        None
+    """
     logger.info("=" * 60)
     logger.info("TEST: Migration Auto-Discovery")
     logger.info("=" * 60)
@@ -274,11 +317,19 @@ async def test_auto_discovery():
             discovered.description == manual.description
         ), f"Description mismatch: {discovered.description} vs {manual.description}"
 
-    logger.info("✅ Auto-discovery test PASSED, dood!")
+    logger.info("✅ Auto-discovery test PASSED")
 
 
 async def test_getMigration_functions():
-    """Test that all migration files have getMigration() functions, dood!"""
+    """Test that all migration files have getMigration() functions.
+
+    Verifies that each migration module has a getMigration() function
+    that returns the correct migration class with the proper version
+    number.
+
+    Returns:
+        None
+    """
     logger.info("=" * 60)
     logger.info("TEST: getMigration() Functions")
     logger.info("=" * 60)
@@ -311,11 +362,19 @@ async def test_getMigration_functions():
 
         logger.debug(f"✅ {moduleName}.getMigration() works correctly")
 
-    logger.info("✅ getMigration() functions test PASSED, dood!")
+    logger.info("✅ getMigration() functions test PASSED")
 
 
 async def test_loadMigrationsFromVersions():
-    """Test MigrationManager.loadMigrationsFromVersions() method, dood!"""
+    """Test MigrationManager.loadMigrationsFromVersions() method.
+
+    Creates a temporary database, uses the MigrationManager to load
+    migrations from the versions directory, and verifies that all
+    migrations are loaded correctly with matching versions.
+
+    Returns:
+        None
+    """
     logger.info("=" * 60)
     logger.info("TEST: loadMigrationsFromVersions() Method")
     logger.info("=" * 60)
@@ -356,7 +415,7 @@ async def test_loadMigrationsFromVersions():
             loadedVersions == discoveredVersions
         ), f"Loaded versions {loadedVersions} don't match discovered {discoveredVersions}"
 
-        logger.info("✅ loadMigrationsFromVersions() test PASSED, dood!")
+        logger.info("✅ loadMigrationsFromVersions() test PASSED")
 
     finally:
         if db is not None:
@@ -366,7 +425,15 @@ async def test_loadMigrationsFromVersions():
 
 
 async def test_database_auto_discovery():
-    """Test that Database uses auto-discovery, dood!"""
+    """Test that Database uses auto-discovery.
+
+    Creates a temporary database, initializes it, and verifies that
+    the Database class uses auto-discovery to load and apply all
+    migrations correctly.
+
+    Returns:
+        None
+    """
     logger.info("=" * 60)
     logger.info("TEST: Database Auto-Discovery")
     logger.info("=" * 60)
@@ -416,7 +483,7 @@ async def test_database_auto_discovery():
         for table in expectedTables:
             assert table in tableNames, f"Table {table} not found"
 
-        logger.info("✅ Database auto-discovery test PASSED, dood!")
+        logger.info("✅ Database auto-discovery test PASSED")
 
     finally:
         if db is not None:

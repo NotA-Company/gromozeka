@@ -1,4 +1,10 @@
-"""TODO: write docstring"""
+"""Repository for managing chat summarization cache operations.
+
+This module provides the ChatSummarizationRepository class which handles
+caching of chat message summaries to avoid redundant summarization operations.
+It supports storing and retrieving summaries based on chat ID, topic ID,
+message ID ranges, and the summarization prompt used.
+"""
 
 import hashlib
 import logging
@@ -15,11 +21,24 @@ logger = logging.getLogger(__name__)
 
 
 class ChatSummarizationRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing chat summarization cache.
+
+    Provides methods to cache and retrieve chat message summaries based on
+    chat ID, topic ID, message ID ranges, and summarization prompts.
+    Uses SHA512 hashing to generate unique cache keys.
+
+    Attributes:
+        __slots__: Empty tuple - no additional instance attributes beyond base class
+    """
 
     __slots__ = ()
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the chat summarization repository.
+
+        Args:
+            manager: DatabaseManager instance for database operations
+        """
         super().__init__(manager)
 
     ###
@@ -116,7 +135,19 @@ class ChatSummarizationRepository(BaseRepository):
         *,
         dataSource: Optional[str] = None,
     ) -> Optional[ChatSummarizationCacheDict]:
-        """Fetch chat summarization from cache by chatId, topicId, firstMessageId, lastMessageId and prompt"""
+        """Fetch chat summarization from cache.
+
+        Args:
+            chatId: Chat identifier
+            topicId: Optional topic identifier
+            firstMessageId: First message ID in range
+            lastMessageId: Last message ID in range
+            prompt: Summarization prompt
+            dataSource: Optional data source name to query
+
+        Returns:
+            ChatSummarizationCacheDict if found, None otherwise
+        """
         try:
             csid = self._makeChatSummarizationCSID(chatId, topicId, firstMessageId, lastMessageId, prompt)
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)

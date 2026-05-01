@@ -1,4 +1,9 @@
-"""TODO: write docstring"""
+"""Repository for managing media attachments and media groups in the database.
+
+This module provides methods to create, update, and retrieve media attachments,
+as well as manage media group relationships. Media attachments can include images,
+videos, documents, and other file types with associated metadata.
+"""
 
 import datetime
 import logging
@@ -15,7 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 class MediaAttachmentsRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing media attachments and media groups.
+
+    Provides CRUD operations for media attachments including adding new attachments,
+    updating metadata and status, and retrieving attachments by ID or group.
+    Also manages media group relationships for grouping related media items.
+    """
 
     __slots__ = ()
 
@@ -206,7 +216,15 @@ class MediaAttachmentsRepository(BaseRepository):
     async def getMediaAttachment(
         self, mediaId: str, *, dataSource: Optional[str] = None
     ) -> Optional[MediaAttachmentDict]:
-        """Get a media attachment from the database."""
+        """Get a media attachment from the database.
+
+        Args:
+            mediaId: Media attachment unique identifier
+            dataSource: Optional data source name for multi-source routing
+
+        Returns:
+            MediaAttachmentDict if found, None otherwise
+        """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
             row = await sqlProvider.executeFetchOne(
@@ -225,7 +243,15 @@ class MediaAttachmentsRepository(BaseRepository):
     async def getMediaAttachmentsByGroupId(
         self, mediaGroupId: str, *, dataSource: Optional[str] = None
     ) -> List[MediaAttachmentDict]:
-        """Get media attachments by group ID from the database."""
+        """Get all media attachments belonging to a media group.
+
+        Args:
+            mediaGroupId: Media group identifier
+            dataSource: Optional data source name for multi-source routing
+
+        Returns:
+            List of MediaAttachmentDict objects, empty list if none found
+        """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(

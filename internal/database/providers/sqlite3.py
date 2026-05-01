@@ -85,7 +85,11 @@ class SQLite3Provider(BaseSQLProvider):
             logger.debug(f"Disconnected from SQLite3 database at {self.dbPath}")
 
     async def isReadOnly(self) -> bool:
-        """Return if this provider is in read only mode or not"""
+        """Return if this provider is in read only mode or not.
+
+        Returns:
+            ``True`` if the provider is in read-only mode, ``False`` otherwise.
+        """
 
         return self.readOnly
 

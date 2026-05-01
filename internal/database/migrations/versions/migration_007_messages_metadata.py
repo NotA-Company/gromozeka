@@ -1,7 +1,8 @@
 """
-Initial schema migration - creates all base tables, dood!
+Add markup and metadata columns to chat_messages table.
 
-This migration extracts all table creation from the original _initDatabase() method.
+This migration adds markup and metadata columns to store additional
+information about chat messages.
 """
 
 from typing import Type
@@ -11,16 +12,19 @@ from ..base import BaseMigration
 
 
 class Migration007(BaseMigration):
-    """Initial database schema migration, dood!"""
+    """Add markup and metadata columns to chat_messages table."""
 
     version = 7
     description = "Add markup and metadata columns to chat_messages table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Apply the migration - add markup and metadata columns to chat_messages, dood!
+        """Apply the migration - add markup and metadata columns to chat_messages.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         await sqlProvider.batchExecute(
             [
@@ -36,10 +40,13 @@ class Migration007(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Rollback the migration - remove markup and metadata columns, dood!
+        """Rollback the migration - remove markup and metadata columns.
 
         Args:
             sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         await sqlProvider.batchExecute(
             [
@@ -56,5 +63,9 @@ class Migration007(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration007

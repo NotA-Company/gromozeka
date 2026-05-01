@@ -1,4 +1,10 @@
-"""TODO: write docstring"""
+"""Delayed tasks repository module.
+
+This module provides the DelayedTasksRepository class for managing delayed tasks
+in the database. Delayed tasks are scheduled operations that should be executed
+at a specific future time, such as sending reminders, processing queued messages,
+or performing periodic maintenance tasks.
+"""
 
 import datetime
 import logging
@@ -15,9 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 class DelayedTasksRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing delayed tasks in the database.
+
+    Provides methods to add, update, retrieve, and cleanup delayed tasks.
+    Delayed tasks are operations scheduled for future execution, identified
+    by a unique task ID and associated with a function name and its kwargs.
+    """
 
     __slots__ = ()
+    """Restricts instance attributes to prevent dynamic attribute creation."""
 
     def __init__(self, manager: DatabaseManager):
         super().__init__(manager)
@@ -99,7 +111,15 @@ class DelayedTasksRepository(BaseRepository):
             return False
 
     async def getPendingDelayedTasks(self, *, dataSource: Optional[str] = None) -> List[DelayedTaskDict]:
-        """Get all pending delayed tasks from the database."""
+        """Get all pending delayed tasks from the database.
+
+        Args:
+            dataSource: Optional data source name to query. If None, uses default source.
+
+        Returns:
+            List of DelayedTaskDict containing all pending tasks (is_done=False).
+            Returns empty list on error.
+        """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(
@@ -118,7 +138,19 @@ class DelayedTasksRepository(BaseRepository):
             return []
 
     async def cleanupOldCompletedDelayedTasks(self, ttl: Optional[int], *, dataSource: Optional[str] = None) -> bool:
-        """Cleanup old completed tasks"""
+        """Delete old completed delayed tasks from the database.
+
+        Args:
+            ttl: Time-to-live in seconds. Tasks updated before this time will be deleted.
+                 If None or 0, deletes all completed tasks regardless of age.
+            dataSource: Optional data source name to query. If None, uses default source.
+
+        Returns:
+            True if cleanup succeeded, False otherwise.
+
+        Note:
+            Writes to default source. Cannot write to readonly sources.
+        """
 
         if ttl is None:
             ttl = 0

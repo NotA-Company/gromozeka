@@ -1,4 +1,10 @@
-"""TODO: write docstring"""
+"""Repository for managing chat users in the database.
+
+This module provides the ChatUsersRepository class which handles CRUD operations
+for chat users, including storing/updating user information, retrieving user data,
+and querying users across chats. Supports multi-source database routing and
+aggregation.
+"""
 
 import datetime
 import logging
@@ -16,11 +22,20 @@ logger = logging.getLogger(__name__)
 
 
 class ChatUsersRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing chat users in the database.
 
-    __slots__ = ()
+    Provides methods to store, update, and retrieve user information within chats.
+    Supports multi-source database routing with automatic aggregation and deduplication.
+    """
+
+    __slots__ = ()  # No additional instance variables beyond base class
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the chat users repository.
+
+        Args:
+            manager: DatabaseManager instance for database operations and routing
+        """
         super().__init__(manager)
 
     ###
@@ -76,8 +91,7 @@ class ChatUsersRepository(BaseRepository):
     async def getChatUser(
         self, chatId: int, userId: int, *, dataSource: Optional[str] = None
     ) -> Optional[ChatUserDict]:
-        """
-        Get the username of a user in a chat.
+        """Get user information for a specific user in a chat.
 
         Args:
             chatId: Chat identifier
@@ -85,7 +99,7 @@ class ChatUsersRepository(BaseRepository):
             dataSource: Optional data source name for explicit routing
 
         Returns:
-            ChatUserDict or None if not found
+            ChatUserDict containing user information or None if not found
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
@@ -148,16 +162,15 @@ class ChatUsersRepository(BaseRepository):
         *,
         dataSource: Optional[str] = None,
     ) -> Optional[ChatUserDict]:
-        """
-        Get the user info of a user in a chat.
+        """Get user information by username within a specific chat.
 
         Args:
             chatId: Chat identifier
-            username: Username to search for
+            username: Username to search for (exact match)
             dataSource: Optional data source name for explicit routing
 
         Returns:
-            ChatUserDict or None if not found
+            ChatUserDict containing user information or None if not found
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)

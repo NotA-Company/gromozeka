@@ -1,7 +1,9 @@
 """
-Database wrapper for the Telegram bot.
-This wrapper provides an abstraction layer that can be easily replaced
-with other database backends in the future.
+Database utility functions for type conversion and validation.
+
+This module provides utility functions for converting between SQL data types
+and Python types, including datetime, boolean, and custom type conversions.
+It also includes type checking and TypedDict validation utilities.
 """
 
 import datetime
@@ -15,6 +17,7 @@ import dateutil
 logger = logging.getLogger(__name__)
 
 DEFAULT_THREAD_ID: int = 0
+"""Default thread ID for database operations."""
 
 
 # # Register converters for reading from database
@@ -26,7 +29,7 @@ DEFAULT_THREAD_ID: int = 0
 
 
 def sqlToDatetime(val: bytes | str) -> datetime.datetime:
-    """Convert a bytes or str SQL timestamp value to a datetime object, dood!
+    """Convert a bytes or str SQL timestamp value to a datetime object.
 
     Args:
         val: Raw SQL value as bytes or str representing a datetime string.
@@ -45,7 +48,7 @@ def sqlToDatetime(val: bytes | str) -> datetime.datetime:
 
 
 def sqlToBoolean(val: bytes) -> bool:
-    """Convert a single-byte SQL boolean value to a Python bool, dood!
+    """Convert a single-byte SQL boolean value to a Python bool.
 
     Args:
         val: Raw SQL value as bytes, expected to be empty or a single digit byte.
@@ -66,7 +69,16 @@ def sqlToBoolean(val: bytes) -> bool:
 
 
 def datetimeToSql(val: datetime.datetime, stripTimezone: bool = True) -> str:
-    """Adapt datetime.datetime to SQLite format string for sqlite3, dood!"""
+    """Adapt datetime.datetime to SQLite format string for sqlite3.
+
+    Args:
+        val: The datetime object to convert.
+        stripTimezone: If True, strip timezone information and use SQLite's
+            datetime format (YYYY-MM-DD HH:MM:SS). If False, use ISO format.
+
+    Returns:
+        String representation of the datetime in SQLite-compatible format.
+    """
     if stripTimezone:
         # Use SQLite's datetime format (YYYY-MM-DD HH:MM:SS) for consistency with CURRENT_TIMESTAMP
         # Strip microseconds to match SQLite's CURRENT_TIMESTAMP format exactly
@@ -76,26 +88,26 @@ def datetimeToSql(val: datetime.datetime, stripTimezone: bool = True) -> str:
 
 
 _T = TypeVar("_T")
+"""Generic type variable for type conversion functions."""
 
 
 def _checkType(value: object, expectedType: type) -> bool:
-    """
-    Recursively check whether *value* matches *expectedType*, dood!
+    """Recursively check whether value matches expectedType.
 
-    Handles plain types, ``Union`` / ``X | Y`` unions, and shallow generic
-    containers (e.g. ``list[str]`` — only the origin type is checked).
+    Handles plain types, Union / X | Y unions, and shallow generic
+    containers (e.g. list[str] — only the origin type is checked).
 
-    Note: ``bool`` is treated as distinct from ``int`` — a ``bool`` value will
-    NOT satisfy an ``int`` check, and an ``int`` value will NOT satisfy a
-    ``bool`` check. This prevents silent type leakage since ``bool`` is a
-    subclass of ``int`` in Python.
+    Note: bool is treated as distinct from int — a bool value will
+    NOT satisfy an int check, and an int value will NOT satisfy a
+    bool check. This prevents silent type leakage since bool is a
+    subclass of int in Python.
 
     Args:
         value: The value to type-check.
         expectedType: The type annotation to check against.
 
     Returns:
-        ``True`` if the value is compatible with the expected type.
+        True if the value is compatible with the expected type.
     """
     origin: type | None = get_origin(expectedType)
 
@@ -122,8 +134,7 @@ def _checkType(value: object, expectedType: type) -> bool:
 
 
 def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optional[_T]]:
-    """
-    Convert SQL response data to the expected Python type, dood!
+    """Convert SQL response data to the expected Python type.
 
     This function attempts to convert raw SQL response data (typically strings or bytes)
     to the specified expected type. It handles common type conversions including
@@ -140,11 +151,11 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
             - convertedValue: The converted value if successful, None otherwise.
 
     Examples:
-        >>> convertSqlResponseToType(b"123", int)
+        >>> sqlToCustomType(b"123", int)
         (True, 123)
-        >>> convertSqlResponseToType(b"true", bool)
+        >>> sqlToCustomType(b"true", bool)
         (True, True)
-        >>> convertSqlResponseToType(b'{"key": "value"}', dict)
+        >>> sqlToCustomType(b'{"key": "value"}', dict)
         (True, {'key': 'value'})
     """
     if _checkType(data, expectedType):
@@ -218,26 +229,25 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
 
 
 def sqlToTypedDict(data: dict, typedDictClass: Type[_T], *, keepOriginal: bool = False) -> _T:
-    """
-    Validate *data* against *typedDictClass* and return it cast to that type, dood!
+    """Validate data against typedDictClass and return it cast to that type.
 
     Checks that every required key is present and that all provided values
-    match the declared type annotations.  Optional keys are allowed to be
+    match the declared type annotations. Optional keys are allowed to be
     absent, but when present their values are still type-checked.
 
     Args:
         data: The plain dict to validate and cast.
         typedDictClass: The TypedDict class that defines the expected schema.
-        keepOriginal: If ``True``, the original *data* dict should not be modified.
+        keepOriginal: If True, the original data dict should not be modified.
 
     Returns:
-        *data* cast to *typedDictClass* (no copy is made).
+        data cast to typedDictClass (no copy is made unless keepOriginal is True).
 
     Raises:
-        TypeError: If *typedDictClass* is not a TypedDict subclass, or if any
-            value in *data* does not match its declared annotation.
-        KeyError: If a required key declared in *typedDictClass* is absent
-            from *data*.
+        TypeError: If typedDictClass is not a TypedDict subclass, or if any
+            value in data does not match its declared annotation.
+        KeyError: If a required key declared in typedDictClass is absent
+            from data.
     """
     if keepOriginal:
         # Create a copy of data to avoid modifying the original

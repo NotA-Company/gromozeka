@@ -1,4 +1,9 @@
-"""TODO: write docstring"""
+"""Repository for managing chat messages in the database.
+
+This module provides the ChatMessagesRepository class which handles all database
+operations related to chat messages, including saving, retrieving, and updating
+messages with their associated metadata.
+"""
 
 import datetime
 import logging
@@ -17,11 +22,21 @@ logger = logging.getLogger(__name__)
 
 
 class ChatMessagesRepository(BaseRepository):
-    """TODO: write docstring"""
+    """Repository for managing chat messages in the database.
+
+    Provides methods to save, retrieve, and update chat messages with their
+    associated metadata, including support for threaded conversations,
+    media groups, and message categorization.
+    """
 
     __slots__ = ()
 
     def __init__(self, manager: DatabaseManager):
+        """Initialize the chat messages repository.
+
+        Args:
+            manager: Database manager instance for provider access
+        """
         super().__init__(manager)
 
     ###
@@ -61,13 +76,15 @@ class ChatMessagesRepository(BaseRepository):
             rootMessageId: Optional root message ID for threads
             quoteText: Optional quoted text
             mediaId: Optional media attachment ID
+            markup: Message markup (keyboard, inline buttons, etc.)
+            metadata: Additional metadata as JSON string
+            mediaGroupId: Optional media group identifier for grouped media
 
         Returns:
             bool: True if successful, False otherwise
 
         Note:
             Writes are routed based on chatId mapping. Cannot write to readonly sources.
-            TODO: Update docstrings
         """
         messageId = str(messageId)
         if replyId is not None:
@@ -402,7 +419,16 @@ class ChatMessagesRepository(BaseRepository):
         messageId: MessageIdType,
         messageCategory: MessageCategory,
     ) -> bool:
-        """Update the category of a chat message."""
+        """Update the category of a chat message.
+
+        Args:
+            chatId: Chat identifier
+            messageId: Message identifier
+            messageCategory: New message category to set
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
             await sqlProvider.execute(
@@ -430,7 +456,16 @@ class ChatMessagesRepository(BaseRepository):
         messageId: MessageIdType,
         metadata: str | Any,
     ) -> bool:
-        """Update the metadata of a chat message."""
+        """Update the metadata of a chat message.
+
+        Args:
+            chatId: Chat identifier
+            messageId: Message identifier
+            metadata: New metadata value (string or any serializable type)
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
             await sqlProvider.execute(
