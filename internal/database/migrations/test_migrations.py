@@ -14,14 +14,13 @@ import os
 import sys
 import tempfile
 
-import pytest
-
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-from internal.database import Database
-from internal.database.migrations import MigrationManager
-from internal.database.migrations.versions import DISCOVERED_MIGRATIONS, discoverMigrations
+from internal.database import Database  # noqa: E402
+from internal.database.manager import DatabaseManagerConfig  # noqa: E402
+from internal.database.migrations import MigrationManager  # noqa: E402
+from internal.database.migrations.versions import DISCOVERED_MIGRATIONS  # noqa: E402
 
 # Use DISCOVERED_MIGRATIONS as MIGRATIONS for backward compatibility
 MIGRATIONS = DISCOVERED_MIGRATIONS
@@ -31,7 +30,7 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(leve
 logger = logging.getLogger(__name__)
 
 
-def test_fresh_database():
+async def test_fresh_database():
     """Test fresh database initialization, dood!"""
     logger.info("=" * 60)
     logger.info("TEST: Fresh Database Initialization")
@@ -43,12 +42,25 @@ def test_fresh_database():
 
     try:
         # Initialize database (should run migrations automatically)
-        db = DatabaseWrapper({"sources": {"default": {"path": dbPath}}, "default": "default"})
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
 
         # Check migration version
-        manager = MigrationManager(db)
+        provider = await db.manager.getProvider()
+        manager = MigrationManager()
         manager.registerMigrations(MIGRATIONS)
-        currentVersion = manager.getCurrentVersion(sqlProvider=None)
+        currentVersion = await manager.getCurrentVersion(sqlProvider=provider)
 
         logger.info(f"Current migration version: {currentVersion}")
         logger.info(f"Expected version: {len(MIGRATIONS)}")
@@ -56,21 +68,21 @@ def test_fresh_database():
         assert currentVersion == len(MIGRATIONS), f"Expected version {len(MIGRATIONS)}, got {currentVersion}"
 
         # Check that tables exist
-        with db.getCursor() as cursor:
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-            tables = [row[0] for row in cursor.fetchall()]
-            logger.info(f"Created tables: {', '.join(tables)}")
+        provider = await db.manager.getProvider()
+        tables = await provider.executeFetchAll("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        tableNames = [row["name"] for row in tables]
+        logger.info(f"Created tables: {', '.join(tableNames)}")
 
-            # Verify key tables exist
-            expectedTables = [
-                "settings",
-                "chat_messages",
-                "chat_users",
-                "chat_info",
-            ]
+        # Verify key tables exist
+        expectedTables = [
+            "settings",
+            "chat_messages",
+            "chat_users",
+            "chat_info",
+        ]
 
-            for table in expectedTables:
-                assert table in tables, f"Table {table} not found"
+        for table in expectedTables:
+            assert table in tableNames, f"Table {table} not found"
 
         logger.info("✅ Fresh database test PASSED, dood!")
 
@@ -80,7 +92,7 @@ def test_fresh_database():
             os.unlink(dbPath)
 
 
-def test_migration_status():
+async def test_migration_status():
     """Test migration status reporting, dood!"""
     logger.info("=" * 60)
     logger.info("TEST: Migration Status")
@@ -90,11 +102,24 @@ def test_migration_status():
         dbPath = f.name
 
     try:
-        db = DatabaseWrapper({"sources": {"default": {"path": dbPath}}, "default": "default"})
-        manager = MigrationManager(db)
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
+        manager = MigrationManager()
         manager.registerMigrations(MIGRATIONS)
 
-        status = manager.getStatus(sqlProvider=None)
+        status = await manager.getStatus(sqlProvider=provider)
         logger.info(f"Migration status: {status}")
 
         assert status["current_version"] == status["latest_version"], "Current version should equal latest version"
@@ -107,7 +132,7 @@ def test_migration_status():
             os.unlink(dbPath)
 
 
-def test_rollback():
+async def test_rollback():
     """Test migration rollback, dood!"""
     logger.info("=" * 60)
     logger.info("TEST: Migration Rollback")
@@ -118,11 +143,24 @@ def test_rollback():
 
     try:
         # Initialize database
-        db = DatabaseWrapper({"sources": {"default": {"path": dbPath}}, "default": "default"})
-        manager = MigrationManager(db)
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
+        manager = MigrationManager()
         manager.registerMigrations(MIGRATIONS)
 
-        initialVersion = manager.getCurrentVersion(sqlProvider=None)
+        initialVersion = await manager.getCurrentVersion(sqlProvider=provider)
         logger.info(f"Initial version: {initialVersion}")
 
         # Rollback to version 2 (to remove metadata column from migration 003)
@@ -131,18 +169,18 @@ def test_rollback():
         stepsToRollback = initialVersion - targetVersion
         logger.info(f"Rolling back {stepsToRollback} migrations to reach version {targetVersion}")
 
-        manager.rollback(steps=stepsToRollback, sqlProvider=None)
+        await manager.rollback(steps=stepsToRollback, sqlProvider=provider)
 
-        newVersion = manager.getCurrentVersion(sqlProvider=None)
+        newVersion = await manager.getCurrentVersion(sqlProvider=provider)
         logger.info(f"Version after rollback: {newVersion}")
 
         assert newVersion == targetVersion, f"Expected version {targetVersion}, got {newVersion}"
 
         # Check that metadata column is gone (migration 003 should be rolled back)
-        with db.getCursor() as cursor:
-            cursor.execute("PRAGMA table_info(chat_users)")
-            columns = [row[1] for row in cursor.fetchall()]
-            assert "metadata" not in columns, "metadata column should be dropped"
+        provider = await db.manager.getProvider(readonly=True)
+        rows = await provider.executeFetchAll("PRAGMA table_info(chat_users)")
+        columns = [row["name"] for row in rows]  # type: ignore[index]
+        assert "metadata" not in columns, "metadata column should be dropped"
 
         logger.info("✅ Rollback test PASSED, dood!")
 
@@ -151,7 +189,7 @@ def test_rollback():
             os.unlink(dbPath)
 
 
-def test_existing_database():
+async def test_existing_database():
     """Test upgrading existing database, dood!"""
     logger.info("=" * 60)
     logger.info("TEST: Existing Database Upgrade")
@@ -162,15 +200,26 @@ def test_existing_database():
 
     try:
         # Create database - __init__ now automatically runs migrations
-        db = DatabaseWrapper(
-            {"sources": {"default": {"path": dbPath, "maxConnections": 5, "timeout": 30.0}}, "default": "default"}
-        )
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
 
         # Verify migrations were run automatically by __init__
-        manager = MigrationManager(db)
+        manager = MigrationManager()
         manager.registerMigrations(MIGRATIONS)
 
-        currentVersion = manager.getCurrentVersion(sqlProvider=None)
+        currentVersion = await manager.getCurrentVersion(sqlProvider=provider)
         logger.info(f"Current version after init: {currentVersion}")
 
         # With new multi-source architecture, migrations run automatically in __init__
@@ -185,7 +234,7 @@ def test_existing_database():
             os.unlink(dbPath)
 
 
-def test_auto_discovery():
+async def test_auto_discovery():
     """Test migration auto-discovery functionality, dood!"""
     logger.info("=" * 60)
     logger.info("TEST: Migration Auto-Discovery")
@@ -216,7 +265,7 @@ def test_auto_discovery():
     logger.info("✅ Auto-discovery test PASSED, dood!")
 
 
-def test_getMigration_functions():
+async def test_getMigration_functions():
     """Test that all migration files have getMigration() functions, dood!"""
     logger.info("=" * 60)
     logger.info("TEST: getMigration() Functions")
@@ -253,7 +302,7 @@ def test_getMigration_functions():
     logger.info("✅ getMigration() functions test PASSED, dood!")
 
 
-def test_loadMigrationsFromVersions():
+async def test_loadMigrationsFromVersions():
     """Test MigrationManager.loadMigrationsFromVersions() method, dood!"""
     logger.info("=" * 60)
     logger.info("TEST: loadMigrationsFromVersions() Method")
@@ -263,8 +312,20 @@ def test_loadMigrationsFromVersions():
         dbPath = f.name
 
     try:
-        db = DatabaseWrapper({"sources": {"default": {"path": dbPath}}, "default": "default"})
-        manager = MigrationManager(db)
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        _ = Database(config)
+        manager = MigrationManager()
 
         # Test loadMigrationsFromVersions()
         manager.loadMigrationsFromVersions()
@@ -289,10 +350,10 @@ def test_loadMigrationsFromVersions():
             os.unlink(dbPath)
 
 
-def test_database_wrapper_auto_discovery():
-    """Test that DatabaseWrapper uses auto-discovery, dood!"""
+async def test_database_auto_discovery():
+    """Test that Database uses auto-discovery, dood!"""
     logger.info("=" * 60)
-    logger.info("TEST: DatabaseWrapper Auto-Discovery")
+    logger.info("TEST: Database Auto-Discovery")
     logger.info("=" * 60)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -300,34 +361,46 @@ def test_database_wrapper_auto_discovery():
 
     try:
         # Initialize database (should use auto-discovery)
-        db = DatabaseWrapper({"sources": {"default": {"path": dbPath}}, "default": "default"})
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
 
         # Check that all migrations were applied
-        manager = MigrationManager(db)
-        currentVersion = manager.getCurrentVersion(sqlProvider=None)
+        manager = MigrationManager()
+        currentVersion = await manager.getCurrentVersion(sqlProvider=provider)
 
         assert currentVersion == len(
             DISCOVERED_MIGRATIONS
         ), f"Expected version {len(DISCOVERED_MIGRATIONS)}, got {currentVersion}"
 
         # Check that tables exist
-        with db.getCursor() as cursor:
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-            tables = [row[0] for row in cursor.fetchall()]
-            logger.info(f"Created tables: {', '.join(tables)}")
+        tables = await provider.executeFetchAll("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        tableNames = [row["name"] for row in tables]
+        logger.info(f"Created tables: {', '.join(tableNames)}")
 
-            # Verify key tables exist
-            expectedTables = [
-                "settings",
-                "chat_messages",
-                "chat_users",
-                "chat_info",
-            ]
+        # Verify key tables exist
+        expectedTables = [
+            "settings",
+            "chat_messages",
+            "chat_users",
+            "chat_info",
+        ]
 
-            for table in expectedTables:
-                assert table in tables, f"Table {table} not found"
+        for table in expectedTables:
+            assert table in tableNames, f"Table {table} not found"
 
-        logger.info("✅ DatabaseWrapper auto-discovery test PASSED, dood!")
+        logger.info("✅ Database auto-discovery test PASSED, dood!")
 
     finally:
         if os.path.exists(dbPath):

@@ -41,9 +41,9 @@ def queueService():
 def mockDatabaseWrapper():
     """Create a mock DatabaseWrapper for testing."""
     mock = Mock()
-    mock.getPendingDelayedTasks = Mock(return_value=[])
-    mock.addDelayedTask = Mock(return_value=None)
-    mock.updateDelayedTask = Mock(return_value=None)
+    mock.delayedTasks.getPendingDelayedTasks = createAsyncMock(returnValue=[])
+    mock.delayedTasks.addDelayedTask = createAsyncMock(returnValue=None)
+    mock.delayedTasks.updateDelayedTask = createAsyncMock(returnValue=None)
     return mock
 
 
@@ -200,7 +200,7 @@ class TestTaskScheduling:
         )
 
         assert queueService.delayedActionsQueue.qsize() == 1
-        mockDatabaseWrapper.addDelayedTask.assert_called_once()
+        mockDatabaseWrapper.delayedTasks.addDelayedTask.assert_called_once()
 
     @pytest.mark.asyncio
     async def testScheduleDelayedTask(self, queueService, mockDatabaseWrapper):
@@ -215,7 +215,7 @@ class TestTaskScheduling:
         )
 
         assert queueService.delayedActionsQueue.qsize() == 1
-        mockDatabaseWrapper.addDelayedTask.assert_called_once()
+        mockDatabaseWrapper.delayedTasks.addDelayedTask.assert_called_once()
 
     @pytest.mark.asyncio
     async def testScheduleTaskWithCustomId(self, queueService, mockDatabaseWrapper):
@@ -231,7 +231,7 @@ class TestTaskScheduling:
         )
 
         # Verify task was added with custom ID
-        callArgs = mockDatabaseWrapper.addDelayedTask.call_args
+        callArgs = mockDatabaseWrapper.delayedTasks.addDelayedTask.call_args
         assert callArgs.kwargs["taskId"] == customId
 
     @pytest.mark.asyncio
@@ -244,7 +244,7 @@ class TestTaskScheduling:
         )
 
         # Verify task was added
-        callArgs = mockDatabaseWrapper.addDelayedTask.call_args
+        callArgs = mockDatabaseWrapper.delayedTasks.addDelayedTask.call_args
         taskId = callArgs.kwargs["taskId"]
         assert isinstance(taskId, str)
         assert len(taskId) > 0
@@ -262,7 +262,7 @@ class TestTaskScheduling:
             )
 
         assert queueService.delayedActionsQueue.qsize() == 5
-        assert mockDatabaseWrapper.addDelayedTask.call_count == 5
+        assert mockDatabaseWrapper.delayedTasks.addDelayedTask.call_count == 5
 
     @pytest.mark.asyncio
     async def testScheduleTaskWithoutDatabase(self, queueService):
@@ -294,7 +294,7 @@ class TestTaskScheduling:
         )
 
         assert queueService.delayedActionsQueue.qsize() == 1
-        mockDatabaseWrapper.addDelayedTask.assert_called_once()
+        mockDatabaseWrapper.delayedTasks.addDelayedTask.assert_called_once()
 
 
 # ============================================================================
@@ -518,7 +518,7 @@ class TestErrorHandling:
     async def testDatabaseErrorDuringTaskAdd(self, queueService, mockDatabaseWrapper):
         """Test handling of database errors during task addition."""
         queueService.db = mockDatabaseWrapper
-        mockDatabaseWrapper.addDelayedTask.side_effect = Exception("Database error")
+        mockDatabaseWrapper.delayedTasks.addDelayedTask.side_effect = Exception("Database error")
 
         with pytest.raises(Exception, match="Database error"):
             await queueService.addDelayedTask(
@@ -635,8 +635,8 @@ class TestIntegration:
         )
 
         # Verify database was called
-        mockDatabaseWrapper.addDelayedTask.assert_called_once()
-        callKwargs = mockDatabaseWrapper.addDelayedTask.call_args.kwargs
+        mockDatabaseWrapper.delayedTasks.addDelayedTask.assert_called_once()
+        callKwargs = mockDatabaseWrapper.delayedTasks.addDelayedTask.call_args.kwargs
         assert callKwargs["function"] == DelayedTaskFunction.SEND_MESSAGE
         assert json.loads(callKwargs["kwargs"]) == testKwargs
 
@@ -934,7 +934,7 @@ class TestEdgeCases:
         )
 
         # Verify database was called with properly encoded kwargs
-        callArgs = mockDatabaseWrapper.addDelayedTask.call_args
+        callArgs = mockDatabaseWrapper.delayedTasks.addDelayedTask.call_args
         storedKwargs = json.loads(callArgs.kwargs["kwargs"])
         assert storedKwargs == specialKwargs
 

@@ -5,7 +5,6 @@ wraps the :mod:`aiosqlite` library with a fully async interface.
 """
 
 import logging
-import sqlite3
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from typing import Optional, cast
@@ -65,7 +64,6 @@ class SQLite3Provider(BaseSQLProvider):
         connection: aiosqlite.Connection = await aiosqlite.connect(
             self.dbPath,
             timeout=self.timeout,
-            detect_types=sqlite3.PARSE_DECLTYPES,
         )
 
         connection.row_factory = aiosqlite.Row
@@ -92,12 +90,16 @@ class SQLite3Provider(BaseSQLProvider):
         return self.readOnly
 
     @asynccontextmanager
-    async def cursor(self) -> AsyncGenerator[aiosqlite.Cursor, None]:
+    async def cursor(self, *, keepConnection: bool = False) -> AsyncGenerator[aiosqlite.Cursor, None]:
         """Async context manager that yields a database cursor within a transaction.
 
         Automatically commits on success or rolls back on any exception.
         Opens the connection if it is not already open, and closes it again
         afterwards when it was not open before entering.
+
+        Args:
+            keepConnection: If True, keeps the connection open even if it was
+                closed before entering this context manager.
 
         Yields:
             An open :class:`aiosqlite.Cursor` ready for query execution.
@@ -106,23 +108,25 @@ class SQLite3Provider(BaseSQLProvider):
             Exception: Re-raises any exception that occurs during execution
                 after rolling back the transaction.
         """
-        needDisconnect: bool = self._connection is None
+        needDisconnect: bool = self._connection is None and not keepConnection
         await self.connect()
 
         assert self._connection is not None
 
-        async with self._connection.cursor() as cursor:
-            try:
-                yield cursor
-                await self._connection.commit()
-            except Exception as e:
-                await self._connection.rollback()
-                logger.error(f"Database operation failed: {e}")
-                logger.exception(e)
-                raise
-            finally:
-                if needDisconnect:
-                    await self.disconnect()
+        cursor = await self._connection.cursor()
+        try:
+            yield cursor
+            await self._connection.commit()
+        except Exception as e:
+            await self._connection.rollback()
+            logger.error(f"Database operation failed: {e}")
+            logger.exception(e)
+            raise
+        finally:
+            # Close cursor before disconnecting to avoid "Connection closed" error
+            await cursor.close()
+            if needDisconnect:
+                await self.disconnect()
 
     async def _makeQueryResult(self, cursor: aiosqlite.Cursor, fetchType: FetchType) -> QueryResult:
         """Convert a cursor's pending rows into the appropriate result type.
@@ -139,9 +143,13 @@ class SQLite3Provider(BaseSQLProvider):
         """
         match fetchType:
             case FetchType.FETCH_ALL:
-                return cast(QueryResult, await cursor.fetchall())
+                rows = await cursor.fetchall()
+                # Convert Row objects to dicts
+                return cast(QueryResult, [dict(row) for row in rows] if rows else [])
             case FetchType.FETCH_ONE:
-                return cast(QueryResult, await cursor.fetchone())
+                row = await cursor.fetchone()
+                # Convert Row object to dict
+                return cast(QueryResult, dict(row) if row else None)
             case FetchType.NO_FETCH:
                 return None
         raise ValueError(f"Unknown fetch type: {fetchType}")

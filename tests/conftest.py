@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from internal.database.manager import DatabaseManagerConfig
+
 # Import test utilities
 from tests.utils import (
     createAsyncMock,
@@ -76,7 +78,7 @@ def mockDatabaseWrapper():
     """
     from internal.database import Database
 
-    mock = Mock(spec=DatabaseWrapper)
+    mock = Mock(spec=Database)
 
     # Configure common return values
     mock.getChatSettings.return_value = {}
@@ -96,12 +98,12 @@ async def testDatabase(inMemoryDbPath) -> AsyncGenerator:
     """
     Create a real in-memory database for integration tests.
 
-    This fixture creates an actual DatabaseWrapper instance with an
+    This fixture creates an actual Database instance with an
     in-memory SQLite database. Use this for integration tests that
     need real database operations.
 
     Yields:
-        DatabaseWrapper: Real database instance with in-memory storage
+        Database: Real database instance with in-memory storage
 
     Example:
         async def testDatabaseOperations(testDatabase):
@@ -111,9 +113,20 @@ async def testDatabase(inMemoryDbPath) -> AsyncGenerator:
     """
     from internal.database import Database
 
-    db = DatabaseWrapper(inMemoryDbPath)
+    config: DatabaseManagerConfig = {
+        "default": "default",
+        "chatMapping": {},
+        "providers": {
+            "default": {
+                "provider": "sqlite3",
+                "parameters": {
+                    "dbPath": inMemoryDbPath,
+                },
+            }
+        },
+    }
+    db = Database(config)
     yield db
-    db.close()
 
 
 # ============================================================================

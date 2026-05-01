@@ -407,7 +407,7 @@ class NaiveBayesFilter:
             logger.error(f"Failed to reset statistics: {e}.")
             return False
 
-    async def cleanup_rare_tokens(self, min_count: int = 2, chat_id: Optional[int] = None) -> None:
+    async def cleanup_rare_tokens(self, min_count: int = 2, chat_id: Optional[int] = None) -> int:
         """
         Remove rarely occurring tokens to improve performance
 
@@ -421,10 +421,12 @@ class NaiveBayesFilter:
         chat_id_param = chat_id if self.config.perChatStats else None
 
         try:
-            await self.storage.cleanupRareTokens(min_count, chat_id_param)
+            removed = await self.storage.cleanupRareTokens(min_count, chat_id_param)
             logger.info(f"Cleaned up rare tokens (min_count={min_count}).")
+            return removed if removed is not None else 0
         except Exception as e:
             logger.error(f"Failed to cleanup rare tokens: {e}.")
+            return 0
 
     def validate_config(self) -> List[str]:
         """

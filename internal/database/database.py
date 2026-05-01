@@ -23,8 +23,6 @@ from .repositories.user_data import UserDataRepository
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_THREAD_ID: int = 0
-
 
 class Database:
     """

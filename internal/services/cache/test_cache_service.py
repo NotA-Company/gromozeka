@@ -27,6 +27,7 @@ from internal.services.cache.models import CacheNamespace  # noqa: E402
 
 # Import directly to avoid circular dependencies
 from internal.services.cache.service import CacheService, LRUCache  # noqa: E402
+from tests.utils import createAsyncMock  # noqa: E402
 
 
 class TestLRUCache(unittest.TestCase):
@@ -130,20 +131,20 @@ class TestCacheServiceSingleton(unittest.TestCase):
         self.assertEqual(cache2.testAttribute, "test_value")  # type: ignore[attr-defined]
 
 
-class TestCacheServiceBasics(unittest.TestCase):
+class TestCacheServiceBasics(unittest.IsolatedAsyncioTestCase):
     """Test basic CacheService functionality, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         # Use plain Mock to avoid any connection creation
         self.mockDb = Mock()
         # Configure mock BEFORE injection to avoid connection issues
-        self.mockDb.getCacheStorage.return_value = []
-        self.cache.injectDatabase(self.mockDb)
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        await self.cache.injectDatabase(self.mockDb)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
@@ -163,21 +164,27 @@ class TestCacheServiceBasics(unittest.TestCase):
     def testDatabaseInjection(self):
         """Test database injection"""
         self.assertIs(self.cache.database, self.mockDb)
-        self.mockDb.getCacheStorage.assert_called_once()
+        self.mockDb.cache.getCacheStorage.assert_called_once()
 
 
-class TestChatSettings(unittest.TestCase):
+class TestChatSettings(unittest.IsolatedAsyncioTestCase):
     """Test chat settings operations, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
-        self.mockDb.getCacheStorage.return_value = []
-        self.cache.injectDatabase(self.mockDb)
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.chatSettings.getChatSettings = createAsyncMock(returnValue={})
+        self.mockDb.chatSettings.setChatSetting = createAsyncMock(returnValue=True)
+        self.mockDb.chatInfo.getChatInfo = createAsyncMock(returnValue=None)
+        self.mockDb.chatInfo.setChatInfo = createAsyncMock(returnValue=True)
+        self.mockDb.userData.getUserData = createAsyncMock(returnValue=None)
+        self.mockDb.userData.setUserData = createAsyncMock(returnValue=True)
+        await self.cache.injectDatabase(self.mockDb)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
@@ -185,48 +192,55 @@ class TestChatSettings(unittest.TestCase):
         CacheService._instance = None
         gc.collect()
 
-    def testGetChatSettingsFromCache(self):
+    async def testGetChatSettingsFromCache(self):
         """Test getting chat settings from cache"""
         testSettings = {ChatSettingsKey.BAYES_ENABLED: ChatSettingsValue("true")}
         self.cache.chats.set(123, {"settings": testSettings})
 
-        settings = self.cache.getChatSettings(123)
+        settings = await self.cache.getChatSettings(123)
         self.assertEqual(settings, testSettings)
 
-    def testGetChatSettingsFromDb(self):
+    async def testGetChatSettingsFromDb(self):
         """Test loading chat settings from database"""
-        self.mockDb.getChatSettings.return_value = {"bayes-enabled": ("true", 0)}
+        self.mockDb.chatSettings.getChatSettings = createAsyncMock(returnValue={"bayes-enabled": ("true", 0)})
 
-        settings = self.cache.getChatSettings(123)
+        settings = await self.cache.getChatSettings(123)
 
-        self.mockDb.getChatSettings.assert_called_once_with(123)
+        self.mockDb.chatSettings.getChatSettings.assert_called_once_with(123)
         self.assertIn(ChatSettingsKey.BAYES_ENABLED, settings)
 
-    def testSetChatSettingsPersistence(self):
+    async def testSetChatSettingsPersistence(self):
         """Test that settings are persisted to database"""
         # Mock getChatSettings to return empty dict (no existing settings)
-        self.mockDb.getChatSettings.return_value = {}
+        self.mockDb.chatSettings.getChatSettings = createAsyncMock(returnValue={})
 
         key = ChatSettingsKey.BAYES_ENABLED
         value = ChatSettingsValue("true")
-        self.cache.setChatSetting(123, key, value, userId=0)
+        await self.cache.setChatSetting(123, key, value, userId=0)
 
-        self.mockDb.setChatSetting.assert_called_once_with(123, ChatSettingsKey.BAYES_ENABLED, "true", updatedBy=0)
+        self.mockDb.chatSettings.setChatSetting.assert_called_once_with(
+            123, ChatSettingsKey.BAYES_ENABLED, "true", updatedBy=0
+        )
 
 
-class TestChatInfo(unittest.TestCase):
+class TestChatInfo(unittest.IsolatedAsyncioTestCase):
     """Test chat info operations, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
-        self.mockDb.getCacheStorage.return_value = []
-        self.mockDb.getChatInfo.return_value = None  # Return None for nonexistent chats
-        self.cache.injectDatabase(self.mockDb)
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.cache.setCacheStorage = createAsyncMock(returnValue=True)
+        self.mockDb.cache.unsetCacheStorage = createAsyncMock(returnValue=True)
+        self.mockDb.chatInfo.getChatInfo = createAsyncMock(returnValue=None)  # Return None for nonexistent chats
+        self.mockDb.chatInfo.setChatInfo = createAsyncMock(returnValue=True)
+        self.mockDb.chatInfo.addChatInfo = createAsyncMock(returnValue=True)
+        self.mockDb.chatInfo.updateChatInfo = createAsyncMock(returnValue=True)
+        await self.cache.injectDatabase(self.mockDb)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
@@ -234,20 +248,20 @@ class TestChatInfo(unittest.TestCase):
         CacheService._instance = None
         gc.collect()
 
-    def testGetChatInfo(self):
+    async def testGetChatInfo(self):
         """Test getting chat info"""
         testInfo = {"title": "Test Chat", "type": "group"}  # type: ignore[typeddict-item]
         self.cache.chats.set(123, {"info": testInfo})  # type: ignore[typeddict-item]
 
-        info = self.cache.getChatInfo(123)
+        info = await self.cache.getChatInfo(123)
         self.assertEqual(info, testInfo)
 
-    def testGetChatInfoNonexistent(self):
+    async def testGetChatInfoNonexistent(self):
         """Test getting nonexistent chat info"""
-        info = self.cache.getChatInfo(999)
+        info = await self.cache.getChatInfo(999)
         self.assertIsNone(info)
 
-    def testSetChatInfo(self):
+    async def testSetChatInfo(self):
         """Test setting chat info"""
         testInfo = {
             "title": "Test Chat",
@@ -255,27 +269,31 @@ class TestChatInfo(unittest.TestCase):
             "username": None,
             "is_forum": False,
         }  # type: ignore[typeddict-item]
-        self.cache.setChatInfo(123, testInfo)  # type: ignore[arg-type]
+        await self.cache.setChatInfo(123, testInfo)  # type: ignore[arg-type]
 
-        info = self.cache.getChatInfo(123)
+        info = await self.cache.getChatInfo(123)
         self.assertEqual(info, testInfo)
 
         # Note: setChatInfo writes directly to DB, so no dirty tracking needed
 
 
-class TestChatUserData(unittest.TestCase):
+class TestChatUserData(unittest.IsolatedAsyncioTestCase):
     """Test chat user data operations, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
-        self.mockDb.getCacheStorage.return_value = []
-        self.mockDb.getUserData.return_value = {}
-        self.cache.injectDatabase(self.mockDb)
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.cache.setCacheStorage = createAsyncMock(returnValue=True)
+        self.mockDb.cache.unsetCacheStorage = createAsyncMock(returnValue=True)
+        self.mockDb.userData.getUserData = createAsyncMock(returnValue={})
+        self.mockDb.userData.setUserData = createAsyncMock(returnValue=True)
+        self.mockDb.userData.addUserData = createAsyncMock(returnValue=True)
+        await self.cache.injectDatabase(self.mockDb)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         # Clear the database reference to avoid resource warnings
         if hasattr(self.cache, "dbWrapper") and self.cache.database is not None:
@@ -288,37 +306,37 @@ class TestChatUserData(unittest.TestCase):
         # Force garbage collection to clean up any lingering references
         gc.collect()
 
-    def testGetChatUserDataFromCache(self):
+    async def testGetChatUserDataFromCache(self):
         """Test getting user data from cache"""
         testData = {"key1": "value1", "key2": ["item1", "item2"]}
         self.cache.chatUsers.set("123:456", {"data": testData})
 
-        userData = self.cache.getChatUserData(123, 456)
+        userData = await self.cache.getChatUserData(123, 456)
         self.assertEqual(userData, testData)
 
-    def testGetChatUserDataFromDb(self):
+    async def testGetChatUserDataFromDb(self):
         """Test loading user data from database"""
-        self.mockDb.getUserData.return_value = {
+        self.mockDb.userData.getUserData.return_value = {
             "key1": '"value1"',
             "key2": '["item1", "item2"]',
         }
 
-        userData = self.cache.getChatUserData(123, 456)
+        userData = await self.cache.getChatUserData(123, 456)
 
-        self.mockDb.getUserData.assert_called_once_with(userId=456, chatId=123)
+        self.mockDb.userData.getUserData.assert_called_once_with(userId=456, chatId=123)
         self.assertEqual(userData["key1"], "value1")
         self.assertEqual(userData["key2"], ["item1", "item2"])
 
-    def testSetChatUserData(self):
+    async def testSetChatUserData(self):
         """Test setting user data"""
-        self.cache.setChatUserData(123, 456, "testKey", "testValue")
+        await self.cache.setChatUserData(123, 456, "testKey", "testValue")
 
-        userData = self.cache.getChatUserData(123, 456)
+        userData = await self.cache.getChatUserData(123, 456)
         self.assertEqual(userData["testKey"], "testValue")
 
         # Check persistence
-        self.mockDb.addUserData.assert_called_once()
-        args = self.mockDb.addUserData.call_args
+        self.mockDb.userData.addUserData.assert_called_once()
+        args = self.mockDb.userData.addUserData.call_args
         self.assertEqual(args[1]["userId"], 456)
         self.assertEqual(args[1]["chatId"], 123)
         self.assertEqual(args[1]["key"], "testKey")
@@ -326,27 +344,27 @@ class TestChatUserData(unittest.TestCase):
         # Check dirty tracking
         self.assertIn("123:456", self.cache.dirtyKeys[CacheNamespace.CHAT_USERS])
 
-    def testSetChatUserDataComplex(self):
+    async def testSetChatUserDataComplex(self):
         """Test setting complex user data"""
         complexData = {"nested": {"key": "value"}, "list": [1, 2, 3]}
-        self.cache.setChatUserData(123, 456, "complex", complexData)
+        await self.cache.setChatUserData(123, 456, "complex", complexData)
 
-        userData = self.cache.getChatUserData(123, 456)
+        userData = await self.cache.getChatUserData(123, 456)
         self.assertEqual(userData["complex"], complexData)
 
 
-class TestUserState(unittest.TestCase):
+class TestUserState(unittest.IsolatedAsyncioTestCase):
     """Test user state operations, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
-        self.mockDb.getCacheStorage.return_value = []
-        self.cache.injectDatabase(self.mockDb)
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        await self.cache.injectDatabase(self.mockDb)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
@@ -360,18 +378,18 @@ class TestUserState(unittest.TestCase):
         self.cache.clearUserState(999)
 
 
-class TestNamespaceOperations(unittest.TestCase):
+class TestNamespaceOperations(unittest.IsolatedAsyncioTestCase):
     """Test namespace-level operations, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
-        self.mockDb.getCacheStorage.return_value = []
-        self.cache.injectDatabase(self.mockDb)
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        await self.cache.injectDatabase(self.mockDb)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
@@ -392,18 +410,20 @@ class TestNamespaceOperations(unittest.TestCase):
         self.assertIn(456, self.cache.dirtyKeys[CacheNamespace.CHATS])
 
 
-class TestPersistence(unittest.TestCase):
+class TestPersistence(unittest.IsolatedAsyncioTestCase):
     """Test persistence operations, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
-        self.mockDb.getCacheStorage.return_value = []
-        self.cache.injectDatabase(self.mockDb)
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.cache.setCacheStorage = createAsyncMock(returnValue=True)
+        self.mockDb.cache.unsetCacheStorage = createAsyncMock(returnValue=True)
+        await self.cache.injectDatabase(self.mockDb)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
@@ -411,54 +431,54 @@ class TestPersistence(unittest.TestCase):
         CacheService._instance = None
         gc.collect()
 
-    def testPersistAllWithoutDb(self):
+    async def testPersistAllWithoutDb(self):
         """Test that persist fails gracefully without database"""
         self.cache.database = None
         self.cache.dirtyKeys[CacheNamespace.USERS].add(123)
 
         # Should not raise exception
-        self.cache.persistAll()
+        await self.cache.persistAll()
 
-    def testPersistAllMemoryOnly(self):
+    async def testPersistAllMemoryOnly(self):
         """Test that MEMORY_ONLY namespaces are not persisted"""
         self.cache.chats.set(123, {"settings": {}})
         self.cache.dirtyKeys[CacheNamespace.CHATS].add(123)
 
-        self.cache.persistAll()
+        await self.cache.persistAll()
 
         # CHATS is MEMORY_ONLY, should not be persisted
-        self.mockDb.setCacheStorage.assert_not_called()
+        self.mockDb.cache.setCacheStorage.assert_not_called()
         # Dirty keys should be cleared
         self.assertEqual(len(self.cache.dirtyKeys[CacheNamespace.CHATS]), 0)
 
-    def testPersistAllOnChange(self):
+    async def testPersistAllOnChange(self):
         """Test that ON_CHANGE namespaces are persisted"""
         testState = {"activeConfigureId": {"step": 1}}
         self.cache.users.set(123, testState)  # type: ignore[arg-type]
         self.cache.dirtyKeys[CacheNamespace.USERS].add(123)
 
-        self.cache.persistAll()
+        await self.cache.persistAll()
 
         # USERS is ON_CHANGE, should be persisted
-        self.mockDb.setCacheStorage.assert_called_once()
-        args = self.mockDb.setCacheStorage.call_args[1]
+        self.mockDb.cache.setCacheStorage.assert_called_once()
+        args = self.mockDb.cache.setCacheStorage.call_args[1]
         self.assertEqual(args["namespace"], "users")
         self.assertEqual(args["key"], "123")
 
         # Dirty keys should be cleared
         self.assertEqual(len(self.cache.dirtyKeys[CacheNamespace.USERS]), 0)
 
-    def testPersistAllEmptyData(self):
+    async def testPersistAllEmptyData(self):
         """Test that empty data is dropped from database"""
         self.cache.users.set(123, {})
         self.cache.dirtyKeys[CacheNamespace.USERS].add(123)
 
-        self.cache.persistAll()
+        await self.cache.persistAll()
 
         # Empty data should trigger unset
-        self.mockDb.unsetCacheStorage.assert_called_once_with(CacheNamespace.USERS, "123")
+        self.mockDb.cache.unsetCacheStorage.assert_called_once_with(CacheNamespace.USERS, "123")
 
-    def testLoadFromDatabase(self):
+    async def testLoadFromDatabase(self):
         """Test loading cache from database"""
         mockData = [
             {
@@ -472,12 +492,12 @@ class TestPersistence(unittest.TestCase):
                 "value": json.dumps({"settings": {}}),
             },
         ]
-        self.mockDb.getCacheStorage.return_value = mockData
+        self.mockDb.cache.getCacheStorage.return_value = mockData
 
         # Reset and reload
         CacheService._instance = None
         self.cache = CacheService.getInstance()
-        self.cache.injectDatabase(self.mockDb)
+        await self.cache.injectDatabase(self.mockDb)
 
         # USERS should be loaded (ON_CHANGE)
         self.assertEqual(len(self.cache.users), 1)
@@ -486,56 +506,56 @@ class TestPersistence(unittest.TestCase):
         # CHATS should be skipped (MEMORY_ONLY)
         self.assertEqual(len(self.cache.chats), 0)
 
-    def testLoadFromDatabaseInvalidJson(self):
+    async def testLoadFromDatabaseInvalidJson(self):
         """Test handling invalid JSON during load"""
         mockData = [
             {"namespace": "users", "key": "123", "value": "invalid json"},
         ]
-        self.mockDb.getCacheStorage.return_value = mockData
+        self.mockDb.cache.getCacheStorage.return_value = mockData
 
         # Should not raise exception
         CacheService._instance = None
         self.cache = CacheService.getInstance()
-        self.cache.injectDatabase(self.mockDb)
+        await self.cache.injectDatabase(self.mockDb)
 
         self.assertEqual(len(self.cache.users), 0)
 
-    def testLoadFromDatabaseUnknownNamespace(self):
+    async def testLoadFromDatabaseUnknownNamespace(self):
         """Test handling unknown namespace during load"""
         mockData = [
             {"namespace": "unknown", "key": "123", "value": "{}"},
         ]
-        self.mockDb.getCacheStorage.return_value = mockData
+        self.mockDb.cache.getCacheStorage.return_value = mockData
 
         # Should not raise exception
         CacheService._instance = None
         self.cache = CacheService.getInstance()
-        self.cache.injectDatabase(self.mockDb)
+        await self.cache.injectDatabase(self.mockDb)
 
-    def testLoadFromDatabaseEmptyValue(self):
+    async def testLoadFromDatabaseEmptyValue(self):
         """Test handling empty values during load"""
         mockData = [
             {"namespace": "users", "key": "123", "value": "{}"},
         ]
-        self.mockDb.getCacheStorage.return_value = mockData
+        self.mockDb.cache.getCacheStorage.return_value = mockData
 
         CacheService._instance = None
         self.cache = CacheService.getInstance()
-        self.cache.injectDatabase(self.mockDb)
+        await self.cache.injectDatabase(self.mockDb)
 
         # Empty values should be ignored
         self.assertEqual(len(self.cache.users), 0)
 
 
-class TestThreadSafety(unittest.TestCase):
+class TestThreadSafety(unittest.IsolatedAsyncioTestCase):
     """Test thread safety of cache operations, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         CacheService._instance = None
         gc.collect()
@@ -565,18 +585,18 @@ class TestThreadSafety(unittest.TestCase):
         self.assertEqual(len(errors), 0, f"Thread safety errors: {errors}")
 
 
-class TestEdgeCases(unittest.TestCase):
+class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
     """Test edge cases and error handling, dood!"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         """Set up test fixtures"""
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
-        self.mockDb.getCacheStorage.return_value = []
-        self.cache.injectDatabase(self.mockDb)
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        await self.cache.injectDatabase(self.mockDb)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Clean up after tests"""
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
@@ -584,49 +604,49 @@ class TestEdgeCases(unittest.TestCase):
         CacheService._instance = None
         gc.collect()
 
-    def testSetChatSettingWithoutDb(self):
+    async def testSetChatSettingWithoutDb(self):
         """Test setting chat settings without database"""
         self.cache.database = None
         key = ChatSettingsKey.BAYES_ENABLED
         value = ChatSettingsValue("true")
 
         # Should not raise exception
-        self.cache.setChatSetting(123, key, value, userId=0)
+        await self.cache.setChatSetting(123, key, value, userId=0)
 
         # Should still be in cache
-        cachedSettings = self.cache.getChatSettings(123)
+        cachedSettings = await self.cache.getChatSettings(123)
         self.assertEqual(cachedSettings, {key: value})
 
-    def testSetChatUserDataWithoutDb(self):
+    async def testSetChatUserDataWithoutDb(self):
         """Test setting user data without database"""
         self.cache.database = None
 
         # Should not raise exception
-        self.cache.setChatUserData(123, 456, "key", "value")
+        await self.cache.setChatUserData(123, 456, "key", "value")
 
-    def testGetChatUserDataDbError(self):
+    async def testGetChatUserDataDbError(self):
         """Test handling database errors when loading user data"""
-        self.mockDb.getUserData.side_effect = Exception("DB Error")
+        self.mockDb.userData.getUserData.side_effect = Exception("DB Error")
 
         # Should log error but not crash
         try:
-            userData = self.cache.getChatUserData(123, 456)
+            userData = await self.cache.getChatUserData(123, 456)
             # If it doesn't raise, it should return empty dict
             self.assertEqual(userData, {})
         except Exception:
             # If it raises, that's also acceptable behavior
             pass
 
-    def testPersistCacheEntryError(self):
+    async def testPersistCacheEntryError(self):
         """Test handling errors during cache entry persistence"""
-        self.mockDb.setCacheStorage.side_effect = Exception("DB Error")
+        self.mockDb.cache.setCacheStorage.side_effect = Exception("DB Error")
 
         testState = {"activeConfigureId": {"step": 1}}
         self.cache.users.set(123, testState)  # type: ignore[typeddict-item]
         self.cache.dirtyKeys[CacheNamespace.USERS].add(123)
 
         # Should not raise exception
-        self.cache.persistAll()
+        await self.cache.persistAll()
 
 
 if __name__ == "__main__":

@@ -102,7 +102,7 @@ def mockDependencies():
         Dict containing mock instances of all required dependencies
     """
     configManager = MagicMock(spec=ConfigManager)
-    database = MagicMock(spec=DatabaseWrapper)
+    database = MagicMock(spec=Database)
     llmManager = MagicMock(spec=LLMManager)
     botProvider = BotProvider.TELEGRAM
 

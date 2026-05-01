@@ -246,7 +246,7 @@ def createMockDatabaseWrapper(
     """
     from internal.database import Database
 
-    mock = Mock(spec=DatabaseWrapper)
+    mock = Mock(spec=Database)
 
     # Store data
     mock._chat_settings = chatSettings or {}

@@ -240,10 +240,23 @@ async def test_bayes_filter():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
         db_path = tmp_db.name
 
-    db: Optional[DatabaseWrapper] = None
+    db: Optional[Database] = None
     try:
         # Initialize database and storage
-        db = DatabaseWrapper({"sources": {"default": {"path": db_path}}, "default": "default"})
+        db = Database(
+            {
+                "default": "default",
+                "chatMapping": {},
+                "providers": {
+                    "default": {
+                        "provider": "sqlite3",
+                        "parameters": {
+                            "dbPath": db_path,
+                        },
+                    }
+                },
+            }
+        )
         storage = DatabaseBayesStorage(db)
 
         # Initialize Bayes filter
@@ -360,8 +373,6 @@ async def test_bayes_filter():
 
     finally:
         # Cleanup
-        if db is not None:
-            db.close()
         try:
             os.unlink(db_path)
         except Exception:
