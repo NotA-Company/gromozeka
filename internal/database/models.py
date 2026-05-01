@@ -95,7 +95,7 @@ class ChatMessageDict(TypedDict):
     root_message_id: Optional[MessageIdType]
     message_text: str
     message_type: str
-    message_category: Union[str, MessageCategory]
+    message_category: MessageCategory
     quote_text: Optional[str]
     media_id: Optional[str]
     created_at: datetime.datetime
@@ -149,7 +149,7 @@ class MediaAttachmentDict(TypedDict):
     file_size: Optional[int]
     media_type: str
     metadata: str
-    status: Union[str, MediaStatus]
+    status: MediaStatus
     mime_type: Optional[str]
     local_url: Optional[str]
     prompt: Optional[str]

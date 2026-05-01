@@ -40,6 +40,7 @@ async def test_fresh_database():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         dbPath = f.name
 
+    db = None
     try:
         # Initialize database (should run migrations automatically)
         config: DatabaseManagerConfig = {
@@ -88,6 +89,8 @@ async def test_fresh_database():
 
     finally:
         # Cleanup
+        if db is not None:
+            await db.manager.closeAll()
         if os.path.exists(dbPath):
             os.unlink(dbPath)
 
@@ -101,6 +104,7 @@ async def test_migration_status():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         dbPath = f.name
 
+    db = None
     try:
         config: DatabaseManagerConfig = {
             "default": "default",
@@ -128,6 +132,8 @@ async def test_migration_status():
         logger.info("✅ Migration status test PASSED, dood!")
 
     finally:
+        if db is not None:
+            await db.manager.closeAll()
         if os.path.exists(dbPath):
             os.unlink(dbPath)
 
@@ -141,6 +147,7 @@ async def test_rollback():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         dbPath = f.name
 
+    db = None
     try:
         # Initialize database
         config: DatabaseManagerConfig = {
@@ -185,6 +192,8 @@ async def test_rollback():
         logger.info("✅ Rollback test PASSED, dood!")
 
     finally:
+        if db is not None:
+            await db.manager.closeAll()
         if os.path.exists(dbPath):
             os.unlink(dbPath)
 
@@ -198,6 +207,7 @@ async def test_existing_database():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         dbPath = f.name
 
+    db = None
     try:
         # Create database - __init__ now automatically runs migrations
         config: DatabaseManagerConfig = {
@@ -230,6 +240,8 @@ async def test_existing_database():
         logger.info("✅ Existing database upgrade test PASSED, dood!")
 
     finally:
+        if db is not None:
+            await db.manager.closeAll()
         if os.path.exists(dbPath):
             os.unlink(dbPath)
 
@@ -311,6 +323,7 @@ async def test_loadMigrationsFromVersions():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         dbPath = f.name
 
+    db = None
     try:
         config: DatabaseManagerConfig = {
             "default": "default",
@@ -324,7 +337,7 @@ async def test_loadMigrationsFromVersions():
                 }
             },
         }
-        _ = Database(config)
+        db = Database(config)
         manager = MigrationManager()
 
         # Test loadMigrationsFromVersions()
@@ -346,6 +359,8 @@ async def test_loadMigrationsFromVersions():
         logger.info("✅ loadMigrationsFromVersions() test PASSED, dood!")
 
     finally:
+        if db is not None:
+            await db.manager.closeAll()
         if os.path.exists(dbPath):
             os.unlink(dbPath)
 
@@ -359,6 +374,7 @@ async def test_database_auto_discovery():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         dbPath = f.name
 
+    db = None
     try:
         # Initialize database (should use auto-discovery)
         config: DatabaseManagerConfig = {
@@ -403,5 +419,7 @@ async def test_database_auto_discovery():
         logger.info("✅ Database auto-discovery test PASSED, dood!")
 
     finally:
+        if db is not None:
+            await db.manager.closeAll()
         if os.path.exists(dbPath):
             os.unlink(dbPath)

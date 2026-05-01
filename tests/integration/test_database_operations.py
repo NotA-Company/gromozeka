@@ -46,7 +46,10 @@ async def inMemoryDb():
     db = Database(config)
     # Initialize database by getting a provider (triggers migration)
     await db.manager.getProvider()
-    yield db
+    try:
+        yield db
+    finally:
+        await db.manager.closeAll()
 
 
 @pytest.fixture
@@ -72,7 +75,10 @@ async def threadSafeDb(tmp_path):
     db = Database(config)
     # Initialize database by getting a provider (triggers migration)
     await db.manager.getProvider()
-    yield db
+    try:
+        yield db
+    finally:
+        await db.manager.closeAll()
 
 
 @pytest.fixture
@@ -345,7 +351,7 @@ async def testMultipleWriters(threadSafeDb):
     assert len(errors) == 0
 
     # Verify all users were created
-    users = await db.getChatUsers(123, limit=20)
+    users = await db.chatUsers.getChatUsers(123, limit=20)
     assert len(users) == 10
 
 
@@ -377,10 +383,7 @@ async def testReadWriteConflicts(threadSafeDb):
             writeResults.append(success)
 
     # Run concurrent reads and writes using asyncio
-    await asyncio.gather(
-        asyncio.create_task(reader()),
-        asyncio.create_task(writer())
-    )
+    await asyncio.gather(asyncio.create_task(reader()), asyncio.create_task(writer()))
 
     # Verify operations completed
     assert len(readResults) == 5
@@ -409,10 +412,7 @@ async def testDeadlockHandling(inMemoryDb):
         results.append(True)
 
     # Run concurrent operations using asyncio
-    await asyncio.gather(
-        asyncio.create_task(updateChats(123, 456)),
-        asyncio.create_task(updateChats(456, 123))
-    )
+    await asyncio.gather(asyncio.create_task(updateChats(123, 456)), asyncio.create_task(updateChats(456, 123)))
 
     # Verify both operations completed
     assert len(results) == 2
@@ -689,11 +689,11 @@ async def testChatUsersCrud(inMemoryDb):
 
     # UPDATE metadata
     metadataDict = {"key": "value"}
-    success = await db.updateUserMetadata(123, 1001, metadataDict)
+    success = await db.chatUsers.updateUserMetadata(123, 1001, metadataDict)
     assert success is True
 
     user = await db.chatUsers.getChatUser(123, 1001)
-    assert user["metadata"] == json.dumps(metadataDict)
+    assert json.loads(user["metadata"]) == metadataDict
 
     # Note: is_spammer functionality removed in migration 009
 
@@ -720,7 +720,7 @@ async def testChatSettingsCrud(inMemoryDb):
     assert value == "gpt-4"
 
     # READ all
-    settings = await db.getChatSettings(123)
+    settings = await db.chatSettings.getChatSettings(123)
     assert "model" in settings
     assert settings["model"] == ("gpt-4", 0)
 
@@ -735,21 +735,21 @@ async def testChatSettingsCrud(inMemoryDb):
     await db.chatSettings.setChatSetting(123, "temperature", "0.7", updatedBy=0)
     await db.chatSettings.setChatSetting(123, "max_tokens", "1000", updatedBy=0)
 
-    settings = await db.getChatSettings(123)
+    settings = await db.chatSettings.getChatSettings(123)
     assert len(settings) == 3
 
     # DELETE one
-    success = await db.unsetChatSetting(123, "temperature")
+    success = await db.chatSettings.unsetChatSetting(123, "temperature")
     assert success is True
 
     value = await db.chatSettings.getChatSetting(123, "temperature")
     assert value is None
 
     # DELETE all
-    success = await db.clearChatSettings(123)
+    success = await db.chatSettings.clearChatSettings(123)
     assert success is True
 
-    settings = await db.getChatSettings(123)
+    settings = await db.chatSettings.getChatSettings(123)
     assert len(settings) == 0
 
 
@@ -768,41 +768,41 @@ async def testUserDataCrud(inMemoryDb):
     await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # CREATE
-    success = await db.addUserData(1001, 123, "preference", "dark_mode")
+    success = await db.userData.addUserData(1001, 123, "preference", "dark_mode")
     assert success is True
 
     # READ
-    data = await db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert "preference" in data
     assert data["preference"] == "dark_mode"
 
     # UPDATE
-    success = await db.addUserData(1001, 123, "preference", "light_mode")
+    success = await db.userData.addUserData(1001, 123, "preference", "light_mode")
     assert success is True
 
-    data = await db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert data["preference"] == "light_mode"
 
     # CREATE multiple
-    await db.addUserData(1001, 123, "language", "en")
-    await db.addUserData(1001, 123, "timezone", "UTC")
+    await db.userData.addUserData(1001, 123, "language", "en")
+    await db.userData.addUserData(1001, 123, "timezone", "UTC")
 
-    data = await db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert len(data) == 3
 
     # DELETE one
-    success = await db.deleteUserData(1001, 123, "language")
+    success = await db.userData.deleteUserData(1001, 123, "language")
     assert success is True
 
-    data = await db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert "language" not in data
     assert len(data) == 2
 
     # DELETE all
-    success = await db.clearUserData(1001, 123)
+    success = await db.userData.clearUserData(1001, 123)
     assert success is True
 
-    data = await db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert len(data) == 0
 
 
@@ -826,18 +826,18 @@ async def testDelayedTasksCrud(inMemoryDb):
     assert success is True
 
     # READ
-    tasks = await db.getPendingDelayedTasks()
+    tasks = await db.delayedTasks.getPendingDelayedTasks()
     assert len(tasks) == 1
     assert tasks[0]["id"] == taskId
     assert tasks[0]["function"] == function
     assert tasks[0]["is_done"] is False
 
     # UPDATE
-    success = await db.updateDelayedTask(taskId, isDone=True)
+    success = await db.delayedTasks.updateDelayedTask(taskId, isDone=True)
     assert success is True
 
     # READ updated
-    tasks = await db.getPendingDelayedTasks()
+    tasks = await db.delayedTasks.getPendingDelayedTasks()
     assert len(tasks) == 0  # No pending tasks
 
 
@@ -856,7 +856,7 @@ async def testSpamHamMessagesCrud(inMemoryDb):
     await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # CREATE spam message
-    success = await db.addSpamMessage(
+    success = await db.spam.addSpamMessage(
         chatId=123,
         userId=1001,
         messageId=1,
@@ -868,17 +868,17 @@ async def testSpamHamMessagesCrud(inMemoryDb):
     assert success is True
 
     # READ spam messages
-    spamMessages = await db.getSpamMessages(limit=10)
+    spamMessages = await db.spam.getSpamMessages(limit=10)
     assert len(spamMessages) == 1
     assert spamMessages[0]["text"] == "Buy now!"
     assert spamMessages[0]["score"] == 0.95
 
     # READ by user
-    userSpam = await db.getSpamMessagesByUserId(123, 1001)
+    userSpam = await db.spam.getSpamMessagesByUserId(123, 1001)
     assert len(userSpam) == 1
 
     # CREATE ham message
-    success = await db.addHamMessage(
+    success = await db.spam.addHamMessage(
         chatId=123,
         userId=1001,
         messageId=2,
@@ -890,10 +890,10 @@ async def testSpamHamMessagesCrud(inMemoryDb):
     assert success is True
 
     # DELETE spam by user
-    success = await db.deleteSpamMessagesByUserId(123, 1001)
+    success = await db.spam.deleteSpamMessagesByUserId(123, 1001)
     assert success is True
 
-    spamMessages = await db.getSpamMessagesByUserId(123, 1001)
+    spamMessages = await db.spam.getSpamMessagesByUserId(123, 1001)
     assert len(spamMessages) == 0
 
 
@@ -910,29 +910,29 @@ async def testCacheOperationsCrud(inMemoryDb):
     # CREATE weather cache
     key = "weather:london"
     data = json.dumps({"temp": 20, "condition": "sunny"})
-    success = await db.setCacheEntry(key, data, CacheType.WEATHER)
+    success = await db.cache.setCacheEntry(key, data, CacheType.WEATHER)
     assert success is True
 
     # READ
-    entry = await db.getCacheEntry(key, CacheType.WEATHER)
+    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER)
     assert entry is not None
     assert entry["key"] == key
     assert entry["data"] == data
 
     # UPDATE
     newData = json.dumps({"temp": 22, "condition": "cloudy"})
-    success = await db.setCacheEntry(key, newData, CacheType.WEATHER)
+    success = await db.cache.setCacheEntry(key, newData, CacheType.WEATHER)
     assert success is True
 
-    entry = await db.getCacheEntry(key, CacheType.WEATHER)
+    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER)
     assert entry["data"] == newData
 
     # Test TTL
-    entry = await db.getCacheEntry(key, CacheType.WEATHER, ttl=3600)
+    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER, ttl=3600)
     assert entry is not None
 
     # Test expired TTL
-    entry = await db.getCacheEntry(key, CacheType.WEATHER, ttl=0)
+    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER, ttl=0)
     assert entry is None
 
 
@@ -942,27 +942,27 @@ async def testCacheStorageOperations(inMemoryDb):
     db = inMemoryDb
 
     # CREATE
-    success = await db.setCacheStorage("test_namespace", "key1", "value1")
+    success = await db.cache.setCacheStorage("test_namespace", "key1", "value1")
     assert success is True
 
     # READ all
-    entries = await db.getCacheStorage()
+    entries = await db.cache.getCacheStorage()
     assert len(entries) >= 1
     assert any(e["namespace"] == "test_namespace" and e["key"] == "key1" for e in entries)
 
     # UPDATE
-    success = await db.setCacheStorage("test_namespace", "key1", "value2")
+    success = await db.cache.setCacheStorage("test_namespace", "key1", "value2")
     assert success is True
 
-    entries = await db.getCacheStorage()
+    entries = await db.cache.getCacheStorage()
     entry = next(e for e in entries if e["namespace"] == "test_namespace" and e["key"] == "key1")
     assert entry["value"] == "value2"
 
     # DELETE
-    success = await db.unsetCacheStorage("test_namespace", "key1")
+    success = await db.cache.unsetCacheStorage("test_namespace", "key1")
     assert success is True
 
-    entries = await db.getCacheStorage()
+    entries = await db.cache.getCacheStorage()
     assert not any(e["namespace"] == "test_namespace" and e["key"] == "key1" for e in entries)
 
 
@@ -978,7 +978,7 @@ async def testCompleteMessageWorkflow(populatedDb):
 
     # 1. Save message with media
     fileUniqueId = "media_123"
-    await db.addMediaAttachment(
+    await db.mediaAttachments.addMediaAttachment(
         fileUniqueId=fileUniqueId, fileId="file_123", mediaType=MessageType.IMAGE, metadata="{}"
     )
 
@@ -1001,10 +1001,10 @@ async def testCompleteMessageWorkflow(populatedDb):
     assert message["media_id"] == fileUniqueId
 
     # 3. Update media status
-    await db.updateMediaAttachment(mediaId=fileUniqueId, status=MediaStatus.DONE)
+    await db.mediaAttachments.updateMediaAttachment(mediaId=fileUniqueId, status=MediaStatus.DONE)
 
     # 4. Verify media status was updated
-    media = await db.getMediaAttachment(fileUniqueId)
+    media = await db.mediaAttachments.getMediaAttachment(fileUniqueId)
     assert media is not None
     assert media["status"] == MediaStatus.DONE
 
@@ -1075,24 +1075,28 @@ async def testSummarizationCacheWorkflow(populatedDb):
     # Add summarization
     prompt = "Summarize the conversation"
     summary = "This is a summary of 5 messages"
-    success = await db.addChatSummarization(
+    success = await db.chatSummarization.addChatSummarization(
         chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt, summary=summary
     )
     assert success is True
 
     # Retrieve summarization
-    cached = await db.getChatSummarization(chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt)
+    cached = await db.chatSummarization.getChatSummarization(
+        chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt
+    )
     assert cached is not None
     assert cached["summary"] == summary
 
     # Update summarization
     newSummary = "Updated summary"
-    success = await db.addChatSummarization(
+    success = await db.chatSummarization.addChatSummarization(
         chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt, summary=newSummary
     )
     assert success is True
 
-    cached = await db.getChatSummarization(chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt)
+    cached = await db.chatSummarization.getChatSummarization(
+        chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt
+    )
     assert cached["summary"] == newSummary
 
 
@@ -1105,19 +1109,19 @@ async def testChatTopicsWorkflow(inMemoryDb):
     await db.chatInfo.updateChatInfo(chatId=123, type="supergroup", title="Forum", isForum=True)
 
     # Add topics
-    await db.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0xFF0000, topicName="General")
-    await db.updateChatTopicInfo(chatId=123, topicId=2, iconColor=0x00FF00, topicName="Support")
+    await db.chatInfo.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0xFF0000, topicName="General")
+    await db.chatInfo.updateChatTopicInfo(chatId=123, topicId=2, iconColor=0x00FF00, topicName="Support")
 
     # Get topics
-    topics = await db.getChatTopics(123)
+    topics = await db.chatInfo.getChatTopics(123)
     assert len(topics) == 2
     assert any(t["name"] == "General" for t in topics)
     assert any(t["name"] == "Support" for t in topics)
 
     # Update topic
-    await db.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0x0000FF, topicName="General Discussion")
+    await db.chatInfo.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0x0000FF, topicName="General Discussion")
 
-    topics = await db.getChatTopics(123)
+    topics = await db.chatInfo.getChatTopics(123)
     topic = next(t for t in topics if t["topic_id"] == 1)
     assert topic["name"] == "General Discussion"
     assert topic["icon_color"] == 0x0000FF
@@ -1129,25 +1133,25 @@ async def testGlobalSettingsWorkflow(inMemoryDb):
     db = inMemoryDb
 
     # Set settings
-    await db.setSetting("bot_version", "1.0.0")
-    await db.setSetting("maintenance_mode", "false")
+    await db.common.setSetting("bot_version", "1.0.0")
+    await db.common.setSetting("maintenance_mode", "false")
 
     # Get individual setting
-    version = await db.getSetting("bot_version")
+    version = await db.common.getSetting("bot_version")
     assert version == "1.0.0"
 
     # Get all settings
-    settings = await db.getSettings()
+    settings = await db.common.getSettings()
     assert "bot_version" in settings
     assert "maintenance_mode" in settings
 
     # Update setting
-    await db.setSetting("bot_version", "1.0.1")
-    version = await db.getSetting("bot_version")
+    await db.common.setSetting("bot_version", "1.0.1")
+    version = await db.common.getSetting("bot_version")
     assert version == "1.0.1"
 
     # Get with default
-    value = await db.getSetting("nonexistent", "default_value")
+    value = await db.common.getSetting("nonexistent", "default_value")
     assert value == "default_value"
 
 
@@ -1161,7 +1165,7 @@ async def testUserChatRelationships(populatedDb):
     await db.chatUsers.updateChatUser(chatId=789, userId=1001, username="user1", fullName="User One")
 
     # Get user's chats
-    chats = await db.getUserChats(1001)
+    chats = await db.chatUsers.getUserChats(1001)
     assert len(chats) >= 2
     chatIds = {chat["chat_id"] for chat in chats}
     assert 123 in chatIds
@@ -1169,7 +1173,7 @@ async def testUserChatRelationships(populatedDb):
     assert 789 in chatIds
 
     # Get all group chats
-    groupChats = await db.getAllGroupChats()
+    groupChats = await db.chatUsers.getAllGroupChats()
     assert len(groupChats) >= 2
     assert any(chat["chat_id"] == 123 for chat in groupChats)
     assert any(chat["chat_id"] == 789 for chat in groupChats)
@@ -1237,11 +1241,11 @@ async def testEmptyResultHandling(populatedDb):
     assert messages == []
 
     # Get users with no recent activity
-    users = await db.getChatUsers(chatId=123, seenSince=future)
+    users = await db.chatUsers.getChatUsers(chatId=123, seenSince=future)
     assert users == []
 
     # Get spam messages when none exist
-    spamMessages = await db.getSpamMessages(limit=10)
+    spamMessages = await db.spam.getSpamMessages(limit=10)
     assert spamMessages == []
 
 

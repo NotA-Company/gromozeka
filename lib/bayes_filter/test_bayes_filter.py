@@ -373,6 +373,8 @@ async def test_bayes_filter():
 
     finally:
         # Cleanup
+        if db is not None:
+            await db.manager.closeAll()
         try:
             os.unlink(db_path)
         except Exception:

@@ -73,7 +73,13 @@ class GromozekBot:
 
     def run(self):
         """Start the bot."""
-        self.botApp.run()
+        try:
+            self.botApp.run()
+        except Exception as e:
+            logger.exception(e)
+            raise
+        finally:
+            asyncio.run(self.database.manager.closeAll())
 
 
 def parse_arguments():

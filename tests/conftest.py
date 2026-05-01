@@ -126,7 +126,10 @@ async def testDatabase(inMemoryDbPath) -> AsyncGenerator:
         },
     }
     db = Database(config)
-    yield db
+    try:
+        yield db
+    finally:
+        await db.manager.closeAll()
 
 
 # ============================================================================

@@ -140,9 +140,10 @@ class CacheRepository(BaseRepository):
         if ttl is not None and ttl <= 0:
             return None
 
-        # Use datetime.now(datetime.UTC) to match SQLite's CURRENT_TIMESTAMP which is in UTC
+        # Use datetime.now(datetime.UTC) and remove timezone info to match SQLite's CURRENT_TIMESTAMP
+        # which returns offset-naive datetime
         minimalUpdatedAt = (
-            datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=ttl)
+            datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(seconds=ttl)
             if ttl is not None and ttl > 0
             else None
         )

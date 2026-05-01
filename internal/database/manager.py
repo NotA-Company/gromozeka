@@ -123,3 +123,20 @@ class DatabaseManager:
             )
 
         return sourceProvider
+
+    async def closeAll(self) -> None:
+        """Close all database connections and cleanup resources.
+
+        This method disconnects all providers and clears the provider cache.
+        It should be called when shutting down the database manager to ensure
+        proper resource cleanup.
+        """
+        logger.info("Closing all database connections...")
+        for providerName, provider in self._providers.items():
+            try:
+                await provider.disconnect()
+                logger.debug(f"Disconnected provider '{providerName}'")
+            except Exception as e:
+                logger.error(f"Error disconnecting provider '{providerName}': {e}")
+        self._providers.clear()
+        logger.info("All database connections closed")

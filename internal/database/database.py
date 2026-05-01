@@ -5,6 +5,7 @@ with other database backends in the future.
 """
 
 import logging
+from typing import Any
 
 from .manager import DatabaseManager, DatabaseManagerConfig
 from .migrations import MigrationManager
@@ -83,6 +84,10 @@ class Database:
             logger.debug(f"Skipping DB migration for readonly source {providerName}, dood")
             return
 
+        # Ensure connection is open and keep it open during migration
+        # This is important for in-memory databases which lose data on disconnect
+        await sqlProvider.connect()
+
         # Create settings table (needed before migrations for version tracking)
         await sqlProvider.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -96,3 +101,24 @@ class Database:
         # Run migrations for this source
         await self._migrationManager.migrate(sqlProvider=sqlProvider)
         logger.info(f"Database initialization complete for provider '{providerName}', dood!")
+
+    async def __aenter__(self) -> "Database":
+        """Enter the async context manager.
+
+        Returns:
+            The database instance itself.
+        """
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Exit the async context manager and cleanup all database connections.
+
+        Args:
+            exc_type: Exception type, or None if no exception occurred.
+            exc: Exception instance, or None.
+            tb: Traceback object, or None.
+        """
+        await self.manager.closeAll()
+        if exc_type is not None:
+            logger.error(f"Exception in database context: {exc_type}", exc_info=(exc_type, exc, tb))
+            raise
