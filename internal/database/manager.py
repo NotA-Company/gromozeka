@@ -36,7 +36,22 @@ class DatabaseManager:
         Args:
             config: Database configuration dict
         """
-        self.config = config
+        
+        self.config = config.copy()
+        if "providers" not in self.config:
+            raise ValueError("No providers found in configuration, dood")
+        if "default" not in self.config:
+            raise ValueError("No default source found in configuration, dood")
+        if self.config["default"] not in self.config["providers"]:
+            raise ValueError(
+                f"Default source '{self.config['default']}' not found in configuration, "
+                "please check your configuration and try again, dood!"
+            )
+        if "chatMapping" not in self.config:
+            # Do not raise error if no chat mappings provided.
+            # Just thewat it as empty dict
+            self.config["chatMapping"] = {}
+
         self._providers: Dict[str, BaseSQLProvider] = {}
         self._initializationHooks: List[SQLProviderInitializationHook] = []
         logger.info(f"Database initialized: {self.config}")

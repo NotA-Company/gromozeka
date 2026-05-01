@@ -32,6 +32,7 @@ class Database:
     that can be easily replaced with other database backends.
     """
 
+    # TODO: populate slots
     # _slots__ = ("_connections", "_sources", "_chatMapping", "_locks", "_defaultSource")
 
     def __init__(
