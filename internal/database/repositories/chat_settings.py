@@ -130,9 +130,9 @@ class ChatSettingsRepository(BaseRepository):
             await sqlProvider.execute(
                 """
                 DELETE FROM chat_settings
-                WHERE chat_id = ?
+                WHERE chat_id = :chatId
             """,
-                (chatId,),
+                {"chatId": chatId},
             )
             return True
         except Exception as e:
@@ -157,11 +157,11 @@ class ChatSettingsRepository(BaseRepository):
                 """
                 SELECT value FROM chat_settings
                 WHERE
-                    chat_id = ?
-                    AND key = ?
+                    chat_id = :chatId
+                    AND key = :key
                 LIMIT 1
             """,
-                (chatId, setting),
+                {"chatId": chatId, "key": setting},
             )
             return row["value"] if row else None
         except Exception as e:
@@ -184,9 +184,9 @@ class ChatSettingsRepository(BaseRepository):
             rows = await sqlProvider.executeFetchAll(
                 """
                 SELECT key, value, updated_by FROM chat_settings
-                WHERE chat_id = ?
+                WHERE chat_id = :chatId
             """,
-                (chatId,),
+                {"chatId": chatId},
             )
             return {row["key"]: (row["value"], row["updated_by"]) for row in rows}
         except Exception as e:

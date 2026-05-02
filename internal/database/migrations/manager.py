@@ -7,10 +7,9 @@ executing migrations in order, handling failures, and supporting rollback operat
 """
 
 import logging
-from collections.abc import Mapping, Sequence
 from typing import List, Optional, Type
 
-from ..providers import BaseSQLProvider, FetchType
+from ..providers import BaseSQLProvider
 from ..providers.base import ExcludedValue
 from ..utils import getCurrentTimestamp
 from .base import BaseMigration
@@ -116,7 +115,7 @@ class MigrationManager:
         Returns:
             Setting value if found, otherwise the default value
         """
-        result = await sqlProvider.execute(
+        result = await sqlProvider.executeFetchOne(
             f"""
                     SELECT value FROM {SETTINGS_TABLE}
                     WHERE key = :key
@@ -124,12 +123,7 @@ class MigrationManager:
             {
                 "key": key,
             },
-            fetchType=FetchType.FETCH_ONE,
         )
-        if isinstance(result, Sequence):
-            result = result[0]
-        if not isinstance(result, Mapping):
-            return default
 
         return result["value"] if result else default
 

@@ -262,9 +262,9 @@ class MediaAttachmentsRepository(BaseRepository):
                 """
                 SELECT ma.* FROM media_groups mg
                 JOIN media_attachments ma ON mg.media_id = ma.file_unique_id
-                WHERE mg.media_group_id = ?
+                WHERE mg.media_group_id = :mediaGroupId
             """,
-                (mediaGroupId,),
+                {"mediaGroupId": mediaGroupId},
             )
 
             return [dbUtils.sqlToTypedDict(row, MediaAttachmentDict) for row in rows]
@@ -294,9 +294,9 @@ class MediaAttachmentsRepository(BaseRepository):
                 """
                 SELECT MAX(created_at) as last_updated
                 FROM media_groups
-                WHERE media_group_id = ?
+                WHERE media_group_id = :mediaGroupId
                 """,
-                (mediaGroupId,),
+                {"mediaGroupId": mediaGroupId},
             )
 
             if row and row["last_updated"]:

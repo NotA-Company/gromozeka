@@ -218,7 +218,7 @@ class SQLinkProvider(BaseSQLProvider):
             )
             return [self._makeQueryResult(queryResult, query.fetchType) for queryResult, query in zip(ret, queries)]
 
-    def applyPagination(self, query: str, limit: Optional[int], offset: Optional[int] = 0) -> str:
+    def applyPagination(self, query: str, limit: Optional[int], offset: int = 0) -> str:
         """Apply SQLite-specific pagination to query.
 
         Args:
@@ -231,7 +231,10 @@ class SQLinkProvider(BaseSQLProvider):
         """
         if limit is None:
             return query
-        return f"{query} LIMIT {limit} OFFSET {offset}"
+        offsetStr = ""
+        if offset:
+            offsetStr = f" OFFSET {offset}"
+        return f"{query} LIMIT {limit}{offsetStr}"
 
     def getTextType(self, maxLength: Optional[int] = None) -> str:
         """Get SQLite-specific TEXT type.

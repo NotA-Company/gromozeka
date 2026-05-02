@@ -37,7 +37,7 @@ class CommonFunctionsRepository(BaseRepository):
         super().__init__(manager)
 
     ###
-    # Global Settings manipulation functions (Are they used an all?)
+    # Global Settings manipulation functions
     ###
 
     async def setSetting(self, key: str, value: str, *, dataSource: Optional[str] = None) -> bool:
@@ -91,7 +91,7 @@ class CommonFunctionsRepository(BaseRepository):
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
 
-            row = await sqlProvider.executeFetchOne("SELECT value FROM settings WHERE key = ?", (key,))
+            row = await sqlProvider.executeFetchOne("SELECT value FROM settings WHERE key = :key", {"key": key})
             return row["value"] if row else default
         except Exception as e:
             logger.error(f"Failed to get setting {key} in {dataSource}: {e}")

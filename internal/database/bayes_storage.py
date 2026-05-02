@@ -334,8 +334,8 @@ class DatabaseBayesStorage(BayesStorageInterface):
                 # Clear specific chat
                 await sqlProvider.batchExecute(
                     [
-                        ParametrizedQuery("DELETE FROM bayes_tokens WHERE chat_id = ?", (chatId,)),
-                        ParametrizedQuery("DELETE FROM bayes_classes WHERE chat_id = ?", (chatId,)),
+                        ParametrizedQuery("DELETE FROM bayes_tokens WHERE chat_id = :chatId", {"chatId": chatId}),
+                        ParametrizedQuery("DELETE FROM bayes_classes WHERE chat_id = :chatId", {"chatId": chatId}),
                     ]
                 )
                 logger.info(f"Cleared Bayes statistics for chat {chatId}, dood!")

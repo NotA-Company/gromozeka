@@ -311,7 +311,7 @@ class BaseSQLProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def applyPagination(self, query: str, limit: Optional[int], offset: Optional[int] = 0) -> str:
+    def applyPagination(self, query: str, limit: Optional[int], offset: int = 0) -> str:
         """Apply RDBMS-specific pagination to query.
 
         Args:

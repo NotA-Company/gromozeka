@@ -95,12 +95,12 @@ class ChatMessagesRepository(BaseRepository):
         if threadId is None:
             threadId = dbUtils.DEFAULT_THREAD_ID
         try:
-            sqlPrivider = await self.manager.getProvider(chatId=chatId, readonly=False)
+            sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
             today = date.replace(hour=0, minute=0, second=0, microsecond=0)
             currentTimestamp = dbUtils.getCurrentTimestamp()
 
             # Insert chat message
-            await sqlPrivider.execute(
+            await sqlProvider.execute(
                 """
                 INSERT INTO chat_messages
                 (date, chat_id, user_id, message_id,
@@ -136,7 +136,7 @@ class ChatMessagesRepository(BaseRepository):
             )
 
             # Update chat users message count
-            await sqlPrivider.execute(
+            await sqlProvider.execute(
                 """
                 UPDATE chat_users
                 SET messages_count = messages_count + 1,
@@ -151,7 +151,7 @@ class ChatMessagesRepository(BaseRepository):
             )
 
             # Upsert chat stats
-            await sqlPrivider.upsert(
+            await sqlProvider.upsert(
                 table="chat_stats",
                 values={
                     "chat_id": chatId,
@@ -168,7 +168,7 @@ class ChatMessagesRepository(BaseRepository):
             )
 
             # Upsert chat user stats
-            await sqlPrivider.upsert(
+            await sqlProvider.upsert(
                 table="chat_user_stats",
                 values={
                     "chat_id": chatId,
@@ -249,7 +249,7 @@ class ChatMessagesRepository(BaseRepository):
                 ORDER BY c.date DESC, c.message_id DESC
             """
             if limit is not None:
-                query += f" LIMIT {int(limit)}"
+                query = sqlProvider.applyPagination(query=query, limit=int(limit))
 
             rows = await sqlProvider.executeFetchAll(
                 query,

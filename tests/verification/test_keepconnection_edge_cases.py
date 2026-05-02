@@ -45,6 +45,7 @@ class TestKeepConnectionEdgeCases:
 
             # Connection should be kept open
             provider = await db.manager.getProvider()
+            assert type(provider) is SQLite3Provider
             assert provider._connection is not None
 
             # Perform multiple operations
@@ -52,6 +53,7 @@ class TestKeepConnectionEdgeCases:
             await db.common.setSetting("key2", "value2")
 
             # Connection should still be open
+            assert type(provider) is SQLite3Provider
             assert provider._connection is not None
 
             await db.manager.closeAll()
@@ -86,6 +88,7 @@ class TestKeepConnectionEdgeCases:
 
         # Connection should be closed after operation
         provider = await db.manager.getProvider()
+        assert type(provider) is SQLite3Provider
         assert provider._connection is None
 
         # Second operation - data will be lost because connection was closed
@@ -94,6 +97,7 @@ class TestKeepConnectionEdgeCases:
         assert value is None  # Data lost as expected
 
         # Connection should be closed again
+        assert type(provider) is SQLite3Provider
         assert provider._connection is None
 
         await db.manager.closeAll()
@@ -119,6 +123,7 @@ class TestKeepConnectionEdgeCases:
         provider = await db.manager.getProvider()
 
         # For in-memory databases, should auto-detect and keep connection
+        assert type(provider) is SQLite3Provider
         assert provider._connection is not None
 
         # Perform multiple operations
@@ -126,6 +131,7 @@ class TestKeepConnectionEdgeCases:
         await db.common.setSetting("key2", "value2")
 
         # Connection should still be open
+        assert type(provider) is SQLite3Provider
         assert provider._connection is not None
 
         await db.manager.closeAll()
@@ -154,12 +160,14 @@ class TestKeepConnectionEdgeCases:
             provider = await db.manager.getProvider()
 
             # For file-based databases, should auto-detect and not keep connection
+            assert type(provider) is SQLite3Provider
             assert provider._connection is None
 
             # Perform operation
             await db.common.setSetting("key1", "value1")
 
             # Connection should be closed
+            assert type(provider) is SQLite3Provider
             assert provider._connection is None
 
             await db.manager.closeAll()
@@ -234,6 +242,7 @@ class TestKeepConnectionEdgeCases:
 
             # Connection should be closed
             provider = await db.manager.getProvider()
+            assert type(provider) is SQLite3Provider
             assert provider._connection is None
 
             await db.manager.closeAll()

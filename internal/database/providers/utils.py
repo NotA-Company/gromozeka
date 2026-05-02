@@ -44,8 +44,6 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
     elif isinstance(data, bool):
         return int(data)
     elif isinstance(data, datetime.datetime):
-        if data.tzinfo is None:
-            return data.strftime("%Y-%m-%d %H:%M:%S")
         return data.isoformat()
     else:
         logger.warning(f"Unsupported type {type(data)} for proper SQL conversion, using str()")
