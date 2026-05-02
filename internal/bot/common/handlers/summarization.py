@@ -453,8 +453,8 @@ class SummarizationHandler(BaseBotHandler):
                         "name": "Default",
                         "icon_color": None,
                         "icon_custom_emoji_id": None,
-                        "created_at": datetime.datetime.now(),
-                        "updated_at": datetime.datetime.now(),
+                        "created_at": utils.now(),
+                        "updated_at": utils.now(),
                     }
                 )
 
@@ -646,7 +646,7 @@ class SummarizationHandler(BaseBotHandler):
             text="Суммаризирую сообщения...",
         )
 
-        today = datetime.datetime.now(datetime.timezone.utc)
+        today = utils.now()
         today = today.replace(hour=0, minute=0, second=0, microsecond=0)
         sinceDT = today
         tillDT: Optional[datetime.datetime] = None
@@ -790,7 +790,7 @@ class SummarizationHandler(BaseBotHandler):
             case ChatType.GROUP:
                 # Summary command print summary for whole chat.
                 # Topic-summary prints summary for current topic, we threat default topic as 0
-                today = datetime.datetime.now(datetime.timezone.utc)
+                today = utils.now()
                 today = today.replace(hour=0, minute=0, second=0, microsecond=0)
 
                 threadId: Optional[int] = None

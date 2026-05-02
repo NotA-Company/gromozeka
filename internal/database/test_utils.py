@@ -300,9 +300,16 @@ class TestConvertSqlResponseToTypeIntInput:
         assert success is True
         assert value == "42"
 
+    def testIntToDatetime(self) -> None:
+        """Test that sqlToCustomType converts raw int to timezone-aware datetime (Unix timestamp)."""
+        success, value = sqlToCustomType(42, datetime.datetime)
+        assert success is True
+        assert isinstance(value, datetime.datetime)
+        assert value.tzinfo == datetime.timezone.utc
+
     def testIntToUnsupportedTypeReturnsFailure(self) -> None:
         """Test that sqlToCustomType returns (False, None) when int cannot be converted to target type."""
-        success, value = sqlToCustomType(42, datetime.datetime)
+        success, value = sqlToCustomType(42, datetime.date)
         assert success is False
         assert value is None
 

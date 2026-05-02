@@ -3,7 +3,7 @@
 provider = "yc-sdk"
 model_id = "yandex-art"
 model_version = "latest"
-#temparature = 0.3
+#temperature = 0.3
 #context = 256000
 support_tools = false
 support_text = false

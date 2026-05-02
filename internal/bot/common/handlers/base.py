@@ -664,7 +664,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 cacheEntry = ModelMessage(role="system", content=condensedMessage["text"])
                 ret.append(cacheEntry)
                 condenseCacheMessages.append(cacheEntry)
-                lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"])
+                lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"], datetime.timezone.utc)
                 skippedMessages = 0
                 for dbMessage in dbMessageList:
                     skippedMessages += 1
@@ -780,7 +780,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatId = message.recipient.id
         storedChatInfo = await self.getChatInfo(chatId=chatId)
         needChange = True
-        now = datetime.datetime.now()
+        now = utils.now()
         if storedChatInfo is not None:
             timeDiff = now - storedChatInfo["updated_at"]
             needChange = timeDiff.total_seconds() > 60 * 60 * 12
@@ -891,8 +891,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 "icon_color": iconColor,
                 "icon_custom_emoji_id": customEmojiId,
                 "name": name,
-                "created_at": datetime.datetime.now(),
-                "updated_at": datetime.datetime.now(),
+                "created_at": utils.now(),
+                "updated_at": utils.now(),
             },
         )
 

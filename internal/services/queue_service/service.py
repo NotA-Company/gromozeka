@@ -23,7 +23,6 @@ Example:
 """
 
 import asyncio
-import datetime
 import json
 import logging
 import time
@@ -427,7 +426,7 @@ class QueueService:
             ... )
         """
         if taskId is None:
-            taskId = datetime.datetime.now().strftime("%y%m%d-%H%M%S-") + str(uuid.uuid4())
+            taskId = utils.now().strftime("%y%m%d-%H%M%S-") + str(uuid.uuid4())
 
         task = DelayedTask(taskId, delayedUntil, function, kwargs)
         # logger.debug(f"Adding delayed task: {task}")

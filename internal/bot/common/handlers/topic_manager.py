@@ -2,7 +2,6 @@
 TODO: write docstring
 """
 
-import datetime
 import logging
 from typing import List, Optional
 
@@ -162,8 +161,8 @@ class TopicManagerHandler(BaseBotHandler):
                     "name": "Default",
                     "icon_color": None,
                     "icon_custom_emoji_id": None,
-                    "created_at": datetime.datetime.now(),
-                    "updated_at": datetime.datetime.now(),
+                    "created_at": utils.now(),
+                    "updated_at": utils.now(),
                 }
             )
 

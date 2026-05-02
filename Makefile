@@ -52,6 +52,12 @@ lint: venv
 format: venv
 	$(ISORT) .
 	$(BLACK) .
+	for dir in lib/ext_modules/*/; do \
+		if [ -d "$$dir" -a "$$(basename "$$dir")" != "__pycache__" ]; then \
+			$(ISORT) "$$dir"; \
+			$(BLACK) "$$dir"; \
+		fi; \
+	done
 
 # Run all tests
 test: venv
