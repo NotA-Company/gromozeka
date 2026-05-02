@@ -9,6 +9,7 @@ It also includes type checking and TypedDict validation utilities.
 import datetime
 import json
 import logging
+import math
 import types
 from typing import Optional, Tuple, Type, TypeVar, Union, get_args, get_origin, get_type_hints, is_typeddict
 
@@ -103,6 +104,19 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
     if isinstance(data, bytes):
         data = data.decode(encoding="utf-8", errors="ignore")
 
+    if isinstance(data, float):
+        try:
+            if expectedType is int:
+                return True, int(math.floor(data))  # pyright: ignore[reportReturnType]
+            elif expectedType is str:
+                return True, str(data)  # pyright: ignore[reportReturnType]
+            elif expectedType is datetime.datetime:
+                return True, datetime.datetime.fromtimestamp(
+                    data, FORCE_SQL_TIMEZONE
+                )  # pyright: ignore[reportReturnType]
+        except (ValueError, TypeError) as e:
+            logger.error(f"Failed to convert float {data} to {expectedType}: {e}")
+            return False, None
     # Fix: SQLite may return raw int values for boolean and float columns.
     # When data is an int (but not bool), attempt numeric conversions before
     # falling through to the str branch.
