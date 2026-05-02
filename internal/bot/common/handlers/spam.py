@@ -39,13 +39,13 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.bayes_storage import DatabaseBayesStorage
 from internal.database.models import (
     ChatUserDict,
     MessageCategory,
     SpamReason,
 )
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType
 from internal.services.cache import HCSpamWarningMessageInfo
 from internal.services.queue_service import DelayedTaskFunction
@@ -80,7 +80,7 @@ class SpamHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """
         Initialize spam handlers with database and LLM model, dood!
@@ -90,7 +90,7 @@ class SpamHandler(BaseBotHandler):
 
         Args:
             configManager (ConfigManager): Configuration manager for bot settings.
-            database (DatabaseWrapper): Database wrapper for persistent storage.
+            database (Database): Database object for persistent storage.
             llmManager (LLMManager): LLM manager for AI-powered features.
 
         Note:
@@ -222,9 +222,9 @@ class SpamHandler(BaseBotHandler):
             # TODO: Message without text, think about checking for spam
             return False
 
-        chatSettings = self.getChatSettings(chatId)
+        chatSettings = await self.getChatSettings(chatId)
 
-        userInfo: Optional[ChatUserDict] = self.db.getChatUser(chatId=chatId, userId=sender.id)
+        userInfo: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(chatId=chatId, userId=sender.id)
         if not userInfo:
             # self.db.updateChatUser(chatId=chatId, userId=sender.id, username=sender.username, fullName=sender.name)
             logger.debug(f"userInfo for {ensuredMessage} is null, assume it's first user message")
@@ -274,7 +274,7 @@ class SpamHandler(BaseBotHandler):
             spamScore = 100.0
 
         # Check if for last 10 messages there are more same messages than different ones:
-        userMessages = self.db.getChatMessagesByUser(chatId=chatId, userId=sender.id, limit=10)
+        userMessages = await self.db.chatMessages.getChatMessagesByUser(chatId=chatId, userId=sender.id, limit=10)
         spamMessagesCount = 0
         nonSpamMessagesCount = 0
         for msg in userMessages:
@@ -292,7 +292,7 @@ class SpamHandler(BaseBotHandler):
             spamScore = max(spamScore, _spamScore)
 
         # If we had the same spam messages, then it's also spam
-        sameSpamMessages = self.db.getSpamMessagesByText(ensuredMessage.messageText)
+        sameSpamMessages = await self.db.spam.getSpamMessagesByText(ensuredMessage.messageText)
         if len(sameSpamMessages) > 0:
             logger.info(f"SPAM: Found {len(sameSpamMessages)} spam messages, so deciding, that it is SPAM")
             spamScore = max(spamScore, 100)
@@ -312,7 +312,7 @@ class SpamHandler(BaseBotHandler):
                         mentionStr = entity.userName
                         if mentionStr is None:
                             mentionStr = entity.extractEntityText(messageText)
-                        chatUser = self.db.getChatUserByUsername(
+                        chatUser = await self.db.chatUsers.getChatUserByUsername(
                             chatId=ensuredMessage.recipient.id, username=mentionStr
                         )
                         if chatUser is None:
@@ -464,7 +464,7 @@ class SpamHandler(BaseBotHandler):
             - Number of messages to delete capped by AUTO_SPAM_MAX_MESSAGES (max 32)
             - All deleted messages also learned as spam and saved to spam database
         """
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
         logger.debug(
             f"Handling spam message: #{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
@@ -488,7 +488,7 @@ class SpamHandler(BaseBotHandler):
         canMarkOldUsers = chatSettings[ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS].toBool()
         if reason != SpamReason.ADMIN or not canMarkOldUsers:
             # Check if we are trying to ban old chat member and it is not from Admin
-            userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
+            userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
             maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
             if maxSpamMessages != 0 and userInfo and userInfo["messages_count"] > maxSpamMessages:
                 logger.warning(f"Tried to mark old user {ensuredMessage.sender} as SPAM")
@@ -517,7 +517,7 @@ class SpamHandler(BaseBotHandler):
                 logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
 
         if ensuredMessage.messageText:
-            self.db.addSpamMessage(
+            await self.db.spam.addSpamMessage(
                 chatId=chatId,
                 userId=userId,
                 messageId=ensuredMessage.messageId,
@@ -535,7 +535,7 @@ class SpamHandler(BaseBotHandler):
             raise ValueError("Bot is not initialized")
         await self._bot.banUserInChat(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
 
-        self.setUserMetadata(
+        await self.setUserMetadata(
             chatId=chatId,
             userId=userId,
             metadata={
@@ -549,7 +549,7 @@ class SpamHandler(BaseBotHandler):
             maxMessagesToDelete = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
             # Cap max messages to delete by some saint number
             maxMessagesToDelete = min(max(maxMessagesToDelete, 1), 32)
-            userMessages = self.db.getChatMessagesByUser(
+            userMessages = await self.db.chatMessages.getChatMessagesByUser(
                 chatId=chatId,
                 userId=userId,
                 limit=maxMessagesToDelete,
@@ -571,7 +571,7 @@ class SpamHandler(BaseBotHandler):
                             logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
                     # And add message to spam-base
                     if msg["message_text"]:
-                        self.db.addSpamMessage(
+                        await self.db.spam.addSpamMessage(
                             chatId=msg["chat_id"],
                             userId=msg["user_id"],
                             messageId=msg["message_id"],
@@ -582,7 +582,7 @@ class SpamHandler(BaseBotHandler):
                         )
                 # Update message category to USER_SPAM
                 # TODO: We can do bulk upgrade, but i don't care, actually
-                self.db.updateChatMessageCategory(
+                await self.db.chatMessages.updateChatMessageCategory(
                     chatId=msg["chat_id"],
                     messageId=msg["message_id"],
                     messageCategory=MessageCategory.USER_SPAM,
@@ -720,7 +720,7 @@ class SpamHandler(BaseBotHandler):
 
         try:
             # Learn from existing spam messages
-            spam_messages = self.db.getSpamMessages(limit=limit)  # Get all spam messages
+            spam_messages = await self.db.spam.getSpamMessages(limit=limit)  # Get all spam messages
             spamUsersIds: Set[int] = {-1}
             for spamMsg in spam_messages:
                 if spamMsg["chat_id"] == chatId and spamMsg["text"]:
@@ -732,7 +732,7 @@ class SpamHandler(BaseBotHandler):
                         stats["failed"] += 1
 
             # Learn from regular user messages as ham
-            hamMessages = self.db.getChatMessagesSince(
+            hamMessages = await self.db.chatMessages.getChatMessagesSince(
                 chatId=chatId, limit=limit, messageCategory=[MessageCategory.USER]
             )
             for hamMsg in hamMessages:
@@ -768,7 +768,7 @@ class SpamHandler(BaseBotHandler):
 
         try:
             # Learn from existing spam messages
-            spam_messages = self.db.getSpamMessages(limit=limit)  # Get all spam messages
+            spam_messages = await self.db.spam.getSpamMessages(limit=limit)  # Get all spam messages
             logger.debug(f"Got {len(spam_messages)} spam messages")
             for spamMsg in spam_messages:
                 if spamMsg["text"]:
@@ -815,7 +815,7 @@ class SpamHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         try:
-            chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+            chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
             if chatSettings[ChatSettingsKey.DETECT_SPAM].toBool():
                 if await self.checkSpam(ensuredMessage):
@@ -890,7 +890,7 @@ class SpamHandler(BaseBotHandler):
 
         isAdmin = await self.isAdmin(user=user, chat=chat)
 
-        chatSettings = self.getChatSettings(chatId=chat.id)
+        chatSettings = await self.getChatSettings(chatId=chat.id)
         userCanMarkSpam = chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
 
         if not isAdmin and not userCanMarkSpam:
@@ -916,7 +916,7 @@ class SpamHandler(BaseBotHandler):
             if messageText:
                 await self.markAsHam(eRepliedMessage)
 
-                self.db.addHamMessage(
+                await self.db.spam.addHamMessage(
                     chatId=chat.id,
                     userId=hamUserId,
                     messageId=eRepliedMessage.messageId,
@@ -926,9 +926,9 @@ class SpamHandler(BaseBotHandler):
                     confidence=1.0,
                 )
 
-            hamUserDB: Optional[ChatUserDict] = self.db.getChatUser(chatId=chat.id, userId=hamUserId)
+            hamUserDB: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(chatId=chat.id, userId=hamUserId)
             if hamUserDB is not None:
-                self.setUserMetadata(
+                await self.setUserMetadata(
                     chatId=hamUserDB["chat_id"],
                     userId=hamUserDB["user_id"],
                     metadata={
@@ -985,7 +985,7 @@ class SpamHandler(BaseBotHandler):
         group chat, including the number of spam and ham messages processed,
         filter accuracy, and other relevant metrics.
         """
-        for chatInfo in self.db.getAllGroupChats():
+        for chatInfo in await self.db.chatUsers.getAllGroupChats():
             stats = await self.getBayesFilterStats(chatId=chatInfo["chat_id"])
             chatTitle = self.getChatTitle(chatInfo)
 
@@ -1297,7 +1297,7 @@ class SpamHandler(BaseBotHandler):
 
         if isLearnSpam:
             await self.bayesFilter.learnSpam(messageText=repliedText, chatId=targetChatId)
-            self.db.addSpamMessage(
+            await self.db.spam.addSpamMessage(
                 chatId=targetChatId,
                 userId=0,
                 messageId=0,
@@ -1313,7 +1313,7 @@ class SpamHandler(BaseBotHandler):
             )
         else:
             await self.bayesFilter.learnHam(messageText=repliedText, chatId=targetChatId)
-            self.db.addHamMessage(
+            await self.db.spam.addHamMessage(
                 chatId=targetChatId,
                 userId=0,
                 messageId=0,
@@ -1481,12 +1481,15 @@ class SpamHandler(BaseBotHandler):
             username = args.split(maxsplit=1)[0]
             if not username.startswith("@"):
                 username = "@" + username
-            user = self.db.getChatUserByUsername(ensuredMessage.recipient.id, username)
+            user = await self.db.chatUsers.getChatUserByUsername(ensuredMessage.recipient.id, username)
 
         if user is None and ensuredMessage.replyId is not None:
             repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
             if repliedMessage is not None:
-                user = self.db.getChatUser(chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id)
+                user = await self.db.chatUsers.getChatUser(
+                    chatId=ensuredMessage.recipient.id,
+                    userId=repliedMessage.sender.id,
+                )
 
         if user is None:
             await self.sendMessage(
@@ -1508,10 +1511,10 @@ class SpamHandler(BaseBotHandler):
             )
 
         # Get user messages, remembered as spam, delete them from spam base and add them to ham base
-        userMessages = self.db.getSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
-        self.db.deleteSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
+        userMessages = await self.db.spam.getSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
+        await self.db.spam.deleteSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
         for userMsg in userMessages:
-            self.db.addHamMessage(
+            await self.db.spam.addHamMessage(
                 chatId=userMsg["chat_id"],
                 userId=userMsg["user_id"],
                 messageId=userMsg["message_id"],
@@ -1522,7 +1525,7 @@ class SpamHandler(BaseBotHandler):
             )
 
         # Set user metadata[notSpammer] = True to skip spam-check for this user in this chat
-        self.setUserMetadata(
+        await self.setUserMetadata(
             chatId=user["chat_id"],
             userId=user["user_id"],
             metadata={
@@ -1590,11 +1593,13 @@ class SpamHandler(BaseBotHandler):
         )
 
         if repliedMessage is not None:
-            user = self.db.getChatUser(chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id)
+            user = await self.db.chatUsers.getChatUser(
+                chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id
+            )
             if user is None:
                 logger.error(f"User {repliedMessage.sender} not found in chat {ensuredMessage.recipient}")
             else:
-                self.setUserMetadata(
+                await self.setUserMetadata(
                     chatId=user["chat_id"],
                     userId=user["user_id"],
                     metadata={"dropMessages": isMark},

@@ -422,8 +422,8 @@ class NaiveBayesFilter:
 
         try:
             removed = await self.storage.cleanupRareTokens(min_count, chat_id_param)
-            logger.info(f"Cleaned up {removed} rare tokens (min_count={min_count}).")
-            return removed
+            logger.info(f"Cleaned up rare tokens (min_count={min_count}).")
+            return removed if removed is not None else 0
         except Exception as e:
             logger.error(f"Failed to cleanup rare tokens: {e}.")
             return 0

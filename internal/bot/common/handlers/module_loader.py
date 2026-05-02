@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Tuple
 
 from internal.bot.models import BotProvider
 from internal.config.manager import ConfigManager
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from lib.ai import LLMManager
 
 from .base import BaseBotHandler
@@ -69,7 +69,7 @@ class CustomHandlerLoader:
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):

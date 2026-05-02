@@ -31,8 +31,8 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMManager
@@ -57,7 +57,7 @@ class CommonHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """
         Initialize the CommonHandler with required services, dood!
@@ -418,7 +418,9 @@ class CommonHandler(BaseBotHandler):
         if listAll:
             listAll = self.isBotOwner(ensuredMessage.sender)
 
-        knownChats = self.db.getAllGroupChats() if listAll else self.getUserChats(ensuredMessage.sender.id)
+        knownChats = (
+            await self.db.chatUsers.getAllGroupChats() if listAll else await self.getUserChats(ensuredMessage.sender.id)
+        )
 
         resp = "Список доступных чатов:\n\n"
 

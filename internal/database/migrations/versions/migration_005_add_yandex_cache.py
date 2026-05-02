@@ -1,55 +1,65 @@
 """
-Initial schema migration - creates all base tables, dood!
+Add Yandex Search cache tables.
 
-This migration extracts all table creation from the original _initDatabase() method.
+This migration creates cache tables for Yandex Search results to improve
+performance by storing search results locally.
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
 class Migration005YandexSearchCache(BaseMigration):
-    """Initial database schema migration, dood!"""
+    """Add Yandex Search cache tables."""
 
     version = 5
     description = "Add Yandex Search Cache"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        """Create all initial tables, dood!
-        
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        """Create Yandex Search cache tables.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Create all Cache Tables
         # Import CacheType here to avoid circular dependency
         from ...models import CacheType
-        
-        for cacheType in CacheType:
-            cursor.execute(
-                f"""
+
+        await sqlProvider.batchExecute([ParametrizedQuery(f"""
                 CREATE TABLE IF NOT EXISTS cache_{cacheType} (
                     key TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
                 )
-                """
-            )
+                """) for cacheType in CacheType])
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        """Drop all tables created by this migration, dood!
-        
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        """Drop Yandex Search cache tables.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Drop cache tables
         from ...models import CacheType
-        
-        for cacheType in [CacheType.YANDEX_SEARCH]:
-            cursor.execute(f"DROP TABLE IF EXISTS cache_{cacheType}")
+
+        await sqlProvider.batchExecute(
+            [ParametrizedQuery(f"DROP TABLE IF EXISTS cache_{cacheType}") for cacheType in [CacheType.YANDEX_SEARCH]]
+        )
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration005YandexSearchCache

@@ -22,8 +22,8 @@ import pytest
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from internal.database import Database  # noqa:E402
 from internal.database.bayes_storage import DatabaseBayesStorage  # noqa:E402
-from internal.database.wrapper import DatabaseWrapper  # noqa:E402
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter  # noqa:E402
 from lib.bayes_filter.models import BayesModelStats, ClassStats, TokenStats  # noqa:E402
 from lib.bayes_filter.storage_interface import BayesStorageInterface  # noqa:E402
@@ -240,10 +240,23 @@ async def test_bayes_filter():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
         db_path = tmp_db.name
 
-    db: Optional[DatabaseWrapper] = None
+    db: Optional[Database] = None
     try:
         # Initialize database and storage
-        db = DatabaseWrapper({"sources": {"default": {"path": db_path}}, "default": "default"})
+        db = Database(
+            {
+                "default": "default",
+                "chatMapping": {},
+                "providers": {
+                    "default": {
+                        "provider": "sqlite3",
+                        "parameters": {
+                            "dbPath": db_path,
+                        },
+                    }
+                },
+            }
+        )
         storage = DatabaseBayesStorage(db)
 
         # Initialize Bayes filter
@@ -361,7 +374,7 @@ async def test_bayes_filter():
     finally:
         # Cleanup
         if db is not None:
-            db.close()
+            await db.manager.closeAll()
         try:
             os.unlink(db_path)
         except Exception:

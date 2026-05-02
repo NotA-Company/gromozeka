@@ -10,75 +10,94 @@ This module tests database operations including:
 - CRUD operations for all tables
 """
 
+import asyncio
 import datetime
 import json
 import sqlite3
-import threading
 
 import pytest
 
+from internal.database import Database
+from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import (
     CacheType,
     MediaStatus,
     MessageCategory,
     SpamReason,
 )
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageType
 
 
 @pytest.fixture
-def inMemoryDb():
+async def inMemoryDb():
     """Provide in-memory SQLite database for testing, dood!"""
-    config = {
-        "sources": {
+    config: DatabaseManagerConfig = {
+        "default": "default",
+        "chatMapping": {},
+        "providers": {
             "default": {
-                "path": ":memory:",
-                "readonly": False,
+                "provider": "sqlite3",
+                "parameters": {
+                    "dbPath": ":memory:",
+                },
             }
         },
-        "default": "default",
     }
-    db = DatabaseWrapper(config)
-    yield db
-    db.close()
+    db = Database(config)
+    # Initialize database by getting a provider (triggers migration)
+    await db.manager.getProvider()
+    try:
+        yield db
+    finally:
+        await db.manager.closeAll()
 
 
 @pytest.fixture
-def threadSafeDb(tmp_path):
+async def threadSafeDb(tmp_path):
     """Provide file-based SQLite database for threading tests, dood!
 
     File-based databases support proper concurrent access across threads,
     unlike in-memory databases which are isolated per connection.
+
+    Note: keepConnection=True is required for concurrent async operations
+    to avoid connection lifecycle conflicts.
     """
     dbPath = tmp_path / "test_threading.db"
-    config = {
-        "sources": {
+    config: DatabaseManagerConfig = {
+        "default": "default",
+        "chatMapping": {},
+        "providers": {
             "default": {
-                "path": str(dbPath),
-                "readonly": False,
+                "provider": "sqlite3",
+                "parameters": {
+                    "dbPath": str(dbPath),
+                    "keepConnection": True,  # Required for concurrent operations
+                },
             }
         },
-        "default": "default",
     }
-    db = DatabaseWrapper(config)
-    yield db
-    db.close()
+    db = Database(config)
+    # Initialize database by getting a provider (triggers migration)
+    await db.manager.getProvider()
+    try:
+        yield db
+    finally:
+        await db.manager.closeAll()
 
 
 @pytest.fixture
-def populatedDb(inMemoryDb):
+async def populatedDb(inMemoryDb):
     """Provide database with sample data, dood!"""
     db = inMemoryDb
 
     # Add sample chat info
-    db.updateChatInfo(chatId=123, type="supergroup", title="Test Chat", isForum=False)
-    db.updateChatInfo(chatId=456, type="private", title="Private Chat", isForum=False)
+    await db.chatInfo.updateChatInfo(chatId=123, type="supergroup", title="Test Chat", isForum=False)
+    await db.chatInfo.updateChatInfo(chatId=456, type="private", title="Private Chat", isForum=False)
 
     # Add sample users
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
-    db.updateChatUser(chatId=123, userId=1002, username="user2", fullName="User Two")
-    db.updateChatUser(chatId=456, userId=1001, username="user1", fullName="User One")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1002, username="user2", fullName="User Two")
+    await db.chatUsers.updateChatUser(chatId=456, userId=1001, username="user1", fullName="User One")
 
     return db
 
@@ -94,15 +113,15 @@ async def testTransactionCommitOnSuccess(inMemoryDb):
     db = inMemoryDb
 
     # Add chat info and user in a transaction
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="test", fullName="Test User")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="test", fullName="Test User")
 
     # Verify data was committed
-    chatInfo = db.getChatInfo(123)
+    chatInfo = await db.chatInfo.getChatInfo(123)
     assert chatInfo is not None
     assert chatInfo["chat_id"] == 123
 
-    user = db.getChatUser(123, 1001)
+    user = await db.chatUsers.getChatUser(123, 1001)
     assert user is not None
     assert user["username"] == "test"
 
@@ -113,18 +132,18 @@ async def testTransactionRollbackOnError(inMemoryDb):
     db = inMemoryDb
 
     # Add valid chat info
-    db.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
 
     # Try to add duplicate chat info (should fail)
     try:
-        with db.getCursor() as cursor:
-            # This should fail due to unique constraint
-            cursor.execute("INSERT INTO chat_info (chat_id, type) VALUES (?, ?)", (123, "group"))
-    except sqlite3.IntegrityError:
+        provider = await db.manager.getProvider(chatId=123, readonly=False)
+        # This should fail due to unique constraint
+        await provider.execute("INSERT INTO chat_info (chat_id, type) VALUES (?, ?)", (123, "group"))
+    except Exception:
         pass  # Expected error
 
     # Verify original data is still there
-    chatInfo = db.getChatInfo(123)
+    chatInfo = await db.chatInfo.getChatInfo(123)
     assert chatInfo is not None
     assert chatInfo["title"] == "Test"
 
@@ -136,14 +155,17 @@ async def testNestedTransactions(inMemoryDb):
 
     # SQLite doesn't support true nested transactions, but we can test
     # that multiple operations in sequence work correctly
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
-    db.setChatSetting(chatId=123, key="model", value="gpt-4", updatedBy=0)
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatSettings.setChatSetting(chatId=123, key="model", value="gpt-4", updatedBy=0)
 
     # Verify all operations succeeded
-    assert db.getChatInfo(123) is not None
-    assert db.getChatUser(123, 1001) is not None
-    assert db.getChatSetting(123, "model") == "gpt-4"
+    chatInfo = await db.chatInfo.getChatInfo(123)
+    assert chatInfo is not None
+    user = await db.chatUsers.getChatUser(123, 1001)
+    assert user is not None
+    setting = await db.chatSettings.getChatSetting(123, "model")
+    assert setting == "gpt-4"
 
 
 @pytest.mark.asyncio
@@ -152,28 +174,26 @@ async def testConcurrentTransactions(inMemoryDb):
     db = inMemoryDb
 
     # Setup initial data
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     results = []
     errors = []
 
-    def updateUser(userId: int, username: str):
+    async def updateUser(userId: int, username: str):
         try:
-            db.updateChatUser(chatId=123, userId=userId, username=username, fullName=f"User {userId}")
+            await db.chatUsers.updateChatUser(chatId=123, userId=userId, username=username, fullName=f"User {userId}")
             results.append(userId)
         except Exception as e:
             errors.append(e)
 
-    # Run concurrent updates
-    threads = []
+    # Run concurrent updates using asyncio
+    tasks = []
     for i in range(5):
-        thread = threading.Thread(target=updateUser, args=(1000 + i, f"user{i}"))
-        threads.append(thread)
-        thread.start()
+        task = asyncio.create_task(updateUser(1000 + i, f"user{i}"))
+        tasks.append(task)
 
-    for thread in threads:
-        thread.join()
+    await asyncio.gather(*tasks)
 
     # Verify all updates succeeded
     assert len(results) == 5
@@ -191,19 +211,19 @@ async def testForeignKeyConstraints(inMemoryDb):
     db = inMemoryDb
 
     # Setup chat and user
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # Try to save message for non-existent user (should work as FK not enforced in current schema)
     # But the join will fail to return user data
     now = datetime.datetime.now(datetime.UTC)
-    success = db.saveChatMessage(
+    success = await db.chatMessages.saveChatMessage(
         date=now, chatId=123, userId=9999, messageId=1, messageText="Test"  # Non-existent user
     )
 
     # Message save might succeed, but retrieval will fail the join
     # This tests that our validation catches missing user data
-    assert success is False or db.getChatMessageByMessageId(123, 1) is None
+    assert success is False or await db.chatMessages.getChatMessageByMessageId(123, 1) is None
 
 
 @pytest.mark.asyncio
@@ -212,16 +232,16 @@ async def testUniqueConstraints(inMemoryDb):
     db = inMemoryDb
 
     # Add chat info
-    db.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
 
     # Try to add duplicate chat info
-    result = db.updateChatInfo(chatId=123, type="supergroup", title="Updated")
+    result = await db.chatInfo.updateChatInfo(chatId=123, type="supergroup", title="Updated")
 
     # Should succeed as we use INSERT OR REPLACE
     assert result is True
 
     # Verify data was updated
-    chatInfo = db.getChatInfo(123)
+    chatInfo = await db.chatInfo.getChatInfo(123)
     assert chatInfo["type"] == "supergroup"
     assert chatInfo["title"] == "Updated"
 
@@ -233,8 +253,8 @@ async def testNotNullConstraints(inMemoryDb):
 
     # Try to add chat info without required fields
     try:
-        with db.getCursor() as cursor:
-            cursor.execute("INSERT INTO chat_info (chat_id) VALUES (?)", (123,))
+        provider = await db.manager.getProvider(readonly=False)
+        await provider.execute("INSERT INTO chat_info (chat_id) VALUES (?)", (123,))
         assert False, "Should have raised error for missing NOT NULL field"
     except sqlite3.IntegrityError:
         pass  # Expected error
@@ -246,12 +266,12 @@ async def testDataValidation(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # Save message with valid data
     now = datetime.datetime.now(datetime.UTC)
-    success = db.saveChatMessage(
+    success = await db.chatMessages.saveChatMessage(
         date=now,
         chatId=123,
         userId=1001,
@@ -263,7 +283,7 @@ async def testDataValidation(inMemoryDb):
     assert success is True
 
     # Retrieve and validate
-    message = db.getChatMessageByMessageId(123, 1)
+    message = await db.chatMessages.getChatMessageByMessageId(123, 1)
     assert message is not None
     assert message["message_text"] == "Test message"
     assert isinstance(message["message_category"], MessageCategory)
@@ -283,24 +303,18 @@ async def testMultipleReaders(threadSafeDb):
     db = threadSafeDb
 
     # Setup data
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     results = []
 
-    def readChatInfo():
-        info = db.getChatInfo(123)
+    async def readChatInfo():
+        info = await db.chatInfo.getChatInfo(123)
         results.append(info)
 
-    # Run concurrent reads
-    threads = []
-    for _ in range(10):
-        thread = threading.Thread(target=readChatInfo)
-        threads.append(thread)
-        thread.start()
-
-    for thread in threads:
-        thread.join()
+    # Run concurrent reads using asyncio
+    tasks = [asyncio.create_task(readChatInfo()) for _ in range(10)]
+    await asyncio.gather(*tasks)
 
     # Verify all reads succeeded
     assert len(results) == 10
@@ -317,27 +331,23 @@ async def testMultipleWriters(threadSafeDb):
     db = threadSafeDb
 
     # Setup
-    db.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
 
     results = []
     errors = []
 
-    def addUser(userId: int):
+    async def addUser(userId: int):
         try:
-            success = db.updateChatUser(chatId=123, userId=userId, username=f"user{userId}", fullName=f"User {userId}")
+            success = await db.chatUsers.updateChatUser(
+                chatId=123, userId=userId, username=f"user{userId}", fullName=f"User {userId}"
+            )
             results.append(success)
         except Exception as e:
             errors.append(e)
 
-    # Run concurrent writes
-    threads = []
-    for i in range(10):
-        thread = threading.Thread(target=addUser, args=(1000 + i,))
-        threads.append(thread)
-        thread.start()
-
-    for thread in threads:
-        thread.join()
+    # Run concurrent writes using asyncio
+    tasks = [asyncio.create_task(addUser(1000 + i)) for i in range(10)]
+    await asyncio.gather(*tasks)
 
     # Verify all writes succeeded
     assert len(results) == 10
@@ -345,7 +355,7 @@ async def testMultipleWriters(threadSafeDb):
     assert len(errors) == 0
 
     # Verify all users were created
-    users = db.getChatUsers(123, limit=20)
+    users = await db.chatUsers.getChatUsers(123, limit=20)
     assert len(users) == 10
 
 
@@ -358,31 +368,26 @@ async def testReadWriteConflicts(threadSafeDb):
     db = threadSafeDb
 
     # Setup
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     readResults = []
     writeResults = []
 
-    def reader():
+    async def reader():
         for _ in range(5):
-            user = db.getChatUser(123, 1001)
+            user = await db.chatUsers.getChatUser(123, 1001)
             readResults.append(user)
 
-    def writer():
+    async def writer():
         for i in range(5):
-            success = db.updateChatUser(chatId=123, userId=1001, username=f"user{i}", fullName=f"User {i}")
+            success = await db.chatUsers.updateChatUser(
+                chatId=123, userId=1001, username=f"user{i}", fullName=f"User {i}"
+            )
             writeResults.append(success)
 
-    # Run concurrent reads and writes
-    readerThread = threading.Thread(target=reader)
-    writerThread = threading.Thread(target=writer)
-
-    readerThread.start()
-    writerThread.start()
-
-    readerThread.join()
-    writerThread.join()
+    # Run concurrent reads and writes using asyncio
+    await asyncio.gather(asyncio.create_task(reader()), asyncio.create_task(writer()))
 
     # Verify operations completed
     assert len(readResults) == 5
@@ -397,29 +402,23 @@ async def testDeadlockHandling(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatInfo(chatId=456, type="group", title="Test 2")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatInfo.updateChatInfo(chatId=456, type="group", title="Test 2")
 
     # SQLite uses a simple locking mechanism that prevents true deadlocks
     # But we can test that concurrent operations don't hang
 
     results = []
 
-    def updateChats(chatId1: int, chatId2: int):
-        db.setChatSetting(chatId1, "key1", "value1", updatedBy=0)
-        db.setChatSetting(chatId2, "key2", "value2", updatedBy=0)
+    async def updateChats(chatId1: int, chatId2: int):
+        await db.chatSettings.setChatSetting(chatId1, "key1", "value1", updatedBy=0)
+        await db.chatSettings.setChatSetting(chatId2, "key2", "value2", updatedBy=0)
         results.append(True)
 
-    thread1 = threading.Thread(target=updateChats, args=(123, 456))
-    thread2 = threading.Thread(target=updateChats, args=(456, 123))
+    # Run concurrent operations using asyncio
+    await asyncio.gather(asyncio.create_task(updateChats(123, 456)), asyncio.create_task(updateChats(456, 123)))
 
-    thread1.start()
-    thread2.start()
-
-    thread1.join(timeout=5.0)
-    thread2.join(timeout=5.0)
-
-    # Verify both threads completed
+    # Verify both operations completed
     assert len(results) == 2
 
 
@@ -434,9 +433,9 @@ async def testSchemaCreation(inMemoryDb):
     db = inMemoryDb
 
     # Verify all tables exist
-    with db.getCursor() as cursor:
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-        tables = [row[0] for row in cursor.fetchall()]
+    provider = await db.manager.getProvider(readonly=True)
+    rows = await provider.executeFetchAll("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    tables = [row["name"] for row in rows]
 
     expectedTables = [
         "bayes_classes",  # Created by migrations
@@ -474,17 +473,15 @@ async def testSchemaUpdates(inMemoryDb):
     # Migration 003 adds metadata to chat_users
     # Migration 004 adds cache_storage table
 
-    with db.getCursor() as cursor:
-        # Check that cache_storage table exists (added in migration 004)
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cache_storage'")
-        result = cursor.fetchone()
-        assert result is not None, "cache_storage table should exist (migration 004)"
+    provider = await db.manager.getProvider(readonly=True)
+    # Check that cache_storage table exists (added in migration 004)
+    rows = await provider.executeFetchAll("SELECT name FROM sqlite_master WHERE type='table' AND name='cache_storage'")
+    assert len(rows) > 0, "cache_storage table should exist (migration 004)"
 
-        # Check that chat_users has metadata column (added in migration 003)
-        cursor.execute("PRAGMA table_info(chat_users)")
-        columns = [row[1] for row in cursor.fetchall()]
-        assert "metadata" in columns, "chat_users should have metadata column (migration 003)"
-        # Note: is_spammer column was removed in migration 009
+    # Check that chat_users has metadata column (added in migration 003)
+    columns = [row["name"] for row in await provider.executeFetchAll("PRAGMA table_info(chat_users)")]
+    assert "metadata" in columns, "chat_users should have metadata column (migration 003)"
+    # Note: is_spammer column was removed in migration 009
 
 
 @pytest.mark.asyncio
@@ -493,14 +490,14 @@ async def testDataMigration(inMemoryDb):
     db = inMemoryDb
 
     # Add data before "migration"
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # Verify data persists (simulating migration)
-    chatInfo = db.getChatInfo(123)
+    chatInfo = await db.chatInfo.getChatInfo(123)
     assert chatInfo is not None
 
-    user = db.getChatUser(123, 1001)
+    user = await db.chatUsers.getChatUser(123, 1001)
     assert user is not None
     assert "metadata" in user  # Field added in migration 003
 
@@ -517,11 +514,11 @@ async def testJoinsAcrossTables(populatedDb):
 
     # Add messages
     now = datetime.datetime.now(datetime.UTC)
-    db.saveChatMessage(date=now, chatId=123, userId=1001, messageId=1, messageText="Test message 1")
-    db.saveChatMessage(date=now, chatId=123, userId=1002, messageId=2, messageText="Test message 2")
+    await db.chatMessages.saveChatMessage(date=now, chatId=123, userId=1001, messageId=1, messageText="Test message 1")
+    await db.chatMessages.saveChatMessage(date=now, chatId=123, userId=1002, messageId=2, messageText="Test message 2")
 
     # Get messages with user info (tests JOIN)
-    messages = db.getChatMessagesSince(chatId=123, sinceDateTime=now - datetime.timedelta(hours=1))
+    messages = await db.chatMessages.getChatMessagesSince(chatId=123, sinceDateTime=now - datetime.timedelta(hours=1))
 
     assert len(messages) == 2
     assert messages[0]["username"] in ["user1", "user2"]
@@ -536,7 +533,7 @@ async def testAggregations(populatedDb):
     # Add multiple messages
     now = datetime.datetime.now(datetime.UTC)
     for i in range(10):
-        db.saveChatMessage(
+        await db.chatMessages.saveChatMessage(
             date=now + datetime.timedelta(seconds=i),
             chatId=123,
             userId=1001,
@@ -545,7 +542,7 @@ async def testAggregations(populatedDb):
         )
 
     # Get user with message count
-    user = db.getChatUser(123, 1001)
+    user = await db.chatUsers.getChatUser(123, 1001)
     assert user is not None
     assert user["messages_count"] == 10
 
@@ -557,10 +554,10 @@ async def testFilteringAndSorting(populatedDb):
 
     # Add messages with different categories
     now = datetime.datetime.now(datetime.UTC)
-    db.saveChatMessage(
+    await db.chatMessages.saveChatMessage(
         date=now, chatId=123, userId=1001, messageId=1, messageText="User message", messageCategory=MessageCategory.USER
     )
-    db.saveChatMessage(
+    await db.chatMessages.saveChatMessage(
         date=now + datetime.timedelta(seconds=1),
         chatId=123,
         userId=1001,
@@ -568,7 +565,7 @@ async def testFilteringAndSorting(populatedDb):
         messageText="Bot message",
         messageCategory=MessageCategory.BOT,
     )
-    db.saveChatMessage(
+    await db.chatMessages.saveChatMessage(
         date=now + datetime.timedelta(seconds=2),
         chatId=123,
         userId=1001,
@@ -578,7 +575,7 @@ async def testFilteringAndSorting(populatedDb):
     )
 
     # Filter by category
-    userMessages = db.getChatMessagesSince(chatId=123, messageCategory=[MessageCategory.USER])
+    userMessages = await db.chatMessages.getChatMessagesSince(chatId=123, messageCategory=[MessageCategory.USER])
 
     assert len(userMessages) == 2
     assert all(msg["message_category"] == MessageCategory.USER for msg in userMessages)
@@ -596,7 +593,7 @@ async def testPagination(populatedDb):
     # Add many messages
     now = datetime.datetime.now(datetime.UTC)
     for i in range(50):
-        db.saveChatMessage(
+        await db.chatMessages.saveChatMessage(
             date=now + datetime.timedelta(seconds=i),
             chatId=123,
             userId=1001,
@@ -605,11 +602,11 @@ async def testPagination(populatedDb):
         )
 
     # Get first page
-    page1 = db.getChatMessagesSince(chatId=123, limit=10)
+    page1 = await db.chatMessages.getChatMessagesSince(chatId=123, limit=10)
     assert len(page1) == 10
 
     # Get second page
-    page2 = db.getChatMessagesSince(chatId=123, tillDateTime=page1[-1]["date"], limit=10)
+    page2 = await db.chatMessages.getChatMessagesSince(chatId=123, tillDateTime=page1[-1]["date"], limit=10)
     assert len(page2) == 10
 
     # Verify no overlap
@@ -630,7 +627,7 @@ async def testChatMessagesCrud(populatedDb):
 
     # CREATE
     now = datetime.datetime.now(datetime.UTC)
-    success = db.saveChatMessage(
+    success = await db.chatMessages.saveChatMessage(
         date=now,
         chatId=123,
         userId=1001,
@@ -643,19 +640,19 @@ async def testChatMessagesCrud(populatedDb):
     assert success is True
 
     # READ
-    message = db.getChatMessageByMessageId(123, 1)
+    message = await db.chatMessages.getChatMessageByMessageId(123, 1)
     assert message is not None
     assert message["message_text"] == "Test message"
     assert message["user_id"] == 1001
 
-    success = db.updateChatMessageCategory(123, 1, MessageCategory.BOT)
+    success = await db.chatMessages.updateChatMessageCategory(123, 1, MessageCategory.BOT)
     assert success is True
 
-    message = db.getChatMessageByMessageId(123, 1)
+    message = await db.chatMessages.getChatMessageByMessageId(123, 1)
     assert message["message_category"] == MessageCategory.BOT
 
     # DELETE (not implemented, but we can test retrieval)
-    messages = db.getChatMessagesSince(chatId=123)
+    messages = await db.chatMessages.getChatMessagesSince(chatId=123)
     assert len(messages) >= 1
 
 
@@ -670,35 +667,37 @@ async def testChatUsersCrud(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
 
     # CREATE
-    success = db.updateChatUser(chatId=123, userId=1001, username="testuser", fullName="Test User")
+    success = await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="testuser", fullName="Test User")
     assert success is True
 
     # READ
-    user = db.getChatUser(123, 1001)
+    user = await db.chatUsers.getChatUser(123, 1001)
     assert user is not None
     assert user["username"] == "testuser"
     assert user["full_name"] == "Test User"
     assert user["messages_count"] == 0
 
     # UPDATE
-    success = db.updateChatUser(chatId=123, userId=1001, username="updateduser", fullName="Updated User")
+    success = await db.chatUsers.updateChatUser(
+        chatId=123, userId=1001, username="updateduser", fullName="Updated User"
+    )
     assert success is True
 
     # READ updated
-    user = db.getChatUser(123, 1001)
+    user = await db.chatUsers.getChatUser(123, 1001)
     assert user["username"] == "updateduser"
     assert user["full_name"] == "Updated User"
 
     # UPDATE metadata
-    metadata = json.dumps({"key": "value"})
-    success = db.updateUserMetadata(123, 1001, metadata)
+    metadataDict = {"key": "value"}
+    success = await db.chatUsers.updateUserMetadata(123, 1001, metadataDict)
     assert success is True
 
-    user = db.getChatUser(123, 1001)
-    assert user["metadata"] == metadata
+    user = await db.chatUsers.getChatUser(123, 1001)
+    assert json.loads(user["metadata"]) == metadataDict
 
     # Note: is_spammer functionality removed in migration 009
 
@@ -714,47 +713,47 @@ async def testChatSettingsCrud(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
 
     # CREATE
-    success = db.setChatSetting(123, "model", "gpt-4", updatedBy=0)
+    success = await db.chatSettings.setChatSetting(123, "model", "gpt-4", updatedBy=0)
     assert success is True
 
     # READ
-    value = db.getChatSetting(123, "model")
+    value = await db.chatSettings.getChatSetting(123, "model")
     assert value == "gpt-4"
 
     # READ all
-    settings = db.getChatSettings(123)
+    settings = await db.chatSettings.getChatSettings(123)
     assert "model" in settings
     assert settings["model"] == ("gpt-4", 0)
 
     # UPDATE
-    success = db.setChatSetting(123, "model", "gpt-3.5-turbo", updatedBy=0)
+    success = await db.chatSettings.setChatSetting(123, "model", "gpt-3.5-turbo", updatedBy=0)
     assert success is True
 
-    value = db.getChatSetting(123, "model")
+    value = await db.chatSettings.getChatSetting(123, "model")
     assert value == "gpt-3.5-turbo"
 
     # CREATE multiple
-    db.setChatSetting(123, "temperature", "0.7", updatedBy=0)
-    db.setChatSetting(123, "max_tokens", "1000", updatedBy=0)
+    await db.chatSettings.setChatSetting(123, "temperature", "0.7", updatedBy=0)
+    await db.chatSettings.setChatSetting(123, "max_tokens", "1000", updatedBy=0)
 
-    settings = db.getChatSettings(123)
+    settings = await db.chatSettings.getChatSettings(123)
     assert len(settings) == 3
 
     # DELETE one
-    success = db.unsetChatSetting(123, "temperature")
+    success = await db.chatSettings.unsetChatSetting(123, "temperature")
     assert success is True
 
-    value = db.getChatSetting(123, "temperature")
+    value = await db.chatSettings.getChatSetting(123, "temperature")
     assert value is None
 
     # DELETE all
-    success = db.clearChatSettings(123)
+    success = await db.chatSettings.clearChatSettings(123)
     assert success is True
 
-    settings = db.getChatSettings(123)
+    settings = await db.chatSettings.getChatSettings(123)
     assert len(settings) == 0
 
 
@@ -769,45 +768,45 @@ async def testUserDataCrud(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # CREATE
-    success = db.addUserData(1001, 123, "preference", "dark_mode")
+    success = await db.userData.addUserData(1001, 123, "preference", "dark_mode")
     assert success is True
 
     # READ
-    data = db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert "preference" in data
     assert data["preference"] == "dark_mode"
 
     # UPDATE
-    success = db.addUserData(1001, 123, "preference", "light_mode")
+    success = await db.userData.addUserData(1001, 123, "preference", "light_mode")
     assert success is True
 
-    data = db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert data["preference"] == "light_mode"
 
     # CREATE multiple
-    db.addUserData(1001, 123, "language", "en")
-    db.addUserData(1001, 123, "timezone", "UTC")
+    await db.userData.addUserData(1001, 123, "language", "en")
+    await db.userData.addUserData(1001, 123, "timezone", "UTC")
 
-    data = db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert len(data) == 3
 
     # DELETE one
-    success = db.deleteUserData(1001, 123, "language")
+    success = await db.userData.deleteUserData(1001, 123, "language")
     assert success is True
 
-    data = db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert "language" not in data
     assert len(data) == 2
 
     # DELETE all
-    success = db.clearUserData(1001, 123)
+    success = await db.userData.clearUserData(1001, 123)
     assert success is True
 
-    data = db.getUserData(1001, 123)
+    data = await db.userData.getUserData(1001, 123)
     assert len(data) == 0
 
 
@@ -827,22 +826,22 @@ async def testDelayedTasksCrud(inMemoryDb):
     kwargs = json.dumps({"chat_id": 123, "text": "Hello"})
     delayedTs = int(datetime.datetime.now(datetime.UTC).timestamp()) + 3600
 
-    success = db.addDelayedTask(taskId, function, kwargs, delayedTs)
+    success = await db.delayedTasks.addDelayedTask(taskId, function, kwargs, delayedTs)
     assert success is True
 
     # READ
-    tasks = db.getPendingDelayedTasks()
+    tasks = await db.delayedTasks.getPendingDelayedTasks()
     assert len(tasks) == 1
     assert tasks[0]["id"] == taskId
     assert tasks[0]["function"] == function
     assert tasks[0]["is_done"] is False
 
     # UPDATE
-    success = db.updateDelayedTask(taskId, isDone=True)
+    success = await db.delayedTasks.updateDelayedTask(taskId, isDone=True)
     assert success is True
 
     # READ updated
-    tasks = db.getPendingDelayedTasks()
+    tasks = await db.delayedTasks.getPendingDelayedTasks()
     assert len(tasks) == 0  # No pending tasks
 
 
@@ -857,11 +856,11 @@ async def testSpamHamMessagesCrud(inMemoryDb):
     db = inMemoryDb
 
     # Setup
-    db.updateChatInfo(chatId=123, type="group", title="Test")
-    db.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
 
     # CREATE spam message
-    success = db.addSpamMessage(
+    success = await db.spam.addSpamMessage(
         chatId=123,
         userId=1001,
         messageId=1,
@@ -873,17 +872,17 @@ async def testSpamHamMessagesCrud(inMemoryDb):
     assert success is True
 
     # READ spam messages
-    spamMessages = db.getSpamMessages(limit=10)
+    spamMessages = await db.spam.getSpamMessages(limit=10)
     assert len(spamMessages) == 1
     assert spamMessages[0]["text"] == "Buy now!"
     assert spamMessages[0]["score"] == 0.95
 
     # READ by user
-    userSpam = db.getSpamMessagesByUserId(123, 1001)
+    userSpam = await db.spam.getSpamMessagesByUserId(123, 1001)
     assert len(userSpam) == 1
 
     # CREATE ham message
-    success = db.addHamMessage(
+    success = await db.spam.addHamMessage(
         chatId=123,
         userId=1001,
         messageId=2,
@@ -895,10 +894,10 @@ async def testSpamHamMessagesCrud(inMemoryDb):
     assert success is True
 
     # DELETE spam by user
-    success = db.deleteSpamMessagesByUserId(123, 1001)
+    success = await db.spam.deleteSpamMessagesByUserId(123, 1001)
     assert success is True
 
-    spamMessages = db.getSpamMessagesByUserId(123, 1001)
+    spamMessages = await db.spam.getSpamMessagesByUserId(123, 1001)
     assert len(spamMessages) == 0
 
 
@@ -915,29 +914,29 @@ async def testCacheOperationsCrud(inMemoryDb):
     # CREATE weather cache
     key = "weather:london"
     data = json.dumps({"temp": 20, "condition": "sunny"})
-    success = db.setCacheEntry(key, data, CacheType.WEATHER)
+    success = await db.cache.setCacheEntry(key, data, CacheType.WEATHER)
     assert success is True
 
     # READ
-    entry = db.getCacheEntry(key, CacheType.WEATHER)
+    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER)
     assert entry is not None
     assert entry["key"] == key
     assert entry["data"] == data
 
     # UPDATE
     newData = json.dumps({"temp": 22, "condition": "cloudy"})
-    success = db.setCacheEntry(key, newData, CacheType.WEATHER)
+    success = await db.cache.setCacheEntry(key, newData, CacheType.WEATHER)
     assert success is True
 
-    entry = db.getCacheEntry(key, CacheType.WEATHER)
+    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER)
     assert entry["data"] == newData
 
     # Test TTL
-    entry = db.getCacheEntry(key, CacheType.WEATHER, ttl=3600)
+    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER, ttl=3600)
     assert entry is not None
 
     # Test expired TTL
-    entry = db.getCacheEntry(key, CacheType.WEATHER, ttl=0)
+    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER, ttl=0)
     assert entry is None
 
 
@@ -947,27 +946,27 @@ async def testCacheStorageOperations(inMemoryDb):
     db = inMemoryDb
 
     # CREATE
-    success = db.setCacheStorage("test_namespace", "key1", "value1")
+    success = await db.cache.setCacheStorage("test_namespace", "key1", "value1")
     assert success is True
 
     # READ all
-    entries = db.getCacheStorage()
+    entries = await db.cache.getCacheStorage()
     assert len(entries) >= 1
     assert any(e["namespace"] == "test_namespace" and e["key"] == "key1" for e in entries)
 
     # UPDATE
-    success = db.setCacheStorage("test_namespace", "key1", "value2")
+    success = await db.cache.setCacheStorage("test_namespace", "key1", "value2")
     assert success is True
 
-    entries = db.getCacheStorage()
+    entries = await db.cache.getCacheStorage()
     entry = next(e for e in entries if e["namespace"] == "test_namespace" and e["key"] == "key1")
     assert entry["value"] == "value2"
 
     # DELETE
-    success = db.unsetCacheStorage("test_namespace", "key1")
+    success = await db.cache.unsetCacheStorage("test_namespace", "key1")
     assert success is True
 
-    entries = db.getCacheStorage()
+    entries = await db.cache.getCacheStorage()
     assert not any(e["namespace"] == "test_namespace" and e["key"] == "key1" for e in entries)
 
 
@@ -983,10 +982,12 @@ async def testCompleteMessageWorkflow(populatedDb):
 
     # 1. Save message with media
     fileUniqueId = "media_123"
-    db.addMediaAttachment(fileUniqueId=fileUniqueId, fileId="file_123", mediaType=MessageType.IMAGE, metadata="{}")
+    await db.mediaAttachments.addMediaAttachment(
+        fileUniqueId=fileUniqueId, fileId="file_123", mediaType=MessageType.IMAGE, metadata="{}"
+    )
 
     now = datetime.datetime.now(datetime.UTC)
-    success = db.saveChatMessage(
+    success = await db.chatMessages.saveChatMessage(
         date=now,
         chatId=123,
         userId=1001,
@@ -999,20 +1000,20 @@ async def testCompleteMessageWorkflow(populatedDb):
     assert success is True
 
     # 2. Retrieve message with media info
-    message = db.getChatMessageByMessageId(123, 1)
+    message = await db.chatMessages.getChatMessageByMessageId(123, 1)
     assert message is not None
     assert message["media_id"] == fileUniqueId
 
     # 3. Update media status
-    db.updateMediaAttachment(fileUniqueId, status=MediaStatus.DONE)
+    await db.mediaAttachments.updateMediaAttachment(mediaId=fileUniqueId, status=MediaStatus.DONE)
 
     # 4. Verify media status was updated
-    media = db.getMediaAttachment(fileUniqueId)
+    media = await db.mediaAttachments.getMediaAttachment(fileUniqueId)
     assert media is not None
     assert media["status"] == MediaStatus.DONE
 
     # 5. Check user stats updated
-    user = db.getChatUser(123, 1001)
+    user = await db.chatUsers.getChatUser(123, 1001)
     assert user["messages_count"] >= 1
 
 
@@ -1024,10 +1025,12 @@ async def testConversationThreadWorkflow(populatedDb):
     now = datetime.datetime.now(datetime.UTC)
 
     # 1. Root message
-    db.saveChatMessage(date=now, chatId=123, userId=1001, messageId=1, messageText="Root message", threadId=0)
+    await db.chatMessages.saveChatMessage(
+        date=now, chatId=123, userId=1001, messageId=1, messageText="Root message", threadId=0
+    )
 
     # 2. Reply to root
-    db.saveChatMessage(
+    await db.chatMessages.saveChatMessage(
         date=now + datetime.timedelta(seconds=1),
         chatId=123,
         userId=1002,
@@ -1039,7 +1042,7 @@ async def testConversationThreadWorkflow(populatedDb):
     )
 
     # 3. Another reply to root
-    db.saveChatMessage(
+    await db.chatMessages.saveChatMessage(
         date=now + datetime.timedelta(seconds=2),
         chatId=123,
         userId=1001,
@@ -1051,7 +1054,7 @@ async def testConversationThreadWorkflow(populatedDb):
     )
 
     # 4. Get conversation thread
-    thread = db.getChatMessagesByRootId(123, 1, threadId=0)
+    thread = await db.chatMessages.getChatMessagesByRootId(123, 1, threadId=0)
     assert len(thread) == 2
     assert int(thread[0]["message_id"]) == 2
     assert int(thread[1]["message_id"]) == 3
@@ -1065,7 +1068,7 @@ async def testSummarizationCacheWorkflow(populatedDb):
     # Add messages
     now = datetime.datetime.now(datetime.UTC)
     for i in range(5):
-        db.saveChatMessage(
+        await db.chatMessages.saveChatMessage(
             date=now + datetime.timedelta(seconds=i),
             chatId=123,
             userId=1001,
@@ -1076,24 +1079,28 @@ async def testSummarizationCacheWorkflow(populatedDb):
     # Add summarization
     prompt = "Summarize the conversation"
     summary = "This is a summary of 5 messages"
-    success = db.addChatSummarization(
+    success = await db.chatSummarization.addChatSummarization(
         chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt, summary=summary
     )
     assert success is True
 
     # Retrieve summarization
-    cached = db.getChatSummarization(chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt)
+    cached = await db.chatSummarization.getChatSummarization(
+        chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt
+    )
     assert cached is not None
     assert cached["summary"] == summary
 
     # Update summarization
     newSummary = "Updated summary"
-    success = db.addChatSummarization(
+    success = await db.chatSummarization.addChatSummarization(
         chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt, summary=newSummary
     )
     assert success is True
 
-    cached = db.getChatSummarization(chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt)
+    cached = await db.chatSummarization.getChatSummarization(
+        chatId=123, topicId=None, firstMessageId=1, lastMessageId=5, prompt=prompt
+    )
     assert cached["summary"] == newSummary
 
 
@@ -1103,22 +1110,22 @@ async def testChatTopicsWorkflow(inMemoryDb):
     db = inMemoryDb
 
     # Setup forum chat
-    db.updateChatInfo(chatId=123, type="supergroup", title="Forum", isForum=True)
+    await db.chatInfo.updateChatInfo(chatId=123, type="supergroup", title="Forum", isForum=True)
 
     # Add topics
-    db.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0xFF0000, topicName="General")
-    db.updateChatTopicInfo(chatId=123, topicId=2, iconColor=0x00FF00, topicName="Support")
+    await db.chatInfo.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0xFF0000, topicName="General")
+    await db.chatInfo.updateChatTopicInfo(chatId=123, topicId=2, iconColor=0x00FF00, topicName="Support")
 
     # Get topics
-    topics = db.getChatTopics(123)
+    topics = await db.chatInfo.getChatTopics(123)
     assert len(topics) == 2
     assert any(t["name"] == "General" for t in topics)
     assert any(t["name"] == "Support" for t in topics)
 
     # Update topic
-    db.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0x0000FF, topicName="General Discussion")
+    await db.chatInfo.updateChatTopicInfo(chatId=123, topicId=1, iconColor=0x0000FF, topicName="General Discussion")
 
-    topics = db.getChatTopics(123)
+    topics = await db.chatInfo.getChatTopics(123)
     topic = next(t for t in topics if t["topic_id"] == 1)
     assert topic["name"] == "General Discussion"
     assert topic["icon_color"] == 0x0000FF
@@ -1130,25 +1137,25 @@ async def testGlobalSettingsWorkflow(inMemoryDb):
     db = inMemoryDb
 
     # Set settings
-    db.setSetting("bot_version", "1.0.0")
-    db.setSetting("maintenance_mode", "false")
+    await db.common.setSetting("bot_version", "1.0.0")
+    await db.common.setSetting("maintenance_mode", "false")
 
     # Get individual setting
-    version = db.getSetting("bot_version")
+    version = await db.common.getSetting("bot_version")
     assert version == "1.0.0"
 
     # Get all settings
-    settings = db.getSettings()
+    settings = await db.common.getSettings()
     assert "bot_version" in settings
     assert "maintenance_mode" in settings
 
     # Update setting
-    db.setSetting("bot_version", "1.0.1")
-    version = db.getSetting("bot_version")
+    await db.common.setSetting("bot_version", "1.0.1")
+    version = await db.common.getSetting("bot_version")
     assert version == "1.0.1"
 
     # Get with default
-    value = db.getSetting("nonexistent", "default_value")
+    value = await db.common.getSetting("nonexistent", "default_value")
     assert value == "default_value"
 
 
@@ -1158,11 +1165,11 @@ async def testUserChatRelationships(populatedDb):
     db = populatedDb
 
     # Add user to multiple chats
-    db.updateChatInfo(chatId=789, type="group", title="Another Chat")
-    db.updateChatUser(chatId=789, userId=1001, username="user1", fullName="User One")
+    await db.chatInfo.updateChatInfo(chatId=789, type="group", title="Another Chat")
+    await db.chatUsers.updateChatUser(chatId=789, userId=1001, username="user1", fullName="User One")
 
     # Get user's chats
-    chats = db.getUserChats(1001)
+    chats = await db.chatUsers.getUserChats(1001)
     assert len(chats) >= 2
     chatIds = {chat["chat_id"] for chat in chats}
     assert 123 in chatIds
@@ -1170,7 +1177,7 @@ async def testUserChatRelationships(populatedDb):
     assert 789 in chatIds
 
     # Get all group chats
-    groupChats = db.getAllGroupChats()
+    groupChats = await db.chatUsers.getAllGroupChats()
     assert len(groupChats) >= 2
     assert any(chat["chat_id"] == 123 for chat in groupChats)
     assert any(chat["chat_id"] == 789 for chat in groupChats)
@@ -1187,19 +1194,19 @@ async def testErrorHandlingInvalidData(inMemoryDb):
     db = inMemoryDb
 
     # Try to get non-existent chat
-    chatInfo = db.getChatInfo(99999)
+    chatInfo = await db.chatInfo.getChatInfo(99999)
     assert chatInfo is None
 
     # Try to get non-existent user
-    user = db.getChatUser(123, 99999)
+    user = await db.chatUsers.getChatUser(123, 99999)
     assert user is None
 
     # Try to get non-existent message
-    message = db.getChatMessageByMessageId(123, 99999)
+    message = await db.chatMessages.getChatMessageByMessageId(123, 99999)
     assert message is None
 
     # Try to get non-existent setting
-    setting = db.getChatSetting(123, "nonexistent")
+    setting = await db.chatSettings.getChatSetting(123, "nonexistent")
     assert setting is None
 
 
@@ -1209,21 +1216,21 @@ async def testRecoveryAfterError(inMemoryDb):
     db = inMemoryDb
 
     # Add valid data
-    db.updateChatInfo(chatId=123, type="group", title="Test")
+    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
 
     # Cause an error
     try:
-        with db.getCursor() as cursor:
-            cursor.execute("INVALID SQL")
+        provider = await db.manager.getProvider(readonly=False)
+        await provider.execute("INVALID SQL")
     except sqlite3.OperationalError:
         pass  # Expected error
 
     # Verify database still works
-    chatInfo = db.getChatInfo(123)
+    chatInfo = await db.chatInfo.getChatInfo(123)
     assert chatInfo is not None
 
     # Add more data
-    success = db.updateChatUser(123, 1001, "user1", "User One")
+    success = await db.chatUsers.updateChatUser(123, 1001, "user1", "User One")
     assert success is True
 
 
@@ -1234,15 +1241,15 @@ async def testEmptyResultHandling(populatedDb):
 
     # Get messages from empty time range
     future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1)
-    messages = db.getChatMessagesSince(chatId=123, sinceDateTime=future)
+    messages = await db.chatMessages.getChatMessagesSince(chatId=123, sinceDateTime=future)
     assert messages == []
 
     # Get users with no recent activity
-    users = db.getChatUsers(chatId=123, seenSince=future)
+    users = await db.chatUsers.getChatUsers(chatId=123, seenSince=future)
     assert users == []
 
     # Get spam messages when none exist
-    spamMessages = db.getSpamMessages(limit=10)
+    spamMessages = await db.spam.getSpamMessages(limit=10)
     assert spamMessages == []
 
 

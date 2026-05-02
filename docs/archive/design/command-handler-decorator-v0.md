@@ -142,7 +142,7 @@ Modify the [`BotHandlers`](internal/bot/handlers.py:88) class:
 class BotHandlers:
     """Contains all bot command and message handlers."""
     
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         # ... existing initialization code ...
         
         # Bind registered handlers to this instance

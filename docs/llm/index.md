@@ -194,7 +194,7 @@ make test
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | 1000 | `TheBot` – platform-agnostic bot ops |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | 1805 | `BaseBotHandler`, `HandlerResultStatus` |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | 892 | `HandlersManager` – handler chain |
-| [`internal/database/wrapper.py`](../../internal/database/wrapper.py) | 3021 | `DatabaseWrapper` – all DB ops |
+| [`internal/database/database.py`](../../internal/database/database.py) | 191 | `Database` – all DB operations with repository pattern |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | 280 | `ConfigManager` – TOML loading |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | 796 | `CacheService` singleton |
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | 531 | `LLMService` singleton |
@@ -215,7 +215,7 @@ make test
 | [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | Max Messenger bot application |
 | [`internal/bot/models/`](../../internal/bot/models/) | Bot model types (EnsuredMessage, ChatSettings, etc.) |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` — TOML config loading |
-| [`internal/database/wrapper.py`](../../internal/database/wrapper.py) | `DatabaseWrapper` — all DB operations (3021 lines) |
+| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern (191 lines) |
 | [`internal/database/migrations/`](../../internal/database/migrations/) | `MigrationManager`, `BaseMigration`, version files |
 | [`internal/models.py`](../../internal/models.py) | Shared type aliases (`MessageIdType`, `MessageType`) |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |

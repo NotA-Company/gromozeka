@@ -1,87 +1,93 @@
 """
-Unify cache tables migration - consolidates all cache tables into one, dood!
+Unify cache tables migration - consolidates all cache tables into one.
 
 This migration replaces the 6 separate cache_{type} tables with a single
 unified_cache table that uses a namespace column to distinguish cache types.
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
 class Migration012UnifyCacheTables(BaseMigration):
-    """Unify all cache tables into a single unified_cache table, dood!"""
+    """Unify all cache tables into a single unified_cache table."""
 
     version = 12
     description = "Unify cache tables into single unified_cache table"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        """Create unified_cache table and drop old cache tables, dood!
-        
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        """Create unified_cache table and drop old cache tables.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
-        # Create generic cache table with namespace support
-        cursor.execute(
-            """
+        from ...models import CacheType
+
+        await sqlProvider.batchExecute(
+            [
+                # Create generic cache table with namespace support
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS cache (
                 namespace TEXT NOT NULL,
                 key TEXT NOT NULL,
                 data TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (namespace, key)
             )
-            """
-        )
-        
-        # Add index on namespace column for efficient filtering
-        cursor.execute(
-            """
+            """),
+                # Add index on namespace column for efficient filtering
+                ParametrizedQuery("""
             CREATE INDEX IF NOT EXISTS idx_cache_namespace_key
             ON cache (namespace, key)
-            """
-        )
-        
-        # Add index on updated_at column for TTL cleanup
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_cache_updated_at 
+            """),
+                # Add index on updated_at column for TTL cleanup
+                ParametrizedQuery("""
+            CREATE INDEX IF NOT EXISTS idx_cache_updated_at
             ON cache (updated_at)
-            """
+            """),
+                # Drop old cache tables
+                *[ParametrizedQuery(f"DROP TABLE IF EXISTS cache_{cacheType}") for cacheType in CacheType],
+            ]
         )
-        from ...models import CacheType
-        
-        # Drop old cache tables
-        for cacheType in CacheType:
-            cursor.execute(f"DROP TABLE IF EXISTS cache_{cacheType}")
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        """Revert to separate cache tables, dood!
-        
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        """Revert to separate cache tables.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
-        """  
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
+        """
         from ...models import CacheType
-        
-        # Recreate old cache tables
-        for cacheType in CacheType:
-            cursor.execute(
-                f"""
+
+        await sqlProvider.batchExecute(
+            [
+                # Recreate old cache tables
+                *[ParametrizedQuery(f"""
                 CREATE TABLE IF NOT EXISTS cache_{cacheType} (
                     key TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
                 )
-                """
-            )
-        
-        # Drop unified cache table
-        cursor.execute("DROP TABLE IF EXISTS cache")
+                """) for cacheType in CacheType],
+                # Drop unified cache table
+                ParametrizedQuery("DROP TABLE IF EXISTS cache"),
+            ]
+        )
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration012UnifyCacheTables

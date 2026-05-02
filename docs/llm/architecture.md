@@ -110,15 +110,16 @@ class MyService:
 
 ### ADR-004: Multi-Source Database Routing
 
-**Decision:** [`DatabaseWrapper`](../../internal/database/wrapper.py) supports multiple SQLite sources with internal routing, dood!
+**Decision:** [`Database`](../../internal/database/database.py) supports multiple database sources with internal routing using repository pattern, dood!
 
 **Why:** Allows read replicas, separate databases for different data types, cross-bot data reading, dood!
 
 **Architecture Principles:**
-- **Single Class Design**: All routing logic internal to `DatabaseWrapper` — no separate Router class
+- **Repository Pattern**: 12 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common)
 - **Simple Priority Routing**: `dataSource` param → `chatId` mapping → default source
 - **Readonly Protection**: Sources marked `readonly=True` reject write operations
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
+- **SQL Portability**: All SQL is provider-agnostic, supporting SQLite3, PostgreSQL, MySQL, and SQLink
 
 **Config:** `[database.sources.*]` in TOML, routing via `dataSource` parameter on read methods:
 ```toml
@@ -138,15 +139,31 @@ pool-size = 10
 timeout = 10
 ```
 
-**Method categories in `DatabaseWrapper`:**
-- 19 chat-specific methods use routing
-- 14 cross-chat methods handle multiple sources or use default
-- 15 internal helper methods remain unchanged
+**SQL Portability Notes:**
+- Migration 013 removed `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns for cross-database compatibility
+- All timestamp values are now explicitly set in application code
+- Provider abstraction layer (`internal/database/providers/`) handles database-specific SQL dialects
+- Supports SQLite3, PostgreSQL, MySQL, and SQLink (SQLite3 over REST) providers
+
+**Repository Structure:**
+- `ChatInfoRepository` — Chat metadata and information
+- `ChatMessagesRepository` — Message storage and retrieval
+- `ChatSettingsRepository` — Chat configuration settings
+- `ChatUsersRepository` — User-chat relationships
+- `ChatSummarizationRepository` — Chat summarization data
+- `CacheRepository` — Cache storage operations
+- `SpamRepository` — Spam detection and messages
+- `UserDataRepository` — User-specific data
+- `MediaAttachmentsRepository` — Media file attachments
+- `DelayedTasksRepository` — Scheduled task management
+- `CommonRepository` — Shared/common operations
+- `BaseRepository` — Abstract base with common functionality
 
 **Implementation Details:**
 - `ConnectionManager`: Manages connection pools per data source with thread-safe access
 - Backward compatible: Works with legacy single database mode
 - Optional `dataSource` parameter: Zero breaking changes
+- Repository pattern provides clear separation of concerns and easier testing
 
 ---
 
@@ -260,7 +277,7 @@ mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
 GromozekBot (main.py)
 ├── ConfigManager (internal/config/manager.py)
 ├── DatabaseManager (internal/database/manager.py)
-│   └── DatabaseWrapper (internal/database/wrapper.py)
+│   └── Database (internal/database/database.py)
 │       └── MigrationManager (internal/database/migrations/manager.py)
 ├── LLMManager (lib/ai/manager.py)
 │   └── AbstractLLMProvider (lib/ai/abstract.py)
@@ -277,7 +294,7 @@ GromozekBot (main.py)
                 ├── QueueService.getInstance()
                 ├── StorageService.getInstance()
                 ├── LLMService.getInstance() (internal/services/llm/service.py)
-                ├── DatabaseWrapper (via self.db)
+                ├── Database (via self.db)
                 ├── LLMManager (via self.llmManager)
                 ├── ConfigManager (via self.configManager)
                 └── TheBot (internal/bot/common/bot.py) [injected]
@@ -290,7 +307,7 @@ GromozekBot (main.py)
 Services MUST be initialized in this order:
 
 1. `ConfigManager` — first, everything needs config
-2. `DatabaseManager` / `DatabaseWrapper` — second, services need DB
+2. `DatabaseManager` / `Database` — second, services need DB
 3. `LLMManager` — third, handlers need LLM
 4. `RateLimiterManager.getInstance().loadConfig(...)` — fourth
 5. `BotApplication` init — which triggers:
@@ -305,7 +322,7 @@ Services MUST be initialized in this order:
 
 | File Modified | What Could Break | Verification |
 |---|---|---|
-| [`internal/database/wrapper.py`](../../internal/database/wrapper.py) | All DB operations, all handlers that use `self.db` | `make test` — `tests/test_db_wrapper.py` |
+| [`internal/database/database.py`](../../internal/database/database.py) | All DB operations, all handlers that use `self.db` | `make test` — `tests/integration/test_database_operations.py` |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | ALL handlers (they all inherit from `BaseBotHandler`) | Full `make test` |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | Handler chain order, command routing, parallelism | Full `make test` |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | Config loading for the entire app | Full `make test` |
@@ -320,7 +337,7 @@ Services MUST be initialized in this order:
 ### 2.4 Safe vs. Risky Modifications
 
 #### Safe (isolated, dood!)
-- Adding a new method to `DatabaseWrapper` without changing existing methods
+- Adding a new repository to `Database` without changing existing repositories
 - Adding a new handler file without modifying `manager.py`
 - Adding a new config getter to `ConfigManager`
 - Adding a new LLM provider to `lib/ai/providers/`
@@ -333,7 +350,7 @@ Services MUST be initialized in this order:
 
 #### High Risk (ALWAYS run full `make test`, dood!)
 - Modifying `BaseBotHandler.__init__()` signature
-- Changing `DatabaseWrapper` core connection methods
+- Changing `Database` core connection methods or repository interfaces
 - Modifying `ConfigManager._loadConfig()` or `_mergeConfigs()`
 - Changing `TheBot.sendMessage()` signature
 - Modifying `HandlersManager._processMessageRec()`
@@ -372,7 +389,7 @@ Three-layer structure:
 
 ### 3.5 Migration Documentation Protocol
 
-**Critical lesson from migration_009 error, dood!**
+**Critical lesson from migration_009 and migration_012 errors, dood!**
 
 When creating or modifying database migrations, ALWAYS:
 
@@ -418,10 +435,10 @@ When creating or modifying database migrations, ALWAYS:
    ```
 
 2. **Version Calculation Rule:**
-   ```
-   New Migration Version = Latest Migration Version + 1
-   ```
-   Example: If highest is `migration_008`, create `migration_009`
+    ```
+    New Migration Version = Latest Migration Version + 1
+    ```
+    Example: If highest is `migration_012`, create `migration_013`
 
 3. **Never assume the next version** — always list the directory first
 
@@ -438,5 +455,5 @@ When creating or modifying database migrations, ALWAYS:
 
 ---
 
-*This guide is auto-maintained and should be updated whenever significant architectural changes are made, dood!*  
-*Last updated: 2026-04-18, dood!*
+*This guide is auto-maintained and should be updated whenever significant architectural changes are made, dood!*
+*Last updated: 2026-05-02, dood!*

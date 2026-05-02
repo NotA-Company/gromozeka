@@ -388,7 +388,7 @@ class BotTaskHandler:
 # internal/bot/handlers/main.py
 
 class BotHandlers(CommandHandlerMixin):
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         # ... existing init code ...
         
         # Initialize task orchestrator

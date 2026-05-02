@@ -22,8 +22,8 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from lib.ai import LLMFunctionParameter, LLMManager, LLMParameterType
@@ -45,7 +45,7 @@ class ExampleHandler(BaseBotHandler):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):
@@ -57,7 +57,7 @@ class ExampleHandler(BaseBotHandler):
 
         Args:
             configManager (ConfigManager): Configuration manager for bot settings.
-            database (DatabaseWrapper): Database wrapper for persistent storage.
+            database (Database): Database object for persistent storage.
             llmManager (LLMManager): LLM manager for AI-powered features.
 
         Note:

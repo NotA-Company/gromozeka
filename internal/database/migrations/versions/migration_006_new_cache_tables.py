@@ -1,51 +1,63 @@
 """
-Initial schema migration - creates all base tables, dood!
+Add new cache tables for all cache types.
 
-This migration extracts all table creation from the original _initDatabase() method.
+This migration creates cache tables for all defined cache types to support
+persistent caching across different services.
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
 class Migration006NewCacheTables(BaseMigration):
-    """Initial database schema migration, dood!"""
+    """Add new cache tables for all cache types."""
 
     version = 6
     description = "Add New Cache Tables"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        """Create all initial tables, dood!
-        
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        """Create cache tables for all cache types.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Create all Cache Tables
         # Import CacheType here to avoid circular dependency
         from ...models import CacheType
-        
-        for cacheType in CacheType:
-            cursor.execute(
-                f"""
+
+        await sqlProvider.batchExecute([ParametrizedQuery(f"""
                 CREATE TABLE IF NOT EXISTS cache_{cacheType} (
                     key TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
                 )
-                """
-            )
+                """) for cacheType in CacheType])
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        """Do not want to
-        
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        """Rollback is not supported for this migration.
+
+        This migration creates cache tables that should not be dropped
+        as they may contain important cached data.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         pass
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration006NewCacheTables

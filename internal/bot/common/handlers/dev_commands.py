@@ -270,7 +270,7 @@ class DevCommandsHandler(BaseBotHandler):
         if argList and argList[0].lower() in ["skip-default", "skip-defaults"]:
             skipDefault = True
 
-        chatInfo = self.getChatInfo(targetChatId)
+        chatInfo = await self.getChatInfo(targetChatId)
         if not chatInfo:
             await self.sendMessage(
                 ensuredMessage,
@@ -282,9 +282,9 @@ class DevCommandsHandler(BaseBotHandler):
         chatName = self.getChatTitle(chatInfo)
 
         resp = f"Настройки чата {chatName}:\n\n"
-        chatSettings = self.getChatSettings(targetChatId)
-        chatSettingsNoDef = self.getChatSettings(targetChatId, returnDefault=False)
-        defaultSettings = self.getChatSettings(
+        chatSettings = await self.getChatSettings(targetChatId)
+        chatSettingsNoDef = await self.getChatSettings(targetChatId, returnDefault=False)
+        defaultSettings = await self.getChatSettings(
             None,
             chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP,
             chatTier=self.getChatTier(chatSettings),
@@ -400,14 +400,14 @@ class DevCommandsHandler(BaseBotHandler):
         if isSet:
             value = " ".join(argList[1:]).strip()
 
-            self.setChatSetting(targetChatId, key, ChatSettingsValue(value), user=ensuredMessage.sender)
+            await self.setChatSetting(targetChatId, key, ChatSettingsValue(value), user=ensuredMessage.sender)
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{keyStr}` в чате #`{targetChatId}`:\n```\n{value}\n```",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
         else:
-            self.unsetChatSetting(targetChatId, key)
+            await self.unsetChatSetting(targetChatId, key)
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{keyStr}` в чате #`{targetChatId}` сброшено в значение по умолчанию",

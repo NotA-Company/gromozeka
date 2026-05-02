@@ -33,7 +33,7 @@ from threading import RLock
 from typing import Any, Dict, List, Optional
 
 import lib.utils as utils
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 
 from . import constants
 from .types import DelayedTask, DelayedTaskFunction, DelayedTaskHandler
@@ -58,7 +58,7 @@ class QueueService:
     supports registering custom handlers for different task types.
 
     Attributes:
-        db (Optional[DatabaseWrapper]): Database connection for task persistence
+        db (Optional[Database]): Database connection for task persistence
         asyncTasksQueue (asyncio.Queue): Queue for background async tasks
         queueLastUpdated (float): Timestamp of last queue update
         delayedActionsQueue (asyncio.PriorityQueue): Priority queue for delayed tasks
@@ -110,7 +110,7 @@ class QueueService:
             thread-safe singleton pattern via __new__.
         """
         if not hasattr(self, "initialized"):
-            self.db: Optional["DatabaseWrapper"] = None
+            self.db: Optional[Database] = None
 
             self.backgroundTasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
             self.queueLastUpdated = time.time()
@@ -238,7 +238,7 @@ class QueueService:
 
         logger.info(f"Registered handler for {function}: {handler}")
 
-    async def startDelayedScheduler(self, db: "DatabaseWrapper") -> None:
+    async def startDelayedScheduler(self, db: Database) -> None:
         """
         Initialize and start the delayed task scheduler, dood!
 
@@ -250,7 +250,7 @@ class QueueService:
         5. Starts the delayed queue processor loop
 
         Args:
-            db (DatabaseWrapper): Database connection for task persistence
+            db (Database): Database class for task persistence
 
         Raises:
             Exception: If scheduler is already initialized (db is not None)
@@ -262,7 +262,7 @@ class QueueService:
             - Initial background processing scheduled for 600 seconds (10 minutes)
 
         Example:
-            >>> db = DatabaseWrapper(...)
+            >>> db = Database(...)
             >>> await queueService.startDelayedScheduler(db)
         """
 
@@ -280,7 +280,7 @@ class QueueService:
             skipDB=True,
         )
 
-        tasks = self.db.getPendingDelayedTasks()
+        tasks = await self.db.delayedTasks.getPendingDelayedTasks()
         for task in tasks:
             await self.addDelayedTask(
                 delayedUntil=float(task["delayed_ts"]),
@@ -368,7 +368,7 @@ class QueueService:
                             logger.exception(e)
 
                 if self.db is not None:
-                    self.db.updateDelayedTask(delayedTask.taskId, True)
+                    await self.db.delayedTasks.updateDelayedTask(delayedTask.taskId, True)
                 else:
                     logger.error("No database connection, this shouldn't happen")
 
@@ -435,7 +435,7 @@ class QueueService:
         if not skipDB:
             if self.db is None:
                 raise Exception("No database connection")
-            self.db.addDelayedTask(
+            await self.db.delayedTasks.addDelayedTask(
                 taskId=taskId,
                 function=function,
                 kwargs=utils.jsonDumps(kwargs, ensure_ascii=False, default=str),

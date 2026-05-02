@@ -73,8 +73,8 @@ class ReactOnUserMessageHandler(BaseBotHandler):
 
         return ret
 
-    def _getAuthorToEmojiMap(self, chatId: int) -> Dict[str | int, str]:
-        chatSettings = self.getChatSettings(chatId)
+    async def _getAuthorToEmojiMap(self, chatId: int) -> Dict[str | int, str]:
+        chatSettings = await self.getChatSettings(chatId)
         authorToEmojiMapStr = chatSettings[ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP].toStr()
 
         authorToEmojiMap = {}
@@ -104,7 +104,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             logger.error("ReactOnUserMessageHandler support Telegram only for now")
             return HandlerResultStatus.SKIPPED
 
-        authorToEmojiMap = self._getAuthorToEmojiMap(ensuredMessage.recipient.id)
+        authorToEmojiMap = await self._getAuthorToEmojiMap(ensuredMessage.recipient.id)
 
         if not authorToEmojiMap:
             # No users to react, no reaction needed
@@ -194,7 +194,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = self._getAuthorToEmojiMap(targetChatId)
+        authorToEmojiMap = await self._getAuthorToEmojiMap(targetChatId)
         sender = self._getMessageAuthor(replyMessage)
 
         if sender.id:
@@ -202,7 +202,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         if sender.username:
             authorToEmojiMap[sender.username.lower()] = emoji
 
-        self.setChatSetting(
+        await self.setChatSetting(
             targetChatId,
             ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP,
             ChatSettingsValue(utils.jsonDumps(authorToEmojiMap, sort_keys=False)),
@@ -283,14 +283,14 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = self._getAuthorToEmojiMap(targetChatId)
+        authorToEmojiMap = await self._getAuthorToEmojiMap(targetChatId)
         sender = self._getMessageAuthor(replyMessage)
         emoji1 = authorToEmojiMap.pop(sender.id, None)
         emoji2 = authorToEmojiMap.pop(sender.username.lower(), None)
 
         emoji = emoji1 or emoji2
 
-        self.setChatSetting(
+        await self.setChatSetting(
             targetChatId,
             ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP,
             ChatSettingsValue(utils.jsonDumps(authorToEmojiMap, sort_keys=False)),
@@ -357,7 +357,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = self._getAuthorToEmojiMap(targetChatId)
+        authorToEmojiMap = await self._getAuthorToEmojiMap(targetChatId)
 
         await self.sendMessage(
             ensuredMessage,

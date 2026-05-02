@@ -1,77 +1,85 @@
 """
-Add media group support, dood!
+Add media group support.
 
 This migration adds support for media groups by:
 - Adding media_group_id column to chat_messages table
 - Creating media_group table to track media group relationships
 """
 
-import sqlite3
 from typing import Type
 
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
 class Migration008AddMediaGroupSupport(BaseMigration):
-    """Add media group support, dood!"""
+    """Add media group support."""
 
     version = 8
-    description = "add media group support"
+    description = "Add media group support"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        """
-        Apply the migration, dood!
-        
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        """Apply the migration to add media group support.
+
         Adds media group support by:
         1. Adding media_group_id column to chat_messages table
         2. Creating media_group table to track media group relationships
-        
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
-        # Add media_group_id column to chat_messages table
-        cursor.execute(
-            """
+        await sqlProvider.batchExecute(
+            [
+                # Add media_group_id column to chat_messages table
+                ParametrizedQuery("""
             ALTER TABLE chat_messages
             ADD COLUMN media_group_id TEXT
-        """
-        )
-
-        # Create media_group table
-        cursor.execute(
-            """
+        """),
+                # Create media_group table
+                ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS media_groups (
                 media_group_id TEXT NOT NULL,
                 media_id TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (media_group_id, media_id)
             )
-        """
+        """),
+            ]
         )
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        """
-        Rollback the migration, dood!
-        
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        """Rollback the migration to remove media group support.
+
         Removes media group support by:
         1. Dropping the media_group table
         2. Removing media_group_id column from chat_messages table
-        
-        Args:
-            cursor: SQLite cursor to execute SQL commands
-        """
-        # Drop media_group table
-        cursor.execute("DROP TABLE IF EXISTS media_groups")
 
-        # Remove media_group_id column from chat_messages table
-        cursor.execute(
-            """
+        Args:
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
+        """
+        await sqlProvider.batchExecute(
+            [
+                # Drop media_group table
+                ParametrizedQuery("DROP TABLE IF EXISTS media_groups"),
+                # Remove media_group_id column from chat_messages table
+                ParametrizedQuery("""
             ALTER TABLE chat_messages
             DROP COLUMN media_group_id
-        """
+        """),
+            ]
         )
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration008AddMediaGroupSupport

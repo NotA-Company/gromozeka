@@ -15,7 +15,7 @@ from internal.bot.common.handlers.manager import HandlersManager
 from internal.bot.models import BotProvider, EnsuredMessage
 from internal.bot.models.ensured_message import ChatType, MessageRecipient, MessageSender
 from internal.config.manager import ConfigManager
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from internal.services.queue_service.service import QueueService
 from lib import utils
 from lib.ai import LLMManager
@@ -33,7 +33,7 @@ class MaxBotApplication:
         self,
         configManager: ConfigManager,
         botToken: str,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
     ):
         """Initialize Max bot application with token, database, and LLM model.
@@ -41,7 +41,7 @@ class MaxBotApplication:
         Args:
             configManager: Configuration manager instance
             botToken: Max bot token for authentication
-            database: Database wrapper for data persistence
+            database: Database object for data persistence
             llmManager: LLM manager for language model operations
         """
         self.configManager = configManager
@@ -67,7 +67,7 @@ class MaxBotApplication:
         if self.maxBot is None:
             raise RuntimeError("Client is not initialized")
 
-        self.handlerManager.injectBot(self.maxBot)
+        await self.handlerManager.initialize(self.maxBot)
         self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # TODO: set commands

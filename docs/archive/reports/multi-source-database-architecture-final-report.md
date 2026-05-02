@@ -1,8 +1,26 @@
 # Multi-Source Database Architecture - Final Implementation Report
 
-**Project:** Multi-Source Database Architecture Enhancement  
-**Duration:** November 30, 2025 (All phases completed in single day)  
-**Team:** SourceCraft Code Assistant Agent  
+> **⚠️ HISTORICAL NOTICE**
+>
+> This document describes a **historical implementation** of the database architecture. The `DatabaseWrapper` class mentioned in this report has been **replaced** by the `Database` class with a repository pattern.
+>
+> **Current Architecture:**
+> - The `Database` class now uses a repository pattern for data access
+> - See [`docs/database-README.md`](../../database-README.md) for current database documentation
+> - See [`internal/database/database.py`](../../internal/database/database.py) for the current implementation
+>
+> **Migration Context:**
+> - This report documents the multi-source architecture that was later refactored
+> - The core concepts (multi-source support, readonly protection, routing) are still relevant
+> - However, the implementation details and class names have changed
+>
+> **Last Updated:** 2025-11-30 (Historical document - not maintained)
+
+---
+
+**Project:** Multi-Source Database Architecture Enhancement
+**Duration:** November 30, 2025 (All phases completed in single day)
+**Team:** SourceCraft Code Assistant Agent
 **Status:** ✅ **COMPLETE AND PRODUCTION-READY**
 
 ---

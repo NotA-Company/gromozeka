@@ -41,12 +41,12 @@ from internal.bot.models import (
 )
 from internal.bot.models.chat_settings import ChatSettingsKey
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
     CacheType,
     MessageCategory,
 )
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
@@ -85,7 +85,7 @@ class YandexSearchHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """
         Initialize the Yandex Search handler with required services and configuration.
@@ -96,7 +96,7 @@ class YandexSearchHandler(BaseBotHandler):
 
         Args:
             configManager (ConfigManager): Configuration manager providing bot settings
-            database (DatabaseWrapper): Database wrapper for data persistence
+            database (Database): Database object for data persistence
             llmManager (LLMManager): LLM manager for AI model operations
 
         Raises:
@@ -398,7 +398,7 @@ class YandexSearchHandler(BaseBotHandler):
 
             if len(content) >= max_size:
                 logger.debug(f"Content length is {len(content)} > {max_size}, condensing...")
-                chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+                chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
                 prompt = [
                     ModelMessage(
                         role="system",
@@ -559,7 +559,7 @@ class YandexSearchHandler(BaseBotHandler):
         searchQuery = args
 
         chatId = ensuredMessage.recipient.id
-        chatSettings = self.getChatSettings(chatId=chatId)
+        chatSettings = await self.getChatSettings(chatId=chatId)
         # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
         await self.llmService.rateLimit(chatId, chatSettings)
 

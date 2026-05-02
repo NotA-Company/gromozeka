@@ -59,10 +59,12 @@
 | Key | Type | Purpose |
 |---|---|---|
 | `default` | str | Default source name |
-| `sources.<name>.path` | str | SQLite file path |
+| `sources.<name>.path` | str | Database file path |
 | `sources.<name>.readonly` | bool | Read-only flag |
 | `sources.<name>.pool-size` | int | Connection pool size |
-| `sources.<name>.timeout` | int | Connection timeout |
+| `sources.<name>.timeout` | int | Connection timeout (seconds) |
+| `sources.<name>.parameters.keepConnection` | bool\|null | Connect immediately (true), on demand (false), or auto-detect (null) |
+| `chatMapping.<chatId>` | str | Map chat ID to source name |
 
 **Example:**
 ```toml
@@ -74,7 +76,49 @@ path = "bot_data.db"
 readonly = false
 pool-size = 5
 timeout = 30
+
+[database.sources.default.parameters]
+keepConnection = false  # Connect on demand (default for file-based DBs)
+
+[database.chatMapping]
+-1001234567890 = "default"
 ```
+
+**Multi-source example:**
+```toml
+[database]
+default = "default"
+
+[database.sources.default]
+path = "bot.db"
+readonly = false
+pool-size = 5
+timeout = 30
+
+[database.sources.default.parameters]
+keepConnection = false  # Connect on demand
+
+[database.sources.readonly]
+path = "archive.db"
+readonly = true
+pool-size = 10
+timeout = 10
+
+[database.sources.readonly.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
+
+[database.chatMapping]
+-1001234567890 = "readonly"  # Old inactive chat
+-1002345678901 = "readonly"  # Another old chat
+```
+
+**`keepConnection` parameter details:**
+- `true` — Connect immediately when provider is created (good for readonly replicas, in-memory DBs)
+- `false` — Connect on first query (default for file-based DBs, saves resources)
+- `null` — Auto-detect: `true` for in-memory SQLite3, `false` otherwise
+- **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
+
+**Note:** Database configuration uses `sources` (not `providers`) for multi-source routing with repository pattern. See [`database.md`](database.md) for details on multi-source routing and repository usage.
 
 ### `[models]`
 
@@ -264,5 +308,5 @@ apiKey: str = myConfig.get("api-key", "")
 
 ---
 
-*This guide is auto-maintained and should be updated whenever configuration sections change, dood!*  
-*Last updated: 2026-04-18, dood!*
+*This guide is auto-maintained and should be updated whenever configuration sections change, dood!*
+*Last updated: 2026-05-02, dood!*

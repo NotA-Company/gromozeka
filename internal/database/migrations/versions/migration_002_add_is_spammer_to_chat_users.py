@@ -1,48 +1,55 @@
 """
-Add is_spammer column to chat_users table, dood!
+Add is_spammer column to chat_users table.
 
 This migration adds a boolean flag to track potential spammers in chats.
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
 class Migration002AddIsSpammerToChatUsers(BaseMigration):
-    """Add is_spammer column to chat_users table, dood!"""
+    """Add is_spammer column to chat_users table."""
 
     version = 2
     description = "Add is_spammer column to chat_users table"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        """Apply the migration - add is_spammer column to chat_users, dood!
-        
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        """Apply the migration - add is_spammer column to chat_users.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Add is_spammer column to chat_users table
-        cursor.execute(
-            """
+        await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
             ADD COLUMN is_spammer BOOLEAN DEFAULT FALSE NOT NULL
-        """
-        )
+        """))
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        """Rollback the migration - remove is_spammer column, dood!
-        
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        """Rollback the migration - remove is_spammer column.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
-        cursor.execute(
-            """
+        await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
             DROP COLUMN is_spammer
-        """
-        )
+        """))
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration002AddIsSpammerToChatUsers

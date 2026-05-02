@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS cache_storage (
     namespace TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (namespace, key)
 );
 

@@ -5,30 +5,33 @@
 > *removing* complexity that doesn't earn its keep, dood!
 >
 > **Scope:** Based on analysis of the actual code in the repository as of 2026-04-18, dood.
+> **Status review:** 2026-05-02
 
 ---
 
 ## Summary Table
 
-| # | Title | Priority | Effort | What Gets Simpler |
-|---|-------|----------|--------|-------------------|
-| 1 | [Eliminate `lib/cache/` — it duplicates `CacheService` for no gain](#1-eliminate-libcache--it-duplicates-cacheservice-for-no-gain) | High | S | Remove one entire sub-library |
-| 2 | [Extract Singleton boilerplate into a reusable mixin](#2-extract-singleton-boilerplate-into-a-reusable-mixin) | Medium | S | ~60 identical lines across 3 classes |
-| 3 | [Replace TheBot if/elif platform chains with a platform adapter](#3-replace-thebot-ifelif-platform-chains-with-a-platform-adapter) | High | M | 1000-line class → 2 focused adapters |
-| 4 | [Remove the universal handler constructor signature repetition](#4-remove-the-universal-handler-constructor-signature-repetition) | Medium | S | 15+ identical `__init__` signatures |
-| 5 | [Collapse ConfigManager get* one-liner wrappers](#5-collapse-configmanager-get-one-liner-wrappers) | Low | S | ~70 lines of mechanical boilerplate |
-| 6 | [Fix LRUCache duplicate model storage in LLMManager](#6-fix-lrucache-duplicate-model-storage-in-llmmanager) | Medium | S | Models stored twice; confusing lookup |
-| 7 | [Rename and consolidate `settings`/`cachedSettings` in CacheService](#7-rename-and-consolidate-settingscachedsettings-in-cacheservice) | High | S | Two overlapping concepts, confusing naming |
-| 8 | [Remove deprecated mediaId/mediaContent fields from EnsuredMessage](#8-remove-deprecated-mediaidmediacontent-fields-from-ensuredmessage) | Medium | M | Dead code + TODO that nobody acts on |
-| 9 | [Extract duplicated handler-chain loop into one helper](#9-extract-duplicated-handler-chain-loop-into-one-helper) | Medium | S | 4 copy-pasted for-loops in HandlersManager |
-| 10 | [Replace polling in awaitStepDone with asyncio.Event](#10-replace-polling-in-awaitstepdone-with-asyncioevent) | Medium | S | Busy-wait polling → event-driven |
-| 11 | [Merge double permission check in handleCommand](#11-merge-double-permission-check-in-handlecommand) | Medium | S | Two separate checks doing the same thing |
-| 12 | [Simplify CacheInterface KeyGenerator strategy](#12-simplify-cacheinterface-keygenerator-strategy) | Medium | S | Unnecessary strategy pattern overhead |
-| 13 | [Simplify RateLimiterManager for the common single-limiter case](#13-simplify-ratelimitermanager-for-the-common-single-limiter-case) | Low | S | Over-engineered queue-to-limiter mapping |
-| 14 | [Fix post-construction dependency injection anti-pattern](#14-fix-post-construction-dependency-injection-anti-pattern) | High | L | `injectDatabase`/`injectBot`/`injectConfig` calls everywhere |
-| 15 | [Simplify HCChatCacheDict string-key magic constants](#15-simplify-hcchatcachedict-string-key-magic-constants) | Medium | M | Scattered string literal keys like `"settings"`, `"info"` |
-| 16 | [Replace asyncio.run() inside GromozekBot constructor](#16-replace-asynciorun-inside-gromozekbot-constructor) | High | S | Mixing sync/async setup dangerously |
-| 17 | [Remove unused `forceRecalc` parameters](#17-remove-unused-forcrecalc-parameters) | Low | S | Parameters that are never passed as True |
+| # | Status | Title | Priority | Effort | What Gets Simpler |
+|---|--------|-------|----------|--------|-------------------|
+| 1 | [ ] | [Eliminate `lib/cache/` — it duplicates `CacheService` for no gain](#1-eliminate-libcache--it-duplicates-cacheservice-for-no-gain) | High | S | Remove one entire sub-library |
+| 2 | [ ] | [Extract Singleton boilerplate into a reusable mixin](#2-extract-singleton-boilerplate-into-a-reusable-mixin) | Medium | S | ~60 identical lines across 3 classes |
+| 3 | [ ] | [Replace TheBot if/elif platform chains with a platform adapter](#3-replace-thebot-ifelif-platform-chains-with-a-platform-adapter) | High | M | 1000-line class → 2 focused adapters |
+| 4 | [ ] | [Remove the universal handler constructor signature repetition](#4-remove-the-universal-handler-constructor-signature-repetition) | Medium | S | 15+ identical `__init__` signatures |
+| 5 | [ ] | [Collapse ConfigManager get* one-liner wrappers](#5-collapse-configmanager-get-one-liner-wrappers) | Low | S | ~70 lines of mechanical boilerplate |
+| 6 | [ ] | [Fix LRUCache duplicate model storage in LLMManager](#6-fix-lrucache-duplicate-model-storage-in-llmmanager) | Medium | S | Models stored twice; confusing lookup |
+| 7 | [ ] | [Rename and consolidate `settings`/`cachedSettings` in CacheService](#7-rename-and-consolidate-settingscachedsettings-in-cacheservice) | High | S | Two overlapping concepts, confusing naming |
+| 8 | [ ] | [Remove deprecated mediaId/mediaContent fields from EnsuredMessage](#8-remove-deprecated-mediaidmediacontent-fields-from-ensuredmessage) | Medium | M | Dead code + TODO that nobody acts on |
+| 9 | [ ] | [Extract duplicated handler-chain loop into one helper](#9-extract-duplicated-handler-chain-loop-into-one-helper) | Medium | S | 4 copy-pasted for-loops in HandlersManager |
+| 10 | [ ] | [Replace polling in awaitStepDone with asyncio.Event](#10-replace-polling-in-awaitstepdone-with-asyncioevent) | Medium | S | Busy-wait polling → event-driven |
+| 11 | [ ] | [Merge double permission check in handleCommand](#11-merge-double-permission-check-in-handlecommand) | Medium | S | Two separate checks doing the same thing |
+| 12 | [ ] | [Simplify CacheInterface KeyGenerator strategy](#12-simplify-cacheinterface-keygenerator-strategy) | Medium | S | Unnecessary strategy pattern overhead |
+| 13 | [ ] | [Simplify RateLimiterManager for the common single-limiter case](#13-simplify-ratelimitermanager-for-the-common-single-limiter-case) | Low | S | Over-engineered queue-to-limiter mapping |
+| 14 | [ ] | [Fix post-construction dependency injection anti-pattern](#14-fix-post-construction-dependency-injection-anti-pattern) | High | L | `injectDatabase`/`injectBot`/`injectConfig` calls everywhere |
+| 15 | [ ] | [Simplify HCChatCacheDict string-key magic constants](#15-simplify-hcchatcachedict-string-key-magic-constants) | Medium | M | Scattered string literal keys like `"settings"`, `"info"` |
+| 16 | [ ] | [Replace asyncio.run() inside GromozekBot constructor](#16-replace-asynciorun-inside-gromozekbot-constructor) | High | S | Mixing sync/async setup dangerously |
+| 17 | [ ] | [Remove unused `forceRecalc` parameters](#17-remove-unused-forcrecalc-parameters) | Low | S | Parameters that are never passed as True |
+
+> **Status Review Note (2026-05-02):** All 17 simplification suggestions remain pending. The appendix quick wins are also all still present in the codebase. The deprecated `mediaId`/`mediaContent`/`mediaPrompt` fields in `EnsuredMessage` (#8) are still actively used throughout the code. The `asyncio.run()` in `GromozekBot.__init__` (#16) is still present at [`main.py:50`](../../main.py:50). The `forceRecalc` params (#17) still exist unchanged. The `canProcess = False; pass` quick win bug at manager.py:640-641 is also still present.
 
 ---
 
@@ -272,7 +275,7 @@ Every single handler class has the **exact same constructor signature** with the
 ```python
 # internal/bot/common/handlers/llm_messages.py:75-86
 def __init__(
-    self, configManager: ConfigManager, database: DatabaseWrapper,
+    self, configManager: ConfigManager, database: Database,
     llmManager: LLMManager, botProvider: BotProvider
 ):
     super().__init__(configManager=configManager, database=database,
@@ -1171,3 +1174,4 @@ These don't need a full section but are worth noting:
 ---
 
 *Document created 2026-04-18, dood! Analysis based on codebase snapshot at that date.*
+*Status review updated: 2026-05-02*

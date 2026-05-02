@@ -1,11 +1,14 @@
 [application]
 root-dir = "storage"
+
 [bot]
 # bot mode: "telegram" or "max"
 mode = "telegram"
 # Your Telegram bot token from @BotFather
 token = "YOUR_BOT_TOKEN_HERE"
-bot_owners = ["YOUR_BOT_OWNER_USERNAME_OR_USER_ID_HERE"]
+bot_owners = [
+    "YOUR_BOT_OWNER_USERNAME_OR_USER_ID_HERE",
+]
 
 # Salt for signing [not]spam buttons to reject those actions on random messages
 spam-button-salt = "YOUR_SALT_HERE"
@@ -19,21 +22,27 @@ max-tasks-per-chat = 512
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot_data.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
 timeout = 30
+useWal = true
+keepConnection = true  # Connect on creation and keep connection open
 
 # [ratelimiter]
 [ratelimiter.ratelimiters.default]
 type = "SlidingWindow"
+
 [ratelimiter.ratelimiters.default.config]
 windowSeconds = 5
 maxRequests = 5
 
 [ratelimiter.ratelimiters.one-per-second]
 type = "SlidingWindow"
+
 [ratelimiter.ratelimiters.one-per-second.config]
 windowSeconds = 1
 maxRequests = 1
@@ -41,7 +50,7 @@ maxRequests = 1
 [ratelimiter.queues]
 yandex-search = "default"
 openweathermap = "default"
-geocode-maps = "one-per-second" # Free Tier has a limit of 1-5 requests per second
+geocode-maps = "one-per-second"
 chat-default = "default"
 
 [models.json-logging]
@@ -55,7 +64,6 @@ add-date-suffix = true
 level = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 console = true
-# Optional: log to file (uncomment to enable)
 file = "logs/gromozeka.log"
 error-file = "logs/gromozeka.err.log"
 rotate = true
@@ -69,6 +77,8 @@ file = "logs/openai.log"
 file-level = "DEBUG"
 rotate = true
 
+[logging.logger."aiosqlite"]
+level = "INFO"
 
 [openweathermap]
 enabled = false
@@ -99,7 +109,6 @@ request-timeout = 30
 ratelimiter-queue = "geocode-maps"
 accept-language = "ru"
 
-
 [yandex-search]
 enabled = false
 # Yandex Cloud credentials for Search API
@@ -112,7 +121,8 @@ cache-ttl = 86400  # 60 * 60 * 24 = 1 day (Search results shouldn't change often
 # API request timeout in seconds
 request-timeout = 30
 
-dump-full-xml = false     # If we need to dump whole XML in xml_parser debug logging 
+# If we need to dump whole XML in xml_parser debug logging 
+dump-full-xml = false
 ratelimiter-queue = "yandex-search"
 
 # Default search parameters. Will be passed to search as `**kwargs`

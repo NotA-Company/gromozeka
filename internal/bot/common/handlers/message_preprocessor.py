@@ -94,13 +94,13 @@ class MessagePreprocessorHandler(BaseBotHandler):
             HandlerResultStatus.FINAL if join message deleted, NEXT otherwise
         """
 
-        self.db.updateChatUser(
+        await self.db.chatUsers.updateChatUser(
             chatId=targetChat.id,
             userId=newMember.id,
             username=newMember.username,
             fullName=newMember.name,
         )
-        self.setUserMetadata(
+        await self.setUserMetadata(
             chatId=targetChat.id,
             userId=newMember.id,
             metadata={
@@ -109,7 +109,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
             isUpdate=True,
         )
 
-        chatSettings = self.getChatSettings(targetChat.id)
+        chatSettings = await self.getChatSettings(targetChat.id)
         if messageId is not None and chatSettings[ChatSettingsKey.DELETE_JOIN_MESSAGES].toBool():
             logger.info(f"Deleting join message#{messageId} of {newMember} in chat {targetChat.id}")
             await self.deleteMessagesById(targetChat.id, [messageId])
@@ -136,13 +136,13 @@ class MessagePreprocessorHandler(BaseBotHandler):
         Returns:
             HandlerResultStatus.FINAL if left message deleted, NEXT otherwise
         """
-        self.db.updateChatUser(
+        await self.db.chatUsers.updateChatUser(
             chatId=targetChat.id,
             userId=leftMember.id,
             username=leftMember.username,
             fullName=leftMember.name,
         )
-        self.setUserMetadata(
+        await self.setUserMetadata(
             chatId=targetChat.id,
             userId=leftMember.id,
             metadata={
@@ -151,7 +151,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
             isUpdate=True,
         )
 
-        chatSettings = self.getChatSettings(targetChat.id)
+        chatSettings = await self.getChatSettings(targetChat.id)
         if messageId is not None and chatSettings[ChatSettingsKey.DELETE_LEFT_MESSAGES].toBool():
             logger.info(f"Deleting left message#{messageId} of {leftMember} in chat {targetChat.id}")
             await self.deleteMessagesById(targetChat.id, [messageId])

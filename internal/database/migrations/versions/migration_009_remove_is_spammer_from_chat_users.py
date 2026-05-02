@@ -1,49 +1,56 @@
 """
-Remove is_spammer column from chat_users table, dood!
+Remove is_spammer column from chat_users table.
 
 This migration reverts the changes from migration_002 by removing the is_spammer
 boolean flag from the chat_users table.
 """
 
-import sqlite3
 from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
 class Migration009RemoveIsSpammerFromChatUsers(BaseMigration):
-    """Remove is_spammer column from chat_users table, dood!"""
+    """Remove is_spammer column from chat_users table."""
 
     version = 9
     description = "Remove is_spammer column from chat_users table"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        """Apply the migration - remove is_spammer column from chat_users, dood!
-        
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        """Apply the migration - remove is_spammer column from chat_users.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
         # Remove is_spammer column from chat_users table
-        cursor.execute(
-            """
+        await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
             DROP COLUMN is_spammer
-        """
-        )
+        """))
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        """Rollback the migration - add back is_spammer column, dood!
-        
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        """Rollback the migration - add back is_spammer column.
+
         Args:
-            cursor: SQLite cursor to execute SQL commands
+            sqlProvider: SQL provider for executing queries
+
+        Returns:
+            None
         """
-        cursor.execute(
-            """
+        await sqlProvider.execute(ParametrizedQuery("""
             ALTER TABLE chat_users
             ADD COLUMN is_spammer BOOLEAN DEFAULT FALSE NOT NULL
-        """
-        )
+        """))
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module
+    """
     return Migration009RemoveIsSpammerFromChatUsers

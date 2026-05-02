@@ -114,13 +114,13 @@ A new module [`internal/bot/common/handlers/module_loader.py`](internal/bot/comm
 │         CustomHandlerLoader              │
 ├──────────────────────────────────────────┤
 │ - configManager: ConfigManager           │
-│ - database: DatabaseWrapper              │
-│ - llmManager: LLMManager                │
+│ - database: Database                     │
+│ - llmManager: LLMManager                 │
 │ - botProvider: BotProvider               │
 │ - modulesDir: str                        │
 ├──────────────────────────────────────────┤
 │ + loadAll: List[HandlerTuple]            │
-│ - _loadSingle: HandlerTuple             │
+│ - _loadSingle: HandlerTuple              │
 │ - _importFromPath: type                  │
 │ - _importFromLocalModule: type           │
 │ - _validateHandlerClass: None            │
@@ -355,7 +355,7 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from lib.ai import LLMManager
 
 logger = logging.getLogger(__name__)
@@ -367,7 +367,7 @@ class GreetingHandler(BaseBotHandler):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):

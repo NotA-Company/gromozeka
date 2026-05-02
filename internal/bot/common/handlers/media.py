@@ -36,8 +36,8 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
@@ -75,7 +75,7 @@ class MediaHandler(BaseBotHandler):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """
         Initialize the MediaHandler with required dependencies, dood!
@@ -169,7 +169,7 @@ class MediaHandler(BaseBotHandler):
         typingManager.action = TypingAction.UPLOAD_PHOTO
         typingManager.maxTimeout = typingManager.maxTimeout + 300
         await typingManager.sendTypingAction()
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         logger.debug(
             f"Generating image: {image_prompt}. Image description: {image_description}, "
             f"mcID: {ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
@@ -250,7 +250,7 @@ class MediaHandler(BaseBotHandler):
         if chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
             return HandlerResultStatus.SKIPPED
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return HandlerResultStatus.SKIPPED
 
@@ -322,7 +322,7 @@ class MediaHandler(BaseBotHandler):
 
         async with await self.startTyping(ensuredMessage) as typingManager:
             # Not text message, try to get it's content from DB
-            storedReply = self.db.getChatMessageByMessageId(
+            storedReply = await self.db.chatMessages.getChatMessageByMessageId(
                 chatId=ensuredReply.recipient.id,
                 messageId=ensuredReply.messageId,
             )
@@ -330,7 +330,7 @@ class MediaHandler(BaseBotHandler):
                 logger.error(f"Failed to get parent message #{ensuredReply.recipient.id}:{ensuredReply.messageId}")
             else:
                 # logger.debug(f"storedReply: {storedReply}")
-                eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
+                eStoredMsg = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
                 # logger.debug(f"eStoredMsg: {eStoredMsg}")
                 await eStoredMsg.updateMediaContent(self.db)
                 # logger.debug(f"eStoredMsg V2: {eStoredMsg}")
@@ -409,7 +409,7 @@ class MediaHandler(BaseBotHandler):
         """
         # Analyse media with given prompt. Should be reply to message with media.
 
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
         if not ensuredMessage.isReply:
             await self.sendMessage(
@@ -612,7 +612,7 @@ class MediaHandler(BaseBotHandler):
             Requires ALLOW_DRAW setting enabled or admin privileges.
         """
         # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
         prompt = ensuredMessage.messageText
 
@@ -642,14 +642,14 @@ class MediaHandler(BaseBotHandler):
                 ),
             ]
             for msg in reversed(
-                self.db.getChatMessagesByUser(
+                await self.db.chatMessages.getChatMessagesByUser(
                     ensuredMessage.recipient.id,
                     ensuredMessage.sender.id,
                     limit=10,
                 )
             ):
-                eMsg = EnsuredMessage.fromDBChatMessage(msg, self.db)
-                self._updateEMessageUserData(eMsg)
+                eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db)
+                await self._updateEMessageUserData(eMsg)
                 latestMessages.append(
                     await eMsg.toModelMessage(
                         self.db,
@@ -672,7 +672,7 @@ class MediaHandler(BaseBotHandler):
                 prompt = llmRet.resultText
             else:
                 # Fallback to something static
-                chatInfo = self.getChatInfo(ensuredMessage.recipient.id)
+                chatInfo = await self.getChatInfo(ensuredMessage.recipient.id)
                 chatTitle = chatInfo["title"] if chatInfo is not None else str(ensuredMessage.recipient)
                 prompt = f"Draw image of {ensuredMessage.sender} in chat `{chatTitle}`"
 

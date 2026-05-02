@@ -32,8 +32,8 @@ from internal.bot.models import (
     MessageSender,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageIdType
 from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
@@ -183,7 +183,7 @@ class HandlersManager(CommandHandlerGetterInterface):
     """
 
     def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
+        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
         """Initialize the handlers manager with required services.
 
@@ -203,8 +203,6 @@ class HandlersManager(CommandHandlerGetterInterface):
         self._commands: Dict[str, CommandHandlerInfoV2] = {}
 
         self.cache = CacheService.getInstance()
-        self.cache.injectDatabase(self.db)
-
         self.storage = StorageService.getInstance()
         self.storage.injectConfig(self.configManager)
 
@@ -320,7 +318,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.chatStates: Dict[str, ChatProcessingState] = {}
         self.handlerTasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
         self.stateLock = asyncio.Lock()
-        """Global Lock for Queue management (checking, creating, deleteing)"""
+        """Global Lock for Queue management (checking, creating, deleting)"""
 
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
@@ -355,10 +353,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         """
 
         nowTime = time.time()
-        nowTimeStuct = time.gmtime(nowTime)
-        nowMinutes = nowTimeStuct.tm_min
-        nowHour = nowTimeStuct.tm_hour
-        nowWDay = nowTimeStuct.tm_wday
+        nowTimeStruct = time.gmtime(nowTime)
+        nowMinutes = nowTimeStruct.tm_min
+        nowHour = nowTimeStruct.tm_hour
+        nowWDay = nowTimeStruct.tm_wday
 
         if nowMinutes == 0 and nowHour == 0 and nowWDay == 0:
             # Once a week, cleanup old data
@@ -382,12 +380,16 @@ class HandlersManager(CommandHandlerGetterInterface):
 
     async def _cleanupOldData(self) -> None:
         # Drop cache entries, that more than 3 month old
-        self.db.clearOldCacheEntries(ttl=60 * 60 * 24 * 90)
+        await self.db.cache.clearOldCacheEntries(ttl=60 * 60 * 24 * 90)
         # Also drop completed tasks older than a month
-        self.db.cleanupOldCompletedDelayedTasks(ttl=60 * 60 * 24 * 30)
+        await self.db.delayedTasks.cleanupOldCompletedDelayedTasks(ttl=60 * 60 * 24 * 30)
 
-    def injectBot(self, bot: ExtBot | libMax.MaxBotClient) -> None:
-        """Inject bot instance into all registered handlers.
+    async def initialize(self, bot: ExtBot | libMax.MaxBotClient) -> None:
+        """Initialize the handlers manager by injecting bot instance into all registered handlers.
+
+        Creates a TheBot wrapper with the provided bot client, validates that the bot type
+        matches the configured bot provider, enriches bot owner information with user IDs
+        from the database, and injects the bot instance into all registered handlers.
 
         Args:
             bot: Bot client instance (ExtBot for Telegram or MaxBotClient for Max Messenger)
@@ -398,6 +400,8 @@ class HandlersManager(CommandHandlerGetterInterface):
         Raises:
             ValueError: If bot type doesn't match the configured bot provider
         """
+        await self.cache.injectDatabase(self.db)
+
         theBot: Optional[TheBot] = None
         if self.botProvider == BotProvider.TELEGRAM and isinstance(bot, ExtBot):
             theBot = TheBot(botProvider=self.botProvider, config=self.configManager.getBotConfig(), tgBot=bot)
@@ -409,7 +413,7 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         # For each botOwner username try to add it's userId as well
         for botOwner in theBot.botOwnersUsername:
-            for userId in self.db.getUserIdByUserName(botOwner.lower()):
+            for userId in await self.db.chatUsers.getUserIdByUserName(botOwner.lower()):
                 theBot.botOwnersId.add(userId)
 
         for handler, _ in self.handlers:
@@ -430,7 +434,18 @@ class HandlersManager(CommandHandlerGetterInterface):
         await asyncio.gather(*self.handlerTasks)
 
     async def runAsync(self, func: Coroutine, timeout: Optional[float] = None) -> asyncio.Task:
-        """Run background tasks."""
+        """Run background tasks with optional timeout.
+
+        Args:
+            func: Coroutine to run as a background task
+            timeout: Optional timeout in seconds for the coroutine
+
+        Returns:
+            asyncio.Task: The created task
+
+        Raises:
+            asyncio.TimeoutError: If the coroutine execution exceeds the timeout
+        """
         while len(self.handlerTasks) >= self.maxTasks:
             await asyncio.sleep(0.5)
         if timeout is not None and timeout > 0:
@@ -443,8 +458,18 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def addMessageToChatQueue(
         self, message: EnsuredMessage, updateObj: UpdateObjectType
     ) -> Optional[MessageQueueRecord]:
-        """
-        TODO: Write docstring
+        """Add a message to the chat's processing queue.
+
+        Creates a new chat state if one doesn't exist, checks if the queue is full,
+        and adds the message to the queue for processing.
+
+        Args:
+            message: The ensured message to add to the queue
+            updateObj: The original update object from the platform
+
+        Returns:
+            MessageQueueRecord if the message was successfully added to the queue,
+            None if the queue is full
         """
         chatId = message.recipient.id
         threadId = message.threadId
@@ -510,7 +535,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             command = splittedText[0]
             args = splittedText[1] if len(splittedText) > 1 else ""
 
-            # Check if bot username privided in command and check if it is our username
+            # Check if bot username provided in command and check if it is our username
             splittedCommand = command.split("@")
             command = splittedCommand[0]
             if len(splittedCommand) > 1:
@@ -518,11 +543,11 @@ class HandlersManager(CommandHandlerGetterInterface):
                 if not myUsername or myUsername.lower() != splittedCommand[1].lower():
                     # TODO: Should we somehow indicate, that it is command but for someone else?
                     logger.debug(
-                        f"Recieved command for someone else: {command}, bot: {splittedCommand[1]}, args: {args}"
+                        f"Received command for someone else: {command}, bot: {splittedCommand[1]}, args: {args}"
                     )
                     return None
 
-            logger.debug(f"Recieved command: {command}, args: {args}")
+            logger.debug(f"Received command: {command}, args: {args}")
             return command, args
 
         return None
@@ -540,11 +565,11 @@ class HandlersManager(CommandHandlerGetterInterface):
             False: Command not handled due to permissions or errors
         """
 
-        commandTouple = await self.parseCommand(ensuredMessage)
-        if commandTouple is None:
+        commandTuple = await self.parseCommand(ensuredMessage)
+        if commandTuple is None:
             return None
 
-        command, args = commandTouple
+        command, args = commandTuple
         commands = self.getCommandHandlersDict()
         commandLower = command.lower()
         if commandLower not in commands:
@@ -565,7 +590,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         # Check permissions if needed
 
         isBotOwner = await handlerObj.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
-        chatSettings = handlerObj.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await handlerObj.getChatSettings(ensuredMessage.recipient.id)
         chatType = ensuredMessage.recipient.chatType
 
         canProcess = (
@@ -662,6 +687,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         """
         messageRec = await self.addMessageToChatQueue(ensuredMessage, updateObj)
         if messageRec is not None:
+            # Run message processing asynchronously; task is tracked by runAsync
             await self.runAsync(self._processMessageRec(messageRec))
 
     async def _processMessageRec(self, messageRec: MessageQueueRecord) -> None:
@@ -694,7 +720,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             updateObj = messageRec.updateObj
             previousRec = await chatState.getPreviousMessage(messageRec)
             ensuredMessage.setUserData(
-                self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
+                await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
             )
 
             commandRet = await asyncio.wait_for(

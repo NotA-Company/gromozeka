@@ -25,8 +25,8 @@ from internal.bot.models import (
 )
 from internal.bot.models.text_formatter import FormatEntity, OutputFormat
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.models import MessageType
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from lib.ai import LLMManager
@@ -89,7 +89,7 @@ class ResendJob:
             messageSuffix: Optional suffix to add to resent messages
             lastMessageDate: Optional last message timestamp processed (datetime or ISO string)
             notification: Optional notification flag (True/False/None for system default)
-            mediaGroupDelaySecs: Delay in seconds to wait for media group completion (default: 5.0)
+            mediaGroupDelaySecs: Delay in seconds to wait for media group completion (default: 10.0)
         """
         self.id = id
         """id of the resend job, used for persisting the job state"""
@@ -201,7 +201,7 @@ class ResenderHandler(BaseBotHandler):
     def __init__(
         self,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
+        database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
     ):
@@ -233,10 +233,6 @@ class ResenderHandler(BaseBotHandler):
             if not isinstance(job, dict):
                 raise ValueError(f"each job must be a dictionary, but got {type(job)}")
             newJob = ResendJob(**job)
-            dataKey = f"resender:{newJob.id}:lastMessageDate"
-            storedData = self.db.getSetting(dataKey)
-            if storedData:
-                newJob.setLastMessageDate(storedData)
             logger.info(f"Loaded resender job {newJob}")
             self.jobs.append(newJob)
 
@@ -245,7 +241,34 @@ class ResenderHandler(BaseBotHandler):
 
         self.isExiting = False
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
+
+        self._initialized = False
+        """Flag to track if job states have been loaded from database"""
+
         logger.debug(f"ResenderHandler initialized with {len(self.jobs)} jobs")
+
+    async def _initializeJobs(self) -> None:
+        """
+        Initialize job states by loading last message dates from database.
+
+        This method loads the last processed message timestamp for each job
+        from the database to resume from where we left off.
+        """
+        if self._initialized:
+            return
+
+        for job in self.jobs:
+            dataKey = f"resender:{job.id}:lastMessageDate"
+            try:
+                storedData = await self.db.common.getSetting(dataKey)
+                if storedData:
+                    job.setLastMessageDate(storedData)
+                    logger.debug(f"Loaded lastMessageDate for job {job.id}: {storedData}")
+            except Exception as e:
+                logger.error(f"Failed to load lastMessageDate for job {job.id}: {e}")
+
+        self._initialized = True
+        logger.debug("ResenderHandler jobs initialized from database")
 
     async def _dtOnExit(self, task: DelayedTask) -> None:
         """
@@ -283,6 +306,9 @@ class ResenderHandler(BaseBotHandler):
         messages that match any configured resend job criteria and resend them
         to their target chats.
         """
+        # Initialize job states on first run
+        await self._initializeJobs()
+
         logger.debug("Cron job started")
         for job in self.jobs:
             if job.isLocked():
@@ -295,7 +321,7 @@ class ResenderHandler(BaseBotHandler):
                 logger.debug(f"Processing job {job}")
 
                 # Get new messages if any
-                newData = self.db.getChatMessagesSince(
+                newData = await self.db.chatMessages.getChatMessagesSince(
                     chatId=job.sourceChatId,
                     sinceDateTime=job.lastMessageDate,
                     messageCategory=job.messageTypes,
@@ -315,7 +341,7 @@ class ResenderHandler(BaseBotHandler):
                                 continue
 
                             # Get the last updated timestamp for this media group
-                            lastUpdated = self.db.getMediaGroupLastUpdatedAt(
+                            lastUpdated = await self.db.mediaAttachments.getMediaGroupLastUpdatedAt(
                                 message["media_group_id"],
                                 dataSource=job.dataSource,
                             )
@@ -338,7 +364,7 @@ class ResenderHandler(BaseBotHandler):
                         attachmentList: List[Tuple[bytes, MessageType, Optional[str]]] = []
                         if message["media_group_id"]:
                             logger.debug(f"Processing media group {message['media_group_id']}")
-                            for media in self.db.getMediaAttachmentsByGroupId(
+                            for media in await self.db.mediaAttachments.getMediaAttachmentsByGroupId(
                                 message["media_group_id"],
                                 dataSource=job.dataSource,
                             ):
@@ -397,9 +423,13 @@ class ResenderHandler(BaseBotHandler):
                             await asyncio.sleep(messageSendDelay)
                             messageSendDelay = min(messageSendDelay * 2, 10)
 
+                        # Update last message date regardless of whether message was sent
+                        # This prevents reprocessing the same message
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
                             job.lastMessageDate = message["date"]
-                        self.db.setSetting(f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat())
+                        await self.db.common.setSetting(
+                            f"resender:{job.id}:lastMessageDate", job.lastMessageDate.isoformat()
+                        )
 
                         if self.isExiting:
                             logger.info("Exiting resender loop as bot is exiting...")

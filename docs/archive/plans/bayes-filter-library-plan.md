@@ -531,7 +531,7 @@ CREATE INDEX IF NOT EXISTS bayes_classes_chat_idx ON bayes_classes(chat_id);
 from typing import List, Optional
 import logging
 
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from .storage_interface import BayesStorageInterface, TokenStats, ClassStats
 
 logger = logging.getLogger(__name__)
@@ -721,7 +721,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
 from lib.spam.bayes_filter import NaiveBayesFilter, BayesConfig
 from lib.spam.database_storage import DatabaseBayesStorage
 
-def __init__(self, config: Dict[str, Any], database: DatabaseWrapper, llmManager: LLMManager):
+def __init__(self, config: Dict[str, Any], database: Database, llmManager: LLMManager):
     # ... existing code ...
     
     # Initialize Bayes filter

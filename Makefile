@@ -58,7 +58,7 @@ test: venv
 	@echo "🧪 Running all Gromozeka tests, dood!"
 	@echo "=================================="
 	@echo ""
-	$(PYTEST) --durations=4 $(ARGS)
+	time timeout 5m $(PYTEST) --durations=4 $(ARGS)
 	@echo ""
 	@echo "✅ All tests completed, dood!"
 
