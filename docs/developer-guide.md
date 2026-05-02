@@ -112,9 +112,9 @@ The project is organized in a strict layered architecture where each layer only 
 └───────────────┘
          │
 ┌────────▼──────────────────────────────────────────────────────┐
-│                      DatabaseWrapper                           │
-│                  internal/database/wrapper.py                  │
-│              (Multi-source SQLite with migrations)             │
+│                         Database                               │
+│                  internal/database/database.py                 │
+│         (Multi-source SQL with repositories & migrations)      │
 └───────────────────────────────────────────────────────────────┘
          │
 ┌────────▼──────────────────────────────────────────────────────┐
@@ -131,7 +131,7 @@ The project is organized in a strict layered architecture where each layer only 
 | Singleton | [`CacheService`](internal/services/cache/service.py:88), [`QueueService`](internal/services/queue_service/service.py), [`RateLimiterManager`](lib/rate_limiter/manager.py:12) | Shared state across handlers |
 | Abstract Base Class | [`AbstractModel`](lib/ai/abstract.py:19), [`AbstractLLMProvider`](lib/ai/abstract.py:257), [`CacheInterface`](lib/cache/interface.py:15), [`BaseMigration`](internal/database/migrations/base.py:9) | Type-safe extensibility |
 | Chain of Responsibility | Handler pipeline in [`HandlersManager`](internal/bot/common/handlers/manager.py:177) | Sequential/parallel message processing |
-| Multi-source Router | [`DatabaseWrapper`](internal/database/wrapper.py:113) | Chat-to-database routing |
+| Multi-source Router | [`Database`](internal/database/database.py) | Chat-to-database routing |
 | Decorator-based Discovery | `@commandHandlerV2` decorator, [`CommandHandlerMixin`](internal/bot/models) | Auto-discovery of bot commands |
 | Golden Data Testing | [`tests/`](tests/) | Deterministic API test replay |
 
@@ -195,16 +195,35 @@ gromozeka/
 │   │   └── manager.py              # ConfigManager - hierarchical TOML loader
 │   │
 │   ├── database/                   # Database layer
-│   │   ├── wrapper.py              # DatabaseWrapper - SQLite abstraction
+│   │   ├── database.py             # Database - main database interface
 │   │   ├── manager.py              # DatabaseManager - lifecycle management
 │   │   ├── models.py               # TypedDict models for DB rows
 │   │   ├── bayes_storage.py        # Bayes filter DB storage
 │   │   ├── generic_cache.py        # Generic DB cache storage
+│   │   ├── providers/              # Database provider implementations
+│   │   │   ├── base.py             # BaseProvider abstract class
+│   │   │   ├── sqlite3.py          # SQLite provider
+│   │   │   ├── mysql.py            # MySQL provider
+│   │   │   ├── postgresql.py       # PostgreSQL provider
+│   │   │   └── utils.py            # Provider utilities
+│   │   ├── repositories/           # Repository pattern implementations
+│   │   │   ├── base.py             # BaseRepository abstract class
+│   │   │   ├── cache.py            # Cache repository
+│   │   │   ├── chat_info.py        # Chat info repository
+│   │   │   ├── chat_messages.py    # Chat messages repository
+│   │   │   ├── chat_settings.py    # Chat settings repository
+│   │   │   ├── chat_summarization.py # Chat summarization repository
+│   │   │   ├── chat_users.py       # Chat users repository
+│   │   │   ├── common.py           # Common repository
+│   │   │   ├── delayed_tasks.py    # Delayed tasks repository
+│   │   │   ├── media_attachments.py # Media attachments repository
+│   │   │   ├── spam.py             # Spam repository
+│   │   │   └── user_data.py        # User data repository
 │   │   └── migrations/             # Migration system
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
 │   │       ├── create_migration.py # Script to scaffold new migrations
-│   │       └── versions/           # Migration files (migration_001 to migration_012)
+│   │       └── versions/           # Migration files (migration_001 to migration_013)
 │   │
 │   ├── services/                   # Service layer (singletons)
 │   │   ├── cache/                  # Cache service
@@ -492,19 +511,20 @@ yandexConfig = configManager.getYandexSearchConfig()
 
 ## 5. Database Layer
 
-The database layer provides SQLite access via [`DatabaseWrapper`](internal/database/wrapper.py:113) with multi-source routing, connection pooling, and an automatic migration system, dood!
+The database layer provides SQL access via [`Database`](internal/database/database.py) with multi-source routing, connection pooling, repository pattern, and an automatic migration system, dood! It supports SQLite, MySQL, and PostgreSQL through a provider abstraction, dood!
 
-### DatabaseWrapper
+### Database
 
-[`DatabaseWrapper`](internal/database/wrapper.py:113) is the main interface to the SQLite database, dood! It supports multiple named database sources, with per-chat routing so different chats can use different database files, dood!
+[`Database`](internal/database/database.py) is the main interface to the database, dood! It supports multiple named database sources, with per-chat routing so different chats can use different databases, dood! The database uses a repository pattern with 12 specialized repositories for different data domains, dood!
 
 ```python
 from internal.database import Database
 
-db = DatabaseWrapper(config={
+db = Database(config={
     "default": "default",
     "sources": {
         "default": {
+            "type": "sqlite3",
             "path": "bot_data.db",
             "readonly": False,
             "pool-size": 5,
@@ -518,9 +538,27 @@ db = DatabaseWrapper(config={
 })
 ```
 
+### Repository Pattern
+
+The database layer uses a repository pattern with 12 specialized repositories, dood! Each repository handles a specific data domain and provides type-safe methods for data access, dood!
+
+| Repository | File | Purpose |
+|---|---|---|
+| [`CacheRepository`](internal/database/repositories/cache.py) | `cache.py` | Cache storage operations |
+| [`ChatInfoRepository`](internal/database/repositories/chat_info.py) | `chat_info.py` | Chat metadata operations |
+| [`ChatMessagesRepository`](internal/database/repositories/chat_messages.py) | `chat_messages.py` | Message history operations |
+| [`ChatSettingsRepository`](internal/database/repositories/chat_settings.py) | `chat_settings.py` | Chat settings operations |
+| [`ChatSummarizationRepository`](internal/database/repositories/chat_summarization.py) | `chat_summarization.py` | Chat summarization operations |
+| [`ChatUsersRepository`](internal/database/repositories/chat_users.py) | `chat_users.py` | Per-chat user metadata operations |
+| [`CommonRepository`](internal/database/repositories/common.py) | `common.py` | Common database operations |
+| [`DelayedTasksRepository`](internal/database/repositories/delayed_tasks.py) | `delayed_tasks.py` | Background task queue operations |
+| [`MediaAttachmentsRepository`](internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
+| [`SpamRepository`](internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
+| [`UserDataRepository`](internal/database/repositories/user_data.py) | `user_data.py` | User data operations |
+
 ### Multi-Source Routing
 
-When you call most database methods with a `chatId`, the wrapper automatically selects the right source, dood! If a chat isn't in the `chatMapping`, it falls back to the `default` source, dood!
+When you call most database methods with a `chatId`, the database automatically selects the right source, dood! If a chat isn't in the `chatMapping`, it falls back to the `default` source, dood!
 
 ```python
 # Routes to the source mapped for chatId (-1001234567890 -> "secondary")
@@ -529,6 +567,18 @@ settings = db.getChatSettings(chatId=-1001234567890)
 # Explicitly pass dataSource to override routing
 messages = db.getChatMessages(chatId=123, dataSource="archive")
 ```
+
+### SQL Portability
+
+The database layer supports multiple SQL backends through a provider abstraction, dood! SQL portability is fully implemented, supporting SQLite, MySQL, and PostgreSQL, dood!
+
+| Provider | Type | Config Key |
+|---|---|---|
+| SQLite | `sqlite3` | Built-in, uses `sqlite3` stdlib |
+| MySQL | `mysql` | Requires `mysql-connector-python` |
+| PostgreSQL | `postgresql` | Requires `psycopg2-binary` |
+
+**Important**: Migration 013 removed `DEFAULT CURRENT_TIMESTAMP` for cross-database compatibility, dood! All timestamp columns now use explicit values in application code, dood!
 
 ### Database Schema (15+ Tables)
 
@@ -576,7 +626,7 @@ class Migration(BaseMigration):
         cursor.execute("DROP TABLE IF EXISTS my_new_table")
 ```
 
-Migrations are applied automatically on [`DatabaseWrapper`](internal/database/wrapper.py:113) initialization, dood! The schema version is tracked in a `schema_migrations` table.
+Migrations are applied automatically on [`Database`](internal/database/database.py) initialization, dood! The schema version is tracked in a `schema_migrations` table.
 
 ### How to Add a Migration
 
@@ -668,7 +718,7 @@ class HandlerParallelism(IntEnum):
 
 All handlers inherit from [`BaseBotHandler`](internal/bot/common/handlers/base.py:110), dood! This base class provides:
 
-- `self.db` — [`DatabaseWrapper`](internal/database/wrapper.py:113) instance
+- `self.db` — [`Database`](internal/database/database.py) instance
 - `self.llmManager` — [`LLMManager`](lib/ai/manager.py:17) instance
 - `self.cache` — [`CacheService`](internal/services/cache/service.py:88) instance
 - `self.queueService` — [`QueueService`](internal/services/queue_service/service.py) instance
@@ -877,7 +927,7 @@ from internal.services.cache import CacheService
 cache = CacheService.getInstance()
 
 # Must be initialized with database before use
-cache.injectDatabase(dbWrapper)
+cache.injectDatabase(db)
 
 # Chat settings (most common use case)
 settings = cache.getChatSettings(chatId=123)
@@ -1423,9 +1473,9 @@ def tempDb():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         dbPath = f.name
 
-    db = DatabaseWrapper(config={
+    db = Database(config={
         "default": "default",
-        "sources": {"default": {"path": dbPath, "readonly": False}},
+        "sources": {"default": {"type": "sqlite3", "path": dbPath, "readonly": False}},
     })
     yield db
 
@@ -1467,7 +1517,7 @@ The project enforces strict naming conventions, dood! Violating these is grounds
 | Local variables | `camelCase` | `resultText`, `spamScore` |
 | Functions/Methods | `camelCase` | `getChatSettings()`, `handleMessage()` |
 | Class fields | `camelCase` | `self.dbWrapper`, `self.maxCacheSize` |
-| Class names | `PascalCase` | `DatabaseWrapper`, `HandlersManager`, `CacheService` |
+| Class names | `PascalCase` | `Database`, `HandlersManager`, `CacheService` |
 | Constants | `UPPER_CASE` | `DEFAULT_TIMEOUT`, `API_BASE_URL`, `MAX_RETRIES` |
 | Module-level vars | `camelCase` or `UPPER_CASE` | `logger`, `DEFAULT_THREAD_ID` |
 
@@ -2215,8 +2265,8 @@ myValue: str = settings.get(ChatSettingsKey.MY_NEW_SETTING, "default_value")
 | Handler result enum | [`internal/bot/common/handlers/base.py:82`](internal/bot/common/handlers/base.py:82) → `HandlerResultStatus` |
 | Handler manager | [`internal/bot/common/handlers/manager.py:177`](internal/bot/common/handlers/manager.py:177) → `HandlersManager` |
 | Config manager | [`internal/config/manager.py:59`](internal/config/manager.py:59) → `ConfigManager` |
-| Database wrapper | [`internal/database/wrapper.py:113`](internal/database/wrapper.py:113) → `DatabaseWrapper` |
-| Database source config | [`internal/database/wrapper.py:81`](internal/database/wrapper.py:81) → `SourceConfig` |
+| Database | [`internal/database/database.py`](internal/database/database.py) → `Database` |
+| Database source config | [`internal/database/database.py`](internal/database/database.py) → `SourceConfig` |
 | Cache service | [`internal/services/cache/service.py:88`](internal/services/cache/service.py:88) → `CacheService` |
 | LLM manager | [`lib/ai/manager.py:17`](lib/ai/manager.py:17) → `LLMManager` |
 | LLM abstract model | [`lib/ai/abstract.py:19`](lib/ai/abstract.py:19) → `AbstractModel` |
@@ -2241,8 +2291,9 @@ main()
   └── GromozekBot(configManager)
         ├── initLogging(loggingConfig)
         ├── DatabaseManager(dbConfig)
-        │     └── DatabaseWrapper(config)
+        │     └── Database(config)
         │           ├── _initializeMultiSource(config)  ← connection pool setup
+        │           ├── _initializeProviders()          ← provider initialization
         │           └── _initDatabase()                 ← run pending migrations
         ├── LLMManager(modelsConfig)
         │     ├── _initProviders()   ← create provider instances

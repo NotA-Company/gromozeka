@@ -58,57 +58,51 @@
 
 | Key | Type | Purpose |
 |---|---|---|
-| `default` | str | Default provider name |
-| `providers.<name>.provider` | str | Provider type (`"sqlite3"` or `"sqlink"`) |
-| `providers.<name>.parameters.dbPath` | str | SQLite file path |
-| `providers.<name>.parameters.readOnly` | bool | Read-only flag |
-| `providers.<name>.parameters.timeout` | float | Connection timeout (seconds) |
-| `providers.<name>.parameters.useWal` | bool | Enable WAL mode (default: `true`) |
-| `chatMapping.<chatId>` | str | Map chat ID to provider name |
+| `default` | str | Default source name |
+| `sources.<name>.path` | str | Database file path |
+| `sources.<name>.readonly` | bool | Read-only flag |
+| `sources.<name>.pool-size` | int | Connection pool size |
+| `sources.<name>.timeout` | int | Connection timeout (seconds) |
+| `chatMapping.<chatId>` | str | Map chat ID to source name |
 
 **Example:**
 ```toml
 [database]
-default = "primary"
+default = "default"
 
-[database.providers.primary]
-provider = "sqlite3"
-
-[database.providers.primary.parameters]
-dbPath = "bot_data.db"
-readOnly = false
-timeout = 30.0
-useWal = true
+[database.sources.default]
+path = "bot_data.db"
+readonly = false
+pool-size = 5
+timeout = 30
 
 [database.chatMapping]
--1001234567890 = "primary"
+-1001234567890 = "default"
 ```
 
 **Multi-source example:**
 ```toml
 [database]
-default = "primary"
+default = "default"
 
-[database.providers.primary]
-provider = "sqlite3"
+[database.sources.default]
+path = "bot.db"
+readonly = false
+pool-size = 5
+timeout = 30
 
-[database.providers.primary.parameters]
-dbPath = "bot.db"
-readOnly = false
-timeout = 30.0
-
-[database.providers.archive]
-provider = "sqlite3"
-
-[database.providers.archive.parameters]
-dbPath = "archive.db"
-readOnly = true
-timeout = 30.0
+[database.sources.readonly]
+path = "archive.db"
+readonly = true
+pool-size = 10
+timeout = 10
 
 [database.chatMapping]
--1001234567890 = "archive"  # Old inactive chat
--1002345678901 = "archive"  # Another old chat
+-1001234567890 = "readonly"  # Old inactive chat
+-1002345678901 = "readonly"  # Another old chat
 ```
+
+**Note:** Database configuration uses `sources` (not `providers`) for multi-source routing with repository pattern. See [`database.md`](database.md) for details on multi-source routing and repository usage.
 
 ### `[models]`
 

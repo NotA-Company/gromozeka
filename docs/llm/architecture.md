@@ -110,7 +110,7 @@ class MyService:
 
 ### ADR-004: Multi-Source Database Routing
 
-**Decision:** [`Database`](../../internal/database/database.py) supports multiple SQLite sources with internal routing using repository pattern, dood!
+**Decision:** [`Database`](../../internal/database/database.py) supports multiple database sources with internal routing using repository pattern, dood!
 
 **Why:** Allows read replicas, separate databases for different data types, cross-bot data reading, dood!
 
@@ -119,6 +119,7 @@ class MyService:
 - **Simple Priority Routing**: `dataSource` param → `chatId` mapping → default source
 - **Readonly Protection**: Sources marked `readonly=True` reject write operations
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
+- **SQL Portability**: All SQL is provider-agnostic, supporting SQLite3, PostgreSQL, MySQL, and SQLink
 
 **Config:** `[database.sources.*]` in TOML, routing via `dataSource` parameter on read methods:
 ```toml
@@ -137,6 +138,12 @@ readonly = true
 pool-size = 10
 timeout = 10
 ```
+
+**SQL Portability Notes:**
+- Migration 013 removed `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns for cross-database compatibility
+- All timestamp values are now explicitly set in application code
+- Provider abstraction layer (`internal/database/providers/`) handles database-specific SQL dialects
+- Supports SQLite3, PostgreSQL, MySQL, and SQLink (SQLite3 over REST) providers
 
 **Repository Structure:**
 - `ChatInfoRepository` — Chat metadata and information

@@ -34,6 +34,7 @@ CREATE TABLE chat_messages (
     markup TEXT NOT NULL DEFAULT '',
     metadata TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, message_id),
     FOREIGN KEY (chat_id, user_id) REFERENCES chat_users(chat_id, user_id),
     FOREIGN KEY (media_id) REFERENCES media_attachments(file_unique_id)
@@ -121,7 +122,7 @@ CREATE TABLE chat_settings (
     chat_id INTEGER NOT NULL,
     key TEXT NOT NULL,
     value TEXT,
-    updated_by INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, key)
@@ -163,7 +164,7 @@ CREATE TABLE media_attachments (
     file_id TEXT,
     file_size INTEGER,
     media_type TEXT NOT NULL,
-    metadata TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
     mime_type TEXT,
     local_url TEXT,
@@ -208,6 +209,7 @@ CREATE TABLE spam_messages (
     text TEXT NOT NULL,
     reason TEXT NOT NULL,
     score FLOAT NOT NULL,
+    confidence FLOAT NOT NULL DEFAULT 1.0,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, user_id, message_id)
@@ -230,6 +232,7 @@ CREATE TABLE ham_messages (
     text TEXT NOT NULL,
     reason TEXT NOT NULL,
     score FLOAT NOT NULL,
+    confidence FLOAT NOT NULL DEFAULT 1.0,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, user_id, message_id)
@@ -346,6 +349,7 @@ CREATE TABLE cache_storage (
     namespace TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (namespace, key)
 )
