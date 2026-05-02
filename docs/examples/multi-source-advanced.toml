@@ -17,12 +17,18 @@ readonly = false
 pool-size = 10  # High traffic, many concurrent operations
 timeout = 30.0
 
+[database.sources.primary.parameters]
+keepConnection = false  # Connect on demand (default for file-based DBs)
+
 # Archive database - old/inactive chats from 2023 and earlier
 [database.sources.archive_2023]
 path = "archive_2023.db"
 readonly = true  # Readonly for data integrity
 pool-size = 3    # Lower traffic, occasional queries
 timeout = 30.0
+
+[database.sources.archive_2023.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # Archive database - old/inactive chats from 2024
 [database.sources.archive_2024]
@@ -31,12 +37,18 @@ readonly = true
 pool-size = 3
 timeout = 30.0
 
+[database.sources.archive_2024.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
+
 # External bot database - read from another bot instance
 [database.sources.other_bot]
 path = "/shared/other_bot.db"
 readonly = true  # Never write to external bot's database
 pool-size = 2    # Minimal pool for occasional cross-bot queries
 timeout = 10.0   # Shorter timeout for external database
+
+[database.sources.other_bot.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # Test database - for development and testing
 [database.sources.test]
@@ -45,12 +57,18 @@ readonly = false
 pool-size = 5
 timeout = 30.0
 
+[database.sources.test.parameters]
+keepConnection = false  # Connect on demand (default for file-based DBs)
+
 # Backup database - for disaster recovery queries
 [database.sources.backup]
 path = "/backups/bot_backup.db"
 readonly = true  # Never modify backups
 pool-size = 1    # Minimal pool, rarely used
 timeout = 60.0   # Longer timeout for potentially slow backup storage
+
+[database.sources.backup.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # MySQL database - production deployment with high concurrency
 [database.sources.mysql_production]
@@ -64,6 +82,9 @@ readonly = false
 pool-size = 20  # High concurrency production database
 timeout = 30.0
 
+[database.sources.mysql_production.parameters]
+keepConnection = false  # Connect on demand (default for MySQL)
+
 # PostgreSQL database - production deployment with complex queries
 [database.sources.postgres_production]
 type = "postgresql"
@@ -76,6 +97,9 @@ readonly = false
 pool-size = 15  # Production database with complex queries
 timeout = 30.0
 
+[database.sources.postgres_production.parameters]
+keepConnection = false  # Connect on demand (default for PostgreSQL)
+
 # PostgreSQL read replica - for read-heavy workloads
 [database.sources.postgres_replica]
 type = "postgresql"
@@ -87,6 +111,9 @@ database = "gromozeka_prod"
 readonly = true  # Read-only replica
 pool-size = 10   # Read replica for analytics and reporting
 timeout = 30.0
+
+[database.sources.postgres_replica.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # ============================================================================
 # CHAT MAPPINGS

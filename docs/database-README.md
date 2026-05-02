@@ -298,6 +298,9 @@ database = "gromozeka_db"
 readonly = false
 pool-size = 10
 timeout = 30
+
+[database.sources.mysql_primary.parameters]
+keepConnection = false  # Connect on demand (default for MySQL)
 ```
 
 #### PostgreSQL Configuration
@@ -313,6 +316,9 @@ database = "gromozeka_db"
 readonly = false
 pool-size = 10
 timeout = 30
+
+[database.sources.postgres_primary.parameters]
+keepConnection = false  # Connect on demand (default for PostgreSQL)
 ```
 
 #### SQLite Configuration (Default)
@@ -325,6 +331,10 @@ readonly = false
 pool-size = 10
 timeout = 30
 enable_foreign_keys = true  # SQLite-specific option
+
+[database.sources.sqlite_primary.parameters]
+keepConnection = false  # Connect on demand (default for file-based SQLite)
+# For in-memory SQLite, use: keepConnection = true
 ```
 
 ### Database-Specific Considerations
@@ -335,6 +345,7 @@ enable_foreign_keys = true  # SQLite-specific option
 - **Case sensitivity**: Uses `LIKE` for case-insensitive comparison
 - **Pagination**: Uses `LIMIT ? OFFSET ?` syntax
 - **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
+- **Connection management**: In-memory databases (`:memory:`) default to `keepConnection=true` to prevent data loss
 
 #### MySQL
 - **Connection pooling**: Uses `aiomysql.Pool` for connection management
@@ -342,6 +353,7 @@ enable_foreign_keys = true  # SQLite-specific option
 - **Case sensitivity**: Uses `LIKE` for case-insensitive comparison
 - **Pagination**: Uses `LIMIT ?, ?` syntax (offset, limit)
 - **Upsert**: Uses `INSERT ... ON DUPLICATE KEY UPDATE` syntax
+- **Connection management**: Defaults to `keepConnection=false` (connect on demand)
 
 #### PostgreSQL
 - **Connection pooling**: Uses `asyncpg.Pool` for connection management
@@ -349,6 +361,7 @@ enable_foreign_keys = true  # SQLite-specific option
 - **Case sensitivity**: Uses `ILIKE` for case-insensitive comparison
 - **Pagination**: Uses `LIMIT ? OFFSET ?` syntax
 - **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
+- **Connection management**: Defaults to `keepConnection=false` (connect on demand)
 
 ### Migration Between Providers
 

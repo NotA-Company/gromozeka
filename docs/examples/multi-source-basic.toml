@@ -12,12 +12,18 @@ readonly = false
 pool-size = 5
 timeout = 30.0
 
+[database.sources.primary.parameters]
+keepConnection = false  # Connect on demand (default for file-based DBs)
+
 # Archive database - old/inactive chats (readonly for safety)
 [database.sources.archive]
 path = "archive.db"
 readonly = true  # Prevents accidental modifications
 pool-size = 3    # Lower pool size for readonly source
 timeout = 30.0
+
+[database.sources.archive.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # Chat-to-source mapping
 # Map specific chats to the archive database

@@ -21,6 +21,9 @@ readonly = false
 pool-size = 10  # High traffic, many concurrent operations
 timeout = 30
 
+[database.sources.mysql_primary.parameters]
+keepConnection = false  # Connect on demand (default for MySQL)
+
 # ============================================================================
 # CHAT MAPPINGS
 # ============================================================================

@@ -4,6 +4,7 @@ Provides :class:`SQLite3Provider`, a concrete :class:`BaseSQLProvider` that
 wraps the :mod:`aiosqlite` library with a fully async interface.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
@@ -29,7 +30,16 @@ class SQLite3Provider(BaseSQLProvider):
         timeout: Seconds to wait for the database lock before raising an error.
     """
 
-    __slots__ = ("dbPath", "readOnly", "useWal", "timeout", "enableForeignKeys", "_connection")
+    __slots__ = (
+        "dbPath",
+        "readOnly",
+        "useWal",
+        "timeout",
+        "enableForeignKeys",
+        "keepConnection",
+        "_connection",
+        "_connectLock",
+    )
 
     def __init__(
         self,
@@ -39,6 +49,7 @@ class SQLite3Provider(BaseSQLProvider):
         useWal: bool = False,
         timeout: int = 30,
         enableForeignKeys: bool = True,
+        keepConnection: Optional[bool] = None,
     ) -> None:
         """Initialise the SQLite3 provider.
 
@@ -48,6 +59,10 @@ class SQLite3Provider(BaseSQLProvider):
             useWal: Enable WAL journal mode when ``True``.
             timeout: Seconds to wait for the database lock; defaults to ``30``.
             enableForeignKeys: Enable foreign key constraints when ``True``; defaults to ``True``.
+            keepConnection: If ``True``, connect on creation and keep connection open.
+                If ``False``, do not connect on creation.
+                If ``None`` (default), treat as ``False`` except for in-memory
+                databases (``dbPath == ":memory:"``) where it's treated as ``True``.
         """
         super().__init__()
         self.dbPath: str = dbPath
@@ -61,34 +76,54 @@ class SQLite3Provider(BaseSQLProvider):
         self.enableForeignKeys: bool = enableForeignKeys
         """When ``True``, foreign key constraints are enabled on the connection."""
 
+        # Determine effective keepConnection value
+        if keepConnection is None:
+            # For in-memory databases, default to True to avoid losing data
+            self.keepConnection: bool = dbPath == ":memory:"
+        else:
+            self.keepConnection: bool = keepConnection
+        """If ``True``, the connection is kept open across operations."""
+
         self._connection: Optional[aiosqlite.Connection] = None
+        self._connectLock: asyncio.Lock = asyncio.Lock()
+        """Lock to prevent race conditions during connection creation."""
 
     async def connect(self) -> None:
         """Open the aiosqlite connection if not already open.
 
         Applies ``PRAGMA query_only`` when :attr:`readOnly` is set, and
         ``PRAGMA journal_mode = WAL`` when :attr:`useWal` is set.
+
+        Uses a lock to prevent race conditions when multiple coroutines
+        try to connect simultaneously.
         """
+        # Fast path: if already connected, return immediately
         if self._connection is not None:
             return
 
-        connection: aiosqlite.Connection = await aiosqlite.connect(
-            self.dbPath,
-            timeout=self.timeout,
-        )
+        # Use lock to prevent race conditions during connection creation
+        async with self._connectLock:
+            # Double-check after acquiring lock
+            if self._connection is not None:
+                return
 
-        connection.row_factory = aiosqlite.Row
-        if self.readOnly:
-            await connection.execute("PRAGMA query_only = ON")
-        if self.useWal:
-            await connection.execute("PRAGMA journal_mode = WAL")
-        if self.enableForeignKeys:
-            await connection.execute("PRAGMA foreign_keys = ON")
+            connection: aiosqlite.Connection = await aiosqlite.connect(
+                self.dbPath,
+                timeout=self.timeout,
+            )
 
-        self._connection = connection
-        logger.debug(
-            f"Connected to SQLite3 database at {self.dbPath} with readOnly={self.readOnly} and useWal={self.useWal}"
-        )
+            connection.row_factory = aiosqlite.Row
+            if self.readOnly:
+                await connection.execute("PRAGMA query_only = ON")
+            if self.useWal:
+                await connection.execute("PRAGMA journal_mode = WAL")
+            if self.enableForeignKeys:
+                await connection.execute("PRAGMA foreign_keys = ON")
+
+            self._connection = connection
+            logger.debug(
+                f"Connected to SQLite3 database at {self.dbPath} with readOnly={self.readOnly} and useWal={self.useWal}"
+            )
 
     async def disconnect(self) -> None:
         """Close the aiosqlite connection if it is open."""
@@ -107,7 +142,7 @@ class SQLite3Provider(BaseSQLProvider):
         return self.readOnly
 
     @asynccontextmanager
-    async def cursor(self, *, keepConnection: bool = False) -> AsyncGenerator[aiosqlite.Cursor, None]:
+    async def cursor(self, *, keepConnection: Optional[bool] = None) -> AsyncGenerator[aiosqlite.Cursor, None]:
         """Async context manager that yields a database cursor within a transaction.
 
         Automatically commits on success or rolls back on any exception.
@@ -116,7 +151,8 @@ class SQLite3Provider(BaseSQLProvider):
 
         Args:
             keepConnection: If True, keeps the connection open even if it was
-                closed before entering this context manager.
+                closed before entering this context manager. If None (default),
+                uses the instance-level ``keepConnection`` setting.
 
         Yields:
             An open :class:`aiosqlite.Cursor` ready for query execution.
@@ -125,7 +161,15 @@ class SQLite3Provider(BaseSQLProvider):
             Exception: Re-raises any exception that occurs during execution
                 after rolling back the transaction.
         """
-        needDisconnect: bool = self._connection is None and not keepConnection
+        # Use instance-level keepConnection if not explicitly provided
+        effectiveKeepConnection = keepConnection if keepConnection is not None else self.keepConnection
+
+        # Track whether we opened the connection ourselves
+        # This prevents race conditions in concurrent operations
+        wasConnected: bool = self._connection is not None
+
+        # Connect if not already connected
+        # If keepConnection is True, this will establish the connection on first use
         await self.connect()
 
         assert self._connection is not None
@@ -142,7 +186,8 @@ class SQLite3Provider(BaseSQLProvider):
         finally:
             # Close cursor before disconnecting to avoid "Connection closed" error
             await cursor.close()
-            if needDisconnect:
+            # Only disconnect if we opened the connection ourselves AND keepConnection is False
+            if not wasConnected and not effectiveKeepConnection:
                 await self.disconnect()
 
     async def _makeQueryResult(self, cursor: aiosqlite.Cursor, fetchType: FetchType) -> QueryResult:
@@ -180,7 +225,7 @@ class SQLite3Provider(BaseSQLProvider):
         Returns:
             Query result according to the query's fetch type.
         """
-        async with self.cursor() as cursor:
+        async with self.cursor(keepConnection=self.keepConnection) as cursor:
             await cursor.execute(query.query, utils.convertContainerElementsToSQLite(query.params))
             return await self._makeQueryResult(cursor, query.fetchType)
 
@@ -197,7 +242,7 @@ class SQLite3Provider(BaseSQLProvider):
             A list of query results, one per input query, in the same order.
         """
         ret: list[QueryResult] = []
-        async with self.cursor() as cursor:
+        async with self.cursor(keepConnection=self.keepConnection) as cursor:
             for query in queries:
                 await cursor.execute(query.query, utils.convertContainerElementsToSQLite(query.params))
                 ret.append(await self._makeQueryResult(cursor, query.fetchType))

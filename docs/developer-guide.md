@@ -423,10 +423,19 @@ readonly = false
 pool-size = 5                 # Max connections per source
 timeout = 30                  # Connection timeout in seconds
 
+[database.sources.default.parameters]
+keepConnection = false        # Connect on demand (default for file-based DBs)
+
 # Multi-source: map specific chats to different databases
 [database.chatMapping]
 "-1001234567890" = "secondary"   # Chat ID string -> source name
 ```
+
+**`keepConnection` parameter:**
+- `true` — Connect immediately when provider is created (good for readonly replicas, in-memory DBs)
+- `false` — Connect on first query (default for file-based DBs, saves resources)
+- `null` — Auto-detect: `true` for in-memory SQLite3, `false` otherwise
+- **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
 
 #### `[ratelimiter]`
 
@@ -579,6 +588,28 @@ The database layer supports multiple SQL backends through a provider abstraction
 | PostgreSQL | `postgresql` | Requires `psycopg2-binary` |
 
 **Important**: Migration 013 removed `DEFAULT CURRENT_TIMESTAMP` for cross-database compatibility, dood! All timestamp columns now use explicit values in application code, dood!
+
+### Connection Management
+
+Database providers support configurable connection management via the `keepConnection` parameter, dood!
+
+**`keepConnection` parameter values:**
+- `true` — Connect immediately when provider is created (good for readonly replicas, in-memory DBs)
+- `false` — Connect on first query (default for file-based DBs, saves resources)
+- `null` — Auto-detect: `true` for in-memory SQLite3, `false` otherwise
+
+**Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss, dood!
+
+**Configuration example:**
+```toml
+[database.sources.default.parameters]
+keepConnection = false  # Connect on demand (default for file-based DBs)
+
+[database.sources.readonly.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
+```
+
+**Migration connection management:** Migrations rely on the provider's `keepConnection` parameter for connection management, dood! No explicit `await sqlProvider.connect()` call is made during migration, dood!
 
 ### Database Schema (15+ Tables)
 

@@ -979,6 +979,129 @@ enable_foreign_keys = true  # Enable foreign keys for this source
 
 ---
 
+### Issue #13: Connection Management Strategy
+
+**Severity**: Medium
+**Files Affected**: All database providers
+**Impact**: Resource usage, performance, data integrity
+
+#### Problem Description
+
+Different database providers have different optimal connection management strategies:
+
+- **SQLite (file-based)**: Can connect on demand, but in-memory databases need immediate connection
+- **MySQL**: Connection pooling is built-in, but establishing connections has overhead
+- **PostgreSQL**: Connection pooling is built-in, but establishing connections has overhead
+- **SQLink**: Lightweight async client, can connect on demand
+
+#### Recommended Solution
+
+Add a `keepConnection` parameter to all database providers to control when connections are established.
+
+**Parameter values:**
+- `true` — Connect immediately when provider is created
+- `false` — Connect on first query (lazy connection)
+- `null` — Auto-detect based on provider type and configuration
+
+**Provider-specific defaults:**
+- **SQLite3**: `null` → Auto-detect: `true` for in-memory (`:memory:`), `false` for file-based
+- **SQLink**: `null` → Defaults to `false` (connect on demand)
+- **MySQL**: `null` → Defaults to `false` (connect on demand)
+- **PostgreSQL**: `null` → Defaults to `false` (connect on demand)
+
+**Implementation:**
+
+```python
+# internal/database/providers/sqlite3.py
+class SQLite3Provider(BaseSQLProvider):
+    def __init__(self, dbPath: str, keepConnection: Optional[bool] = None, ...):
+        """Initialize SQLite3 provider.
+        
+        Args:
+            dbPath: Database file path or ":memory:" for in-memory database
+            keepConnection: Connect immediately (true), on demand (false), or auto-detect (null)
+        """
+        # Special handling for in-memory databases to prevent data loss
+        self.keepConnection: bool = dbPath == ":memory:" if keepConnection is None else keepConnection
+
+# internal/database/providers/sqlink.py
+class SQLinkProvider(BaseSQLProvider):
+    def __init__(self, dbPath: str, keepConnection: Optional[bool] = None, ...):
+        """Initialize SQLink provider.
+        
+        Args:
+            dbPath: Database file path
+            keepConnection: Connect immediately (true), on demand (false), or auto-detect (null)
+        """
+        self.keepConnection: bool = keepConnection if keepConnection is not None else False
+
+# internal/database/providers/mysql.py
+class MySQLProvider(BaseSQLProvider):
+    def __init__(self, host: str, port: int, user: str, password: str, database: str,
+                 keepConnection: Optional[bool] = None, ...):
+        """Initialize MySQL provider.
+        
+        Args:
+            host: Database host
+            port: Database port
+            user: Database user
+            password: Database password
+            database: Database name
+            keepConnection: Connect immediately (true), on demand (false), or auto-detect (null)
+        """
+        self.keepConnection: bool = keepConnection if keepConnection is not None else False
+
+# internal/database/providers/postgresql.py
+class PostgreSQLProvider(BaseSQLProvider):
+    def __init__(self, host: str, port: int, user: str, password: str, database: str,
+                 keepConnection: Optional[bool] = None, ...):
+        """Initialize PostgreSQL provider.
+        
+        Args:
+            host: Database host
+            port: Database port
+            user: Database user
+            password: Database password
+            database: Database name
+            keepConnection: Connect immediately (true), on demand (false), or auto-detect (null)
+        """
+        self.keepConnection: bool = keepConnection if keepConnection is not None else False
+```
+
+**Configuration example:**
+
+```toml
+[database.sources.default.parameters]
+keepConnection = false  # Connect on demand (default for file-based DBs)
+
+[database.sources.readonly.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
+
+[database.sources.inmemory.parameters]
+dbPath = ":memory:"
+keepConnection = true  # Required for in-memory databases
+```
+
+**Migration connection management:**
+
+The migration system now relies on the provider's `keepConnection` parameter for connection management. No explicit `await sqlProvider.connect()` call is made during migration. Providers with `keepConnection=true` connect immediately before migrations run, while providers with `keepConnection=false` connect on first query during migration.
+
+**Benefits:**
+- Flexible connection management based on use case
+- Optimal resource usage for file-based databases (connect on demand)
+- Prevents data loss for in-memory databases (connect immediately)
+- Better performance for readonly replicas (connect immediately)
+- Consistent behavior across all providers
+
+**Use cases:**
+- **File-based SQLite**: Use `keepConnection=false` to save resources
+- **In-memory SQLite**: Use `keepConnection=true` to prevent data loss
+- **Readonly replicas**: Use `keepConnection=true` for faster query response
+- **Production MySQL/PostgreSQL**: Use `keepConnection=false` to avoid unnecessary connections
+- **Development/testing**: Use `keepConnection=true` for immediate feedback
+
+---
+
 ## Implementation Strategy
 
 ### Phase 1: Foundation (Week 1-2)

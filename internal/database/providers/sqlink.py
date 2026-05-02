@@ -5,6 +5,7 @@ wraps the ``sqlink`` async client library to execute SQL queries against a
 remote database server.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
@@ -29,7 +30,7 @@ class SQLinkProvider(BaseSQLProvider):
         timeout: Seconds to wait for a query response before raising an error.
     """
 
-    __slots__ = ("_connection", "url", "user", "password", "database", "timeout")
+    __slots__ = ("_connection", "url", "user", "password", "database", "timeout", "keepConnection", "_connectLock")
 
     def __init__(
         self,
@@ -39,6 +40,7 @@ class SQLinkProvider(BaseSQLProvider):
         password: str,
         database: str,
         timeout: int = 30,
+        keepConnection: Optional[bool] = None,
     ) -> None:
         """Initialise the SQLink provider.
 
@@ -48,6 +50,9 @@ class SQLinkProvider(BaseSQLProvider):
             password: Password for authentication.
             database: Database name to connect to.
             timeout: Seconds to wait for a response; defaults to ``30``.
+            keepConnection: If ``True``, connect on creation and keep connection open.
+                If ``False``, do not connect on creation.
+                If ``None`` (default), treat as ``False``.
         """
         super().__init__()
         self.url: str = url
@@ -60,29 +65,43 @@ class SQLinkProvider(BaseSQLProvider):
         """Name of the database to connect to."""
         self.timeout: int = timeout
         """Seconds to wait for a query response before raising an error."""
+        self.keepConnection: bool = keepConnection if keepConnection is not None else False
+        """If ``True``, the connection is kept open across operations."""
 
         self._connection: Optional[sqlink.AsyncConnection] = None
         """Active SQLink connection, or ``None`` if not connected."""
+        self._connectLock: asyncio.Lock = asyncio.Lock()
+        """Lock to prevent race conditions during connection creation."""
 
     async def connect(self) -> None:
         """Open the SQLink connection if not already open.
 
         Uses ``autoRefresh=True`` so the connection token is refreshed
         automatically when it expires.
+
+        Uses a lock to prevent race conditions when multiple coroutines
+        try to connect simultaneously.
         """
+        # Fast path: if already connected, return immediately
         if self._connection is not None:
             return
 
-        self._connection = await sqlink.asyncConnect(
-            self.url,
-            username=self.user,
-            password=self.password,
-            database=self.database,
-            timeout=self.timeout,
-            autoRefresh=True,
-        )
+        # Use lock to prevent race conditions during connection creation
+        async with self._connectLock:
+            # Double-check after acquiring lock
+            if self._connection is not None:
+                return
 
-        logger.debug(f"Connected to SQLink database {self.url}/{self.database}")
+            self._connection = await sqlink.asyncConnect(
+                self.url,
+                username=self.user,
+                password=self.password,
+                database=self.database,
+                timeout=self.timeout,
+                autoRefresh=True,
+            )
+
+            logger.debug(f"Connected to SQLink database {self.url}/{self.database}")
 
     async def disconnect(self) -> None:
         """Close the SQLink connection if it is open."""
@@ -148,18 +167,21 @@ class SQLinkProvider(BaseSQLProvider):
 
         Opens a connection if one is not already active, yields it for use,
         and closes the connection after the context exits if it was opened
-        by this context manager.
+        by this context manager and ``keepConnection`` is ``False``.
 
         Yields:
             An active ``sqlink.AsyncConnection`` instance.
         """
-        needDisconnect = self._connection is None
+        # Track whether we opened the connection ourselves
+        # This prevents race conditions in concurrent operations
+        wasConnected = self._connection is not None
         await self.connect()
         assert self._connection is not None
         try:
             yield self._connection
         finally:
-            if needDisconnect:
+            # Only disconnect if we opened the connection ourselves AND keepConnection is False
+            if not wasConnected and not self.keepConnection:
                 await self.disconnect()
 
     async def _execute(self, query: ParametrizedQuery) -> QueryResult:

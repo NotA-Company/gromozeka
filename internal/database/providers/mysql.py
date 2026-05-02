@@ -4,6 +4,7 @@ Provides :class:`MySQLProvider`, a concrete :class:`BaseSQLProvider` that
 wraps the ``aiomysql`` library with a fully async interface.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
@@ -32,7 +33,18 @@ class MySQLProvider(BaseSQLProvider):
         timeout: Seconds to wait for a query response before raising an error.
     """
 
-    __slots__ = ("host", "port", "user", "password", "database", "readOnly", "timeout", "_connection", "_pool")
+    __slots__ = (
+        "host",
+        "port",
+        "user",
+        "password",
+        "database",
+        "readOnly",
+        "timeout",
+        "keepConnection",
+        "_connectLock",
+        "_pool",
+    )
 
     def __init__(
         self,
@@ -44,6 +56,7 @@ class MySQLProvider(BaseSQLProvider):
         database: str,
         readOnly: bool = False,
         timeout: int = 30,
+        keepConnection: Optional[bool] = None,
     ) -> None:
         """Initialise the MySQL provider.
 
@@ -55,6 +68,9 @@ class MySQLProvider(BaseSQLProvider):
             database: Database name to connect to.
             readOnly: Open connection in query-only mode when ``True``.
             timeout: Seconds to wait for a response; defaults to ``30``.
+            keepConnection: If ``True``, connect on creation and keep connection open.
+                If ``False``, do not connect on creation.
+                If ``None`` (default), treat as ``False``.
         """
         super().__init__()
         self.host: str = host
@@ -71,26 +87,33 @@ class MySQLProvider(BaseSQLProvider):
         """When ``True``, the connection is opened in query-only mode."""
         self.timeout: int = timeout
         """Seconds to wait for a query response before raising an error."""
+        self.keepConnection: bool = keepConnection if keepConnection is not None else False
+        """If ``True``, the connection is kept open across operations."""
 
-        self._connection: Optional[aiomysql.Connection] = None
         self._pool: Optional[aiomysql.Pool] = None
+        self._connectLock: asyncio.Lock = asyncio.Lock()
+        """Lock to prevent race conditions during connection creation."""
 
     async def connect(self) -> None:
         """Open the MySQL connection pool if not already open."""
         if self._pool is not None:
             return
 
-        self._pool = await aiomysql.create_pool(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
-            db=self.database,
-            autocommit=False,
-            connect_timeout=self.timeout,
-        )
+        async with self._connectLock:
+            if self._pool is not None:
+                return
 
-        logger.debug(f"Connected to MySQL database at {self.host}:{self.port}/{self.database}")
+            self._pool = await aiomysql.create_pool(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                db=self.database,
+                autocommit=False,
+                connect_timeout=self.timeout,
+            )
+
+            logger.debug(f"Connected to MySQL database at {self.host}:{self.port}/{self.database}")
 
     async def disconnect(self) -> None:
         """Close the MySQL connection pool if it is open."""

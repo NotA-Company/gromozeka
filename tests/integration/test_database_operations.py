@@ -58,6 +58,9 @@ async def threadSafeDb(tmp_path):
 
     File-based databases support proper concurrent access across threads,
     unlike in-memory databases which are isolated per connection.
+
+    Note: keepConnection=True is required for concurrent async operations
+    to avoid connection lifecycle conflicts.
     """
     dbPath = tmp_path / "test_threading.db"
     config: DatabaseManagerConfig = {
@@ -68,6 +71,7 @@ async def threadSafeDb(tmp_path):
                 "provider": "sqlite3",
                 "parameters": {
                     "dbPath": str(dbPath),
+                    "keepConnection": True,  # Required for concurrent operations
                 },
             }
         },

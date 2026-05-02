@@ -30,6 +30,7 @@ dbPath = "bot_data.db"
 readOnly = false
 timeout = 30
 useWal = true
+keepConnection = true  # Connect on creation and keep connection open
 
 # [ratelimiter]
 [ratelimiter.ratelimiters.default]

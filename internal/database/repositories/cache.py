@@ -60,7 +60,7 @@ class CacheRepository(BaseRepository):
             logger.error(f"Failed to get cache storage: {e}")
             return []
 
-    async def setCacheStorage(self, namespace: str, key: str, value: str) -> bool:
+    async def setCacheStorage(self, namespace: str, key: str, value: str, *, dataSource: Optional[str] = None) -> bool:
         """
         Store cache entry in cache_storage table.
 
@@ -68,15 +68,16 @@ class CacheRepository(BaseRepository):
             namespace: Cache namespace
             key: Cache key
             value: Cache value
+            dataSource: Optional data source name for explicit routing
 
         Returns:
             bool: True if successful, False otherwise
 
         Note:
-            Writes to default source. Cannot write to readonly sources.
+            Writes to default source unless dataSource specified. Cannot write to readonly sources.
         """
         try:
-            sqlProvider = await self.manager.getProvider(readonly=False)
+            sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=False)
             await sqlProvider.upsert(
                 table="cache_storage",
                 values={

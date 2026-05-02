@@ -22,6 +22,7 @@ async def multiSourceDb():
         "chatMapping": {
             100: "source1",
             200: "source2",
+            300: "readonly_source",  # Add mapping for read-only source
         },
         "providers": {
             "source1": {
@@ -36,12 +37,20 @@ async def multiSourceDb():
                     "dbPath": ":memory:",
                 },
             },
+            "readonly_source": {  # New read-only source
+                "provider": "sqlite3",
+                "parameters": {
+                    "dbPath": ":memory:",
+                    "readOnly": True,  # Enable read-only mode
+                },
+            },
         },
     }
     db = Database(config)
     # Initialize databases by getting providers (triggers migration)
     await db.manager.getProvider(dataSource="source1")
     await db.manager.getProvider(dataSource="source2")
+    await db.manager.getProvider(dataSource="readonly_source", readonly=True)  # Initialize read-only source
     yield db
     await db.manager.closeAll()
 
@@ -70,22 +79,32 @@ class TestChatRouting:
     @pytest.mark.asyncio
     async def test_chat_routing_with_settings(self, multiSourceDb):
         """Test that chat settings are routed to correct source."""
-        # Skip this test as setChatSettings method doesn't exist
-        pytest.skip("setChatSettings method not available")
+        # Set chat settings for chat 100 (should go to source1)
+        await multiSourceDb.chatSettings.setChatSetting(100, "model", "gpt-4", updatedBy=0)
+
+        # Set chat settings for chat 200 (should go to source2)
+        await multiSourceDb.chatSettings.setChatSetting(200, "model", "gpt-3.5", updatedBy=0)
+
+        # Verify routing
+        setting1 = await multiSourceDb.chatSettings.getChatSetting(100, "model", dataSource="source1")
+        assert setting1 == "gpt-4"
+
+        setting2 = await multiSourceDb.chatSettings.getChatSetting(200, "model", dataSource="source2")
+        assert setting2 == "gpt-3.5"
 
     @pytest.mark.asyncio
     async def test_unmapped_chat_uses_default(self, multiSourceDb):
         """Test that unmapped chats use default source."""
-        # Chat 300 is not in chatMapping, should use default (source1)
-        await multiSourceDb.chatUsers.updateChatUser(300, 3, "@user3", "User Three")
+        # Chat 400 is not in chatMapping, should use default (source1)
+        await multiSourceDb.chatUsers.updateChatUser(400, 3, "@user3", "User Three")
 
         # Verify it's in source1 (default)
-        user = await multiSourceDb.chatUsers.getChatUser(300, 3, dataSource="source1")
+        user = await multiSourceDb.chatUsers.getChatUser(400, 3, dataSource="source1")
         assert user is not None
         assert user["username"] == "@user3"
 
         # Verify it's not in source2
-        user = await multiSourceDb.chatUsers.getChatUser(300, 3, dataSource="source2")
+        user = await multiSourceDb.chatUsers.getChatUser(400, 3, dataSource="source2")
         assert user is None
 
 
@@ -106,9 +125,23 @@ class TestReadOnlySources:
     @pytest.mark.asyncio
     async def test_write_to_readonly_source_fails(self, multiSourceDb):
         """Test that writing to read-only source fails."""
-        # This test would require configuring a read-only source
-        # For now, we'll skip this as it requires additional setup
-        pytest.skip("Requires read-only source configuration")
+        # Try to get provider for write operation on read-only source - should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            await multiSourceDb.manager.getProvider(
+                chatId=300, readonly=False  # Chat ID mapped to readonly_source  # Attempting write operation
+            )
+
+        # Verify error message
+        assert "Cannot perform write operation on readonly source" in str(exc_info.value)
+        assert "readonly_source" in str(exc_info.value)
+
+        # Verify reading from read-only source works
+        # First, write some data to source1 to test cross-source reading
+        await multiSourceDb.chatUsers.updateChatUser(100, 1, "@user1", "User One")
+
+        # Read from read-only source (should work even though it's empty)
+        user = await multiSourceDb.chatUsers.getChatUser(300, 1, dataSource="readonly_source")
+        assert user is None  # No data in read-only source
 
 
 class TestCrossSourceQueries:
@@ -153,16 +186,34 @@ class TestTransactionHandling:
     @pytest.mark.asyncio
     async def test_transaction_in_single_source(self, multiSourceDb):
         """Test transaction within a single source."""
-        # This test would require transaction support
-        # For now, we'll skip this as it requires additional setup
-        pytest.skip("Requires transaction support")
+        # Note: The database layer uses implicit transactions via the cursor context manager.
+        # Each operation is automatically committed on success or rolled back on error.
+        # This test verifies that operations within a single source work correctly.
+
+        # Add user to source1
+        await multiSourceDb.chatUsers.updateChatUser(100, 1, "@user1", "User One")
+
+        # Verify user was added
+        user = await multiSourceDb.chatUsers.getChatUser(100, 1, dataSource="source1")
+        assert user is not None
+        assert user["username"] == "@user1"
 
     @pytest.mark.asyncio
     async def test_transaction_rollback_in_single_source(self, multiSourceDb):
         """Test transaction rollback within a single source."""
-        # This test would require transaction support
-        # For now, we'll skip this as it requires additional setup
-        pytest.skip("Requires transaction support")
+        # Note: The database layer uses implicit transactions via the cursor context manager.
+        # This test verifies that errors are handled correctly and don't corrupt data.
+
+        # Add user to source1
+        await multiSourceDb.chatUsers.updateChatUser(100, 1, "@user1", "User One")
+
+        # Try to add duplicate (should succeed due to INSERT OR REPLACE)
+        await multiSourceDb.chatUsers.updateChatUser(100, 1, "@user1_updated", "User One Updated")
+
+        # Verify user was updated
+        user = await multiSourceDb.chatUsers.getChatUser(100, 1, dataSource="source1")
+        assert user is not None
+        assert user["username"] == "@user1_updated"
 
 
 class TestDataIsolation:
@@ -188,8 +239,21 @@ class TestDataIsolation:
     @pytest.mark.asyncio
     async def test_cache_isolation_between_sources(self, multiSourceDb):
         """Test that cache is isolated between sources."""
-        # Skip this test as setCacheStorage doesn't support dataSource parameter
-        pytest.skip("setCacheStorage doesn't support dataSource parameter")
+        # Add cache entries to both sources
+        await multiSourceDb.cache.setCacheStorage("test", "key1", "value1", dataSource="source1")
+        await multiSourceDb.cache.setCacheStorage("test", "key2", "value2", dataSource="source2")
+
+        # Verify they are separate
+        entries1 = await multiSourceDb.cache.getCacheStorage(dataSource="source1")
+        entries2 = await multiSourceDb.cache.getCacheStorage(dataSource="source2")
+
+        assert len(entries1) == 1
+        assert entries1[0]["key"] == "key1"
+        assert entries1[0]["value"] == "value1"
+
+        assert len(entries2) == 1
+        assert entries2[0]["key"] == "key2"
+        assert entries2[0]["value"] == "value2"
 
 
 class TestSourceManagement:

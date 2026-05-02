@@ -137,6 +137,11 @@ class Database:
         Creates the settings table for version tracking and executes all pending
         migrations for the specified database provider.
 
+        Connection management is handled automatically by the provider's keepConnection
+        parameter. For in-memory databases, keepConnection defaults to True to prevent
+        data loss on disconnect. For file-based databases, the provider connects on-demand
+        when executing queries.
+
         Args:
             sqlProvider: SQL provider instance for database operations.
             providerName: Name of the database provider being migrated.
@@ -150,11 +155,8 @@ class Database:
             logger.debug(f"Skipping DB migration for readonly source {providerName}, dood")
             return
 
-        # Ensure connection is open and keep it open during migration
-        # This is important for in-memory databases which lose data on disconnect
-        await sqlProvider.connect()
-
         # Create settings table (needed before migrations for version tracking)
+        # Provider will connect automatically via cursor context manager
         await sqlProvider.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
@@ -165,6 +167,7 @@ class Database:
             """)
 
         # Run migrations for this source
+        # Provider manages connections internally based on keepConnection setting
         await self._migrationManager.migrate(sqlProvider=sqlProvider)
         logger.info(f"Database initialization complete for provider '{providerName}', dood!")
 

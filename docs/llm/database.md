@@ -101,12 +101,24 @@ readonly = false
 pool-size = 5
 timeout = 30
 
+[database.sources.default.parameters]
+keepConnection = false  # Connect on demand (default for file-based DBs)
+
 [database.sources.readonly]
 path = "bot_data.db"
 readonly = true
 pool-size = 10
 timeout = 10
+
+[database.sources.readonly.parameters]
+keepConnection = true  # Connect immediately (good for readonly replicas)
 ```
+
+**`keepConnection` parameter:**
+- `true` — Connect immediately when provider is created (good for readonly replicas, in-memory DBs)
+- `false` — Connect on first query (default for file-based DBs, saves resources)
+- `None` — Auto-detect: `true` for in-memory SQLite3, `false` otherwise
+- **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
 
 **Key class:** [`SourceConfig`](../../internal/database/database.py:81) — config for one DB source.
 
@@ -144,6 +156,13 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
 - `getSpamMessages()`: `(chat_id, message_id)` — message uniqueness within chat
 - `getCacheStorage()`: `(namespace, key)` — cache entry uniqueness
 - `getCacheEntry()`: First match (no deduplication) — performance optimization
+
+**Migration Connection Management:**
+- Migrations now rely on the provider's `keepConnection` parameter for connection management
+- No explicit `await sqlProvider.connect()` call is made during migration
+- Providers with `keepConnection=true` connect immediately before migrations run
+- Providers with `keepConnection=false` connect on first query during migration
+- This ensures consistent behavior across all database operations
 
 ---
 
