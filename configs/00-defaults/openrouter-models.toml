@@ -23,6 +23,18 @@ support_text = true
 support_images = false
 tier = "paid"
 
+[models.models."openrouter/deepseek-v4-flash"]
+# https://openrouter.ai/deepseek/deepseek-v4-flash
+provider = "openrouter"
+model_id = "deepseek/deepseek-v4-flash"
+model_version = "latest"
+temparature = 0.3
+context = 1000000
+support_tools = true
+support_text = true
+support_images = false
+tier = "paid"
+
 [models.models."openrouter/qwen3-235b-a22b"]
 # https://openrouter.ai/qwen/qwen3-235b-a22b
 provider = "openrouter"
