@@ -12,6 +12,7 @@ from typing import List, Optional
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import CacheDict, CacheStorageDict, CacheType
+from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -76,20 +77,18 @@ class CacheRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO cache_storage
-                    (namespace, key, value, updated_at)
-                VALUES
-                    (:namespace, :key, :value, CURRENT_TIMESTAMP)
-                ON CONFLICT(namespace, key) DO UPDATE SET
-                    value = :value,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                {
+            await sqlProvider.upsert(
+                table="cache_storage",
+                values={
                     "namespace": namespace,
                     "key": key,
                     "value": value,
+                    "updated_at": dbUtils.getCurrentTimestamp(),
+                },
+                conflictColumns=["namespace", "key"],
+                updateExpressions={
+                    "value": ExcludedValue(),
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True
@@ -155,12 +154,8 @@ class CacheRepository(BaseRepository):
         if ttl is not None and ttl <= 0:
             return None
 
-        # Use datetime.now(datetime.UTC) and remove timezone info to match SQLite's CURRENT_TIMESTAMP
-        # which returns offset-naive datetime
         minimalUpdatedAt = (
-            datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(seconds=ttl)
-            if ttl is not None and ttl > 0
-            else None
+            dbUtils.getCurrentTimestamp() - datetime.timedelta(seconds=ttl) if ttl is not None and ttl > 0 else None
         )
 
         try:
@@ -204,20 +199,20 @@ class CacheRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO cache
-                    (namespace, key, data, created_at, updated_at)
-                VALUES
-                    (:namespace, :key, :data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT(namespace, key) DO UPDATE SET
-                    data = :data,
-                    updated_at = CURRENT_TIMESTAMP
-            """,
-                {
+            now = dbUtils.getCurrentTimestamp()
+            await sqlProvider.upsert(
+                table="cache",
+                values={
                     "namespace": cacheType,
                     "key": key,
                     "data": data,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                conflictColumns=["namespace", "key"],
+                updateExpressions={
+                    "data": ExcludedValue(),
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True
@@ -275,7 +270,7 @@ class CacheRepository(BaseRepository):
         # Calculate the cutoff timestamp
         if ttl is None:
             ttl = 0
-        cutoffTime = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=ttl)
+        cutoffTime = dbUtils.getCurrentTimestamp() - datetime.timedelta(seconds=ttl)
 
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=False)

@@ -10,6 +10,8 @@ import logging
 from typing import Dict, Optional
 
 from ..manager import DatabaseManager
+from ..providers.base import ExcludedValue
+from ..utils import getCurrentTimestamp
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -58,21 +60,20 @@ class UserDataRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO user_data
-                    (user_id, chat_id, key, data)
-                VALUES
-                    (:userId, :chatId, :key, :data)
-                ON CONFLICT DO UPDATE SET
-                    data = :data,
-                    updated_at = CURRENT_TIMESTAMP
-            """,
-                {
-                    "userId": userId,
-                    "chatId": chatId,
+            await sqlProvider.upsert(
+                table="user_data",
+                values={
+                    "user_id": userId,
+                    "chat_id": chatId,
                     "key": key,
                     "data": data,
+                    "updated_at": getCurrentTimestamp(),
+                    "created_at": getCurrentTimestamp(),
+                },
+                conflictColumns=["user_id", "chat_id", "key"],
+                updateExpressions={
+                    "data": ExcludedValue(),
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True

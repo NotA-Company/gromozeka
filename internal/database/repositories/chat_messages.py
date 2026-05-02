@@ -15,7 +15,7 @@ from internal.models import MessageIdType, MessageType
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import ChatMessageDict, MessageCategory
-from ..providers import ParametrizedQuery
+from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -97,73 +97,92 @@ class ChatMessagesRepository(BaseRepository):
         try:
             sqlPrivider = await self.manager.getProvider(chatId=chatId, readonly=False)
             today = date.replace(hour=0, minute=0, second=0, microsecond=0)
-            await sqlPrivider.batchExecute(
-                [
-                    ParametrizedQuery(
-                        """
-                    INSERT INTO chat_messages
-                    (date, chat_id, user_id, message_id,
-                        reply_id, thread_id, message_text, message_type,
-                        message_category, root_message_id, quote_text,
-                        media_id, markup, metadata, media_group_id
-                        )
-                    VALUES
-                    (:date, :chatId, :userId, :messageId,
-                        :replyId, :threadId, :messageText, :messageType,
-                        :messageCategory, :rootMessageId, :quoteText,
-                        :mediaId, :markup, :metadata, :mediaGroupId
-                        )
-                """,
-                        {
-                            "date": date,
-                            "chatId": chatId,
-                            "userId": userId,
-                            "messageId": messageId,
-                            "replyId": replyId,
-                            "threadId": threadId,
-                            "messageText": messageText,
-                            "messageType": messageType,
-                            "messageCategory": str(messageCategory),
-                            "rootMessageId": rootMessageId,
-                            "quoteText": quoteText,
-                            "mediaId": mediaId,
-                            "markup": markup,
-                            "metadata": metadata,
-                            "mediaGroupId": mediaGroupId,
-                        },
-                    ),
-                    ParametrizedQuery(
-                        """
-                    UPDATE chat_users
-                    SET messages_count = messages_count + 1,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE chat_id = ? AND user_id = ?
-                """,
-                        (chatId, userId),
-                    ),
-                    ParametrizedQuery(
-                        """
-                    INSERT INTO chat_stats
-                    (chat_id, date, messages_count, updated_at)
-                    VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-                    ON CONFLICT (chat_id, date) DO UPDATE SET
-                        messages_count = messages_count + 1,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                        (chatId, today),
-                    ),
-                    ParametrizedQuery(
-                        """
-                    INSERT INTO chat_user_stats
-                    (chat_id, user_id, date, messages_count, updated_at)
-                    VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
-                    ON CONFLICT (chat_id, user_id, date) DO UPDATE SET
-                        messages_count = messages_count + 1,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                        (chatId, userId, today),
-                    ),
-                ]
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+
+            # Insert chat message
+            await sqlPrivider.execute(
+                """
+                INSERT INTO chat_messages
+                (date, chat_id, user_id, message_id,
+                    reply_id, thread_id, message_text, message_type,
+                    message_category, root_message_id, quote_text,
+                    media_id, markup, metadata, media_group_id, created_at
+                    )
+                VALUES
+                (:date, :chatId, :userId, :messageId,
+                    :replyId, :threadId, :messageText, :messageType,
+                    :messageCategory, :rootMessageId, :quoteText,
+                    :mediaId, :markup, :metadata, :mediaGroupId, :createdAt
+                    )
+            """,
+                {
+                    "date": date,
+                    "chatId": chatId,
+                    "userId": userId,
+                    "messageId": messageId,
+                    "replyId": replyId,
+                    "threadId": threadId,
+                    "messageText": messageText,
+                    "messageType": messageType,
+                    "messageCategory": str(messageCategory),
+                    "rootMessageId": rootMessageId,
+                    "quoteText": quoteText,
+                    "mediaId": mediaId,
+                    "markup": markup,
+                    "metadata": metadata,
+                    "mediaGroupId": mediaGroupId,
+                    "createdAt": currentTimestamp,
+                },
+            )
+
+            # Update chat users message count
+            await sqlPrivider.execute(
+                """
+                UPDATE chat_users
+                SET messages_count = messages_count + 1,
+                    updated_at = :updatedAt
+                WHERE chat_id = :chatId AND user_id = :userId
+            """,
+                {
+                    "chatId": chatId,
+                    "userId": userId,
+                    "updatedAt": currentTimestamp,
+                },
+            )
+
+            # Upsert chat stats
+            await sqlPrivider.upsert(
+                table="chat_stats",
+                values={
+                    "chat_id": chatId,
+                    "date": today,
+                    "messages_count": 1,
+                    "updated_at": currentTimestamp,
+                    "created_at": currentTimestamp,
+                },
+                conflictColumns=["chat_id", "date"],
+                updateExpressions={
+                    "messages_count": "messages_count + 1",
+                    "updated_at": ExcludedValue(),
+                },
+            )
+
+            # Upsert chat user stats
+            await sqlPrivider.upsert(
+                table="chat_user_stats",
+                values={
+                    "chat_id": chatId,
+                    "user_id": userId,
+                    "date": today,
+                    "messages_count": 1,
+                    "updated_at": currentTimestamp,
+                    "created_at": currentTimestamp,
+                },
+                conflictColumns=["chat_id", "user_id", "date"],
+                updateExpressions={
+                    "messages_count": "messages_count + 1",
+                    "updated_at": ExcludedValue(),
+                },
             )
 
             return True

@@ -8,10 +8,11 @@ executing migrations in order, handling failures, and supporting rollback operat
 
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import datetime
 from typing import List, Optional, Type
 
 from ..providers import BaseSQLProvider, FetchType
+from ..providers.base import ExcludedValue
+from ..utils import getCurrentTimestamp
 from .base import BaseMigration
 
 logger = logging.getLogger(__name__)
@@ -85,15 +86,19 @@ class MigrationManager:
             value: Setting value to store
             sqlProvider: SQL provider instance for database operations
         """
-        await sqlProvider.execute(
-            f"""
-                    INSERT OR REPLACE INTO {SETTINGS_TABLE}
-                    (key, value, updated_at)
-                    VALUES (:key, :value, CURRENT_TIMESTAMP)
-                """,
-            {
+        currentTimestamp = getCurrentTimestamp()
+        await sqlProvider.upsert(
+            table=SETTINGS_TABLE,
+            values={
                 "key": key,
                 "value": value,
+                "created_at": currentTimestamp,
+                "updated_at": currentTimestamp,
+            },
+            conflictColumns=["key"],
+            updateExpressions={
+                "value": ExcludedValue(),
+                "updated_at": ExcludedValue(),
             },
         )
 
@@ -154,7 +159,7 @@ class MigrationManager:
             sqlProvider: SQL provider instance for database operations
         """
         await self.setSetting(MIGRATION_VERSION_KEY, str(version), sqlProvider=sqlProvider)
-        await self.setSetting(MIGRATION_LAST_RUN_KEY, datetime.now().isoformat(), sqlProvider=sqlProvider)
+        await self.setSetting(MIGRATION_LAST_RUN_KEY, getCurrentTimestamp().isoformat(), sqlProvider=sqlProvider)
         logger.info(f"Updated migration in {sqlProvider} version to {version}")
 
     def getAvailableMigrations(self) -> List[Type[BaseMigration]]:
@@ -226,9 +231,9 @@ class MigrationManager:
             logger.info(f"Applying migration {migration.version}: {migration.description}")
 
             try:
-                startTime = datetime.now()
+                startTime = getCurrentTimestamp()
                 await migration.up(sqlProvider)
-                duration = (datetime.now() - startTime).total_seconds()
+                duration = (getCurrentTimestamp() - startTime).total_seconds()
 
                 await self._setVersion(migration.version, sqlProvider=sqlProvider)
                 logger.info(f"Migration {migration.version} completed in {duration:.2f}s")
@@ -271,9 +276,9 @@ class MigrationManager:
             logger.info(f"Rolling back migration {migration.version}: {migration.description}")
 
             try:
-                startTime = datetime.now()
+                startTime = getCurrentTimestamp()
                 await migration.down(sqlProvider)
-                duration = (datetime.now() - startTime).total_seconds()
+                duration = (getCurrentTimestamp() - startTime).total_seconds()
 
                 # Set version to previous migration
                 newVersion = migration.version - 1

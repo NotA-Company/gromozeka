@@ -11,8 +11,10 @@ from typing import Any, Dict, Iterable, List, Optional
 from lib.bayes_filter.models import BayesModelStats, ClassStats, TokenStats
 from lib.bayes_filter.storage_interface import BayesStorageInterface
 
+from . import utils as dbUtils
 from .database import Database
 from .providers import ParametrizedQuery
+from .providers.base import ExcludedValue
 
 logger = logging.getLogger(__name__)
 
@@ -144,31 +146,24 @@ class DatabaseBayesStorage(BayesStorageInterface):
         """
         try:
             sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO bayes_tokens
-                    (token, chat_id, spam_count, ham_count, total_count, created_at, updated_at)
-                VALUES (
-                    :token,
-                    :chat_id,
-                    :spam_inc,
-                    :ham_inc,
-                    :increment,
-                    CURRENT_TIMESTAMP,
-                    CURRENT_TIMESTAMP
-                )
-                ON CONFLICT(token, chat_id) DO UPDATE SET
-                    spam_count = spam_count + :spam_inc,
-                    ham_count = ham_count + :ham_inc,
-                    total_count = total_count + :increment,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                {
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+            await sqlProvider.upsert(
+                table="bayes_tokens",
+                values={
                     "token": token,
                     "chat_id": chat_id,
-                    "spam_inc": increment if is_spam else 0,
-                    "ham_inc": increment if not is_spam else 0,
-                    "increment": increment,
+                    "spam_count": increment if is_spam else 0,
+                    "ham_count": increment if not is_spam else 0,
+                    "total_count": increment,
+                    "created_at": currentTimestamp,
+                    "updated_at": currentTimestamp,
+                },
+                conflictColumns=["token", "chat_id"],
+                updateExpressions={
+                    "spam_count": "spam_count + :spam_count",
+                    "ham_count": "ham_count + :ham_count",
+                    "total_count": "total_count + :total_count",
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True
@@ -193,24 +188,23 @@ class DatabaseBayesStorage(BayesStorageInterface):
         """
         try:
             sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO bayes_classes
-                    (chat_id, is_spam, message_count, token_count, created_at, updated_at)
-                VALUES (
-                    :chat_id,
-                    :is_spam,
-                    :msg_inc,
-                    :tok_inc,
-                    CURRENT_TIMESTAMP,
-                    CURRENT_TIMESTAMP
-                )
-                ON CONFLICT(chat_id, is_spam) DO UPDATE SET
-                    message_count = message_count + :msg_inc,
-                    token_count = token_count + :tok_inc,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                {"chat_id": chatId, "is_spam": isSpam, "msg_inc": messageIncrement, "tok_inc": tokenIncrement},
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+            await sqlProvider.upsert(
+                table="bayes_classes",
+                values={
+                    "chat_id": chatId,
+                    "is_spam": isSpam,
+                    "message_count": messageIncrement,
+                    "token_count": tokenIncrement,
+                    "created_at": currentTimestamp,
+                    "updated_at": currentTimestamp,
+                },
+                conflictColumns=["chat_id", "is_spam"],
+                updateExpressions={
+                    "message_count": "message_count + :message_count",
+                    "token_count": "token_count + :token_count",
+                    "updated_at": ExcludedValue(),
+                },
             )
             return True
         except Exception as e:
@@ -367,37 +361,31 @@ class DatabaseBayesStorage(BayesStorageInterface):
 
         try:
             sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=False)
+            # Generate timestamp once for all batch items
+            currentTimestamp = dbUtils.getCurrentTimestamp()
             for update in tokenUpdates:
                 token = update["token"]
-                is_spam = update["is_spam"]
+                isSpam = update["is_spam"]
                 increment = update["increment"]
 
                 # Use the same logic as update_token_stats but in batch
-                await sqlProvider.execute(
-                    """
-                    INSERT INTO bayes_tokens
-                        (token, chat_id, spam_count, ham_count, total_count, created_at, updated_at)
-                    VALUES (
-                        :token,
-                        :chat_id,
-                        :spam_inc,
-                        :ham_inc,
-                        :increment,
-                        CURRENT_TIMESTAMP,
-                        CURRENT_TIMESTAMP
-                    )
-                    ON CONFLICT(token, chat_id) DO UPDATE SET
-                        spam_count = spam_count + :spam_inc,
-                        ham_count = ham_count + :ham_inc,
-                        total_count = total_count + :increment,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    {
+                await sqlProvider.upsert(
+                    table="bayes_tokens",
+                    values={
                         "token": token,
                         "chat_id": chatId,
-                        "spam_inc": increment if is_spam else 0,
-                        "ham_inc": increment if not is_spam else 0,
-                        "increment": increment,
+                        "spam_count": increment if isSpam else 0,
+                        "ham_count": increment if not isSpam else 0,
+                        "total_count": increment,
+                        "created_at": currentTimestamp,
+                        "updated_at": currentTimestamp,
+                    },
+                    conflictColumns=["token", "chat_id"],
+                    updateExpressions={
+                        "spam_count": "spam_count + :spam_count",
+                        "ham_count": "ham_count + :ham_count",
+                        "total_count": "total_count + :total_count",
+                        "updated_at": ExcludedValue(),
                     },
                 )
 

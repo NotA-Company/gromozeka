@@ -73,9 +73,11 @@ class SpamRepository(BaseRepository):
             await sqlProvider.execute(
                 """
                 INSERT INTO spam_messages
-                    (chat_id, user_id, message_id, text, reason, score, confidence)
+                    (chat_id, user_id, message_id, text, reason, score, confidence,
+                     created_at, updated_at)
                 VALUES
-                    (:chatId, :userId, :messageId, :messageText, :spamReason, :score, :confidence)
+                    (:chatId, :userId, :messageId, :messageText, :spamReason, :score,
+                     :confidence, :createdAt, :updatedAt)
             """,
                 {
                     "chatId": chatId,
@@ -85,6 +87,8 @@ class SpamRepository(BaseRepository):
                     "spamReason": spamReason.value,
                     "score": score,
                     "confidence": confidence,
+                    "createdAt": dbUtils.getCurrentTimestamp(),
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
             return True
@@ -126,9 +130,11 @@ class SpamRepository(BaseRepository):
             await sqlProvider.execute(
                 """
                 INSERT INTO ham_messages
-                    (chat_id, user_id, message_id, text, reason, score, confidence)
+                    (chat_id, user_id, message_id, text, reason, score, confidence,
+                     created_at, updated_at)
                 VALUES
-                    (:chatId, :userId, :messageId, :messageText, :spamReason, :score, :confidence)
+                    (:chatId, :userId, :messageId, :messageText, :spamReason, :score,
+                     :confidence, :createdAt, :updatedAt)
             """,
                 {
                     "chatId": chatId,
@@ -138,6 +144,8 @@ class SpamRepository(BaseRepository):
                     "spamReason": spamReason.value,
                     "score": score,
                     "confidence": confidence,
+                    "createdAt": dbUtils.getCurrentTimestamp(),
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
             return True
@@ -158,11 +166,12 @@ class SpamRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=True)
+            caseInsensitiveComparison = sqlProvider.getCaseInsensitiveComparison("text", "text")
             rows = await sqlProvider.executeFetchAll(
-                """
+                f"""
                 SELECT * FROM spam_messages
                 WHERE
-                    text = :text
+                    {caseInsensitiveComparison}
             """,
                 {
                     "text": text,

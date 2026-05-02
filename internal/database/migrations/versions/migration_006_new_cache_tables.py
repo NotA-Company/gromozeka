@@ -34,8 +34,8 @@ class Migration006NewCacheTables(BaseMigration):
                 CREATE TABLE IF NOT EXISTS cache_{cacheType} (
                     key TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
                 )
                 """) for cacheType in CacheType])
 

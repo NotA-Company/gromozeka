@@ -111,13 +111,24 @@ A streamlined reference optimized for LLM consumption, featuring:
 
 ## 🔍 Key Features
 
+### SQL Portability
+The database system is designed for cross-RDBMS compatibility, supporting multiple database backends:
+- **Multiple providers**: SQLite, MySQL, PostgreSQL, and SQLink
+- **Provider abstraction**: Common interface through `BaseSQLProvider` class
+- **Portable operations**: Provider-specific methods handle SQL dialect differences
+- **Type safety**: Consistent TypedDict models across all providers
+- **Easy migration**: Switch between databases with minimal code changes
+
+Learn more: [SQL Portability Guide](sql-portability-guide.md)
+
 ### Multi-Source Database Support
-The database system supports routing different chats to different SQLite database files:
+The database system supports routing different chats to different database files:
 - **Data isolation**: Separate databases for different chat groups
 - **Performance optimization**: Distribute load across multiple files
 - **Read-only sources**: Support for read-only database replicas
 - **3-tier routing**: Explicit source, chat mapping, or default fallback
 - **Repository pattern**: Organized access through specialized repositories
+- **Cross-provider support**: Use different database types for different sources
 
 Learn more: [Multi-Source Architecture](database-schema.md#multi-source-architecture)
 
@@ -138,6 +149,230 @@ All database operations use TypedDict models:
 - **Repository pattern**: Organized access through 12 specialized repositories
 
 Learn more: [TypedDict Models](database-schema.md#typeddict-models)
+
+## 🔌 SQL Portability
+
+### Overview
+
+The Gromozeka database system is designed to work with multiple relational database management systems (RDBMS) through a provider abstraction layer. This allows you to choose the database that best fits your needs and switch between them with minimal code changes.
+
+### Supported Database Providers
+
+#### SQLite (Default)
+- **Provider**: [`SQLite3Provider`](../internal/database/providers/sqlite3.py:1)
+- **Library**: `sqlite3` (Python standard library)
+- **Use case**: Embedded databases, development, testing, small to medium deployments
+- **Features**: Zero configuration, file-based, ACID compliant
+
+#### MySQL
+- **Provider**: [`MySQLProvider`](../internal/database/providers/mysql.py:1)
+- **Library**: `aiomysql` (async MySQL driver)
+- **Use case**: Production deployments, high concurrency, large datasets
+- **Features**: Connection pooling, async operations, enterprise-grade
+
+#### PostgreSQL
+- **Provider**: [`PostgreSQLProvider`](../internal/database/providers/postgresql.py:1)
+- **Library**: `asyncpg` (async PostgreSQL driver)
+- **Use case**: Production deployments, complex queries, advanced features
+- **Features**: Connection pooling, async operations, rich data types
+
+#### SQLink
+- **Provider**: [`SQLinkProvider`](../internal/database/providers/sqlink.py:1)
+- **Library**: `sqlink` (SQLite with async support)
+- **Use case**: Async SQLite operations, better performance than sqlite3
+- **Features**: Async operations, SQLite compatibility
+
+### Provider Methods
+
+The `BaseSQLProvider` class defines a common interface that all providers implement. Key methods for SQL portability:
+
+#### `upsert()`
+Perform an "insert or update" operation with provider-specific SQL syntax.
+
+```python
+from internal.database.providers.base import ExcludedValue
+
+# Insert or update a chat message
+db.chatMessages.saveChatMessage(
+    date=datetime.now(),
+    chatId=-1001234567890,
+    userId=123456789,
+    messageId="12345",
+    messageText="Hello, world!",
+    messageType=MessageType.TEXT,
+    messageCategory=MessageCategory.USER
+)
+
+# The provider automatically handles the upsert syntax:
+# - SQLite/PostgreSQL: INSERT ... ON CONFLICT DO UPDATE
+# - MySQL: INSERT ... ON DUPLICATE KEY UPDATE
+```
+
+#### `getCurrentTimestamp()`
+Get the current timestamp in the provider's native format.
+
+```python
+# Provider-specific timestamp handling
+timestamp = provider.getCurrentTimestamp()
+# Returns: 'datetime("now")' for SQLite
+# Returns: 'NOW()' for MySQL
+# Returns: 'NOW()' for PostgreSQL
+```
+
+#### `getCaseInsensitiveComparison()`
+Get the SQL operator for case-insensitive string comparison.
+
+```python
+# Case-insensitive search
+operator = provider.getCaseInsensitiveComparison()
+# Returns: 'LIKE' for SQLite
+# Returns: 'LIKE' for MySQL
+# Returns: 'ILIKE' for PostgreSQL
+```
+
+#### `applyPagination()`
+Apply pagination to a query with provider-specific syntax.
+
+```python
+# Paginated query
+query = "SELECT * FROM chat_messages WHERE chatId = ?"
+paginatedQuery = provider.applyPagination(query, limit=50, offset=100)
+# Returns: 'SELECT * FROM chat_messages WHERE chatId = ? LIMIT 50 OFFSET 100' for SQLite/PostgreSQL
+# Returns: 'SELECT * FROM chat_messages WHERE chatId = ? LIMIT 100, 50' for MySQL
+```
+
+#### `getTextType()`
+Get the appropriate text data type for the provider.
+
+```python
+# Schema migrations
+textType = provider.getTextType()
+# Returns: 'TEXT' for SQLite
+# Returns: 'VARCHAR(255)' for MySQL
+# Returns: 'TEXT' for PostgreSQL
+```
+
+#### `getAutoIncrementType()`
+Get the auto-increment column type for the provider.
+
+```python
+# Schema migrations
+autoIncrementType = provider.getAutoIncrementType()
+# Returns: 'INTEGER PRIMARY KEY AUTOINCREMENT' for SQLite
+# Returns: 'INT AUTO_INCREMENT' for MySQL
+# Returns: 'SERIAL' for PostgreSQL
+```
+
+### The `ExcludedValue` Class
+
+The `ExcludedValue` class is a special marker that allows provider-specific translation of upsert update expressions:
+
+```python
+from internal.database.providers.base import ExcludedValue
+
+# In an upsert operation, use ExcludedValue to reference the new value
+update_expressions = {
+    "value": ExcludedValue(),  # Will be translated to excluded.value or VALUES(value)
+    "count": "count + 1"  # Custom expression
+}
+
+# Provider-specific translation:
+# - SQLite/PostgreSQL: excluded.column
+# - MySQL: VALUES(column)
+```
+
+### Configuration Examples
+
+#### MySQL Configuration
+
+```toml
+[database.sources.mysql_primary]
+type = "mysql"
+host = "localhost"
+port = 3306
+user = "gromozeka"
+password = "your_password"
+database = "gromozeka_db"
+readonly = false
+pool-size = 10
+timeout = 30
+```
+
+#### PostgreSQL Configuration
+
+```toml
+[database.sources.postgres_primary]
+type = "postgresql"
+host = "localhost"
+port = 5432
+user = "gromozeka"
+password = "your_password"
+database = "gromozeka_db"
+readonly = false
+pool-size = 10
+timeout = 30
+```
+
+#### SQLite Configuration (Default)
+
+```toml
+[database.sources.sqlite_primary]
+type = "sqlite3"
+path = "bot.db"
+readonly = false
+pool-size = 10
+timeout = 30
+enable_foreign_keys = true  # SQLite-specific option
+```
+
+### Database-Specific Considerations
+
+#### SQLite
+- **Foreign keys**: Must be enabled with `PRAGMA foreign_keys = ON` (handled by `enable_foreign_keys` parameter)
+- **Date/time**: Uses `datetime("now")` for current timestamp
+- **Case sensitivity**: Uses `LIKE` for case-insensitive comparison
+- **Pagination**: Uses `LIMIT ? OFFSET ?` syntax
+- **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
+
+#### MySQL
+- **Connection pooling**: Uses `aiomysql.Pool` for connection management
+- **Date/time**: Uses `NOW()` for current timestamp
+- **Case sensitivity**: Uses `LIKE` for case-insensitive comparison
+- **Pagination**: Uses `LIMIT ?, ?` syntax (offset, limit)
+- **Upsert**: Uses `INSERT ... ON DUPLICATE KEY UPDATE` syntax
+
+#### PostgreSQL
+- **Connection pooling**: Uses `asyncpg.Pool` for connection management
+- **Date/time**: Uses `NOW()` for current timestamp
+- **Case sensitivity**: Uses `ILIKE` for case-insensitive comparison
+- **Pagination**: Uses `LIMIT ? OFFSET ?` syntax
+- **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
+
+### Migration Between Providers
+
+To switch between database providers:
+
+1. **Update configuration**: Change the provider type in your config file
+2. **Run migrations**: The migration system will create the schema in the new database
+3. **Migrate data**: Use database-specific tools to migrate data (e.g., `pg_dump` for PostgreSQL)
+4. **Test thoroughly**: Ensure all operations work correctly with the new provider
+
+### Best Practices
+
+1. **Use provider methods**: Always use provider methods instead of raw SQL for portable operations
+2. **Test on all providers**: Ensure your code works with all supported providers
+3. **Handle provider-specific features**: Use conditional logic for features that differ between providers
+4. **Document provider dependencies**: Note any provider-specific requirements in your code
+5. **Use parameterized queries**: Always use parameterized queries to prevent SQL injection
+
+### Related Documentation
+
+- **SQL Portability Guide**: [`sql-portability-guide.md`](sql-portability-guide.md)
+- **Provider Base Class**: [`internal/database/providers/base.py`](../internal/database/providers/base.py:1)
+- **SQLite Provider**: [`internal/database/providers/sqlite3.py`](../internal/database/providers/sqlite3.py:1)
+- **MySQL Provider**: [`internal/database/providers/mysql.py`](../internal/database/providers/mysql.py:1)
+- **PostgreSQL Provider**: [`internal/database/providers/postgresql.py`](../internal/database/providers/postgresql.py:1)
+- **SQLink Provider**: [`internal/database/providers/sqlink.py`](../internal/database/providers/sqlink.py:1)
 
 ### Repository Pattern Architecture
 
@@ -332,6 +567,77 @@ cachedData = db.cache.getCache(
 )
 ```
 
+### SQL Portability Examples
+
+#### Using Provider Methods
+```python
+# Access the provider for the current data source
+provider = db.getProvider(dataSource="primary")
+
+# Get provider-specific timestamp
+timestamp = provider.getCurrentTimestamp()
+# Returns provider-specific timestamp function
+
+# Apply pagination
+query = "SELECT * FROM chat_messages WHERE chatId = ?"
+paginatedQuery = provider.applyPagination(query, limit=50, offset=100)
+# Returns provider-specific pagination syntax
+
+# Case-insensitive search
+operator = provider.getCaseInsensitiveComparison()
+# Returns 'LIKE' for SQLite/MySQL, 'ILIKE' for PostgreSQL
+```
+
+#### Cross-Provider Upsert
+```python
+from internal.database.providers.base import ExcludedValue
+
+# Upsert operation works the same across all providers
+db.chatMessages.saveChatMessage(
+    date=datetime.now(),
+    chatId=-1001234567890,
+    userId=123456789,
+    messageId="12345",
+    messageText="Hello, world!",
+    messageType=MessageType.TEXT,
+    messageCategory=MessageCategory.USER
+)
+
+# The provider automatically handles the upsert syntax:
+# - SQLite: INSERT ... ON CONFLICT DO UPDATE
+# - MySQL: INSERT ... ON DUPLICATE KEY UPDATE
+# - PostgreSQL: INSERT ... ON CONFLICT DO UPDATE
+```
+
+#### Provider-Specific Configuration
+```toml
+# SQLite with foreign keys enabled
+[database.sources.sqlite]
+type = "sqlite3"
+path = "bot.db"
+enable_foreign_keys = true  # SQLite-specific option
+
+# MySQL with connection pooling
+[database.sources.mysql]
+type = "mysql"
+host = "localhost"
+port = 3306
+user = "gromozeka"
+password = "password"
+database = "gromozeka_db"
+pool-size = 10
+
+# PostgreSQL with connection pooling
+[database.sources.postgres]
+type = "postgresql"
+host = "localhost"
+port = 5432
+user = "gromozeka"
+password = "password"
+database = "gromozeka_db"
+pool-size = 10
+```
+
 ## 🔗 Related Documentation
 
 - **Database Class**: [`internal/database/database.py`](../internal/database/database.py:1)
@@ -370,7 +676,7 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Cache Tables**: 7+ (dynamic based on CacheType enum)
 - **Spam Detection Tables**: 4 (spam, ham, tokens, classes)
 - **Statistics Tables**: 2 (chat stats, user stats)
-- **Current Migration Version**: 12
+- **Current Migration Version**: 13
 - **Total Repositories**: 12 specialized repositories
 
 ## 🤝 Contributing
@@ -391,6 +697,6 @@ This documentation is part of the Gromozeka bot project.
 
 ---
 
-**Last Updated**: 2026-05-01
-**Database Version**: 12
-**Documentation Version**: 2.0
+**Last Updated**: 2026-05-02
+**Database Version**: 13
+**Documentation Version**: 2.1

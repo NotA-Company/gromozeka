@@ -16,6 +16,7 @@ from telegram import Chat
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import ChatInfoDict, ChatUserDict
+from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -60,27 +61,26 @@ class ChatUsersRepository(BaseRepository):
 
         Note:
             Writes are routed based on chatId mapping. Cannot write to readonly sources.
-            The updated_at timestamp is automatically set to CURRENT_TIMESTAMP
-            on both insert and update operations, dood.
+            The updated_at timestamp is automatically set to current timestamp
+            on both insert and update operations.
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO chat_users
-                    (chat_id, user_id, username, full_name, updated_at)
-                VALUES
-                    (:chatId, :userId, :username, :fullName, CURRENT_TIMESTAMP)
-                ON CONFLICT(chat_id, user_id) DO UPDATE SET
-                    username = excluded.username,
-                    full_name = excluded.full_name,
-                    updated_at = CURRENT_TIMESTAMP
-            """,
-                {
-                    "chatId": chatId,
-                    "userId": userId,
+            await sqlProvider.upsert(
+                table="chat_users",
+                values={
+                    "chat_id": chatId,
+                    "user_id": userId,
                     "username": username,
-                    "fullName": fullName,
+                    "full_name": fullName,
+                    "updated_at": dbUtils.getCurrentTimestamp(),
+                    "created_at": dbUtils.getCurrentTimestamp(),
+                },
+                conflictColumns=["chat_id", "user_id"],
+                updateExpressions={
+                    "username": ExcludedValue(),
+                    "full_name": ExcludedValue(),
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True
@@ -107,11 +107,14 @@ class ChatUsersRepository(BaseRepository):
                 """
                 SELECT * FROM chat_users
                 WHERE
-                    chat_id = ?
-                    AND user_id = ?
+                    chat_id = :chatId
+                    AND user_id = :userId
                 LIMIT 1
             """,
-                (chatId, userId),
+                {
+                    "chatId": chatId,
+                    "userId": userId,
+                },
             )
             return dbUtils.sqlToTypedDict(row, ChatUserDict) if row else None
         except Exception as e:
@@ -139,7 +142,7 @@ class ChatUsersRepository(BaseRepository):
                 """
                 UPDATE chat_users
                 SET metadata = :metadata,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = :updatedAt
                 WHERE
                     chat_id = :chatId
                     AND user_id = :userId
@@ -148,6 +151,7 @@ class ChatUsersRepository(BaseRepository):
                     "chatId": chatId,
                     "userId": userId,
                     "metadata": metadata,
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
             return True
@@ -174,12 +178,13 @@ class ChatUsersRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
+            caseInsensitiveComparison = sqlProvider.getCaseInsensitiveComparison("username", "username")
             row = await sqlProvider.executeFetchOne(
-                """
+                f"""
                 SELECT * FROM chat_users
                 WHERE
                     chat_id = :chatId
-                    AND username = :username
+                    AND {caseInsensitiveComparison}
                 LIMIT 1
             """,
                 {

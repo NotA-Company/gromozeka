@@ -1,0 +1,125 @@
+# MySQL Database Configuration Example
+# This example demonstrates how to configure Gromozeka to use MySQL as the database backend
+
+[database]
+# Default source for operations without explicit routing
+default = "mysql_primary"
+
+# ============================================================================
+# DATA SOURCES
+# ============================================================================
+
+# Primary MySQL database - main active bot database
+[database.sources.mysql_primary]
+type = "mysql"
+host = "localhost"
+port = 3306
+user = "gromozeka"
+password = "your_secure_password"
+database = "gromozeka_db"
+readonly = false
+pool-size = 10  # High traffic, many concurrent operations
+timeout = 30
+
+# ============================================================================
+# CHAT MAPPINGS
+# ============================================================================
+# Map specific chats to specific data sources
+# Format: chatId = "sourceName"
+
+[database.chatMapping]
+
+# All chats will use the mysql_primary source by default
+# You can map specific chats to different sources if needed
+# -1001234567890 = "mysql_primary"
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+
+# Example 1: Basic MySQL connection
+# The bot will automatically connect to MySQL using the configuration above
+# All database operations will be routed to the mysql_primary source
+
+# Example 2: Query with explicit source
+# messages = db.chatMessages.getChatMessages(chatId=-1001234567890, dataSource="mysql_primary")
+
+# Example 3: Use chat mapping (automatic routing)
+# messages = db.chatMessages.getChatMessages(chatId=-1001234567890)  # Routes to mysql_primary
+
+# ============================================================================
+# MYSQL-SPECIFIC NOTES
+# ============================================================================
+
+# 1. Connection Pooling:
+#    - MySQL provider uses aiomysql.Pool for connection management
+#    - pool-size controls the maximum number of connections in the pool
+#    - Recommended pool-size: 5-20 depending on expected concurrent operations
+
+# 2. Performance Considerations:
+#    - MySQL is well-suited for production deployments with high concurrency
+#    - Consider using read replicas for read-heavy workloads
+#    - Use connection pooling to reduce connection overhead
+
+# 3. Security:
+#    - Always use strong passwords
+#    - Consider using environment variables for sensitive data
+#    - Restrict database user permissions to only what's needed
+#    - Use SSL/TLS for connections in production
+
+# 4. Backup and Maintenance:
+#    - Regular backups using mysqldump or MySQL Enterprise Backup
+#    - Monitor connection pool usage and adjust pool-size as needed
+#    - Set up monitoring for slow queries and connection issues
+
+# ============================================================================
+# ADVANCED CONFIGURATION
+# ============================================================================
+
+# Example: Multiple MySQL databases for different purposes
+# [database.sources.mysql_archive]
+# type = "mysql"
+# host = "archive-db.example.com"
+# port = 3306
+# user = "gromozeka_readonly"
+# password = "readonly_password"
+# database = "gromozeka_archive"
+# readonly = true
+# pool-size = 3
+# timeout = 30
+
+# Example: MySQL with custom connection settings
+# [database.sources.mysql_custom]
+# type = "mysql"
+# host = "custom-db.example.com"
+# port = 3307  # Custom port
+# user = "gromozeka"
+# password = "custom_password"
+# database = "gromozeka_custom"
+# readonly = false
+# pool-size = 15
+# timeout = 60  # Longer timeout for remote database
+
+# ============================================================================
+# ENVIRONMENT VARIABLE SUPPORT
+# ============================================================================
+
+# You can use environment variables for sensitive configuration:
+# [database.sources.mysql_primary]
+# type = "mysql"
+# host = "${MYSQL_HOST}"
+# port = "${MYSQL_PORT}"
+# user = "${MYSQL_USER}"
+# password = "${MYSQL_PASSWORD}"
+# database = "${MYSQL_DATABASE}"
+
+# ============================================================================
+# REQUIREMENTS
+# ============================================================================
+
+# To use MySQL provider, install the required dependency:
+# pip install aiomysql
+
+# For more information, see:
+# - SQL Portability Guide: ../sql-portability-guide.md
+# - MySQL Provider: ../../internal/database/providers/mysql.py

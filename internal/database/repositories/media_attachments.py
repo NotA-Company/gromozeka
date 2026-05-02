@@ -52,18 +52,15 @@ class MediaAttachmentsRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO media_groups
-                    (media_group_id, media_id)
-                VALUES
-                    (:mediaGroupId, :mediaId)
-                ON CONFLICT DO NOTHING
-                """,
-                {
-                    "mediaGroupId": mediaGroupId,
-                    "mediaId": mediaId,
+            await sqlProvider.upsert(
+                table="media_groups",
+                values={
+                    "media_group_id": mediaGroupId,
+                    "media_id": mediaId,
+                    "created_at": dbUtils.getCurrentTimestamp(),
                 },
+                conflictColumns=["media_group_id", "media_id"],
+                updateExpressions={},  # ON CONFLICT DO NOTHING
             )
             return True
         except Exception as e:
@@ -113,13 +110,13 @@ class MediaAttachmentsRepository(BaseRepository):
                     (file_unique_id, file_id, file_size,
                             media_type, metadata, status,
                             mime_type, local_url, prompt,
-                            description
+                            description, created_at, updated_at
                             )
                 VALUES
                     (:fileUniqueId, :fileId, :fileSize,
                             :mediaType, :metadata, :status,
                             :mimeType, :localUrl, :prompt,
-                            :description)
+                            :description, :createdAt, :updatedAt)
             """,
                 {
                     "fileUniqueId": fileUniqueId,
@@ -132,6 +129,8 @@ class MediaAttachmentsRepository(BaseRepository):
                     "localUrl": localUrl,
                     "prompt": prompt,
                     "description": description,
+                    "createdAt": dbUtils.getCurrentTimestamp(),
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
             return True
@@ -202,11 +201,14 @@ class MediaAttachmentsRepository(BaseRepository):
                 UPDATE media_attachments
                 SET
                     {query}
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = :updatedAt
                 WHERE
                     file_unique_id = :fileUniqueId
             """,
-                values,
+                {
+                    **values,
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
+                },
             )
             return True
         except Exception as e:
@@ -230,9 +232,11 @@ class MediaAttachmentsRepository(BaseRepository):
             row = await sqlProvider.executeFetchOne(
                 """
                 SELECT * FROM media_attachments
-                WHERE file_unique_id = ?
+                WHERE file_unique_id = :mediaId
             """,
-                (mediaId,),
+                {
+                    "mediaId": mediaId,
+                },
             )
 
             return dbUtils.sqlToTypedDict(row, MediaAttachmentDict) if row else None

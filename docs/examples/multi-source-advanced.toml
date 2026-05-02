@@ -52,6 +52,42 @@ readonly = true  # Never modify backups
 pool-size = 1    # Minimal pool, rarely used
 timeout = 60.0   # Longer timeout for potentially slow backup storage
 
+# MySQL database - production deployment with high concurrency
+[database.sources.mysql_production]
+type = "mysql"
+host = "mysql.example.com"
+port = 3306
+user = "gromozeka"
+password = "mysql_secure_password"
+database = "gromozeka_prod"
+readonly = false
+pool-size = 20  # High concurrency production database
+timeout = 30.0
+
+# PostgreSQL database - production deployment with complex queries
+[database.sources.postgres_production]
+type = "postgresql"
+host = "postgres.example.com"
+port = 5432
+user = "gromozeka"
+password = "postgres_secure_password"
+database = "gromozeka_prod"
+readonly = false
+pool-size = 15  # Production database with complex queries
+timeout = 30.0
+
+# PostgreSQL read replica - for read-heavy workloads
+[database.sources.postgres_replica]
+type = "postgresql"
+host = "postgres-replica.example.com"
+port = 5432
+user = "gromozeka_readonly"
+password = "readonly_password"
+database = "gromozeka_prod"
+readonly = true  # Read-only replica
+pool-size = 10   # Read replica for analytics and reporting
+timeout = 30.0
+
 # ============================================================================
 # CHAT MAPPINGS
 # ============================================================================
@@ -99,6 +135,15 @@ timeout = 60.0   # Longer timeout for potentially slow backup storage
 # Example 5: Backup verification
 # backup_data = db.getChatInfo(chatId=123, dataSource="backup")
 
+# Example 6: Query MySQL production database
+# messages = db.chatMessages.getChatMessages(chatId=-1005000000000, dataSource="mysql_production")
+
+# Example 7: Query PostgreSQL production database
+# messages = db.chatMessages.getChatMessages(chatId=-1006000000000, dataSource="postgres_production")
+
+# Example 8: Query PostgreSQL read replica (read-only operations)
+# messages = db.chatMessages.getChatMessagesSince(chatId=-1006000000000, dataSource="postgres_replica")
+
 # ============================================================================
 # PERFORMANCE NOTES
 # ============================================================================
@@ -109,6 +154,9 @@ timeout = 60.0   # Longer timeout for potentially slow backup storage
 # - other_bot: 2 connections (low traffic, cross-bot queries)
 # - test: 5 connections (moderate traffic during development)
 # - backup: 1 connection (minimal traffic, disaster recovery only)
+# - mysql_production: 20 connections (high concurrency production database)
+# - postgres_production: 15 connections (production database with complex queries)
+# - postgres_replica: 10 connections (read replica for analytics and reporting)
 
 # Timeout Guidelines:
 # - Local databases: 30.0 seconds (standard)
@@ -130,3 +178,30 @@ timeout = 60.0   # Longer timeout for potentially slow backup storage
 # - External bot databases
 # - Backup databases
 # - Shared databases
+# - Read replicas
+
+# ============================================================================
+# CROSS-PROVIDER SUPPORT
+# ============================================================================
+
+# This configuration demonstrates mixing different database providers:
+# - SQLite: primary, archives, test, backup (file-based, embedded)
+# - MySQL: mysql_production (client-server, high concurrency)
+# - PostgreSQL: postgres_production, postgres_replica (client-server, complex queries)
+
+# Benefits of cross-provider setup:
+# - Use SQLite for development and testing (zero configuration)
+# - Use MySQL for high-concurrency production workloads
+# - Use PostgreSQL for complex queries and analytics
+# - Mix and match based on your specific needs
+# - Seamless switching between providers with minimal code changes
+
+# Provider-specific features:
+# - SQLite: Zero configuration, file-based, perfect for development
+# - MySQL: Connection pooling, async operations, enterprise-grade
+# - PostgreSQL: Advanced data types, full-text search, read replicas
+
+# For more information on SQL portability, see:
+# - SQL Portability Guide: ../sql-portability-guide.md
+# - MySQL Configuration: mysql-configuration.toml
+# - PostgreSQL Configuration: postgresql-configuration.toml

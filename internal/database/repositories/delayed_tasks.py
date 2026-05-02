@@ -59,15 +59,17 @@ class DelayedTasksRepository(BaseRepository):
             await sqlProvider.execute(
                 """
                 INSERT INTO delayed_tasks
-                    (id, function, kwargs, delayed_ts)
+                    (id, function, kwargs, delayed_ts, created_at, updated_at)
                 VALUES
-                    (:id, :function, :kwargs, :delayedTS)
+                    (:id, :function, :kwargs, :delayedTS, :createdAt, :updatedAt)
             """,
                 {
                     "id": taskId,
                     "function": function,
                     "kwargs": kwargs,
                     "delayedTS": delayedTS,
+                    "createdAt": dbUtils.getCurrentTimestamp(),
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
             return True
@@ -96,13 +98,14 @@ class DelayedTasksRepository(BaseRepository):
                 UPDATE delayed_tasks
                 SET
                     is_done = :isDone,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = :updatedAt
                 WHERE
                     id = :id
             """,
                 {
                     "id": id,
                     "isDone": isDone,
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
             return True
@@ -154,7 +157,7 @@ class DelayedTasksRepository(BaseRepository):
 
         if ttl is None:
             ttl = 0
-        maxUpdatedAt = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=ttl)
+        maxUpdatedAt = dbUtils.getCurrentTimestamp() - datetime.timedelta(seconds=ttl)
 
         try:
             sqlProvider = await self.manager.getProvider(dataSource=dataSource, readonly=False)

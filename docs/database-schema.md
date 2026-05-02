@@ -147,6 +147,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 10 | [`migration_010_add_updated_by_to_chat_settings.py`](../internal/database/migrations/versions/migration_010_add_updated_by_to_chat_settings.py:1) | Adds `updated_by` column to [`chat_settings`](#chat_settings) |
 | 11 | [`migration_011_add_confidence_to_spam_messages.py`](../internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py:1) | Adds `confidence` column to [`spam_messages`](#spam_messages) and [`ham_messages`](#ham_messages) |
 | 12 | [`migration_012_unify_cache_tables.py`](../internal/database/migrations/versions/migration_012_unify_cache_tables.py:1) | Unifies all cache tables into single [`cache`](#cache) table |
+| 13 | [`migration_013_remove_timestamp_defaults.py`](../internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:1) | Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns |
 
 ### Creating New Migrations
 
@@ -210,7 +211,7 @@ Stores all chat messages with detailed metadata.
 | `media_group_id` | TEXT | Yes | NULL | Media group identifier for grouped media messages |
 | `markup` | TEXT | No | "" | JSON-serialized keyboard markup |
 | `metadata` | TEXT | No | "" | JSON-serialized additional metadata |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 
 **Relationships**:
 - References [`chat_users`](#chat_users) via `(chat_id, user_id)`
@@ -247,8 +248,8 @@ Stores per-chat user information and statistics.
 | `timezone` | TEXT | Yes | NULL | User's timezone (future use) |
 | `messages_count` | INTEGER | No | 0 | Total messages sent by user in this chat |
 | `metadata` | TEXT | No | "" | JSON-serialized additional metadata |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | First seen timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last activity timestamp |
+| `created_at` | TIMESTAMP | No | - | First seen timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last activity timestamp (must be provided explicitly) |
 
 **Relationships**:
 - Referenced by [`chat_messages`](#chat_messages) via `(chat_id, user_id)`
@@ -280,8 +281,8 @@ Stores chat metadata and configuration.
 | `username` | TEXT | Yes | NULL | Chat @username (for public chats) |
 | `type` | TEXT | No | - | Chat type (private/group/supergroup/channel) |
 | `is_forum` | BOOLEAN | No | FALSE | Whether chat has forum topics enabled |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`ChatInfoDict`](../internal/database/models.py:118)
 
@@ -308,8 +309,8 @@ Stores forum topic information for chats with topics enabled.
 | `icon_color` | INTEGER | Yes | NULL | Topic icon color |
 | `icon_custom_emoji_id` | TEXT | Yes | NULL | Custom emoji ID for topic icon |
 | `name` | TEXT | Yes | NULL | Topic name |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Relationships**:
 - References [`chat_info`](#chat_info) via `chat_id`
@@ -330,8 +331,8 @@ Stores per-chat configuration settings.
 | `key` | TEXT | No | - | Setting key (see [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41)) |
 | `value` | TEXT | Yes | NULL | Setting value (stored as string) |
 | `updated_by` | INTEGER | No | - | User ID who last updated the setting |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Available Settings**: See [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41) enum for all available settings including:
 - LLM model selection (`chat-model`, `summary-model`, etc.)
@@ -365,8 +366,8 @@ Aggregated daily statistics per chat.
 | `chat_id` | INTEGER | No | - | Telegram chat identifier |
 | `date` | TIMESTAMP | No | - | Date (time set to 00:00:00) |
 | `messages_count` | INTEGER | No | 0 | Total messages sent on this date |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Note**: Automatically updated when messages are saved via repository methods.
 
@@ -384,8 +385,8 @@ Aggregated daily statistics per user per chat.
 | `user_id` | INTEGER | No | - | Telegram user identifier |
 | `date` | TIMESTAMP | No | - | Date (time set to 00:00:00) |
 | `messages_count` | INTEGER | No | 0 | Messages sent by user on this date |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Note**: Automatically updated when messages are saved via repository methods.
 
@@ -403,8 +404,8 @@ Stores media group relationships for messages with multiple media items sent tog
 |--------|------|----------|---------|-------------|
 | `media_group_id` | TEXT | No | - | Telegram media group identifier |
 | `media_id` | TEXT | No | - | Foreign key to [`media_attachments.file_unique_id`](#media_attachments) |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Relationships**:
 - References [`media_attachments`](#media_attachments) via `media_id`
@@ -432,8 +433,8 @@ Stores information about media attachments (images, documents, etc.).
 | `local_url` | TEXT | Yes | NULL | Local file path if downloaded |
 | `prompt` | TEXT | Yes | NULL | Prompt used for image generation |
 | `description` | TEXT | Yes | NULL | AI-generated description of media |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Relationships**:
 - Referenced by [`chat_messages`](#chat_messages) via `media_id`
@@ -456,8 +457,8 @@ Stores arbitrary key-value data about users collected during conversations.
 | `chat_id` | INTEGER | No | - | Telegram chat identifier |
 | `key` | TEXT | No | - | Data key |
 | `data` | TEXT | No | - | Data value |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Example**: Store user preferences, facts mentioned in conversation, etc.
 
@@ -489,8 +490,8 @@ Stores messages identified as spam for training and analysis.
 | `reason` | TEXT | No | - | Reason for spam classification (see [`SpamReason`](#spamreason)) |
 | `score` | FLOAT | No | - | Spam confidence score (0-100) |
 | `confidence` | FLOAT | No | 1.0 | Detection confidence level (0-1) |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`SpamMessageDict`](../internal/database/models.py:165)
 
@@ -511,8 +512,8 @@ Stores legitimate (non-spam) messages for training spam filters.
 | `reason` | TEXT | No | - | Reason for ham classification |
 | `score` | FLOAT | No | - | Confidence score |
 | `confidence` | FLOAT | No | 1.0 | Detection confidence level (0-1) |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 ---
 
@@ -529,8 +530,8 @@ Stores token statistics for Bayesian spam filtering.
 | `spam_count` | INTEGER | No | 0 | Occurrences in spam messages |
 | `ham_count` | INTEGER | No | 0 | Occurrences in ham messages |
 | `total_count` | INTEGER | No | 0 | Total occurrences |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Indexes**:
 - `bayes_tokens_chat_idx` on `chat_id`
@@ -550,8 +551,8 @@ Stores class statistics for Bayesian spam filtering.
 | `is_spam` | BOOLEAN | No | - | Whether this is spam class (TRUE) or ham class (FALSE) |
 | `message_count` | INTEGER | No | 0 | Number of messages in this class |
 | `token_count` | INTEGER | No | 0 | Total tokens in this class |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Indexes**:
 - `bayes_classes_chat_idx` on `chat_id`
@@ -575,8 +576,8 @@ Caches chat message summaries to avoid regenerating them.
 | `last_message_id` | TEXT | No | - | Last message ID in summarized range |
 | `prompt` | TEXT | No | - | Summarization prompt used |
 | `summary` | TEXT | No | - | Generated summary |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Indexes**:
 - `chat_summarization_cache_ctfl_index` on `(chat_id, topic_id, first_message_id, last_message_id, prompt)`
@@ -598,7 +599,7 @@ Generic key-value cache storage with namespace support.
 | `namespace` | TEXT | No | - | Cache namespace for organization |
 | `key` | TEXT | No | - | Cache key |
 | `value` | TEXT | No | - | Cached value (JSON-serialized) |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`CacheStorageDict`](../internal/database/models.py:199)
 
@@ -615,8 +616,8 @@ Unified cache table for all cache types (replaces separate cache tables from mig
 | `namespace` | TEXT | No | - | Cache namespace (e.g., 'weather', 'geocoding', 'yandex_search') |
 | `key` | TEXT | No | - | Cache key |
 | `data` | TEXT | No | - | Cached data (JSON-serialized) |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Indexes**:
 - `idx_cache_namespace_key` on `(namespace, key)`
@@ -649,8 +650,8 @@ Stores tasks scheduled for delayed execution.
 | `function` | TEXT | No | - | Function name to execute |
 | `kwargs` | TEXT | No | - | JSON-serialized function arguments |
 | `is_done` | BOOLEAN | No | FALSE | Whether task has been executed |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:155)
 
@@ -668,8 +669,8 @@ Stores global system settings and migration version tracking.
 |--------|------|----------|---------|-------------|
 | `key` | TEXT | No | - | Setting key |
 | `value` | TEXT | Yes | NULL | Setting value |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Special Keys**:
 - `db-migration-version` - Current migration version number

@@ -33,7 +33,18 @@ internal/database/migrations/
 └── versions/                          # Migration files
     ├── __init__.py
     ├── migration_001_initial_schema.py
-    └── migration_002_example_migration.py
+    ├── migration_002_add_is_spammer_to_chat_users.py
+    ├── migration_003_add_metadata_to_chat_users.py
+    ├── migration_004_add_cache_storage_table.py
+    ├── migration_005_add_yandex_cache.py
+    ├── migration_006_new_cache_tables.py
+    ├── migration_007_messages_metadata.py
+    ├── migration_008_add_media_group_support.py
+    ├── migration_009_remove_is_spammer_from_chat_users.py
+    ├── migration_010_add_updated_by_to_chat_settings.py
+    ├── migration_011_add_confidence_to_spam_messages.py
+    ├── migration_012_unify_cache_tables.py
+    └── migration_013_remove_timestamp_defaults.py
 ```
 
 ### Key Components
@@ -63,6 +74,35 @@ Manages migration execution, version tracking, and rollbacks, dood!
 - [`migrate(targetVersion=None)`](manager.py:91) - Run pending migrations
 - [`rollback(steps=1)`](manager.py:143) - Rollback N migrations
 - [`getStatus()`](manager.py:193) - Get migration status information
+
+---
+
+## Migration History
+
+This section documents all migrations in the system, dood!
+
+| Version | File | Description | Tables Affected |
+|---------|------|-------------|-----------------|
+| 001 | [`migration_001_initial_schema.py`](versions/migration_001_initial_schema.py:1) | Initial database schema | All core tables |
+| 002 | [`migration_002_add_is_spammer_to_chat_users.py`](versions/migration_002_add_is_spammer_to_chat_users.py:1) | Add is_spammer column to chat_users | chat_users |
+| 003 | [`migration_003_add_metadata_to_chat_users.py`](versions/migration_003_add_metadata_to_chat_users.py:1) | Add metadata column to chat_users | chat_users |
+| 004 | [`migration_004_add_cache_storage_table.py`](versions/migration_004_add_cache_storage_table.py:1) | Add cache_storage table | cache_storage |
+| 005 | [`migration_005_add_yandex_cache.py`](versions/migration_005_add_yandex_cache.py:1) | Add Yandex search cache tables | yandex_cache |
+| 006 | [`migration_006_new_cache_tables.py`](versions/migration_006_new_cache_tables.py:1) | Add new cache tables | cache, cache_storage |
+| 007 | [`migration_007_messages_metadata.py`](versions/migration_007_messages_metadata.py:1) | Add markup and metadata to chat_messages | chat_messages |
+| 008 | [`migration_008_add_media_group_support.py`](versions/migration_008_add_media_group_support.py:1) | Add media_group_id and media_groups table | chat_messages, media_groups |
+| 009 | [`migration_009_remove_is_spammer_from_chat_users.py`](versions/migration_009_remove_is_spammer_from_chat_users.py:1) | Remove is_spammer column from chat_users | chat_users |
+| 010 | [`migration_010_add_updated_by_to_chat_settings.py`](versions/migration_010_add_updated_by_to_chat_settings.py:1) | Add updated_by column to chat_settings | chat_settings |
+| 011 | [`migration_011_add_confidence_to_spam_messages.py`](versions/migration_011_add_confidence_to_spam_messages.py:1) | Add confidence column to spam/ham messages | spam_messages, ham_messages |
+| 012 | [`migration_012_unify_cache_tables.py`](versions/migration_012_unify_cache_tables.py:1) | Unify cache tables structure | cache, cache_storage |
+| 013 | [`migration_013_remove_timestamp_defaults.py`](versions/migration_013_remove_timestamp_defaults.py:1) | Remove DEFAULT CURRENT_TIMESTAMP from timestamp columns | 19 tables (settings, chat_messages, chat_settings, chat_users, chat_info, chat_stats, chat_user_stats, media_attachments, delayed_tasks, user_data, spam_messages, ham_messages, chat_topics, chat_summarization_cache, bayes_tokens, bayes_classes, cache_storage, cache, media_groups) |
+
+**Total Migrations:** 13
+
+**Important Notes:**
+- Migration 013 recreates 19 tables to remove `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns for SQL portability
+- This migration includes ALL columns from migrations 2-12 to ensure no data loss
+- The migration is reversible via the `down()` method
 
 ---
 
@@ -146,7 +186,7 @@ If you prefer to create migrations manually, dood:
 ls internal/database/migrations/versions/
 
 # Next version = highest + 1
-# If you see migration_002_*.py, next is 003
+# If you see migration_013_*.py, next is 014
 ```
 
 #### Step 2: Create Migration File
@@ -154,8 +194,8 @@ ls internal/database/migrations/versions/
 **Naming Convention:** `migration_{version:03d}_{description}.py`
 
 ```bash
-# Example: Create migration 003
-touch internal/database/migrations/versions/migration_003_add_user_preferences.py
+# Example: Create migration 014
+touch internal/database/migrations/versions/migration_014_add_user_preferences.py
 ```
 
 #### Step 3: Implement Migration Class
@@ -172,10 +212,10 @@ if TYPE_CHECKING:
     from ...wrapper import DatabaseWrapper
 
 
-class Migration003AddUserPreferences(BaseMigration):
+class Migration014AddUserPreferences(BaseMigration):
     """Add user preferences table, dood!"""
 
-    version = 3
+    version = 14
     description = "Add user preferences table"
 
     def up(self, db: "DatabaseWrapper") -> None:
@@ -213,24 +253,46 @@ class Migration003AddUserPreferences(BaseMigration):
 Add to [`internal/database/migrations/__init__.py`](__init__.py:1):
 
 ```python
-from .versions import migration_003_add_user_preferences
+from .versions import migration_014_add_user_preferences
 
 MIGRATIONS: List[Type[BaseMigration]] = [
     migration_001_initial_schema.Migration001InitialSchema,
-    migration_002_example_migration.Migration002Example,
-    migration_003_add_user_preferences.Migration003AddUserPreferences,  # Add here
+    migration_002_add_is_spammer_to_chat_users.Migration002AddIsSpammerToChatUsers,
+    migration_003_add_metadata_to_chat_users.Migration003AddMetadataToChatUsers,
+    migration_004_add_cache_storage_table.Migration004AddCacheStorageTable,
+    migration_005_add_yandex_cache.Migration005AddYandexCache,
+    migration_006_new_cache_tables.Migration006NewCacheTables,
+    migration_007_messages_metadata.Migration007MessagesMetadata,
+    migration_008_add_media_group_support.Migration008AddMediaGroupSupport,
+    migration_009_remove_is_spammer_from_chat_users.Migration009RemoveIsSpammerFromChatUsers,
+    migration_010_add_updated_by_to_chat_settings.Migration010AddUpdatedByToChatSettings,
+    migration_011_add_confidence_to_spam_messages.Migration011AddConfidenceToSpamMessages,
+    migration_012_unify_cache_tables.Migration012UnifyCacheTables,
+    migration_013_remove_timestamp_defaults.Migration013RemoveTimestampDefaults,
+    migration_014_add_user_preferences.Migration014AddUserPreferences,  # Add here
 ]
 ```
 
 Also update [`internal/database/migrations/versions/__init__.py`](versions/__init__.py:1):
 
 ```python
-from . import migration_003_add_user_preferences
+from . import migration_014_add_user_preferences
 
 __all__ = [
     "migration_001_initial_schema",
-    "migration_002_example_migration",
-    "migration_003_add_user_preferences",  # Add here
+    "migration_002_add_is_spammer_to_chat_users",
+    "migration_003_add_metadata_to_chat_users",
+    "migration_004_add_cache_storage_table",
+    "migration_005_add_yandex_cache",
+    "migration_006_new_cache_tables",
+    "migration_007_messages_metadata",
+    "migration_008_add_media_group_support",
+    "migration_009_remove_is_spammer_from_chat_users",
+    "migration_010_add_updated_by_to_chat_settings",
+    "migration_011_add_confidence_to_spam_messages",
+    "migration_012_unify_cache_tables",
+    "migration_013_remove_timestamp_defaults",
+    "migration_014_add_user_preferences",  # Add here
 ]
 ```
 

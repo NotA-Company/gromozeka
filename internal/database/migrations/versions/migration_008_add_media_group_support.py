@@ -43,7 +43,7 @@ class Migration008AddMediaGroupSupport(BaseMigration):
             CREATE TABLE IF NOT EXISTS media_groups (
                 media_group_id TEXT NOT NULL,
                 media_id TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (media_group_id, media_id)
             )
         """),

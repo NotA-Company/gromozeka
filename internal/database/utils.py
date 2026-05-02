@@ -214,3 +214,12 @@ def sqlToTypedDict(data: dict, typedDictClass: Type[_T], *, keepOriginal: bool =
             data[key] = value
 
     return data  # type: ignore[return-value]
+
+
+def getCurrentTimestamp() -> datetime.datetime:
+    """Get the current UTC timestamp.
+
+    Returns:
+        A datetime object representing the current time in UTC.
+    """
+    return datetime.datetime.now(datetime.timezone.utc)

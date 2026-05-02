@@ -15,6 +15,7 @@ from internal.models import MessageIdType
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import ChatSummarizationCacheDict
+from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -98,25 +99,24 @@ class ChatSummarizationRepository(BaseRepository):
 
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO chat_summarization_cache
-                    (csid, chat_id, topic_id, first_message_id, last_message_id,
-                        prompt, summary, created_at, updated_at)
-                VALUES (:csid, :chatId, :topicId, :firstMessageId, :lastMessageId,
-                        :prompt, :summary, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT(csid) DO UPDATE SET
-                    summary = excluded.summary,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                {
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+            await sqlProvider.upsert(
+                table="chat_summarization_cache",
+                values={
                     "csid": csid,
-                    "chatId": chatId,
-                    "topicId": topicId,
-                    "firstMessageId": firstMessageId,
-                    "lastMessageId": lastMessageId,
+                    "chat_id": chatId,
+                    "topic_id": topicId,
+                    "first_message_id": firstMessageId,
+                    "last_message_id": lastMessageId,
                     "prompt": prompt,
                     "summary": summary,
+                    "created_at": currentTimestamp,
+                    "updated_at": currentTimestamp,
+                },
+                conflictColumns=["csid"],
+                updateExpressions={
+                    "summary": ExcludedValue(),
+                    "updated_at": ExcludedValue(),
                 },
             )
             logger.debug(f"Added/updated chat summarization cache: csid={csid}")

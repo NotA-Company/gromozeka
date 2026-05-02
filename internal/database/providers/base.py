@@ -9,9 +9,36 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class ExcludedValue:
+    """Special marker to indicate a column should be set to the excluded value.
+
+    This allows provider-specific translation:
+    - SQLite/PostgreSQL: excluded.column
+    - MySQL: VALUES(column)
+
+    Usage:
+        update_expressions = {
+            "value": ExcludedValue(),  # Will be translated to excluded.value or VALUES(value)
+            "count": "count + 1"  # Custom expression
+        }
+    """
+
+    def __init__(self, column: Optional[str] = None):
+        """Initialize excluded value marker.
+
+        Args:
+            column: Optional column name. If None, uses the key from update_expressions dict.
+        """
+        self.column = column
+
+    def __repr__(self) -> str:
+        """Return string representation of ExcludedValue."""
+        return f"ExcludedValue({self.column})"
 
 
 class FetchType(Enum):
@@ -248,10 +275,77 @@ class BaseSQLProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def upsert(
+        self,
+        table: str,
+        values: Dict[str, Any],
+        conflictColumns: List[str],
+        updateExpressions: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Execute provider-specific upsert operation.
+
+        Args:
+            table: Table name.
+            values: Dictionary of column names and values to insert.
+            conflictColumns: List of columns that define the conflict target.
+            updateExpressions: Optional dict of column -> expression for UPDATE clause.
+                If None, all non-conflict columns are updated with their values.
+                Supports complex expressions like "messages_count = messages_count + 1"
+                or ExcludedValue() to set to excluded value.
+
+        Returns:
+            True if successful.
+
+        Raises:
+            NotImplementedError: Must be overridden by subclasses.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def isReadOnly(self) -> bool:
         """Check if this provider is in read-only mode.
 
         Returns:
             True if the provider is in read-only mode, False otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def applyPagination(self, query: str, limit: Optional[int], offset: Optional[int] = 0) -> str:
+        """Apply RDBMS-specific pagination to query.
+
+        Args:
+            query: The base SQL query.
+            limit: The maximum number of rows to return. If None, no pagination is applied.
+            offset: The number of rows to skip. Defaults to 0.
+
+        Returns:
+            The query with pagination clause appended.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def getTextType(self, maxLength: Optional[int] = None) -> str:
+        """Get RDBMS-specific TEXT type.
+
+        Args:
+            maxLength: Optional maximum length for the text field. Used for MySQL to determine
+                TEXT, MEDIUMTEXT, or LONGTEXT.
+
+        Returns:
+            The appropriate TEXT type for the provider.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def getCaseInsensitiveComparison(self, column: str, param: str) -> str:
+        """Get RDBMS-specific case-insensitive comparison.
+
+        Args:
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
+
+        Returns:
+            A SQL expression string for case-insensitive comparison.
         """
         raise NotImplementedError

@@ -9,6 +9,7 @@ that can be used across the application.
 import logging
 from typing import Dict, Optional
 
+from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from .base import BaseRepository
 
@@ -60,12 +61,14 @@ class CommonFunctionsRepository(BaseRepository):
             await sqlProvider.execute(
                 """
                     INSERT OR REPLACE INTO settings
-                    (key, value, updated_at)
-                    VALUES (:key, :value, CURRENT_TIMESTAMP)
+                    (key, value, created_at, updated_at)
+                    VALUES (:key, :value, :createdAt, :updatedAt)
                 """,
                 {
                     "key": key,
                     "value": value,
+                    "createdAt": dbUtils.getCurrentTimestamp(),
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
             return True

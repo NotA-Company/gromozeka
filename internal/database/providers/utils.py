@@ -2,7 +2,7 @@
 Utility functions for database providers.
 
 This module provides helper functions for converting Python data types to
-SQL-compatible formats, particularly for SQLite and similar database backends.
+SQL-compatible formats, suitable for SQLite, MySQL, PostgreSQL, and similar database backends.
 """
 
 import datetime
@@ -20,7 +20,8 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
     """
     Convert data to a SQL-compatible type.
 
-    Converts various Python data types to formats suitable for SQLite storage:
+    Converts various Python data types to formats suitable for SQL storage across
+    multiple RDBMS (SQLite, MySQL, PostgreSQL):
     - str, int, float: returned as-is
     - dict, list, Mapping, Sequence: converted to JSON string
     - bool: converted to int (0 or 1)

@@ -11,6 +11,7 @@ from typing import List, Optional
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import ChatInfoDict, ChatTopicInfoDict
+from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -66,25 +67,25 @@ class ChatInfoRepository(BaseRepository):
             isForum = False
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId)
-            await sqlProvider.execute(
-                """
-                INSERT INTO chat_info
-                    (chat_id, type, title, username, is_forum)
-                VALUES
-                    (:chatId, :type, :title, :username, :isForum)
-                ON CONFLICT DO UPDATE SET
-                    type = :type,
-                    title = :title,
-                    username = :username,
-                    is_forum = :isForum,
-                    updated_at = CURRENT_TIMESTAMP
-            """,
-                {
-                    "chatId": chatId,
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+            await sqlProvider.upsert(
+                table="chat_info",
+                values={
+                    "chat_id": chatId,
                     "type": type,
                     "title": title,
                     "username": username,
-                    "isForum": isForum,
+                    "is_forum": isForum,
+                    "created_at": currentTimestamp,
+                    "updated_at": currentTimestamp,
+                },
+                conflictColumns=["chat_id"],
+                updateExpressions={
+                    "type": ExcludedValue(),
+                    "title": ExcludedValue(),
+                    "username": ExcludedValue(),
+                    "is_forum": ExcludedValue(),
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True
@@ -149,24 +150,24 @@ class ChatInfoRepository(BaseRepository):
             topicName = "Default"
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO chat_topics
-                    (chat_id, topic_id, icon_color, icon_custom_emoji_id, name, updated_at)
-                VALUES
-                    (:chatId, :topicId, :iconColor, :customEmojiId, :topicName, CURRENT_TIMESTAMP)
-                ON CONFLICT(chat_id, topic_id) DO UPDATE SET
-                    icon_color = excluded.icon_color,
-                    icon_custom_emoji_id = excluded.icon_custom_emoji_id,
-                    name = excluded.name,
-                    updated_at = CURRENT_TIMESTAMP
-            """,
-                {
-                    "chatId": chatId,
-                    "topicId": topicId,
-                    "iconColor": iconColor,
-                    "customEmojiId": customEmojiId,
-                    "topicName": topicName,
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+            await sqlProvider.upsert(
+                table="chat_topics",
+                values={
+                    "chat_id": chatId,
+                    "topic_id": topicId,
+                    "icon_color": iconColor,
+                    "icon_custom_emoji_id": customEmojiId,
+                    "name": topicName,
+                    "created_at": currentTimestamp,
+                    "updated_at": currentTimestamp,
+                },
+                conflictColumns=["chat_id", "topic_id"],
+                updateExpressions={
+                    "icon_color": ExcludedValue(),
+                    "icon_custom_emoji_id": ExcludedValue(),
+                    "name": ExcludedValue(),
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True

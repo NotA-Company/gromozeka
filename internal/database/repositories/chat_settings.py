@@ -9,6 +9,8 @@ import logging
 from typing import Any, Dict, Optional
 
 from ..manager import DatabaseManager
+from ..providers.base import ExcludedValue
+from ..utils import getCurrentTimestamp
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -56,19 +58,22 @@ class ChatSettingsRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-            await sqlProvider.execute(
-                """
-                INSERT INTO chat_settings
-                    (chat_id, key, value, updated_by, updated_at)
-                VALUES
-                    (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT (chat_id, key)
-                DO UPDATE SET
-                    value = excluded.value,
-                    updated_by = excluded.updated_by,
-                    updated_at = CURRENT_TIMESTAMP
-            """,
-                (chatId, key, value, updatedBy),
+            await sqlProvider.upsert(
+                table="chat_settings",
+                values={
+                    "chat_id": chatId,
+                    "key": key,
+                    "value": value,
+                    "updated_by": updatedBy,
+                    "updated_at": getCurrentTimestamp(),
+                    "created_at": getCurrentTimestamp(),
+                },
+                conflictColumns=["chat_id", "key"],
+                updateExpressions={
+                    "value": ExcludedValue(),
+                    "updated_by": ExcludedValue(),
+                    "updated_at": ExcludedValue(),
+                },
             )
             return True
         except Exception as e:
@@ -94,10 +99,13 @@ class ChatSettingsRepository(BaseRepository):
             await sqlProvider.execute(
                 """
                 DELETE FROM chat_settings
-                WHERE chat_id = ?
-                    AND key = ?
+                WHERE chat_id = :chatId
+                    AND key = :key
             """,
-                (chatId, key),
+                {
+                    "chatId": chatId,
+                    "key": key,
+                },
             )
             return True
         except Exception as e:

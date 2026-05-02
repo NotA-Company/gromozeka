@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 12 (up to `migration_012`)
+**Migrations**: 13 (up to `migration_013`)
 
 ---
 
@@ -33,7 +33,7 @@ CREATE TABLE chat_messages (
     media_group_id TEXT,
     markup TEXT NOT NULL DEFAULT '',
     metadata TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, message_id),
     FOREIGN KEY (chat_id, user_id) REFERENCES chat_users(chat_id, user_id),
     FOREIGN KEY (media_id) REFERENCES media_attachments(file_unique_id)
@@ -60,8 +60,8 @@ CREATE TABLE chat_users (
     timezone TEXT,
     messages_count INTEGER NOT NULL DEFAULT 0,
     metadata TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, user_id)
 )
 ```
@@ -81,8 +81,8 @@ CREATE TABLE chat_info (
     username TEXT,
     type TEXT NOT NULL,
     is_forum BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 )
 ```
 
@@ -101,8 +101,8 @@ CREATE TABLE chat_topics (
     icon_color INTEGER,
     icon_custom_emoji_id TEXT,
     name TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, topic_id),
     FOREIGN KEY (chat_id) REFERENCES chat_info(chat_id)
 )
@@ -122,8 +122,8 @@ CREATE TABLE chat_settings (
     key TEXT NOT NULL,
     value TEXT,
     updated_by INTEGER NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, key)
 )
 ```
@@ -140,8 +140,8 @@ CREATE TABLE chat_settings (
 CREATE TABLE media_group (
     media_group_id TEXT NOT NULL,
     media_id TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (media_group_id, media_id),
     FOREIGN KEY (media_id) REFERENCES media_attachments(file_unique_id)
 )
@@ -169,8 +169,8 @@ CREATE TABLE media_attachments (
     local_url TEXT,
     prompt TEXT,
     description TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 )
 ```
 
@@ -188,8 +188,8 @@ CREATE TABLE user_data (
     chat_id INTEGER NOT NULL,
     key TEXT NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (user_id, chat_id, key)
 )
 ```
@@ -208,8 +208,8 @@ CREATE TABLE spam_messages (
     text TEXT NOT NULL,
     reason TEXT NOT NULL,
     score FLOAT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, user_id, message_id)
 )
 ```
@@ -230,8 +230,8 @@ CREATE TABLE ham_messages (
     text TEXT NOT NULL,
     reason TEXT NOT NULL,
     score FLOAT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, user_id, message_id)
 )
 ```
@@ -249,8 +249,8 @@ CREATE TABLE bayes_tokens (
     spam_count INTEGER NOT NULL DEFAULT 0,
     ham_count INTEGER NOT NULL DEFAULT 0,
     total_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (token, chat_id)
 )
 ```
@@ -269,8 +269,8 @@ CREATE TABLE bayes_classes (
     is_spam BOOLEAN NOT NULL,
     message_count INTEGER NOT NULL DEFAULT 0,
     token_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, is_spam)
 )
 ```
@@ -288,8 +288,8 @@ CREATE TABLE chat_stats (
     chat_id INTEGER NOT NULL,
     date TIMESTAMP NOT NULL,
     messages_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, date)
 )
 ```
@@ -306,8 +306,8 @@ CREATE TABLE chat_user_stats (
     user_id INTEGER NOT NULL,
     date TIMESTAMP NOT NULL,
     messages_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, user_id, date)
 )
 ```
@@ -327,8 +327,8 @@ CREATE TABLE chat_summarization_cache (
     last_message_id TEXT NOT NULL,
     prompt TEXT NOT NULL,
     summary TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 )
 ```
 
@@ -346,7 +346,7 @@ CREATE TABLE cache_storage (
     namespace TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (namespace, key)
 )
 ```
@@ -363,8 +363,8 @@ CREATE TABLE cache_storage (
 CREATE TABLE cache_{type} (
     key TEXT PRIMARY KEY,
     data TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 )
 ```
 
@@ -384,8 +384,8 @@ CREATE TABLE delayed_tasks (
     function TEXT NOT NULL,
     kwargs TEXT NOT NULL,
     is_done BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 )
 ```
 
@@ -401,8 +401,8 @@ CREATE TABLE delayed_tasks (
 CREATE TABLE settings (
     key TEXT PRIMARY KEY,
     value TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 )
 ```
 

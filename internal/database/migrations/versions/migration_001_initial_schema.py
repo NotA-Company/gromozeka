@@ -45,7 +45,7 @@ class Migration001InitialSchema(BaseMigration):
                 message_category TEXT DEFAULT 'user' NOT NULL,
                 quote_text TEXT,
                 media_id TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, message_id)
             )
         """),
@@ -55,8 +55,8 @@ class Migration001InitialSchema(BaseMigration):
                 chat_id INTEGER NOT NULL,
                 key TEXT NOT NULL,
                 value TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, key)
             )
         """),
@@ -69,8 +69,8 @@ class Migration001InitialSchema(BaseMigration):
                 full_name TEXT NOT NULL,
                 timezone TEXT,
                 messages_count INTEGER DEFAULT 0 NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, user_id)
             )
         """),
@@ -81,8 +81,8 @@ class Migration001InitialSchema(BaseMigration):
                 username TEXT,
                 type TEXT NOT NULL,
                 is_forum BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
             )
         """),
                 # Chat stats (currently only messages count per date)
@@ -91,8 +91,8 @@ class Migration001InitialSchema(BaseMigration):
                 chat_id INTEGER NOT NULL,
                 date TIMESTAMP NOT NULL,
                 messages_count INTEGER DEFAULT 0 NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, date)
             )
         """),
@@ -103,8 +103,8 @@ class Migration001InitialSchema(BaseMigration):
                 user_id INTEGER NOT NULL,
                 date TIMESTAMP NOT NULL,
                 messages_count INTEGER DEFAULT 0 NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, user_id, date)
             )
         """),
@@ -121,8 +121,8 @@ class Migration001InitialSchema(BaseMigration):
                 local_url TEXT,
                 prompt TEXT,
                 description TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
             )
         """),
                 # Table for delayed tasks
@@ -133,8 +133,8 @@ class Migration001InitialSchema(BaseMigration):
                 function TEXT NOT NULL,
                 kwargs TEXT NOT NULL,
                 is_done BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
             )
         """),
                 # Some knowledge about user, collected during discussion
@@ -144,8 +144,8 @@ class Migration001InitialSchema(BaseMigration):
                 chat_id INTEGER NOT NULL,
                 key TEXT NOT NULL,
                 data TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (user_id, chat_id, key)
             )
         """),
@@ -158,8 +158,8 @@ class Migration001InitialSchema(BaseMigration):
                 text TEXT NOT NULL,
                 reason TEXT NOT NULL,
                 score FLOAT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, user_id, message_id)
             )
         """),
@@ -172,8 +172,8 @@ class Migration001InitialSchema(BaseMigration):
                 text TEXT NOT NULL,
                 reason TEXT NOT NULL,
                 score FLOAT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, user_id, message_id)
             )
         """),
@@ -185,8 +185,8 @@ class Migration001InitialSchema(BaseMigration):
                 icon_color INTEGER,
                 icon_custom_emoji_id TEXT,
                 name TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, topic_id)
             )
         """),
@@ -200,8 +200,8 @@ class Migration001InitialSchema(BaseMigration):
                 last_message_id TEXT NOT NULL,
                 prompt TEXT NOT NULL,
                 summary TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
             )
         """),
                 ParametrizedQuery("""
@@ -218,8 +218,8 @@ class Migration001InitialSchema(BaseMigration):
                 spam_count INTEGER DEFAULT 0,
                 ham_count INTEGER DEFAULT 0,
                 total_count INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (token, chat_id)
             )
         """),
@@ -230,8 +230,8 @@ class Migration001InitialSchema(BaseMigration):
                 is_spam BOOLEAN NOT NULL,
                 message_count INTEGER DEFAULT 0,
                 token_count INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
                 PRIMARY KEY (chat_id, is_spam)
             )
         """),
@@ -252,8 +252,8 @@ class Migration001InitialSchema(BaseMigration):
                 CREATE TABLE IF NOT EXISTS cache_{cacheType} (
                     key TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
                 )
                 """)
                 for cacheType in CacheType
