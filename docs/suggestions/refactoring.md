@@ -11,27 +11,27 @@
 
 | # | Status | Title | Priority | Effort | Key Files |
 |---|--------|-------|----------|--------|-----------|
-| 1 | [ ] | [Split `DatabaseWrapper` into Domain Repositories](#1-split-databasewrapper-into-domain-repositories) | Critical | XL | [`wrapper.py`](../internal/database/wrapper.py) |
-| 2 | [ ] | [Split `BaseBotHandler` into Focused Mixins](#2-split-basebothandler-into-focused-mixins) | Critical | L | [`base.py`](../internal/bot/common/handlers/base.py) |
-| 3 | [ ] | [Extract Platform Abstraction Layer from `TheBot`](#3-extract-platform-abstraction-layer-from-thebot) | Critical | L | [`bot.py`](../internal/bot/common/bot.py) |
-| 4 | [ ] | [Split `MaxBotClient` into API Domain Clients](#4-split-maxbotclient-into-api-domain-clients) | High | L | [`client.py`](../lib/max_bot/client.py) |
-| 5 | [ ] | [Decompose `CacheService` Namespaces into Dedicated Cache Objects](#5-decompose-cacheservice-namespaces-into-dedicated-cache-objects) | High | M | [`service.py`](../internal/services/cache/service.py) |
-| 6 | [ ] | [Introduce Handler Factory / Registry to Decouple `HandlersManager`](#6-introduce-handler-factory--registry-to-decouple-handlersmanager) | High | M | [`manager.py`](../internal/bot/common/handlers/manager.py) |
-| 7 | [ ] | [Extract Queue Management from `HandlersManager` into `ChatQueueManager`](#7-extract-queue-management-from-handlersmanager-into-chatqueuemanager) | High | M | [`manager.py`](../internal/bot/common/handlers/manager.py) |
-| 8 | [ ] | [Replace if/elif Platform Dispatch with Strategy Pattern in `TheBot`](#8-replace-ifelif-platform-dispatch-with-strategy-pattern-in-thebot) | High | M | [`bot.py`](../internal/bot/common/bot.py) |
-| 9 | [ ] | [Extract `LLMContextBuilder` from `LLMMessageHandler`](#9-extract-llmcontextbuilder-from-llmmessagehandler) | High | M | [`llm_messages.py`](../internal/bot/common/handlers/llm_messages.py) |
-| 10 | [ ] | [Eliminate Circular-Import Workaround in `CacheService`](#10-eliminate-circular-import-workaround-in-cacheservice) | High | S | [`service.py`](../internal/services/cache/service.py) |
-| 11 | [ ] | [Extract `DatabaseRowValidator` from `DatabaseWrapper`](#11-extract-databaserowvalidator-from-databasewrapper) | Medium | S | [`wrapper.py`](../internal/database/wrapper.py) |
-| 12 | [ ] | [Abstract Application Lifecycle into `BaseBotApplication`](#12-abstract-application-lifecycle-into-basebotapplication) | Medium | M | [`telegram/application.py`](../internal/bot/telegram/application.py), [`max/application.py`](../internal/bot/max/application.py) |
-| 13 | [ ] | [Extract `BotOwnerResolver` from `HandlersManager.injectBot`](#13-extract-botownerresolver-from-handlersmanagerinjectbot) | Medium | S | [`manager.py`](../internal/bot/common/handlers/manager.py) |
-| 14 | [ ] | [Make `QueueService` Shutdown Deterministic with Structured Concurrency](#14-make-queueservice-shutdown-deterministic-with-structured-concurrency) | Medium | M | [`queue_service/service.py`](../internal/services/queue_service/service.py) |
-| 15 | [ ] | [Replace Magic `if/elif` in `getChatSettings` with Tier Policy Objects](#15-replace-magic-ifelif-in-getchatsettings-with-tier-policy-objects) | Medium | M | [`base.py`](../internal/bot/common/handlers/base.py) |
-| 16 | [ ] | [Add `__slots__` to `TheBot` and High-Frequency Data Classes](#16-add-__slots__-to-thebot-and-high-frequency-data-classes) | Medium | S | [`bot.py`](../internal/bot/common/bot.py) |
-| 17 | [ ] | [Extract `MarkdownRenderer` Platform Bridge from `TheBot`](#17-extract-markdownrenderer-platform-bridge-from-thebot) | Medium | S | [`bot.py`](../internal/bot/common/bot.py) |
+| 1 | ✅ DONE | [Split `DatabaseWrapper` into Domain Repositories](#1-split-databasewrapper-into-domain-repositories) | Critical | XL | [`database.py`](../../internal/database/database.py), [`repositories/`](../../internal/database/repositories/) |
+| 2 | [ ] | [Split `BaseBotHandler` into Focused Mixins](#2-split-basebothandler-into-focused-mixins) | Critical | L | [`base.py`](../../internal/bot/common/handlers/base.py) |
+| 3 | [ ] | [Extract Platform Abstraction Layer from `TheBot`](#3-extract-platform-abstraction-layer-from-thebot) | Critical | L | [`bot.py`](../../internal/bot/common/bot.py) |
+| 4 | [ ] | [Split `MaxBotClient` into API Domain Clients](#4-split-maxbotclient-into-api-domain-clients) | High | L | [`client.py`](../../lib/max_bot/client.py) |
+| 5 | [ ] | [Decompose `CacheService` Namespaces into Dedicated Cache Objects](#5-decompose-cacheservice-namespaces-into-dedicated-cache-objects) | High | M | [`service.py`](../../internal/services/cache/service.py) |
+| 6 | [ ] | [Introduce Handler Factory / Registry to Decouple `HandlersManager`](#6-introduce-handler-factory--registry-to-decouple-handlersmanager) | High | M | [`manager.py`](../../internal/bot/common/handlers/manager.py) |
+| 7 | [ ] | [Extract Queue Management from `HandlersManager` into `ChatQueueManager`](#7-extract-queue-management-from-handlersmanager-into-chatqueuemanager) | High | M | [`manager.py`](../../internal/bot/common/handlers/manager.py) |
+| 8 | [ ] | [Replace if/elif Platform Dispatch with Strategy Pattern in `TheBot`](#8-replace-ifelif-platform-dispatch-with-strategy-pattern-in-thebot) | High | M | [`bot.py`](../../internal/bot/common/bot.py) |
+| 9 | [ ] | [Extract `LLMContextBuilder` from `LLMMessageHandler`](#9-extract-llmcontextbuilder-from-llmmessagehandler) | High | M | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) |
+| 10 | [ ] | [Eliminate Circular-Import Workaround in `CacheService`](#10-eliminate-circular-import-workaround-in-cacheservice) | High | S | [`service.py`](../../internal/services/cache/service.py) |
+| 11 | ✅ DONE | [Extract `DatabaseRowValidator` from `DatabaseWrapper`](#11-extract-databaserowvalidator-from-databasewrapper) | Medium | S | [`utils.py`](../../internal/database/utils.py) |
+| 12 | [ ] | [Abstract Application Lifecycle into `BaseBotApplication`](#12-abstract-application-lifecycle-into-basebotapplication) | Medium | M | [`telegram/application.py`](../../internal/bot/telegram/application.py), [`max/application.py`](../../internal/bot/max/application.py) |
+| 13 | [ ] | [Extract `BotOwnerResolver` from `HandlersManager.injectBot`](#13-extract-botownerresolver-from-handlersmanagerinjectbot) | Medium | S | [`manager.py`](../../internal/bot/common/handlers/manager.py) |
+| 14 | [ ] | [Make `QueueService` Shutdown Deterministic with Structured Concurrency](#14-make-queueservice-shutdown-deterministic-with-structured-concurrency) | Medium | M | [`queue_service/service.py`](../../internal/services/queue_service/service.py) |
+| 15 | [ ] | [Replace Magic `if/elif` in `getChatSettings` with Tier Policy Objects](#15-replace-magic-ifelif-in-getchatsettings-with-tier-policy-objects) | Medium | M | [`base.py`](../../internal/bot/common/handlers/base.py) |
+| 16 | [ ] | [Add `__slots__` to `TheBot` and High-Frequency Data Classes](#16-add-__slots__-to-thebot-and-high-frequency-data-classes) | Medium | S | [`bot.py`](../../internal/bot/common/bot.py) |
+| 17 | [ ] | [Extract `MarkdownRenderer` Platform Bridge from `TheBot`](#17-extract-markdownrenderer-platform-bridge-from-thebot) | Medium | S | [`bot.py`](../../internal/bot/common/bot.py) |
 | 18 | [ ] | [Unify Singleton Pattern with Generic `SingletonMixin`](#18-unify-singleton-pattern-with-generic-singletonmixin) | Medium | S | Multiple service files |
-| 19 | [ ] | [Move Inline DB Schema DDL out of `_initDatabase`](#19-move-inline-db-schema-ddl-out-of-_initdatabase) | Low | S | [`wrapper.py`](../internal/database/wrapper.py) |
+| 19 | 🔄 NEEDS UPDATE | [Move Inline DB Schema DDL out of `_initDatabase`](#19-move-inline-db-schema-ddl-out-of-_initdatabase) | Low | S | [`database.py`](../../internal/database/database.py) |
 | 20 | [ ] | [Replace Bare `Dict[str, Any]` Config Passing with Typed Config Dataclasses](#20-replace-bare-dictstr-any-config-passing-with-typed-config-dataclasses) | Low | M | Multiple files |
-| 21 | [ ] | [Extract `awaitStepDone` Polling into `asyncio.Condition`-Based Wait](#21-extract-awaitstepone-polling-into-asynciocondition-based-wait) | Low | S | [`manager.py`](../internal/bot/common/handlers/manager.py) |
+| 21 | [ ] | [Extract `awaitStepDone` Polling into `asyncio.Condition`-Based Wait](#21-extract-awaitstepone-polling-into-asynciocondition-based-wait) | Low | S | [`manager.py`](../../internal/bot/common/handlers/manager.py) |
 
 ---
 
@@ -43,9 +43,11 @@
 
 **Priority:** Critical | **Effort:** XL (1+ week)
 
-#### Current Problem
+> **✅ DONE (as of 2026-05-02):** This refactoring has been fully implemented. The monolithic `DatabaseWrapper` in `wrapper.py` has been replaced with a clean [`Database`](../../internal/database/database.py:28) façade class (191 lines) that composes 11 domain repositories under [`internal/database/repositories/`](../../internal/database/repositories/). A [`BaseRepository`](../../internal/database/repositories/base.py:14) abstract class receives a `DatabaseManager`, and concrete repos include `ChatMessagesRepository`, `ChatUsersRepository`, `ChatSettingsRepository`, `ChatInfoRepository`, `ChatSummarizationRepository`, `UserDataRepository`, `MediaAttachmentsRepository`, `SpamRepository`, `DelayedTasksRepository`, `CacheRepository`, and `CommonFunctionsRepository`. Additionally, a new [`providers/`](../../internal/database/providers/) layer was introduced with `BaseSQLProvider` abstract class and concrete `sqlite3` / `sqlink` providers. The old `wrapper.py` no longer exists.
 
-[`DatabaseWrapper`](../internal/database/wrapper.py:113) is a 3 021-line class that violates every dimension of the Single Responsibility Principle, dood! It mixes:
+#### Current Problem (HISTORICAL)
+
+[`DatabaseWrapper`](../internal/database/wrapper.py:113) was a 3 021-line class that violated every dimension of the Single Responsibility Principle, dood! It mixed:
 
 - Connection pool management (lines ~140–310)
 - Schema migrations bootstrapping (~352–388)
@@ -735,9 +737,11 @@ Alternatively, define a `ChatSettingsProtocol` in `internal/services/cache/types
 
 **Priority:** Medium | **Effort:** S (hours)
 
-#### Current Problem
+> **✅ DONE (as of 2026-05-02):** Row validation has been extracted into [`internal/database/utils.py`](../../internal/database/utils.py). The generic [`sqlToTypedDict()`](../../internal/database/utils.py:164) function validates and coerces raw SQL row dicts against any `TypedDict` class, with a reusable [`sqlToCustomType()`](../../internal/database/utils.py:69) helper for type conversion (datetime, bool, dict, list, enums). The old `_validateDict*` methods in `DatabaseWrapper` no longer exist. This was done as part of the broader database refactoring (#1).
 
-[`DatabaseWrapper._validateDictIsChatMessageDict`](../internal/database/wrapper.py:394) and similar `_validateDict*` methods perform row-to-TypedDict validation. These methods are private helpers duplicated across the wrapper — each does essentially the same enum-coercion + required-field check pattern, dood! They add ~200+ lines to the already-massive wrapper.
+#### Current Problem (HISTORICAL)
+
+[`DatabaseWrapper._validateDictIsChatMessageDict`](../internal/database/wrapper.py:394) and similar `_validateDict*` methods performed row-to-TypedDict validation. These methods were private helpers duplicated across the wrapper — each did essentially the same enum-coercion + required-field check pattern, dood! They added ~200+ lines to the already-massive wrapper.
 
 #### Proposed Solution
 
@@ -1191,9 +1195,11 @@ class CacheService(SingletonMixin):
 
 **Priority:** Low | **Effort:** S (hours)
 
-#### Current Problem
+> **🔄 NEEDS UPDATE (as of 2026-05-02):** The architecture has changed significantly. The old `_initDatabase` in `DatabaseWrapper` is gone. The `settings` table creation now lives in [`Database.migrateDatabase()`](../../internal/database/database.py:133) at line 158 and is still inline DDL (`CREATE TABLE IF NOT EXISTS settings ...`), but the context is different — it's now per-provider via `addProviderInitializationHook`. The `settings` table is required *before* migrations run (for version tracking), making it a chicken-and-egg problem. This suggestion should be revised to account for the new provider-based architecture, or simply closed as a deliberate design choice.
 
-[`DatabaseWrapper._initDatabase`](../internal/database/wrapper.py:352) hardcodes the `CREATE TABLE IF NOT EXISTS settings (...)` DDL as an inline string literal at line 374. This mixed DDL in Python is hard to diff, version, or lint. The migration system already exists for schema management — this single table creation is a special-case that bypasses it, dood!
+#### Current Problem (REVISED)
+
+[`Database.migrateDatabase()`](../../internal/database/database.py:133) still hardcodes the `CREATE TABLE IF NOT EXISTS settings (...)` DDL inline at line 158. However, the `settings` table is a prerequisite for the migration system itself (it stores migration version data), so it cannot be moved into a migration without a bootstrap mechanism, dood!
 
 #### Proposed Solution
 
@@ -1362,18 +1368,18 @@ class MessageQueueRecord:
 
 ## Implementation Order Recommendation
 
-Given the interdependencies, dood, here is the suggested order:
+Given the interdependencies, dood, here is the suggested order (updated 2026-05-02):
 
 ```
 Phase 1 (Foundation, no breaking changes):
   #18 SingletonMixin          → cleans up all services
   #16 __slots__ to TheBot     → resolves existing TODO
-  #11 DatabaseRowValidator    → prerequisite for #1
+  #11 DatabaseRowValidator    → ✅ DONE (extracted to internal/database/utils.py)
   #13 BotOwnerResolver        → small, safe extraction
   #21 Condition-based wait    → performance fix
 
 Phase 2 (Core decomposition):
-  #1  DatabaseWrapper split   → biggest win, needs most testing
+  #1  DatabaseWrapper split   → ✅ DONE (internal/database/repositories/ + Database façade)
   #7  ChatQueueManager        → extracted from HandlersManager
   #6  Handler Registry        → declarative handler config
 
@@ -1392,10 +1398,11 @@ Phase 5 (Config & misc):
   #10 Circular import fix     → needs model relocation
   #17 MessageFormatter        → small platform utility
   #5  CacheService decompose  → depends on #10
-  #19 DDL to migrations       → schema cleanup
+  #19 DDL to migrations       → 🔄 NEEDS REVISION (settings table is a bootstrap prerequisite)
   #20 Typed config dataclasses → large but incremental
 ```
 
 ---
 
 *Generated by code analysis of Gromozeka source — 2026-04-18, dood!*
+*Status review updated: 2026-05-02*

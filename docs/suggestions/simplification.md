@@ -5,6 +5,7 @@
 > *removing* complexity that doesn't earn its keep, dood!
 >
 > **Scope:** Based on analysis of the actual code in the repository as of 2026-04-18, dood.
+> **Status review:** 2026-05-02
 
 ---
 
@@ -29,6 +30,8 @@
 | 15 | [ ] | [Simplify HCChatCacheDict string-key magic constants](#15-simplify-hcchatcachedict-string-key-magic-constants) | Medium | M | Scattered string literal keys like `"settings"`, `"info"` |
 | 16 | [ ] | [Replace asyncio.run() inside GromozekBot constructor](#16-replace-asynciorun-inside-gromozekbot-constructor) | High | S | Mixing sync/async setup dangerously |
 | 17 | [ ] | [Remove unused `forceRecalc` parameters](#17-remove-unused-forcrecalc-parameters) | Low | S | Parameters that are never passed as True |
+
+> **Status Review Note (2026-05-02):** All 17 simplification suggestions remain pending. The appendix quick wins are also all still present in the codebase. The deprecated `mediaId`/`mediaContent`/`mediaPrompt` fields in `EnsuredMessage` (#8) are still actively used throughout the code. The `asyncio.run()` in `GromozekBot.__init__` (#16) is still present at [`main.py:50`](../../main.py:50). The `forceRecalc` params (#17) still exist unchanged. The `canProcess = False; pass` quick win bug at manager.py:640-641 is also still present.
 
 ---
 
@@ -1171,3 +1174,4 @@ These don't need a full section but are worth noting:
 ---
 
 *Document created 2026-04-18, dood! Analysis based on codebase snapshot at that date.*
+*Status review updated: 2026-05-02*

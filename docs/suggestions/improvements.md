@@ -3,6 +3,7 @@
 > **Scope:** New features, performance optimizations, reliability improvements, observability, DX, security, scalability, testing, and UX enhancements, dood!  
 > **NOT in scope:** Structural refactoring → see [`docs/suggestions/refactoring.md`](refactoring.md) | Complexity reduction → see [`docs/suggestions/simplification.md`](simplification.md)  
 > **Last updated:** 2026-04-18
+> **Status review:** 2026-05-02
 
 ---
 
@@ -1412,5 +1413,8 @@ Simple read-only panel that connects to the existing SQLite file via the `readon
 
 ---
 
-*All improvement suggestions reference actual code locations and are based on analysis of the Gromozeka codebase at commit state 2026-04-18, dood!*  
+*All improvement suggestions reference actual code locations and are based on analysis of the Gromozeka codebase at commit state 2026-04-18, dood!*
 *Cross-reference with [`docs/suggestions/refactoring.md`](refactoring.md) for structural changes and [`docs/suggestions/simplification.md`](simplification.md) for complexity reduction, dood!*
+
+> **Status Review Note (2026-05-02):** All 27 improvement suggestions remain pending. No new features from this list have been implemented. However, references to `DatabaseWrapper` in suggestions #5, #6, #10, #12, and #21 should be updated to reference the new [`Database`](../../internal/database/database.py) class and its repositories, since the `wrapper.py` file no longer exists. The `f-string without f prefix` quick win referenced in the simplification doc's appendix (at [`lib/ai/manager.py:51`](../../lib/ai/manager.py:51)) is still present.
+*Status review updated: 2026-05-02*
