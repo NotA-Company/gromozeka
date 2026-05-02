@@ -305,8 +305,8 @@ class TestChatMessageOperations:
         """Test retrieving messages since a specific datetime."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")
 
-        # Create messages at different times
-        baseTime = datetime.datetime(2024, 1, 1, 12, 0, 0)
+        # Create messages at different times (timezone-aware)
+        baseTime = datetime.datetime(2024, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
         for i in range(5):
             await inMemoryDb.chatMessages.saveChatMessage(
                 date=baseTime + datetime.timedelta(hours=i),
