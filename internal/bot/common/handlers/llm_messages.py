@@ -16,7 +16,6 @@ Key Features:
     - Fallback model support for reliability
 """
 
-import datetime
 import json
 import logging
 import random
@@ -27,6 +26,7 @@ from typing import Any, Dict, Optional
 
 import telegram
 
+import lib.utils as utils
 from internal.bot import constants
 from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
@@ -524,7 +524,7 @@ class LLMMessageHandler(BaseBotHandler):
                 if userTitle[-1] == "?":
                     userTitle = userTitle[:-1]
 
-                today = datetime.datetime.now(datetime.timezone.utc)
+                today = utils.now()
                 today = today.replace(hour=0, minute=0, second=0, microsecond=0)
                 users = await self.db.chatUsers.getChatUsers(
                     chatId=ensuredMessage.recipient.id,

@@ -123,7 +123,7 @@ class CommonHandler(BaseBotHandler):
             sender=MessageSender(id=kwargs["userId"], name="", username=""),
             recipient=MessageRecipient(id=kwargs["chatId"], chatType=ChatType(kwargs["chatType"])),
             messageId=kwargs["messageId"],
-            date=datetime.datetime.now(),
+            date=utils.now(),
             messageText=kwargs["messageText"],
         )
         ensuredMessage.threadId = kwargs["threadId"]
@@ -187,7 +187,7 @@ class CommonHandler(BaseBotHandler):
                 - timestamp: Unix timestamp (float)
                 - timezone: Timezone identifier (always "UTC")
         """
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = utils.now()
         return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
 
     ###

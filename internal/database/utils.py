@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_THREAD_ID: int = 0
 """Default thread ID for database operations."""
+FORCE_SQL_TIMEZONE: Optional[datetime.tzinfo] = datetime.timezone.utc
+"""If datetime from SQL have no timezone, force this one"""
 
 
 _T = TypeVar("_T")
@@ -92,6 +94,10 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
         (True, {'key': 'value'})
     """
     if _checkType(data, expectedType):
+        # Little trick fo forcing timezone
+        if expectedType is datetime.datetime and isinstance(data, datetime.datetime):
+            if data.tzinfo is None and FORCE_SQL_TIMEZONE is not None:
+                data = data.replace(tzinfo=FORCE_SQL_TIMEZONE)
         return True, data  # pyright: ignore[reportReturnType]
 
     if isinstance(data, bytes):
@@ -108,6 +114,10 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
                 return True, float(data)  # pyright: ignore[reportReturnType]
             elif expectedType is str:
                 return True, str(data)  # pyright: ignore[reportReturnType]
+            elif expectedType is datetime.datetime:
+                return True, datetime.datetime.fromtimestamp(
+                    data, FORCE_SQL_TIMEZONE
+                )  # pyright: ignore[reportReturnType]
         except (ValueError, TypeError) as e:
             logger.error(f"Failed to convert int {data!r} to {expectedType}: {e}")
             return False, None
@@ -143,7 +153,10 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
             elif expectedType in [dict, list]:
                 return True, json.loads(data)  # pyright: ignore[reportReturnType]
             elif expectedType is datetime.datetime:
-                return True, dateutil.parser.parse(data)  # pyright: ignore[reportReturnType]
+                dtRet = dateutil.parser.parse(data)
+                if dtRet.tzinfo is None and FORCE_SQL_TIMEZONE is not None:
+                    dtRet = dtRet.replace(tzinfo=FORCE_SQL_TIMEZONE)
+                return True, dtRet  # pyright: ignore[reportReturnType]
 
             # Handle generic types like dict[str, int] or list[str]
             originType = get_origin(expectedType)

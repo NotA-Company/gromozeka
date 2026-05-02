@@ -13,7 +13,6 @@ and provides commands for training, testing, and managing the spam filter, dood!
 """
 
 import asyncio
-import datetime
 import logging
 import time
 import zlib
@@ -234,8 +233,8 @@ class SpamHandler(BaseBotHandler):
                 "username": sender.username,
                 "full_name": sender.name,
                 "messages_count": 1,
-                "created_at": datetime.datetime.now(),
-                "updated_at": datetime.datetime.now(),
+                "created_at": utils.now(),
+                "updated_at": utils.now(),
                 "timezone": "",
                 "metadata": "",
             }
