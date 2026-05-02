@@ -41,7 +41,7 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
 
 ## Overview
 
-The Gromozeka bot uses SQLite as its database backend with a custom wrapper layer ([`DatabaseWrapper`](../internal/database/wrapper.py:128)) that provides:
+The Gromozeka bot uses SQLite as its database backend with a custom database layer ([`Database`](../internal/database/database.py:1)) that provides:
 
 - **Multi-source database support**: Route different chats to different database files
 - **Thread-safe connection pooling**: Per-source thread-local connections
@@ -57,7 +57,7 @@ The database stores chat messages, user information, settings, media attachments
 
 ### Overview
 
-The database wrapper supports routing different chats to different SQLite database files. This enables:
+The database supports routing different chats to different SQLite database files. This enables:
 
 - **Data isolation**: Separate databases for different chat groups
 - **Performance optimization**: Distribute load across multiple files
@@ -90,7 +90,7 @@ timeout = 10
 
 ### Routing Logic
 
-The [`_getConnection()`](../internal/database/wrapper.py:223) method implements 3-tier routing:
+The database implements 3-tier routing through the repository pattern:
 
 1. **Tier 1 (Highest Priority)**: Explicit `dataSource` parameter
 2. **Tier 2 (Medium Priority)**: Chat ID mapping lookup
@@ -99,20 +99,20 @@ The [`_getConnection()`](../internal/database/wrapper.py:223) method implements 
 Example:
 ```python
 # Explicit source routing (Tier 1)
-db.getChatMessages(chatId=123, dataSource="archive")
+db.chatMessages.getChatMessages(chatId=123, dataSource="archive")
 
 # Chat mapping routing (Tier 2)
-db.getChatMessages(chatId=-1001234567890)  # Routes to "archive" via mapping
+db.chatMessages.getChatMessages(chatId=-1001234567890)  # Routes to "archive" via mapping
 
 # Default routing (Tier 3)
-db.getChatMessages(chatId=456)  # Routes to "default" source
+db.chatMessages.getChatMessages(chatId=456)  # Routes to "default" source
 ```
 
 ### Read-Only Sources
 
 Sources marked as `readonly = true` will:
 - Enable SQLite's `query_only` pragma
-- Reject write operations with [`ValueError`](../internal/database/wrapper.py:290)
+- Reject write operations with `ValueError`
 - Skip migration execution during initialization
 
 ---
@@ -145,6 +145,8 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 8 | [`migration_008_add_media_group_support.py`](../internal/database/migrations/versions/migration_008_add_media_group_support.py:1) | Adds `media_group_id` column to [`chat_messages`](#chat_messages) and creates [`media_group`](#media_group) table |
 | 9 | [`migration_009_remove_is_spammer_from_chat_users.py`](../internal/database/migrations/versions/migration_009_remove_is_spammer_from_chat_users.py:1) | Removes `is_spammer` column from [`chat_users`](#chat_users) |
 | 10 | [`migration_010_add_updated_by_to_chat_settings.py`](../internal/database/migrations/versions/migration_010_add_updated_by_to_chat_settings.py:1) | Adds `updated_by` column to [`chat_settings`](#chat_settings) |
+| 11 | [`migration_011_add_confidence_to_spam_messages.py`](../internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py:1) | Adds `confidence` column to [`spam_messages`](#spam_messages) and [`ham_messages`](#ham_messages) |
+| 12 | [`migration_012_unify_cache_tables.py`](../internal/database/migrations/versions/migration_012_unify_cache_tables.py:1) | Unifies all cache tables into single [`cache`](#cache) table |
 
 ### Creating New Migrations
 
@@ -221,7 +223,7 @@ Stores all chat messages with detailed metadata.
 **Example Query**:
 ```python
 # Get recent messages from a chat
-messages = db.getChatMessagesSince(
+messages = db.chatMessages.getChatMessagesSince(
     chatId=-1001234567890,
     sinceDateTime=datetime.now() - timedelta(hours=24),
     limit=100
@@ -257,7 +259,7 @@ Stores per-chat user information and statistics.
 **Example Query**:
 ```python
 # Get user info
-user = db.getChatUser(chatId=-1001234567890, userId=123456789)
+user = db.chatUsers.getChatUser(chatId=-1001234567890, userId=123456789)
 if user:
     print(f"{user['full_name']} (@{user['username']})")
     print(f"Messages: {user['messages_count']}")
@@ -286,9 +288,9 @@ Stores chat metadata and configuration.
 **Example Query**:
 ```python
 # Get chat info
-chat = db.getChatInfo(chatId=-1001234567890)
+chat = db.chatInfo.getChatInfo(chatId=-1001234567890)
 if chat and chat['is_forum']:
-    topics = db.getChatTopics(chatId=chat['chat_id'])
+    topics = db.chatTopics.getChatTopics(chatId=chat['chat_id'])
 ```
 
 ---
@@ -341,11 +343,11 @@ Stores per-chat configuration settings.
 **Example Query**:
 ```python
 # Get chat settings
-settings = db.getChatSettings(chatId=-1001234567890)
+settings = db.chatSettings.getChatSettings(chatId=-1001234567890)
 chatModel = settings.get('chat-model', 'default-model')
 
 # Set a setting
-db.setChatSetting(chatId=-1001234567890, key='parse-images', value='true')
+db.chatSettings.setChatSetting(chatId=-1001234567890, key='parse-images', value='true')
 ```
 
 ---
@@ -366,7 +368,7 @@ Aggregated daily statistics per chat.
 | `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
 | `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
 
-**Note**: Automatically updated when messages are saved via [`saveChatMessage()`](../internal/database/wrapper.py:853).
+**Note**: Automatically updated when messages are saved via repository methods.
 
 ---
 
@@ -385,7 +387,7 @@ Aggregated daily statistics per user per chat.
 | `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
 | `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
 
-**Note**: Automatically updated when messages are saved via [`saveChatMessage()`](../internal/database/wrapper.py:853).
+**Note**: Automatically updated when messages are saved via repository methods.
 
 ---
 
@@ -461,10 +463,10 @@ Stores arbitrary key-value data about users collected during conversations.
 
 ```python
 # Store user data
-db.addUserData(userId=123, chatId=-1001234567890, key='favorite_color', data='blue')
+db.userData.addUserData(userId=123, chatId=-1001234567890, key='favorite_color', data='blue')
 
 # Retrieve user data
-userData = db.getUserData(userId=123, chatId=-1001234567890)
+userData = db.userData.getUserData(userId=123, chatId=-1001234567890)
 favoriteColor = userData.get('favorite_color')
 ```
 
@@ -486,6 +488,7 @@ Stores messages identified as spam for training and analysis.
 | `text` | TEXT | No | - | Message text content |
 | `reason` | TEXT | No | - | Reason for spam classification (see [`SpamReason`](#spamreason)) |
 | `score` | FLOAT | No | - | Spam confidence score (0-100) |
+| `confidence` | FLOAT | No | 1.0 | Detection confidence level (0-1) |
 | `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
 | `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
 
@@ -507,6 +510,7 @@ Stores legitimate (non-spam) messages for training spam filters.
 | `text` | TEXT | No | - | Message text content |
 | `reason` | TEXT | No | - | Reason for ham classification |
 | `score` | FLOAT | No | - | Confidence score |
+| `confidence` | FLOAT | No | 1.0 | Detection confidence level (0-1) |
 | `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
 | `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
 
@@ -579,7 +583,7 @@ Caches chat message summaries to avoid regenerating them.
 
 **TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:176)
 
-**Cache Key Generation**: See [`_makeChatSummarizationCSID()`](../internal/database/wrapper.py:1996)
+**Cache Key Generation**: Implemented in the chatMessages repository
 
 ---
 
@@ -600,27 +604,33 @@ Generic key-value cache storage with namespace support.
 
 ---
 
-### Dynamic Cache Tables
+### cache
 
-The system automatically creates cache tables for each [`CacheType`](#cachetype):
+Unified cache table for all cache types (replaces separate cache tables from migration_012).
 
-- `cache_weather` - Weather API responses
-- `cache_geocoding` - Geocoding API responses
-- `cache_yandex_search` - Yandex Search API responses
-- `cache_geocode_maps_search` - Geocode Maps search results
-- `cache_geocode_maps_reverse` - Geocode Maps reverse geocoding
-- `cache_geocode_maps_lookup` - Geocode Maps location lookups
-
-**Schema** (all cache tables):
+**Primary Key**: `(namespace, key)`
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| `key` | TEXT | No | - | Cache key (PRIMARY KEY) |
+| `namespace` | TEXT | No | - | Cache namespace (e.g., 'weather', 'geocoding', 'yandex_search') |
+| `key` | TEXT | No | - | Cache key |
 | `data` | TEXT | No | - | Cached data (JSON-serialized) |
 | `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
 | `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
 
+**Indexes**:
+- `idx_cache_namespace_key` on `(namespace, key)`
+- `idx_cache_updated_at` on `updated_at` (for TTL cleanup)
+
 **TypedDict**: [`CacheDict`](../internal/database/models.py:190)
+
+**Available Namespaces**: See [`CacheType`](#cachetype) enum for all available cache namespaces including:
+- `WEATHER` - Weather API responses
+- `GEOCODING` - Geocoding API responses
+- `YANDEX_SEARCH` - Yandex Search API responses
+- `GM_SEARCH` - Geocode Maps search results
+- `GM_REVERSE` - Geocode Maps reverse geocoding
+- `GM_LOOKUP` - Geocode Maps location lookups
 
 ---
 
@@ -758,7 +768,54 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 These TypedDict models provide:
 - **Type safety**: IDE autocomplete and type checking
 - **Documentation**: Clear field names and types
-- **Validation**: Runtime validation via [`_validateDictIs*`](../internal/database/wrapper.py:411) methods
+- **Validation**: Runtime validation via repository methods
+
+---
+
+## Repository Pattern
+
+The database uses a repository pattern with 12 specialized repositories, each handling a specific domain:
+
+| Repository | File | Purpose |
+|------------|------|---------|
+| `chatMessages` | [`chat_messages.py`](../internal/database/repositories/chat_messages.py) | Chat message operations |
+| `chatUsers` | [`chat_users.py`](../internal/database/repositories/chat_users.py) | User information and statistics |
+| `chatInfo` | [`chat_info.py`](../internal/database/repositories/chat_info.py) | Chat metadata |
+| `chatTopics` | [`chat_topics.py`](../internal/database/repositories/chat_topics.py) | Forum topic management |
+| `chatSettings` | [`chat_settings.py`](../internal/database/repositories/chat_settings.py) | Per-chat configuration |
+| `chatStats` | [`chat_stats.py`](../internal/database/repositories/chat_stats.py) | Chat statistics |
+| `mediaAttachments` | [`media_attachments.py`](../internal/database/repositories/media_attachments.py) | Media attachment management |
+| `userData` | [`user_data.py`](../internal/database/repositories/user_data.py) | User key-value data |
+| `spamMessages` | [`spam_messages.py`](../internal/database/repositories/spam_messages.py) | Spam detection data |
+| `bayesTokens` | [`bayes_tokens.py`](../internal/database/repositories/bayes_tokens.py) | Bayesian spam filtering tokens |
+| `cache` | [`cache.py`](../internal/database/repositories/cache.py) | Unified cache operations |
+| `delayedTasks` | [`delayed_tasks.py`](../internal/database/repositories/delayed_tasks.py) | Task scheduling |
+
+### Accessing Repositories
+
+All repositories are accessible through the main [`Database`](../internal/database/database.py:1) class:
+
+```python
+from internal.database import Database
+
+db = Database(config)
+
+# Access repositories
+messages = db.chatMessages.getChatMessages(chatId=-1001234567890)
+user = db.chatUsers.getChatUser(chatId=-1001234567890, userId=123456789)
+settings = db.chatSettings.getChatSettings(chatId=-1001234567890)
+```
+
+### Repository Methods
+
+Each repository provides methods for its domain. Common patterns include:
+
+- **Query methods**: `get*`, `find*`, `list*` - Retrieve data
+- **Create methods**: `add*`, `create*`, `save*` - Insert new records
+- **Update methods**: `update*`, `set*` - Modify existing records
+- **Delete methods**: `delete*`, `remove*` - Remove records
+
+See individual repository files for complete method documentation.
 
 ---
 

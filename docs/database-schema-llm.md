@@ -3,8 +3,10 @@
 ## Quick Reference
 
 **Database**: SQLite with multi-source support
-**Wrapper Class**: [`DatabaseWrapper`](../internal/database/wrapper.py:128)
+**Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
+**Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
+**Migrations**: 12 (up to `migration_012`)
 
 ---
 
@@ -473,7 +475,7 @@ GM_LOOKUP = "geocode_maps_lookup"
 
 **Save Message**
 ```python
-db.saveChatMessage(
+db.chatMessages.saveChatMessage(
     date: datetime,
     chatId: int,
     userId: int,
@@ -493,7 +495,7 @@ db.saveChatMessage(
 
 **Get Messages Since Date**
 ```python
-db.getChatMessagesSince(
+db.chatMessages.getChatMessagesSince(
     chatId: int,
     sinceDateTime: Optional[datetime] = None,
     tillDateTime: Optional[datetime] = None,
@@ -506,7 +508,7 @@ db.getChatMessagesSince(
 
 **Get Message by ID**
 ```python
-db.getChatMessageByMessageId(
+db.chatMessages.getChatMessageByMessageId(
     chatId: int,
     messageId: MessageIdType,
     dataSource: Optional[str] = None
@@ -515,7 +517,7 @@ db.getChatMessageByMessageId(
 
 **Get Messages by Root ID**
 ```python
-db.getChatMessagesByRootId(
+db.chatMessages.getChatMessagesByRootId(
     chatId: int,
     rootMessageId: MessageIdType,
     threadId: Optional[int] = None,
@@ -525,7 +527,7 @@ db.getChatMessagesByRootId(
 
 **Get Messages by User**
 ```python
-db.getChatMessagesByUser(
+db.chatMessages.getChatMessagesByUser(
     chatId: int,
     userId: int,
     limit: int = 100,
@@ -535,7 +537,7 @@ db.getChatMessagesByUser(
 
 **Update Message Category**
 ```python
-db.updateChatMessageCategory(
+db.chatMessages.updateChatMessageCategory(
     chatId: int,
     messageId: MessageIdType,
     messageCategory: MessageCategory
@@ -548,7 +550,7 @@ db.updateChatMessageCategory(
 
 **Save/Update User**
 ```python
-db.saveChatUser(
+db.chatUsers.saveChatUser(
     chatId: int,
     userId: int,
     username: str,
@@ -559,7 +561,7 @@ db.saveChatUser(
 
 **Get User**
 ```python
-db.getChatUser(
+db.chatUsers.getChatUser(
     chatId: int,
     userId: int,
     dataSource: Optional[str] = None
@@ -568,24 +570,15 @@ db.getChatUser(
 
 **Get All Users**
 ```python
-db.getChatUsers(
+db.chatUsers.getChatUsers(
     chatId: int,
     dataSource: Optional[str] = None
 ) -> List[ChatUserDict]
 ```
 
-**Mark User as Spammer**
-```python
-db.markUserAsSpammer(
-    chatId: int,
-    userId: int,
-    isSpammer: bool = True
-) -> bool
-```
-
 **Update User Metadata**
 ```python
-db.updateChatUserMetadata(
+db.chatUsers.updateChatUserMetadata(
     chatId: int,
     userId: int,
     metadata: str
@@ -598,7 +591,7 @@ db.updateChatUserMetadata(
 
 **Save/Update Chat Info**
 ```python
-db.saveChatInfo(
+db.chatInfo.saveChatInfo(
     chatId: int,
     title: Optional[str] = None,
     username: Optional[str] = None,
@@ -609,7 +602,7 @@ db.saveChatInfo(
 
 **Get Chat Info**
 ```python
-db.getChatInfo(
+db.chatInfo.getChatInfo(
     chatId: int,
     dataSource: Optional[str] = None
 ) -> Optional[ChatInfoDict]
@@ -617,7 +610,7 @@ db.getChatInfo(
 
 **Save Topic**
 ```python
-db.saveChatTopic(
+db.chatInfo.saveChatTopic(
     chatId: int,
     topicId: int,
     name: Optional[str] = None,
@@ -628,7 +621,7 @@ db.saveChatTopic(
 
 **Get Topics**
 ```python
-db.getChatTopics(
+db.chatInfo.getChatTopics(
     chatId: int,
     dataSource: Optional[str] = None
 ) -> List[ChatTopicInfoDict]
@@ -640,7 +633,7 @@ db.getChatTopics(
 
 **Get Chat Setting**
 ```python
-db.getChatSetting(
+db.chatSettings.getChatSetting(
     chatId: int,
     key: str,
     default: Optional[str] = None,
@@ -650,7 +643,7 @@ db.getChatSetting(
 
 **Get All Chat Settings**
 ```python
-db.getChatSettings(
+db.chatSettings.getChatSettings(
     chatId: int,
     dataSource: Optional[str] = None
 ) -> Dict[str, str]
@@ -658,7 +651,7 @@ db.getChatSettings(
 
 **Set Chat Setting**
 ```python
-db.setChatSetting(
+db.chatSettings.setChatSetting(
     chatId: int,
     key: str,
     value: str
@@ -667,7 +660,7 @@ db.setChatSetting(
 
 **Get Global Setting**
 ```python
-db.getSetting(
+db.common.getSetting(
     key: str,
     default: Optional[str] = None,
     dataSource: Optional[str] = None
@@ -676,7 +669,7 @@ db.getSetting(
 
 **Set Global Setting**
 ```python
-db.setSetting(
+db.common.setSetting(
     key: str,
     value: str,
     dataSource: Optional[str] = None
@@ -689,7 +682,7 @@ db.setSetting(
 
 **Save Media Attachment**
 ```python
-db.saveMediaAttachment(
+db.mediaAttachments.saveMediaAttachment(
     fileUniqueId: str,
     fileId: Optional[str] = None,
     fileSize: Optional[int] = None,
@@ -705,7 +698,7 @@ db.saveMediaAttachment(
 
 **Get Media Attachment**
 ```python
-db.getMediaAttachment(
+db.mediaAttachments.getMediaAttachment(
     fileUniqueId: str,
     dataSource: Optional[str] = None
 ) -> Optional[MediaAttachmentDict]
@@ -713,7 +706,7 @@ db.getMediaAttachment(
 
 **Update Media Status**
 ```python
-db.updateMediaStatus(
+db.mediaAttachments.updateMediaStatus(
     fileUniqueId: str,
     status: MediaStatus
 ) -> bool
@@ -721,7 +714,7 @@ db.updateMediaStatus(
 
 **Update Media Description**
 ```python
-db.updateMediaDescription(
+db.mediaAttachments.updateMediaDescription(
     fileUniqueId: str,
     description: str
 ) -> bool
@@ -733,7 +726,7 @@ db.updateMediaDescription(
 
 **Add User Data**
 ```python
-db.addUserData(
+db.userData.addUserData(
     userId: int,
     chatId: int,
     key: str,
@@ -743,7 +736,7 @@ db.addUserData(
 
 **Get User Data**
 ```python
-db.getUserData(
+db.userData.getUserData(
     userId: int,
     chatId: int,
     dataSource: Optional[str] = None
@@ -752,7 +745,7 @@ db.getUserData(
 
 **Delete User Data**
 ```python
-db.deleteUserData(
+db.userData.deleteUserData(
     userId: int,
     chatId: int,
     key: str
@@ -765,7 +758,7 @@ db.deleteUserData(
 
 **Save Spam Message**
 ```python
-db.saveSpamMessage(
+db.spam.saveSpamMessage(
     chatId: int,
     userId: int,
     messageId: MessageIdType,
@@ -777,7 +770,7 @@ db.saveSpamMessage(
 
 **Save Ham Message**
 ```python
-db.saveHamMessage(
+db.spam.saveHamMessage(
     chatId: int,
     userId: int,
     messageId: MessageIdType,
@@ -789,7 +782,7 @@ db.saveHamMessage(
 
 **Get Spam Messages**
 ```python
-db.getSpamMessages(
+db.spam.getSpamMessages(
     chatId: int,
     limit: int = 100,
     dataSource: Optional[str] = None
@@ -798,7 +791,7 @@ db.getSpamMessages(
 
 **Update Bayes Token**
 ```python
-db.updateBayesToken(
+db.spam.updateBayesToken(
     token: str,
     chatId: Optional[int],
     spamCount: int,
@@ -808,7 +801,7 @@ db.updateBayesToken(
 
 **Get Bayes Token**
 ```python
-db.getBayesToken(
+db.spam.getBayesToken(
     token: str,
     chatId: Optional[int] = None,
     dataSource: Optional[str] = None
@@ -817,7 +810,7 @@ db.getBayesToken(
 
 **Update Bayes Class**
 ```python
-db.updateBayesClass(
+db.spam.updateBayesClass(
     chatId: Optional[int],
     isSpam: bool,
     messageCount: int,
@@ -831,7 +824,7 @@ db.updateBayesClass(
 
 **Get Cache**
 ```python
-db.getCache(
+db.cache.getCache(
     cacheType: CacheType,
     key: str,
     dataSource: Optional[str] = None
@@ -840,7 +833,7 @@ db.getCache(
 
 **Set Cache**
 ```python
-db.setCache(
+db.cache.setCache(
     cacheType: CacheType,
     key: str,
     data: str
@@ -849,7 +842,7 @@ db.setCache(
 
 **Get Cache Storage**
 ```python
-db.getCacheStorage(
+db.cache.getCacheStorage(
     namespace: str,
     key: str,
     dataSource: Optional[str] = None
@@ -858,7 +851,7 @@ db.getCacheStorage(
 
 **Set Cache Storage**
 ```python
-db.setCacheStorage(
+db.cache.setCacheStorage(
     namespace: str,
     key: str,
     value: str
@@ -867,7 +860,7 @@ db.setCacheStorage(
 
 **Get Summarization Cache**
 ```python
-db.getChatSummarizationCache(
+db.chatSummarization.getChatSummarizationCache(
     chatId: int,
     topicId: Optional[int],
     firstMessageId: MessageIdType,
@@ -879,7 +872,7 @@ db.getChatSummarizationCache(
 
 **Set Summarization Cache**
 ```python
-db.setChatSummarizationCache(
+db.chatSummarization.setChatSummarizationCache(
     chatId: int,
     topicId: Optional[int],
     firstMessageId: MessageIdType,
@@ -895,7 +888,7 @@ db.setChatSummarizationCache(
 
 **Save Delayed Task**
 ```python
-db.saveDelayedTask(
+db.delayedTasks.saveDelayedTask(
     taskId: str,
     delayedTs: int,
     function: str,
@@ -905,7 +898,7 @@ db.saveDelayedTask(
 
 **Get Pending Tasks**
 ```python
-db.getPendingDelayedTasks(
+db.delayedTasks.getPendingDelayedTasks(
     currentTs: int,
     dataSource: Optional[str] = None
 ) -> List[DelayedTaskDict]
@@ -913,7 +906,7 @@ db.getPendingDelayedTasks(
 
 **Mark Task Done**
 ```python
-db.markDelayedTaskDone(
+db.delayedTasks.markDelayedTaskDone(
     taskId: str
 ) -> bool
 ```
@@ -954,13 +947,13 @@ timeout = 10
 
 ```python
 # Explicit routing (Tier 1)
-db.getChatMessages(chatId=123, dataSource="archive")
+db.chatMessages.getChatMessages(chatId=123, dataSource="archive")
 
 # Chat mapping routing (Tier 2)
-db.getChatMessages(chatId=-1001234567890)  # Routes to "archive"
+db.chatMessages.getChatMessages(chatId=-1001234567890)  # Routes to "archive"
 
 # Default routing (Tier 3)
-db.getChatMessages(chatId=456)  # Routes to "default"
+db.chatMessages.getChatMessages(chatId=456)  # Routes to "default"
 ```
 
 ---
@@ -969,7 +962,7 @@ db.getChatMessages(chatId=456)  # Routes to "default"
 
 ### Get Recent Chat Context
 ```python
-messages = db.getChatMessagesSince(
+messages = db.chatMessages.getChatMessagesSince(
     chatId=chat_id,
     sinceDateTime=datetime.now() - timedelta(hours=1),
     limit=50,
@@ -979,7 +972,7 @@ messages = db.getChatMessagesSince(
 
 ### Get Conversation Thread
 ```python
-thread_messages = db.getChatMessagesByRootId(
+thread_messages = db.chatMessages.getChatMessagesByRootId(
     chatId=chat_id,
     rootMessageId=root_msg_id,
     threadId=topic_id
@@ -988,7 +981,7 @@ thread_messages = db.getChatMessagesByRootId(
 
 ### Get Chat Configuration
 ```python
-settings = db.getChatSettings(chatId=chat_id)
+settings = db.chatSettings.getChatSettings(chatId=chat_id)
 model = settings.get('chat-model', 'default-model')
 use_tools = settings.get('use-tools', 'false') == 'true'
 ```
@@ -996,14 +989,14 @@ use_tools = settings.get('use-tools', 'false') == 'true'
 ### Cache API Response
 ```python
 # Set cache
-db.setCache(
+db.cache.setCache(
     cacheType=CacheType.WEATHER,
     key=f"{lat},{lon}",
     data=json.dumps(weather_data)
 )
 
 # Get cache
-cached = db.getCache(
+cached = db.cache.getCache(
     cacheType=CacheType.WEATHER,
     key=f"{lat},{lon}"
 )

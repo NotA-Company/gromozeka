@@ -58,22 +58,56 @@
 
 | Key | Type | Purpose |
 |---|---|---|
-| `default` | str | Default source name |
-| `sources.<name>.path` | str | SQLite file path |
-| `sources.<name>.readonly` | bool | Read-only flag |
-| `sources.<name>.pool-size` | int | Connection pool size |
-| `sources.<name>.timeout` | int | Connection timeout |
+| `default` | str | Default provider name |
+| `providers.<name>.provider` | str | Provider type (`"sqlite3"` or `"sqlink"`) |
+| `providers.<name>.parameters.dbPath` | str | SQLite file path |
+| `providers.<name>.parameters.readOnly` | bool | Read-only flag |
+| `providers.<name>.parameters.timeout` | float | Connection timeout (seconds) |
+| `providers.<name>.parameters.useWal` | bool | Enable WAL mode (default: `true`) |
+| `chatMapping.<chatId>` | str | Map chat ID to provider name |
 
 **Example:**
 ```toml
 [database]
-default = "default"
+default = "primary"
 
-[database.sources.default]
-path = "bot_data.db"
-readonly = false
-pool-size = 5
-timeout = 30
+[database.providers.primary]
+provider = "sqlite3"
+
+[database.providers.primary.parameters]
+dbPath = "bot_data.db"
+readOnly = false
+timeout = 30.0
+useWal = true
+
+[database.chatMapping]
+-1001234567890 = "primary"
+```
+
+**Multi-source example:**
+```toml
+[database]
+default = "primary"
+
+[database.providers.primary]
+provider = "sqlite3"
+
+[database.providers.primary.parameters]
+dbPath = "bot.db"
+readOnly = false
+timeout = 30.0
+
+[database.providers.archive]
+provider = "sqlite3"
+
+[database.providers.archive.parameters]
+dbPath = "archive.db"
+readOnly = true
+timeout = 30.0
+
+[database.chatMapping]
+-1001234567890 = "archive"  # Old inactive chat
+-1002345678901 = "archive"  # Another old chat
 ```
 
 ### `[models]`
@@ -264,5 +298,5 @@ apiKey: str = myConfig.get("api-key", "")
 
 ---
 
-*This guide is auto-maintained and should be updated whenever configuration sections change, dood!*  
-*Last updated: 2026-04-18, dood!*
+*This guide is auto-maintained and should be updated whenever configuration sections change, dood!*
+*Last updated: 2026-05-02, dood!*

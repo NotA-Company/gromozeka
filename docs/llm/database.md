@@ -1,7 +1,7 @@
 # Gromozeka — Database Operations
 
-> **Audience:** LLM agents, dood!  
-> **Purpose:** Complete reference for database operations, migrations, schema, and multi-source routing, dood!  
+> **Audience:** LLM agents, dood!
+> **Purpose:** Complete reference for database operations, migrations, schema, and multi-source routing, dood!
 > **Self-contained:** Everything needed for database work is here, dood!
 
 ---
@@ -13,36 +13,38 @@
 3. [Multi-Source Database Routing](#3-multi-source-database-routing)
 4. [Adding a Database Migration](#4-adding-a-database-migration)
 5. [Database Models Reference](#5-database-models-reference)
-6. [Adding Methods to DatabaseWrapper](#6-adding-methods-to-databasewrapper)
+6. [Adding Methods to Database](#6-adding-methods-to-database)
 7. [Migration Documentation Protocol](#7-migration-documentation-protocol)
 
 ---
 
 ## 1. Key Database Methods
 
-**File:** [`internal/database/wrapper.py`](../../internal/database/wrapper.py)
+**File:** [`internal/database/database.py`](../../internal/database/database.py)
 
-| Method | Returns | Purpose |
-|---|---|---|
-| `saveChatMessage(...)` | `None` | Save incoming/outgoing message |
-| `getChatMessageByMessageId(chatId, messageId)` | `Optional[ChatMessageDict]` | Get message by ID |
-| `getChatMessagesByRootId(chatId, rootMessageId, threadId)` | `List[ChatMessageDict]` | Get thread messages |
-| `updateChatMessageCategory(chatId, messageId, category)` | `None` | Update message category |
-| `updateChatMessageMetadata(chatId, messageId, metadata)` | `None` | Update message metadata |
-| `getChatUser(chatId, userId)` | `Optional[ChatUserDict]` | Get user in chat |
-| `updateChatUser(chatId, userId, username, fullName)` | `None` | Upsert user in chat |
-| `updateUserMetadata(chatId, userId, metadata)` | `None` | Update user metadata |
-| `getUserChats(userId)` | `List[ChatInfoDict]` | Get all chats for user |
-| `addMediaAttachment(...)` | `None` | Add media attachment record |
-| `getMediaAttachment(mediaId)` | `Optional[MediaAttachmentDict]` | Get media by unique ID |
-| `updateMediaAttachment(mediaId, ...)` | `None` | Update media record |
-| `ensureMediaInGroup(mediaId, mediaGroupId)` | `None` | Ensure media in group |
-| `getMediaGroupLastUpdatedAt(mediaGroupId)` | `Optional[datetime]` | Get MAX(created_at) from media_groups |
-| `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
-| `getChatSetting(chatId, setting)` | `Optional[str]` | Get single setting value |
-| `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
-| `clearOldCacheEntries(ttl)` | `None` | Cleanup stale cache |
-| `cleanupOldCompletedDelayedTasks(ttl)` | `None` | Cleanup old tasks |
+**Repository Pattern:** Database operations are now accessed through specialized repositories, dood!
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
+| `chatMessages` | `saveChatMessage(...)` | `None` | Save incoming/outgoing message |
+| `chatMessages` | `getChatMessageByMessageId(chatId, messageId)` | `Optional[ChatMessageDict]` | Get message by ID |
+| `chatMessages` | `getChatMessagesByRootId(chatId, rootMessageId, threadId)` | `List[ChatMessageDict]` | Get thread messages |
+| `chatMessages` | `updateChatMessageCategory(chatId, messageId, category)` | `None` | Update message category |
+| `chatMessages` | `updateChatMessageMetadata(chatId, messageId, metadata)` | `None` | Update message metadata |
+| `chatUsers` | `getChatUser(chatId, userId)` | `Optional[ChatUserDict]` | Get user in chat |
+| `chatUsers` | `updateChatUser(chatId, userId, username, fullName)` | `None` | Upsert user in chat |
+| `chatUsers` | `updateUserMetadata(chatId, userId, metadata)` | `None` | Update user metadata |
+| `chatUsers` | `getUserChats(userId)` | `List[ChatInfoDict]` | Get all chats for user |
+| `mediaAttachments` | `addMediaAttachment(...)` | `None` | Add media attachment record |
+| `mediaAttachments` | `getMediaAttachment(mediaId)` | `Optional[MediaAttachmentDict]` | Get media by unique ID |
+| `mediaAttachments` | `updateMediaAttachment(mediaId, ...)` | `None` | Update media record |
+| `mediaAttachments` | `ensureMediaInGroup(mediaId, mediaGroupId)` | `None` | Ensure media in group |
+| `mediaAttachments` | `getMediaGroupLastUpdatedAt(mediaGroupId)` | `Optional[datetime]` | Get MAX(created_at) from media_groups |
+| `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
+| `chatSettings` | `getChatSetting(chatId, setting)` | `Optional[str]` | Get single setting value |
+| `chatSettings` | `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
+| `cache` | `clearOldCacheEntries(ttl)` | `None` | Cleanup stale cache |
+| `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `None` | Cleanup old tasks |
 
 ---
 
@@ -52,10 +54,10 @@ Chat settings are stored in the cache layer (not directly in DB for hot path):
 
 ```python
 # Get settings (from cache, falls back to DB)
-chatSettings: ChatSettingsDict = self.getChatSettings(chatId)
+chatSettings: ChatSettingsDict = self.db.chatSettings.getChatSettings(chatId)
 
 # Set a setting (updatedBy is REQUIRED keyword-only arg, dood!)
-self.setChatSetting(
+self.db.chatSettings.setChatSetting(
     chatId=chatId,
     key=ChatSettingsKey.CHAT_MODEL,
     value=ChatSettingsValue("gpt-4"),
@@ -63,7 +65,7 @@ self.setChatSetting(
 )
 
 # Remove a setting (revert to default)
-self.unsetChatSetting(chatId=chatId, key=ChatSettingsKey.CHAT_MODEL)
+self.db.chatSettings.unsetChatSetting(chatId=chatId, key=ChatSettingsKey.CHAT_MODEL)
 ```
 
 **IMPORTANT:** `getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]` where each value is a `(value, updated_by)` tuple. The `updated_by` field is the user ID who last changed the setting (0 for system changes), dood!
@@ -106,7 +108,7 @@ pool-size = 10
 timeout = 10
 ```
 
-**Key class:** [`SourceConfig`](../../internal/database/wrapper.py:81) — config for one DB source.
+**Key class:** [`SourceConfig`](../../internal/database/database.py:81) — config for one DB source.
 
 **Routing priority:** `dataSource` param → `chatId` mapping → default source
 
@@ -115,7 +117,7 @@ timeout = 10
 Most read methods accept an optional `dataSource: Optional[str] = None` parameter:
 ```python
 # Read from specific source
-messages = db.getChatMessagesByRootId(
+messages = db.chatMessages.getChatMessagesByRootId(
     chatId=chatId,
     rootMessageId=messageId,
     threadId=threadId,
@@ -123,7 +125,7 @@ messages = db.getChatMessagesByRootId(
 )
 
 # Default routing (uses chatId mapping or default)
-messages = db.getChatMessagesByRootId(
+messages = db.chatMessages.getChatMessagesByRootId(
     chatId=chatId,
     rootMessageId=messageId,
     threadId=threadId,
@@ -133,7 +135,7 @@ messages = db.getChatMessagesByRootId(
 **Readonly protection:** Sources with `readonly=True` reject write operations:
 ```python
 # This will raise an error if "readonly" source has readonly=True
-db.saveChatMessage(..., dataSource="readonly")  # ERROR!
+db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
 ```
 
 **Cross-source deduplication keys:**
@@ -209,9 +211,9 @@ class MigrationAddMyTable(BaseMigration):
 
 Check `internal/database/migrations/__init__.py` or the DB manager for registration pattern, dood!
 
-### Step 4: Add methods to `DatabaseWrapper`
+### Step 4: Add methods to `Database`
 
-In [`internal/database/wrapper.py`](../../internal/database/wrapper.py), add methods to use the new table (see [Section 6](#6-adding-methods-to-databasewrapper)), dood!
+In [`internal/database/database.py`](../../internal/database/database.py), add methods to use the new table (see [Section 6](#6-adding-methods-to-database)), dood!
 
 ### Step 5: Update models if needed
 
@@ -243,7 +245,7 @@ make test
 - [ ] Implemented `up(cursor)` with `IF NOT EXISTS` guards
 - [ ] Implemented `down(cursor)` for rollback
 - [ ] Registered migration in registry
-- [ ] Added `DatabaseWrapper` methods to use new table
+- [ ] Added `Database` repository methods to use new table
 - [ ] Updated `internal/database/models.py` if new types needed
 - [ ] Updated documentation files
 - [ ] Tests pass: `make format lint && make test`
@@ -293,9 +295,23 @@ Various spam classification reasons — used by `SpamHandler`, dood!
 
 ---
 
-## 6. Adding Methods to `DatabaseWrapper`
+## 6. Adding Methods to `Database`
 
-**Required patterns:**
+**Repository Pattern:** Database operations are organized into specialized repositories in `internal/database/repositories/`, dood!
+
+**Available Repositories:**
+- `chatMessages` — Message operations
+- `chatUsers` — User operations
+- `chatSettings` — Settings operations
+- `mediaAttachments` — Media operations
+- `cache` — Cache operations
+- `delayedTasks` — Task operations
+- And 6 more specialized repositories
+
+**Adding methods to existing repository:**
+
+1. Open the appropriate repository file in `internal/database/repositories/`
+2. Add your method following the repository pattern:
 ```python
 def myNewDbMethod(self, chatId: int, value: str) -> Optional[SomeDict]:
     """Short description, dood!
@@ -307,7 +323,7 @@ def myNewDbMethod(self, chatId: int, value: str) -> Optional[SomeDict]:
     Returns:
         SomeDict if found, None otherwise
     """
-    with self._getConnection() as conn:
+    with self.db._getConnection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             "SELECT * FROM some_table WHERE chat_id = ?",
@@ -331,17 +347,49 @@ def getMyData(self, chatId: int, dataSource: Optional[str] = None) -> Optional[S
     Returns:
         SomeDict if found, None otherwise
     """
-    with self._getConnection(chatId=chatId, dataSource=dataSource, readonly=True) as conn:
+    with self.db._getConnection(chatId=chatId, dataSource=dataSource, readonly=True) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM my_table WHERE chat_id = ?", (chatId,))
         row = cursor.fetchone()
         return dict(row) if row else None
 ```
 
-**Checklist after modifying `DatabaseWrapper`:**
+**Creating a new repository:**
+
+1. Create new file in `internal/database/repositories/my_repository.py`
+2. Inherit from `BaseRepository`:
+```python
+from internal.database.repositories.base import BaseRepository
+
+class MyRepository(BaseRepository):
+    """Repository for my_table operations, dood!"""
+    
+    def __init__(self, db: 'Database'):
+        super().__init__(db)
+    
+    def myMethod(self, chatId: int) -> Optional[SomeDict]:
+        """Method description, dood!"""
+        with self.db._getConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM my_table WHERE chat_id = ?", (chatId,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+```
+
+3. Register in `internal/database/database.py`:
+```python
+from internal.database.repositories.my_repository import MyRepository
+
+class Database:
+    def __init__(self, ...):
+        # ... existing code ...
+        self.myRepository = MyRepository(self)
+```
+
+**Checklist after modifying `Database`:**
 - [ ] Method has docstring
 - [ ] Method has type hints
-- [ ] Uses context manager `with self._getConnection()`
+- [ ] Uses context manager `with self.db._getConnection()`
 - [ ] Migration created if schema changed
 - [ ] Tests in `tests/test_db_wrapper.py`
 - [ ] Ran `make format lint` and `make test`
@@ -383,8 +431,9 @@ def getMyData(self, chatId: int, dataSource: Optional[str] = None) -> Optional[S
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_010` — Baseline migrations through adding `updated_by` to `chat_settings`
+- `migration_001` to `migration_012` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
+- `migration_011` and `migration_012`: Additional schema improvements
 
 ---
 
@@ -400,5 +449,5 @@ def getMyData(self, chatId: int, dataSource: Optional[str] = None) -> Optional[S
 
 ---
 
-*This guide is auto-maintained and should be updated whenever significant database changes are made, dood!*  
-*Last updated: 2026-04-18, dood!*
+*This guide is auto-maintained and should be updated whenever significant database changes are made, dood!*
+*Last updated: 2026-05-02, dood!*

@@ -1,8 +1,28 @@
 # Phase 6: Multi-Source Database Comprehensive Testing - Completion Report
 
-**Date:** 2025-11-30  
-**Task:** Create comprehensive tests for all multi-source database functionality  
-**Status:** ✅ COMPLETED  
+> **⚠️ HISTORICAL NOTICE**
+>
+> This document describes a **historical implementation** of the database architecture. The `DatabaseWrapper` class mentioned in this report has been **replaced** by the `Database` class with a repository pattern.
+>
+> **Current Architecture:**
+> - The `Database` class now uses a repository pattern for data access
+> - See [`docs/database-README.md`](../../database-README.md) for current database documentation
+> - See [`internal/database/database.py`](../../internal/database/database.py) for the current implementation
+>
+> **Migration Context:**
+> - This report documents Phase 6 comprehensive testing of the multi-source architecture
+> - The test suite described here was for the `DatabaseWrapper` implementation
+> - Current testing approach may differ with the repository pattern
+> - The testing concepts (routing, readonly protection, aggregation) are still relevant
+> - However, the implementation details and class names have changed
+>
+> **Last Updated:** 2025-11-30 (Historical document - not maintained)
+
+---
+
+**Date:** 2025-11-30
+**Task:** Create comprehensive tests for all multi-source database functionality
+**Status:** ✅ COMPLETED
 **Mode:** Code
 
 ## Executive Summary
