@@ -1,14 +1,32 @@
 """
-Comprehensive tests for cache service, dood!
+Comprehensive test suite for the cache service implementation.
 
-Tests cover:
-- LRUCache functionality (get, set, eviction, thread safety)
-- CacheService singleton pattern
-- Namespace operations (chats, chatUsers, users)
-- Convenience methods (getChatSettings, setChatSetting, etc.)
-- Persistence and loading from database
-- Dirty key tracking
-- Statistics
+This module provides extensive unit and integration tests for the cache service,
+covering all major functionality including LRU cache operations, singleton pattern,
+namespace management, persistence, and thread safety.
+
+Test Coverage:
+    - LRUCache: Basic operations (get, set, delete, clear), LRU eviction policy,
+      ordering behavior, and concurrent access
+    - CacheService: Singleton pattern enforcement, database injection, and
+      initialization behavior
+    - Namespace Operations: Access to chats, chatUsers, and users namespaces,
+      namespace clearing, and dirty key tracking
+    - Chat Settings: Retrieval from cache and database, persistence, and
+      convenience methods
+    - Chat Info: Getting and setting chat information with proper caching
+    - Chat User Data: Complex data structures, JSON serialization, and
+      database persistence
+    - User State: State management and clearing operations
+    - Persistence: Memory-only vs on-change namespaces, dirty key tracking,
+      empty data handling, and database loading
+    - Thread Safety: Concurrent access to LRU cache operations
+    - Edge Cases: Database errors, missing database, invalid JSON, and
+      unknown namespaces
+
+Example:
+    Run tests from project root:
+        ./venv/bin/python3 -m unittest internal/services/cache/test_cache_service.py
 """
 
 import gc
@@ -31,20 +49,39 @@ from tests.utils import createAsyncMock  # noqa: E402
 
 
 class TestLRUCache(unittest.TestCase):
-    """Test LRU cache implementation, dood!"""
+    """Test suite for LRU (Least Recently Used) cache implementation.
 
-    def setUp(self):
-        """Set up test fixtures"""
+    Tests the core functionality of the LRUCache class including basic operations,
+    eviction policy, ordering behavior, and cache management methods.
+
+    Attributes:
+        cache: An LRUCache instance with a maximum size of 3 for testing eviction.
+    """
+
+    def setUp(self) -> None:
+        """Set up test fixtures before each test method.
+
+        Creates a new LRUCache instance with a maximum size of 3 to test
+        eviction behavior.
+        """
         self.cache = LRUCache[str, int](maxSize=3)
 
-    def testBasicGetSet(self):
-        """Test basic get and set operations"""
+    def testBasicGetSet(self) -> None:
+        """Test basic get and set operations.
+
+        Verifies that values can be stored and retrieved correctly, and that
+        default values are returned for non-existent keys.
+        """
         self.cache.set("key1", 100)
         self.assertEqual(self.cache.get("key1", 0), 100)
         self.assertEqual(self.cache.get("nonexistent", 999), 999)  # type: ignore[arg-type]
 
-    def testLRUEviction(self):
-        """Test that oldest items are evicted when capacity is exceeded"""
+    def testLRUEviction(self) -> None:
+        """Test that oldest items are evicted when capacity is exceeded.
+
+        Verifies that when the cache exceeds its maximum size, the least recently
+        used item is automatically evicted.
+        """
         self.cache.set("key1", 1)
         self.cache.set("key2", 2)
         self.cache.set("key3", 3)
@@ -55,8 +92,12 @@ class TestLRUCache(unittest.TestCase):
         self.assertEqual(self.cache.get("key3", 0), 3)
         self.assertEqual(self.cache.get("key4", 0), 4)
 
-    def testLRUOrdering(self):
-        """Test that accessing items updates their position"""
+    def testLRUOrdering(self) -> None:
+        """Test that accessing items updates their position.
+
+        Verifies that accessing an existing key moves it to the most recently
+        used position, affecting which item gets evicted next.
+        """
         self.cache.set("key1", 1)
         self.cache.set("key2", 2)
         self.cache.set("key3", 3)
@@ -72,8 +113,12 @@ class TestLRUCache(unittest.TestCase):
         self.assertEqual(self.cache.get("key3", 0), 3)
         self.assertEqual(self.cache.get("key4", 0), 4)
 
-    def testUpdateExisting(self):
-        """Test updating existing keys moves them to end"""
+    def testUpdateExisting(self) -> None:
+        """Test updating existing keys moves them to end.
+
+        Verifies that updating an existing key's value moves it to the most
+        recently used position.
+        """
         self.cache.set("key1", 1)
         self.cache.set("key2", 2)
         self.cache.set("key3", 3)
@@ -87,15 +132,22 @@ class TestLRUCache(unittest.TestCase):
         self.assertEqual(self.cache.get("key1", 0), 100)
         self.assertEqual(self.cache.get("key2", -1), -1)  # type: ignore[arg-type]
 
-    def testDelete(self):
-        """Test delete operation"""
+    def testDelete(self) -> None:
+        """Test delete operation.
+
+        Verifies that keys can be removed from the cache and that deleting
+        a non-existent key returns False.
+        """
         self.cache.set("key1", 1)
         self.assertTrue(self.cache.delete("key1"))
         self.assertFalse(self.cache.delete("key1"))
         self.assertEqual(self.cache.get("key1", -1), -1)  # type: ignore[arg-type]
 
-    def testClear(self):
-        """Test clear operation"""
+    def testClear(self) -> None:
+        """Test clear operation.
+
+        Verifies that the cache can be completely cleared, removing all items.
+        """
         self.cache.set("key1", 1)
         self.cache.set("key2", 2)
         self.cache.clear()
@@ -104,26 +156,43 @@ class TestLRUCache(unittest.TestCase):
 
 
 class TestCacheServiceSingleton(unittest.TestCase):
-    """Test CacheService singleton pattern, dood!"""
+    """Test suite for CacheService singleton pattern implementation.
 
-    def setUp(self):
-        """Reset singleton before each test"""
+    Verifies that the CacheService class properly implements the singleton pattern,
+    ensuring only one instance exists throughout the application lifecycle.
+    """
+
+    def setUp(self) -> None:
+        """Reset singleton before each test method.
+
+        Clears the singleton instance to ensure each test starts with a clean state.
+        """
         CacheService._instance = None
 
-    def testSingletonPattern(self):
-        """Test that getInstance returns same instance"""
+    def testSingletonPattern(self) -> None:
+        """Test that getInstance returns same instance.
+
+        Verifies that multiple calls to getInstance() return the same object instance.
+        """
         cache1 = CacheService.getInstance()
         cache2 = CacheService.getInstance()
         self.assertIs(cache1, cache2)
 
-    def testSingletonWithNew(self):
-        """Test that __new__ also returns singleton"""
+    def testSingletonWithNew(self) -> None:
+        """Test that __new__ also returns singleton.
+
+        Verifies that using the constructor directly also returns the singleton instance.
+        """
         cache1 = CacheService()
         cache2 = CacheService()
         self.assertIs(cache1, cache2)
 
-    def testInitializationOnlyOnce(self):
-        """Test that initialization only happens once"""
+    def testInitializationOnlyOnce(self) -> None:
+        """Test that initialization only happens once.
+
+        Verifies that the singleton instance maintains its state across multiple
+        getInstance() calls, proving it's the same object.
+        """
         cache1 = CacheService.getInstance()
         cache1.testAttribute = "test_value"  # type: ignore[attr-defined]
 
@@ -132,10 +201,17 @@ class TestCacheServiceSingleton(unittest.TestCase):
 
 
 class TestCacheServiceBasics(unittest.IsolatedAsyncioTestCase):
-    """Test basic CacheService functionality, dood!"""
+    """Test suite for basic CacheService functionality.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests fundamental CacheService operations including namespace access,
+    database injection, and initialization behavior.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with a mocked database for testing.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         # Use plain Mock to avoid any connection creation
@@ -144,8 +220,12 @@ class TestCacheServiceBasics(unittest.IsolatedAsyncioTestCase):
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance and cleans up mock objects to prevent
+        test interference.
+        """
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
             del self.mockDb
@@ -155,23 +235,39 @@ class TestCacheServiceBasics(unittest.IsolatedAsyncioTestCase):
             warnings.simplefilter("ignore", ResourceWarning)
             gc.collect()
 
-    def testNamespaceAccess(self):
-        """Test accessing different namespaces"""
+    def testNamespaceAccess(self) -> None:
+        """Test accessing different namespaces.
+
+        Verifies that all cache namespaces (chats, chatUsers, users) are properly
+        initialized and accessible as LRUCache instances.
+        """
         self.assertIsInstance(self.cache.chats, LRUCache)
         self.assertIsInstance(self.cache.chatUsers, LRUCache)
         self.assertIsInstance(self.cache.users, LRUCache)
 
-    def testDatabaseInjection(self):
-        """Test database injection"""
+    def testDatabaseInjection(self) -> None:
+        """Test database injection.
+
+        Verifies that the database is properly injected into the CacheService
+        and that cache storage is loaded from the database.
+        """
         self.assertIs(self.cache.database, self.mockDb)
         self.mockDb.cache.getCacheStorage.assert_called_once()
 
 
 class TestChatSettings(unittest.IsolatedAsyncioTestCase):
-    """Test chat settings operations, dood!"""
+    """Test suite for chat settings operations.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests the retrieval, caching, and persistence of chat settings including
+    loading from cache, loading from database, and persisting changes.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with mocked database methods for
+        chat settings operations.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
@@ -184,24 +280,35 @@ class TestChatSettings(unittest.IsolatedAsyncioTestCase):
         self.mockDb.userData.setUserData = createAsyncMock(returnValue=True)
         await self.cache.injectDatabase(self.mockDb)
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance and cleans up mock objects.
+        """
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
             del self.mockDb
         CacheService._instance = None
         gc.collect()
 
-    async def testGetChatSettingsFromCache(self):
-        """Test getting chat settings from cache"""
+    async def testGetChatSettingsFromCache(self) -> None:
+        """Test getting chat settings from cache.
+
+        Verifies that chat settings are retrieved from the cache when available,
+        avoiding database queries.
+        """
         testSettings = {ChatSettingsKey.BAYES_ENABLED: ChatSettingsValue("true")}
         self.cache.chats.set(123, {"settings": testSettings})
 
         settings = await self.cache.getChatSettings(123)
         self.assertEqual(settings, testSettings)
 
-    async def testGetChatSettingsFromDb(self):
-        """Test loading chat settings from database"""
+    async def testGetChatSettingsFromDb(self) -> None:
+        """Test loading chat settings from database.
+
+        Verifies that chat settings are loaded from the database when not in cache,
+        and that the database is queried with the correct chat ID.
+        """
         self.mockDb.chatSettings.getChatSettings = createAsyncMock(returnValue={"bayes-enabled": ("true", 0)})
 
         settings = await self.cache.getChatSettings(123)
@@ -209,8 +316,12 @@ class TestChatSettings(unittest.IsolatedAsyncioTestCase):
         self.mockDb.chatSettings.getChatSettings.assert_called_once_with(123)
         self.assertIn(ChatSettingsKey.BAYES_ENABLED, settings)
 
-    async def testSetChatSettingsPersistence(self):
-        """Test that settings are persisted to database"""
+    async def testSetChatSettingsPersistence(self) -> None:
+        """Test that settings are persisted to database.
+
+        Verifies that when chat settings are changed, they are persisted to the
+        database with the correct parameters.
+        """
         # Mock getChatSettings to return empty dict (no existing settings)
         self.mockDb.chatSettings.getChatSettings = createAsyncMock(returnValue={})
 
@@ -224,10 +335,18 @@ class TestChatSettings(unittest.IsolatedAsyncioTestCase):
 
 
 class TestChatInfo(unittest.IsolatedAsyncioTestCase):
-    """Test chat info operations, dood!"""
+    """Test suite for chat information operations.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests the retrieval, caching, and persistence of chat information including
+    getting chat info from cache, handling non-existent chats, and setting chat info.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with mocked database methods for
+        chat info operations.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
@@ -240,29 +359,42 @@ class TestChatInfo(unittest.IsolatedAsyncioTestCase):
         self.mockDb.chatInfo.updateChatInfo = createAsyncMock(returnValue=True)
         await self.cache.injectDatabase(self.mockDb)
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance and cleans up mock objects.
+        """
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
             del self.mockDb
         CacheService._instance = None
         gc.collect()
 
-    async def testGetChatInfo(self):
-        """Test getting chat info"""
+    async def testGetChatInfo(self) -> None:
+        """Test getting chat info.
+
+        Verifies that chat information is retrieved from the cache when available.
+        """
         testInfo = {"title": "Test Chat", "type": "group"}  # type: ignore[typeddict-item]
         self.cache.chats.set(123, {"info": testInfo})  # type: ignore[typeddict-item]
 
         info = await self.cache.getChatInfo(123)
         self.assertEqual(info, testInfo)
 
-    async def testGetChatInfoNonexistent(self):
-        """Test getting nonexistent chat info"""
+    async def testGetChatInfoNonexistent(self) -> None:
+        """Test getting nonexistent chat info.
+
+        Verifies that None is returned when requesting info for a non-existent chat.
+        """
         info = await self.cache.getChatInfo(999)
         self.assertIsNone(info)
 
-    async def testSetChatInfo(self):
-        """Test setting chat info"""
+    async def testSetChatInfo(self) -> None:
+        """Test setting chat info.
+
+        Verifies that chat information can be set and retrieved correctly.
+        Note: setChatInfo writes directly to DB, so no dirty tracking needed.
+        """
         testInfo = {
             "title": "Test Chat",
             "type": "group",
@@ -278,10 +410,18 @@ class TestChatInfo(unittest.IsolatedAsyncioTestCase):
 
 
 class TestChatUserData(unittest.IsolatedAsyncioTestCase):
-    """Test chat user data operations, dood!"""
+    """Test suite for chat user data operations.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests the retrieval, caching, and persistence of user-specific data within
+    chats, including complex data structures and JSON serialization.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with mocked database methods for
+        user data operations.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
@@ -293,8 +433,12 @@ class TestChatUserData(unittest.IsolatedAsyncioTestCase):
         self.mockDb.userData.addUserData = createAsyncMock(returnValue=True)
         await self.cache.injectDatabase(self.mockDb)
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Clears the database reference to avoid resource warnings and resets
+        the singleton instance.
+        """
         # Clear the database reference to avoid resource warnings
         if hasattr(self.cache, "dbWrapper") and self.cache.database is not None:
             self.cache.database = None
@@ -306,16 +450,24 @@ class TestChatUserData(unittest.IsolatedAsyncioTestCase):
         # Force garbage collection to clean up any lingering references
         gc.collect()
 
-    async def testGetChatUserDataFromCache(self):
-        """Test getting user data from cache"""
+    async def testGetChatUserDataFromCache(self) -> None:
+        """Test getting user data from cache.
+
+        Verifies that user data is retrieved from the cache when available,
+        avoiding database queries.
+        """
         testData = {"key1": "value1", "key2": ["item1", "item2"]}
         self.cache.chatUsers.set("123:456", {"data": testData})
 
         userData = await self.cache.getChatUserData(123, 456)
         self.assertEqual(userData, testData)
 
-    async def testGetChatUserDataFromDb(self):
-        """Test loading user data from database"""
+    async def testGetChatUserDataFromDb(self) -> None:
+        """Test loading user data from database.
+
+        Verifies that user data is loaded from the database when not in cache,
+        and that JSON strings are properly deserialized.
+        """
         self.mockDb.userData.getUserData.return_value = {
             "key1": '"value1"',
             "key2": '["item1", "item2"]',
@@ -327,8 +479,12 @@ class TestChatUserData(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(userData["key1"], "value1")
         self.assertEqual(userData["key2"], ["item1", "item2"])
 
-    async def testSetChatUserData(self):
-        """Test setting user data"""
+    async def testSetChatUserData(self) -> None:
+        """Test setting user data.
+
+        Verifies that user data can be set, persisted to the database, and
+        properly tracked as dirty for synchronization.
+        """
         await self.cache.setChatUserData(123, 456, "testKey", "testValue")
 
         userData = await self.cache.getChatUserData(123, 456)
@@ -344,8 +500,12 @@ class TestChatUserData(unittest.IsolatedAsyncioTestCase):
         # Check dirty tracking
         self.assertIn("123:456", self.cache.dirtyKeys[CacheNamespace.CHAT_USERS])
 
-    async def testSetChatUserDataComplex(self):
-        """Test setting complex user data"""
+    async def testSetChatUserDataComplex(self) -> None:
+        """Test setting complex user data.
+
+        Verifies that complex data structures (nested dicts, lists) are properly
+        serialized and deserialized.
+        """
         complexData = {"nested": {"key": "value"}, "list": [1, 2, 3]}
         await self.cache.setChatUserData(123, 456, "complex", complexData)
 
@@ -354,51 +514,78 @@ class TestChatUserData(unittest.IsolatedAsyncioTestCase):
 
 
 class TestUserState(unittest.IsolatedAsyncioTestCase):
-    """Test user state operations, dood!"""
+    """Test suite for user state operations.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests user state management including clearing state for users.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with a mocked database.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance and cleans up mock objects.
+        """
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
             del self.mockDb
         CacheService._instance = None
         gc.collect()
 
-    def testClearUserStateNonexistent(self):
-        """Test clearing state for nonexistent user"""
+    def testClearUserStateNonexistent(self) -> None:
+        """Test clearing state for nonexistent user.
+
+        Verifies that clearing state for a non-existent user does not raise
+        an exception.
+        """
         # Should not raise exception
         self.cache.clearUserState(999)
 
 
 class TestNamespaceOperations(unittest.IsolatedAsyncioTestCase):
-    """Test namespace-level operations, dood!"""
+    """Test suite for namespace-level operations.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests operations that affect entire cache namespaces including clearing
+    namespaces and tracking dirty keys for synchronization.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with a mocked database.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance and cleans up mock objects.
+        """
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
             del self.mockDb
         CacheService._instance = None
         gc.collect()
 
-    def testClearNamespace(self):
-        """Test clearing entire namespace"""
+    def testClearNamespace(self) -> None:
+        """Test clearing entire namespace.
+
+        Verifies that clearing a namespace removes all items and marks them
+        as dirty for deletion from the database.
+        """
         self.cache.chats.set(123, {"settings": {}})
         self.cache.chats.set(456, {"settings": {}})
 
@@ -411,10 +598,18 @@ class TestNamespaceOperations(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPersistence(unittest.IsolatedAsyncioTestCase):
-    """Test persistence operations, dood!"""
+    """Test suite for persistence operations.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests the persistence of cache data to the database including handling
+    of different namespace types, dirty key tracking, and error handling.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with mocked database methods for
+        persistence operations.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
@@ -423,24 +618,35 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
         self.mockDb.cache.unsetCacheStorage = createAsyncMock(returnValue=True)
         await self.cache.injectDatabase(self.mockDb)
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance and cleans up mock objects.
+        """
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
             del self.mockDb
         CacheService._instance = None
         gc.collect()
 
-    async def testPersistAllWithoutDb(self):
-        """Test that persist fails gracefully without database"""
+    async def testPersistAllWithoutDb(self) -> None:
+        """Test that persist fails gracefully without database.
+
+        Verifies that persistAll() does not raise an exception when no database
+        is configured.
+        """
         self.cache.database = None
         self.cache.dirtyKeys[CacheNamespace.USERS].add(123)
 
         # Should not raise exception
         await self.cache.persistAll()
 
-    async def testPersistAllMemoryOnly(self):
-        """Test that MEMORY_ONLY namespaces are not persisted"""
+    async def testPersistAllMemoryOnly(self) -> None:
+        """Test that MEMORY_ONLY namespaces are not persisted.
+
+        Verifies that namespaces marked as MEMORY_ONLY are not persisted to
+        the database, but dirty keys are still cleared.
+        """
         self.cache.chats.set(123, {"settings": {}})
         self.cache.dirtyKeys[CacheNamespace.CHATS].add(123)
 
@@ -451,8 +657,12 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
         # Dirty keys should be cleared
         self.assertEqual(len(self.cache.dirtyKeys[CacheNamespace.CHATS]), 0)
 
-    async def testPersistAllOnChange(self):
-        """Test that ON_CHANGE namespaces are persisted"""
+    async def testPersistAllOnChange(self) -> None:
+        """Test that ON_CHANGE namespaces are persisted.
+
+        Verifies that namespaces marked as ON_CHANGE are properly persisted
+        to the database with correct parameters.
+        """
         testState = {"activeConfigureId": {"step": 1}}
         self.cache.users.set(123, testState)  # type: ignore[arg-type]
         self.cache.dirtyKeys[CacheNamespace.USERS].add(123)
@@ -468,8 +678,12 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
         # Dirty keys should be cleared
         self.assertEqual(len(self.cache.dirtyKeys[CacheNamespace.USERS]), 0)
 
-    async def testPersistAllEmptyData(self):
-        """Test that empty data is dropped from database"""
+    async def testPersistAllEmptyData(self) -> None:
+        """Test that empty data is dropped from database.
+
+        Verifies that when cache data is empty, the database entry is removed
+        using unsetCacheStorage.
+        """
         self.cache.users.set(123, {})
         self.cache.dirtyKeys[CacheNamespace.USERS].add(123)
 
@@ -478,8 +692,12 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
         # Empty data should trigger unset
         self.mockDb.cache.unsetCacheStorage.assert_called_once_with(CacheNamespace.USERS, "123")
 
-    async def testLoadFromDatabase(self):
-        """Test loading cache from database"""
+    async def testLoadFromDatabase(self) -> None:
+        """Test loading cache from database.
+
+        Verifies that cache data is loaded from the database during initialization,
+        and that MEMORY_ONLY namespaces are skipped.
+        """
         mockData = [
             {
                 "namespace": "users",
@@ -506,8 +724,12 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
         # CHATS should be skipped (MEMORY_ONLY)
         self.assertEqual(len(self.cache.chats), 0)
 
-    async def testLoadFromDatabaseInvalidJson(self):
-        """Test handling invalid JSON during load"""
+    async def testLoadFromDatabaseInvalidJson(self) -> None:
+        """Test handling invalid JSON during load.
+
+        Verifies that invalid JSON in the database does not cause the cache
+        loading to fail.
+        """
         mockData = [
             {"namespace": "users", "key": "123", "value": "invalid json"},
         ]
@@ -520,8 +742,12 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(self.cache.users), 0)
 
-    async def testLoadFromDatabaseUnknownNamespace(self):
-        """Test handling unknown namespace during load"""
+    async def testLoadFromDatabaseUnknownNamespace(self) -> None:
+        """Test handling unknown namespace during load.
+
+        Verifies that unknown namespaces in the database are ignored without
+        causing errors.
+        """
         mockData = [
             {"namespace": "unknown", "key": "123", "value": "{}"},
         ]
@@ -532,8 +758,12 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
         self.cache = CacheService.getInstance()
         await self.cache.injectDatabase(self.mockDb)
 
-    async def testLoadFromDatabaseEmptyValue(self):
-        """Test handling empty values during load"""
+    async def testLoadFromDatabaseEmptyValue(self) -> None:
+        """Test handling empty values during load.
+
+        Verifies that empty values in the database are ignored and not loaded
+        into the cache.
+        """
         mockData = [
             {"namespace": "users", "key": "123", "value": "{}"},
         ]
@@ -548,26 +778,45 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
 
 
 class TestThreadSafety(unittest.IsolatedAsyncioTestCase):
-    """Test thread safety of cache operations, dood!"""
+    """Test suite for thread safety of cache operations.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests that the cache implementation handles concurrent access correctly
+    without data corruption or race conditions.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance.
+        """
         CacheService._instance = None
         gc.collect()
 
-    def testLRUCacheConcurrentAccess(self):
-        """Test that LRU cache handles concurrent access"""
+    def testLRUCacheConcurrentAccess(self) -> None:
+        """Test that LRU cache handles concurrent access.
+
+        Verifies that multiple threads can safely access and modify the cache
+        without causing errors or data corruption.
+        """
         import threading
 
         lruCache = LRUCache[int, int](maxSize=100)
         errors = []
 
-        def worker(startVal: int):
+        def worker(startVal: int) -> None:
+            """Worker function that performs cache operations.
+
+            Args:
+                startVal: Starting value for this worker's operations.
+            """
             try:
                 for i in range(startVal, startVal + 100):
                     lruCache.set(i, i * 2)
@@ -586,26 +835,40 @@ class TestThreadSafety(unittest.IsolatedAsyncioTestCase):
 
 
 class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
-    """Test edge cases and error handling, dood!"""
+    """Test suite for edge cases and error handling.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures"""
+    Tests unusual scenarios and error conditions to ensure the cache service
+    handles them gracefully.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with a mocked database.
+        """
         CacheService._instance = None
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
-    async def asyncTearDown(self):
-        """Clean up after tests"""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance and cleans up mock objects.
+        """
         if hasattr(self, "mockDb"):
             self.mockDb.reset_mock()
             del self.mockDb
         CacheService._instance = None
         gc.collect()
 
-    async def testSetChatSettingWithoutDb(self):
-        """Test setting chat settings without database"""
+    async def testSetChatSettingWithoutDb(self) -> None:
+        """Test setting chat settings without database.
+
+        Verifies that chat settings can be set and cached even when no database
+        is configured.
+        """
         self.cache.database = None
         key = ChatSettingsKey.BAYES_ENABLED
         value = ChatSettingsValue("true")
@@ -617,15 +880,22 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
         cachedSettings = await self.cache.getChatSettings(123)
         self.assertEqual(cachedSettings, {key: value})
 
-    async def testSetChatUserDataWithoutDb(self):
-        """Test setting user data without database"""
+    async def testSetChatUserDataWithoutDb(self) -> None:
+        """Test setting user data without database.
+
+        Verifies that user data can be set even when no database is configured.
+        """
         self.cache.database = None
 
         # Should not raise exception
         await self.cache.setChatUserData(123, 456, "key", "value")
 
-    async def testGetChatUserDataDbError(self):
-        """Test handling database errors when loading user data"""
+    async def testGetChatUserDataDbError(self) -> None:
+        """Test handling database errors when loading user data.
+
+        Verifies that database errors are handled gracefully, either by
+        returning an empty dict or raising an exception.
+        """
         self.mockDb.userData.getUserData.side_effect = Exception("DB Error")
 
         # Should log error but not crash
@@ -637,8 +907,12 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
             # If it raises, that's also acceptable behavior
             pass
 
-    async def testPersistCacheEntryError(self):
-        """Test handling errors during cache entry persistence"""
+    async def testPersistCacheEntryError(self) -> None:
+        """Test handling errors during cache entry persistence.
+
+        Verifies that errors during persistence do not cause the application
+        to crash.
+        """
         self.mockDb.cache.setCacheStorage.side_effect = Exception("DB Error")
 
         testState = {"activeConfigureId": {"step": 1}}

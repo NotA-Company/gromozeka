@@ -3,10 +3,26 @@ Comprehensive tests for the Configuration Manager.
 
 This module provides extensive test coverage for the ConfigManager class,
 testing configuration loading, merging, validation, and error handling.
+
+Test Coverage:
+    - Initialization with various configurations
+    - Configuration loading from single and multiple files
+    - Configuration merging (simple, nested, priority)
+    - Configuration validation (required fields, structure)
+    - Getter methods (bot, database, logging, models, etc.)
+    - Error handling (invalid syntax, missing files, permissions)
+    - Integration tests (full workflows, inheritance)
+    - Edge cases (Unicode, special chars, deep nesting, large arrays)
+
+Test Organization:
+    - Fixtures: Reusable test data and temporary directories
+    - Helper Functions: Utilities for creating test configurations
+    - Test Classes: Organized by functionality (initialization, loading, merging, etc.)
 """
 
 import tempfile
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -18,15 +34,23 @@ from internal.config.manager import ConfigManager
 
 
 @pytest.fixture
-def tempDir():
-    """Create a temporary directory for test files."""
+def tempDir() -> Iterator[Path]:
+    """Create a temporary directory for test files.
+
+    Yields:
+        Path: Path to the temporary directory that will be cleaned up after the test.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
 @pytest.fixture
-def sampleConfigToml():
-    """Provide sample valid TOML configuration."""
+def sampleConfigToml() -> str:
+    """Provide sample valid TOML configuration.
+
+    Returns:
+        str: A valid TOML configuration string with bot, database, and logging sections.
+    """
     return """
 [bot]
 token = "test_bot_token_123"
@@ -41,8 +65,12 @@ level = "INFO"
 
 
 @pytest.fixture
-def defaultsToml():
-    """Provide default configuration TOML."""
+def defaultsToml() -> str:
+    """Provide default configuration TOML.
+
+    Returns:
+        str: A TOML configuration string with default values for bot, database, and models.
+    """
     return """
 [bot]
 token = "default_token"
@@ -59,8 +87,12 @@ default_model = "gpt-3.5-turbo"
 
 
 @pytest.fixture
-def overrideToml():
-    """Provide override configuration TOML."""
+def overrideToml() -> str:
+    """Provide override configuration TOML.
+
+    Returns:
+        str: A TOML configuration string with override values for testing merging behavior.
+    """
     return """
 [bot]
 token = "override_token"
@@ -76,8 +108,12 @@ format = "detailed"
 
 
 @pytest.fixture
-def invalidSyntaxToml():
-    """Provide invalid TOML syntax."""
+def invalidSyntaxToml() -> str:
+    """Provide invalid TOML syntax.
+
+    Returns:
+        str: A TOML string with syntax errors for testing error handling.
+    """
     return """
 [bot
 token = "missing_bracket"
@@ -85,8 +121,12 @@ token = "missing_bracket"
 
 
 @pytest.fixture
-def missingRequiredToml():
-    """Provide TOML missing required bot token."""
+def missingRequiredToml() -> str:
+    """Provide TOML missing required bot token.
+
+    Returns:
+        str: A TOML configuration string without the required bot token section.
+    """
     return """
 [database]
 path = "test.db"
@@ -97,14 +137,22 @@ level = "INFO"
 
 
 @pytest.fixture
-def emptyToml():
-    """Provide empty TOML file."""
+def emptyToml() -> str:
+    """Provide empty TOML file.
+
+    Returns:
+        str: An empty string representing an empty TOML configuration.
+    """
     return ""
 
 
 @pytest.fixture
-def nestedConfigToml():
-    """Provide nested configuration structure."""
+def nestedConfigToml() -> str:
+    """Provide nested configuration structure.
+
+    Returns:
+        str: A TOML configuration string with nested sections for testing deep merging.
+    """
     return """
 [bot]
 token = "test_token"
@@ -120,8 +168,12 @@ verbose = false
 
 
 @pytest.fixture
-def configWithCommentsToml():
-    """Provide configuration with comments."""
+def configWithCommentsToml() -> str:
+    """Provide configuration with comments.
+
+    Returns:
+        str: A TOML configuration string with inline and block comments.
+    """
     return """
 # Bot configuration
 [bot]
@@ -140,14 +192,32 @@ path = "bot.db"  # SQLite database path
 
 
 def createConfigFile(directory: Path, filename: str, content: str) -> Path:
-    """Create a TOML config file in the specified directory."""
+    """Create a TOML config file in the specified directory.
+
+    Args:
+        directory: The directory where the config file will be created.
+        filename: The name of the config file to create.
+        content: The TOML content to write to the file.
+
+    Returns:
+        Path: The path to the created config file.
+    """
     filePath = directory / filename
     filePath.write_text(content)
     return filePath
 
 
 def createConfigDir(baseDir: Path, dirName: str, files: dict) -> Path:
-    """Create a config directory with multiple TOML files."""
+    """Create a config directory with multiple TOML files.
+
+    Args:
+        baseDir: The base directory where the config directory will be created.
+        dirName: The name of the config directory to create.
+        files: A dictionary mapping filenames to their TOML content.
+
+    Returns:
+        Path: The path to the created config directory.
+    """
     configDir = baseDir / dirName
     configDir.mkdir(parents=True, exist_ok=True)
 
@@ -163,30 +233,51 @@ def createConfigDir(baseDir: Path, dirName: str, files: dict) -> Path:
 
 
 class TestConfigManagerInitialization:
-    """Test ConfigManager initialization."""
+    """Test ConfigManager initialization.
 
-    def testInitWithValidConfig(self, tempDir, sampleConfigToml):
-        """Test initialization with valid configuration file."""
+    This test class verifies that ConfigManager can be initialized correctly
+    with various configuration scenarios including valid configs, config directories,
+    and error conditions.
+    """
+
+    def testInitWithValidConfig(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test initialization with valid configuration file.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
 
         manager = ConfigManager(str(configPath))
 
-        assert manager.config_path == str(configPath)
+        assert manager.configPath == str(configPath)
         assert manager.config is not None
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
-    def testInitWithConfigDirs(self, tempDir, sampleConfigToml, defaultsToml):
-        """Test initialization with config directories."""
+    def testInitWithConfigDirs(self, tempDir: Path, sampleConfigToml: str, defaultsToml: str) -> None:
+        """Test initialization with config directories.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+            defaultsToml: Default TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         configDir = createConfigDir(tempDir, "defaults", {"defaults.toml": defaultsToml})
 
         manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
 
-        assert manager.config_dirs == [str(configDir)]
+        assert manager.configDirs == [str(configDir)]
         assert manager.config is not None
 
-    def testInitWithoutConfigFile(self, tempDir, defaultsToml):
-        """Test initialization without main config file but with config dirs."""
+    def testInitWithoutConfigFile(self, tempDir: Path, defaultsToml: str) -> None:
+        """Test initialization without main config file but with config dirs.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            defaultsToml: Default TOML configuration fixture.
+        """
         configDir = createConfigDir(tempDir, "defaults", {"defaults.toml": defaultsToml})
         nonExistentPath = str(tempDir / "nonexistent.toml")
 
@@ -194,8 +285,15 @@ class TestConfigManagerInitialization:
         manager = ConfigManager(nonExistentPath, configDirs=[str(configDir)])
         assert manager.config["bot"]["token"] == "default_token"
 
-    def testInitWithNonExistentConfigAndNoDirs(self, tempDir):
-        """Test initialization fails when config file doesn't exist and no dirs provided."""
+    def testInitWithNonExistentConfigAndNoDirs(self, tempDir: Path) -> None:
+        """Test initialization fails when config file doesn't exist and no dirs provided.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+
+        Raises:
+            SystemExit: When config file doesn't exist and no config dirs are provided.
+        """
         nonExistentPath = str(tempDir / "nonexistent.toml")
 
         with pytest.raises(SystemExit):
@@ -208,10 +306,20 @@ class TestConfigManagerInitialization:
 
 
 class TestConfigurationLoading:
-    """Test configuration loading from TOML files."""
+    """Test configuration loading from TOML files.
 
-    def testLoadSingleConfigFile(self, tempDir, sampleConfigToml):
-        """Test loading configuration from single TOML file."""
+    This test class verifies that ConfigManager can load configurations
+    from single files, multiple files, and handle various loading scenarios
+    including defaults, empty files, and comments.
+    """
+
+    def testLoadSingleConfigFile(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test loading configuration from single TOML file.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
 
         manager = ConfigManager(str(configPath))
@@ -221,8 +329,14 @@ class TestConfigurationLoading:
         assert "logging" in manager.config
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
-    def testLoadConfigWithDefaults(self, tempDir, sampleConfigToml, defaultsToml):
-        """Test loading config with default values from directory."""
+    def testLoadConfigWithDefaults(self, tempDir: Path, sampleConfigToml: str, defaultsToml: str) -> None:
+        """Test loading config with default values from directory.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+            defaultsToml: Default TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         configDir = createConfigDir(tempDir, "defaults", {"defaults.toml": defaultsToml})
 
@@ -241,8 +355,17 @@ class TestConfigurationLoading:
         # Logging from main config is preserved (not in defaults)
         assert manager.config["logging"]["level"] == "INFO"
 
-    def testLoadMultipleConfigFiles(self, tempDir, sampleConfigToml, defaultsToml, overrideToml):
-        """Test loading and merging multiple config files."""
+    def testLoadMultipleConfigFiles(
+        self, tempDir: Path, sampleConfigToml: str, defaultsToml: str, overrideToml: str
+    ) -> None:
+        """Test loading and merging multiple config files.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+            defaultsToml: Default TOML configuration fixture.
+            overrideToml: Override TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         configDir = createConfigDir(
             tempDir,
@@ -258,8 +381,14 @@ class TestConfigurationLoading:
         assert manager.config is not None
         assert "bot" in manager.config
 
-    def testLoadEmptyConfigFile(self, tempDir, emptyToml, defaultsToml):
-        """Test loading empty configuration file with defaults."""
+    def testLoadEmptyConfigFile(self, tempDir: Path, emptyToml: str, defaultsToml: str) -> None:
+        """Test loading empty configuration file with defaults.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            emptyToml: Empty TOML configuration fixture.
+            defaultsToml: Default TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", emptyToml)
         configDir = createConfigDir(tempDir, "defaults", {"defaults.toml": defaultsToml})
 
@@ -268,8 +397,13 @@ class TestConfigurationLoading:
         # Should have defaults
         assert manager.config["bot"]["token"] == "default_token"
 
-    def testLoadConfigWithComments(self, tempDir, configWithCommentsToml):
-        """Test loading configuration with comments."""
+    def testLoadConfigWithComments(self, tempDir: Path, configWithCommentsToml: str) -> None:
+        """Test loading configuration with comments.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            configWithCommentsToml: TOML configuration with comments fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", configWithCommentsToml)
 
         manager = ConfigManager(str(configPath))
@@ -284,10 +418,19 @@ class TestConfigurationLoading:
 
 
 class TestConfigurationMerging:
-    """Test configuration merging logic."""
+    """Test configuration merging logic.
 
-    def testMergeSimpleConfigs(self, tempDir):
-        """Test merging simple non-nested configurations."""
+    This test class verifies that ConfigManager correctly merges configurations
+    from multiple sources, handling simple and nested structures, priority ordering,
+    and array replacement behavior.
+    """
+
+    def testMergeSimpleConfigs(self, tempDir: Path) -> None:
+        """Test merging simple non-nested configurations.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         base = """
 [bot]
 token = "base_token"
@@ -308,8 +451,13 @@ token = "override_token"
         # Owners should still be present
         assert manager.config["bot"]["owners"] == [1, 2]
 
-    def testMergeNestedConfigs(self, tempDir, nestedConfigToml):
-        """Test merging nested configuration structures."""
+    def testMergeNestedConfigs(self, tempDir: Path, nestedConfigToml: str) -> None:
+        """Test merging nested configuration structures.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            nestedConfigToml: Nested TOML configuration fixture.
+        """
         override = """
 [bot.settings]
 timeout = 60
@@ -331,8 +479,12 @@ extra = "new_value"
         assert manager.config["bot"]["settings"]["advanced"]["verbose"] is False
         assert manager.config["bot"]["settings"]["advanced"]["extra"] == "new_value"
 
-    def testMergePriority(self, tempDir):
-        """Test that later files override earlier ones."""
+    def testMergePriority(self, tempDir: Path) -> None:
+        """Test that later files override earlier ones.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         first = """
 [bot]
 token = "first_token"
@@ -364,8 +516,12 @@ token = "third_token"
         assert manager.config["bot"]["token"] == "third_token"
         assert manager.config["bot"]["value"] == 2
 
-    def testMergeMultipleDirectories(self, tempDir):
-        """Test merging configs from multiple directories."""
+    def testMergeMultipleDirectories(self, tempDir: Path) -> None:
+        """Test merging configs from multiple directories.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         mainConfig = """
 [bot]
 token = "main_token"
@@ -382,8 +538,12 @@ token = "main_token"
         assert manager.config["bot"]["owners"] == [1]
         assert manager.config["database"]["path"] == "test.db"
 
-    def testMergeArraysOverride(self, tempDir):
-        """Test that arrays are overridden, not merged."""
+    def testMergeArraysOverride(self, tempDir: Path) -> None:
+        """Test that arrays are overridden, not merged.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         base = """
 [bot]
 token = "token"
@@ -409,10 +569,19 @@ owners = [4, 5]
 
 
 class TestConfigurationValidation:
-    """Test configuration validation."""
+    """Test configuration validation.
 
-    def testValidateRequiredBotToken(self, tempDir, sampleConfigToml):
-        """Test that bot token is required."""
+    This test class verifies that ConfigManager validates required fields,
+    checks for empty or placeholder values, and ensures proper configuration structure.
+    """
+
+    def testValidateRequiredBotToken(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test that bot token is required.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
 
         manager = ConfigManager(str(configPath))
@@ -420,15 +589,30 @@ class TestConfigurationValidation:
         # Should not raise error with valid token
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
-    def testValidateMissingBotToken(self, tempDir, missingRequiredToml):
-        """Test that missing bot token causes exit."""
+    def testValidateMissingBotToken(self, tempDir: Path, missingRequiredToml: str) -> None:
+        """Test that missing bot token causes exit.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            missingRequiredToml: TOML configuration missing required fields.
+
+        Raises:
+            SystemExit: When bot token is missing from configuration.
+        """
         configPath = createConfigFile(tempDir, "config.toml", missingRequiredToml)
 
         with pytest.raises(SystemExit):
             ConfigManager(str(configPath))
 
-    def testValidateEmptyBotToken(self, tempDir):
-        """Test that empty bot token causes exit."""
+    def testValidateEmptyBotToken(self, tempDir: Path) -> None:
+        """Test that empty bot token causes exit.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+
+        Raises:
+            SystemExit: When bot token is empty.
+        """
         config = """
 [bot]
 token = ""
@@ -438,8 +622,15 @@ token = ""
         with pytest.raises(SystemExit):
             ConfigManager(str(configPath))
 
-    def testValidatePlaceholderToken(self, tempDir):
-        """Test that placeholder token is rejected."""
+    def testValidatePlaceholderToken(self, tempDir: Path) -> None:
+        """Test that placeholder token is rejected.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+
+        Raises:
+            SystemExit: When bot token is a placeholder value.
+        """
         config = """
 [bot]
 token = "YOUR_BOT_TOKEN_HERE"
@@ -452,8 +643,13 @@ token = "YOUR_BOT_TOKEN_HERE"
         with pytest.raises(SystemExit):
             manager.getBotToken()
 
-    def testValidateConfigStructure(self, tempDir, sampleConfigToml):
-        """Test that configuration structure is valid."""
+    def testValidateConfigStructure(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test that configuration structure is valid.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
 
         manager = ConfigManager(str(configPath))
@@ -470,10 +666,20 @@ token = "YOUR_BOT_TOKEN_HERE"
 
 
 class TestGetterMethods:
-    """Test configuration getter methods."""
+    """Test configuration getter methods.
 
-    def testGet(self, tempDir, sampleConfigToml):
-        """Test generic get method."""
+    This test class verifies that ConfigManager's getter methods correctly
+    retrieve configuration values for various sections including bot, database,
+    logging, models, and OpenWeatherMap configurations.
+    """
+
+    def testGet(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test generic get method.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         manager = ConfigManager(str(configPath))
 
@@ -481,8 +687,13 @@ class TestGetterMethods:
         assert manager.get("nonexistent") is None
         assert manager.get("nonexistent", "default") == "default"
 
-    def testGetBotConfig(self, tempDir, sampleConfigToml):
-        """Test getting bot configuration."""
+    def testGetBotConfig(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting bot configuration.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         manager = ConfigManager(str(configPath))
 
@@ -493,8 +704,12 @@ class TestGetterMethods:
         assert "owners" in botConfig
         assert botConfig["token"] == "test_bot_token_123"
 
-    def testGetBotConfigEmpty(self, tempDir):
-        """Test getting bot config when not present."""
+    def testGetBotConfigEmpty(self, tempDir: Path) -> None:
+        """Test getting bot config when not present.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         config = """
 [database]
 path = "test.db"
@@ -509,8 +724,13 @@ path = "test.db"
         assert botConfig is not None
         assert botConfig["token"] == "test_token"
 
-    def testGetDatabaseConfig(self, tempDir, sampleConfigToml):
-        """Test getting database configuration."""
+    def testGetDatabaseConfig(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting database configuration.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         manager = ConfigManager(str(configPath))
 
@@ -520,8 +740,13 @@ path = "test.db"
         assert "path" in dbConfig
         assert dbConfig["path"] == "test.db"
 
-    def testGetDatabaseConfigEmpty(self, tempDir, sampleConfigToml):
-        """Test getting database config when not present."""
+    def testGetDatabaseConfigEmpty(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting database config when not present.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         config = """
 [bot]
 token = "test_token"
@@ -532,8 +757,13 @@ token = "test_token"
         dbConfig = manager.getDatabaseConfig()
         assert dbConfig == {}
 
-    def testGetLoggingConfig(self, tempDir, sampleConfigToml):
-        """Test getting logging configuration."""
+    def testGetLoggingConfig(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting logging configuration.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         manager = ConfigManager(str(configPath))
 
@@ -543,8 +773,12 @@ token = "test_token"
         assert "level" in loggingConfig
         assert loggingConfig["level"] == "INFO"
 
-    def testGetLoggingConfigEmpty(self, tempDir):
-        """Test getting logging config when not present."""
+    def testGetLoggingConfigEmpty(self, tempDir: Path) -> None:
+        """Test getting logging config when not present.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         config = """
 [bot]
 token = "test_token"
@@ -555,8 +789,12 @@ token = "test_token"
         loggingConfig = manager.getLoggingConfig()
         assert loggingConfig == {}
 
-    def testGetModelsConfig(self, tempDir):
-        """Test getting models configuration."""
+    def testGetModelsConfig(self, tempDir: Path) -> None:
+        """Test getting models configuration.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         config = """
 [bot]
 token = "test_token"
@@ -574,16 +812,26 @@ temperature = 0.7
         assert "default_model" in modelsConfig
         assert modelsConfig["default_model"] == "gpt-4"
 
-    def testGetModelsConfigEmpty(self, tempDir, sampleConfigToml):
-        """Test getting models config when not present."""
+    def testGetModelsConfigEmpty(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting models config when not present.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         manager = ConfigManager(str(configPath))
 
         modelsConfig = manager.getModelsConfig()
         assert modelsConfig == {}
 
-    def testGetBotToken(self, tempDir, sampleConfigToml):
-        """Test getting bot token."""
+    def testGetBotToken(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting bot token.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         manager = ConfigManager(str(configPath))
 
@@ -591,8 +839,12 @@ temperature = 0.7
 
         assert token == "test_bot_token_123"
 
-    def testGetOpenWeatherMapConfig(self, tempDir):
-        """Test getting OpenWeatherMap configuration."""
+    def testGetOpenWeatherMapConfig(self, tempDir: Path) -> None:
+        """Test getting OpenWeatherMap configuration.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         config = """
 [bot]
 token = "test_token"
@@ -610,8 +862,13 @@ ttl = 3600
         assert "api_key" in weatherConfig
         assert weatherConfig["api_key"] == "weather_api_key"
 
-    def testGetOpenWeatherMapConfigEmpty(self, tempDir, sampleConfigToml):
-        """Test getting OpenWeatherMap config when not present."""
+    def testGetOpenWeatherMapConfigEmpty(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting OpenWeatherMap config when not present.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         manager = ConfigManager(str(configPath))
 
@@ -625,17 +882,36 @@ ttl = 3600
 
 
 class TestErrorHandling:
-    """Test error handling for various failure scenarios."""
+    """Test error handling for various failure scenarios.
 
-    def testInvalidTomlSyntax(self, tempDir, invalidSyntaxToml):
-        """Test handling of invalid TOML syntax."""
+    This test class verifies that ConfigManager gracefully handles errors
+    including invalid TOML syntax, missing files, permission issues, and
+    other edge cases without crashing.
+    """
+
+    def testInvalidTomlSyntax(self, tempDir: Path, invalidSyntaxToml: str) -> None:
+        """Test handling of invalid TOML syntax.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            invalidSyntaxToml: Invalid TOML syntax fixture.
+
+        Raises:
+            SystemExit: When TOML syntax is invalid.
+        """
         configPath = createConfigFile(tempDir, "config.toml", invalidSyntaxToml)
 
         with pytest.raises(SystemExit):
             ConfigManager(str(configPath))
 
-    def testInvalidTomlInConfigDir(self, tempDir, sampleConfigToml, invalidSyntaxToml):
-        """Test handling of invalid TOML in config directory."""
+    def testInvalidTomlInConfigDir(self, tempDir: Path, sampleConfigToml: str, invalidSyntaxToml: str) -> None:
+        """Test handling of invalid TOML in config directory.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+            invalidSyntaxToml: Invalid TOML syntax fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         configDir = createConfigDir(tempDir, "configs", {"invalid.toml": invalidSyntaxToml})
 
@@ -645,8 +921,13 @@ class TestErrorHandling:
         # Main config should still be loaded
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
-    def testNonExistentConfigDirectory(self, tempDir, sampleConfigToml):
-        """Test handling of non-existent config directory."""
+    def testNonExistentConfigDirectory(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test handling of non-existent config directory.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         nonExistentDir = str(tempDir / "nonexistent")
 
@@ -655,8 +936,13 @@ class TestErrorHandling:
 
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
-    def testConfigDirIsFile(self, tempDir, sampleConfigToml):
-        """Test handling when config dir path is actually a file."""
+    def testConfigDirIsFile(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test handling when config dir path is actually a file.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         filePath = createConfigFile(tempDir, "notadir.txt", "content")
 
@@ -665,8 +951,17 @@ class TestErrorHandling:
 
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
-    def testPermissionError(self, tempDir, sampleConfigToml):
-        """Test handling of permission errors when reading files."""
+    def testPermissionError(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test handling of permission errors when reading files.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+
+        Note:
+            This test is platform-dependent and may not work on all systems.
+            Just verifies the manager can be created.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
 
         # This test is platform-dependent and may not work on all systems
@@ -681,10 +976,19 @@ class TestErrorHandling:
 
 
 class TestIntegration:
-    """Test full integration scenarios."""
+    """Test full integration scenarios.
 
-    def testFullConfigurationWorkflow(self, tempDir):
-        """Test complete configuration loading workflow."""
+    This test class verifies end-to-end workflows including complete
+    configuration loading, recursive discovery, environment-specific configs,
+    and configuration inheritance patterns.
+    """
+
+    def testFullConfigurationWorkflow(self, tempDir: Path) -> None:
+        """Test complete configuration loading workflow.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         # Create main config
         mainConfig = """
 [bot]
@@ -751,8 +1055,12 @@ temperature = 0.7
         assert manager.getModelsConfig()["default_model"] == "gpt-3.5-turbo"  # From 00-defaults
         assert manager.getModelsConfig()["temperature"] == 0.7  # From 99-overrides
 
-    def testRecursiveConfigDiscovery(self, tempDir):
-        """Test recursive discovery of config files in subdirectories."""
+    def testRecursiveConfigDiscovery(self, tempDir: Path) -> None:
+        """Test recursive discovery of config files in subdirectories.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         mainConfig = """
 [bot]
 token = "test_token"
@@ -778,8 +1086,12 @@ token = "test_token"
         assert "providers" in manager.config
         assert "models" in manager.config
 
-    def testEnvironmentSpecificConfigs(self, tempDir):
-        """Test loading environment-specific configurations."""
+    def testEnvironmentSpecificConfigs(self, tempDir: Path) -> None:
+        """Test loading environment-specific configurations.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         baseConfig = """
 [bot]
 token = "base_token"
@@ -820,8 +1132,12 @@ level = "WARNING"
         assert "database" in manager.config
         assert "logging" in manager.config
 
-    def testConfigInheritance(self, tempDir):
-        """Test configuration inheritance pattern."""
+    def testConfigInheritance(self, tempDir: Path) -> None:
+        """Test configuration inheritance pattern.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         base = """
 [bot]
 token = "token"
@@ -852,10 +1168,20 @@ feature_b = false
 
 
 class TestEdgeCases:
-    """Test edge cases and special scenarios."""
+    """Test edge cases and special scenarios.
 
-    def testEmptyConfigDirectory(self, tempDir, sampleConfigToml):
-        """Test handling of empty config directory."""
+    This test class verifies that ConfigManager handles unusual but valid
+    configurations including empty directories, comments-only files, Unicode
+    characters, special characters, large arrays, deep nesting, and other edge cases.
+    """
+
+    def testEmptyConfigDirectory(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test handling of empty config directory.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         emptyDir = tempDir / "empty"
         emptyDir.mkdir()
@@ -864,8 +1190,13 @@ class TestEdgeCases:
 
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
-    def testConfigWithOnlyComments(self, tempDir, sampleConfigToml):
-        """Test config file with only comments."""
+    def testConfigWithOnlyComments(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test config file with only comments.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
         commentsOnly = """
 # This is a comment
 # Another comment
@@ -880,8 +1211,12 @@ class TestEdgeCases:
 
         assert manager.config["bot"]["token"] == "test_bot_token_123"
 
-    def testConfigWithUnicodeCharacters(self, tempDir):
-        """Test configuration with Unicode characters."""
+    def testConfigWithUnicodeCharacters(self, tempDir: Path) -> None:
+        """Test configuration with Unicode characters.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         config = """
 [bot]
 token = "test_token"
@@ -898,8 +1233,12 @@ greeting = "Привет! 你好! مرحبا!"
         assert manager.config["bot"]["name"] == "Громозека 🤖"
         assert manager.config["messages"]["greeting"] == "Привет! 你好! مرحبا!"
 
-    def testConfigWithSpecialCharacters(self, tempDir):
-        """Test configuration with special characters."""
+    def testConfigWithSpecialCharacters(self, tempDir: Path) -> None:
+        """Test configuration with special characters.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         config = """
 [bot]
 token = "test_token"
@@ -913,8 +1252,12 @@ quotes = 'Single "quotes" inside'
         assert "special" in manager.config["bot"]
         assert "quotes" in manager.config["bot"]
 
-    def testConfigWithLargeArrays(self, tempDir):
-        """Test configuration with large arrays."""
+    def testConfigWithLargeArrays(self, tempDir: Path) -> None:
+        """Test configuration with large arrays.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         owners = list(range(1000))
         config = f"""
 [bot]
@@ -927,8 +1270,12 @@ owners = {owners}
 
         assert len(manager.config["bot"]["owners"]) == 1000
 
-    def testConfigWithDeepNesting(self, tempDir):
-        """Test configuration with deeply nested structures."""
+    def testConfigWithDeepNesting(self, tempDir: Path) -> None:
+        """Test configuration with deeply nested structures.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         config = """
 [bot]
 token = "test_token"
@@ -945,8 +1292,12 @@ value = "deep"
 
         assert manager.config["level1"]["level2"]["level3"]["level4"]["value"] == "deep"
 
-    def testMultipleConfigDirsWithSameFiles(self, tempDir):
-        """Test multiple config dirs with files of same name."""
+    def testMultipleConfigDirsWithSameFiles(self, tempDir: Path) -> None:
+        """Test multiple config dirs with files of same name.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
         mainConfig = """
 [bot]
 token = "main_token"
@@ -966,9 +1317,10 @@ token = "main_token"
 # ============================================================================
 # Summary Statistics
 # ============================================================================
-def testSummary():
-    """
-    Summary of test coverage for ConfigManager:
+
+
+def testSummary() -> None:
+    """Summary of test coverage for ConfigManager.
 
     Test Classes: 9
     Test Methods: 60+
