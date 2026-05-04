@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
 """
-Test script for database migrations.
+Test suite for database migrations functionality.
 
-This script tests:
-- Fresh database initialization
-- Migration execution
-- Version tracking
-- Rollback functionality
-- Auto-discovery of migrations
-- Migration status reporting
+This module provides comprehensive tests for the Gromozeka database migration system,
+including fresh database initialization, migration execution, version tracking, rollback
+functionality, auto-discovery of migrations, and migration status reporting.
+
+Key Test Functions:
+    - test_fresh_database: Tests initialization of a new database with all migrations
+    - test_migration_status: Verifies migration status reporting functionality
+    - test_rollback: Tests migration rollback to previous versions
+    - test_existing_database: Tests upgrading an existing database
+    - test_auto_discovery: Verifies automatic migration discovery
+    - test_getMigration_functions: Tests getMigration() functions in migration modules
+    - test_loadMigrationsFromVersions: Tests MigrationManager.loadMigrationsFromVersions()
+    - test_database_auto_discovery: Tests Database class auto-discovery integration
+
+Usage:
+    Run this script directly to execute all migration tests:
+        ./internal/database/migrations/test_migrations.py
+
+    Or import and run specific test functions:
+        from internal.database.migrations.test_migrations import test_fresh_database
+        await test_fresh_database()
+
+Note:
+    All tests use temporary SQLite databases that are automatically cleaned up after
+    each test. Tests are designed to be independent and can be run in any order.
 """
 
 import logging
@@ -32,15 +50,23 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(leve
 logger = logging.getLogger(__name__)
 
 
-async def test_fresh_database():
+async def test_fresh_database() -> None:
     """Test fresh database initialization.
 
     Creates a temporary database, initializes it with migrations,
     and verifies that all expected tables and the correct migration
     version are present.
 
+    Args:
+        None
+
     Returns:
         None
+
+    Raises:
+        AssertionError: If migration version doesn't match expected version
+        AssertionError: If expected tables are not found in the database
+        Exception: If database initialization or migration execution fails
     """
     logger.info("=" * 60)
     logger.info("TEST: Fresh Database Initialization")
@@ -48,9 +74,9 @@ async def test_fresh_database():
 
     # Create temporary database
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        dbPath = f.name
+        dbPath: str = f.name
 
-    db = None
+    db: Database | None = None
     try:
         # Initialize database (should run migrations automatically)
         config: DatabaseManagerConfig = {
@@ -71,7 +97,7 @@ async def test_fresh_database():
         provider = await db.manager.getProvider()
         manager = MigrationManager()
         manager.registerMigrations(MIGRATIONS)
-        currentVersion = await manager.getCurrentVersion(sqlProvider=provider)
+        currentVersion: int = await manager.getCurrentVersion(sqlProvider=provider)
 
         logger.info(f"Current migration version: {currentVersion}")
         logger.info(f"Expected version: {len(MIGRATIONS)}")
@@ -81,7 +107,7 @@ async def test_fresh_database():
         # Check that tables exist
         provider = await db.manager.getProvider()
         tables = await provider.executeFetchAll("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-        tableNames = [row["name"] for row in tables]
+        tableNames: list[str] = [row["name"] for row in tables]
         logger.info(f"Created tables: {', '.join(tableNames)}")
 
         # Verify key tables exist
@@ -105,24 +131,32 @@ async def test_fresh_database():
             os.unlink(dbPath)
 
 
-async def test_migration_status():
+async def test_migration_status() -> None:
     """Test migration status reporting.
 
     Creates a temporary database, initializes it with migrations,
     and verifies that the migration status correctly reports the
     current version, latest version, and pending migrations.
 
+    Args:
+        None
+
     Returns:
         None
+
+    Raises:
+        AssertionError: If current version doesn't equal latest version
+        AssertionError: If pending migrations count is not zero
+        Exception: If database initialization or status retrieval fails
     """
     logger.info("=" * 60)
     logger.info("TEST: Migration Status")
     logger.info("=" * 60)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        dbPath = f.name
+        dbPath: str = f.name
 
-    db = None
+    db: Database | None = None
     try:
         config: DatabaseManagerConfig = {
             "default": "default",
@@ -156,7 +190,7 @@ async def test_migration_status():
             os.unlink(dbPath)
 
 
-async def test_rollback():
+async def test_rollback() -> None:
     """Test migration rollback functionality.
 
     Creates a temporary database, initializes it with migrations,
@@ -164,17 +198,25 @@ async def test_rollback():
     rollback correctly removes schema changes (e.g., the metadata
     column from migration 003).
 
+    Args:
+        None
+
     Returns:
         None
+
+    Raises:
+        AssertionError: If rollback version doesn't match target version
+        AssertionError: If metadata column still exists after rollback
+        Exception: If database initialization or rollback execution fails
     """
     logger.info("=" * 60)
     logger.info("TEST: Migration Rollback")
     logger.info("=" * 60)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        dbPath = f.name
+        dbPath: str = f.name
 
-    db = None
+    db: Database | None = None
     try:
         # Initialize database
         config: DatabaseManagerConfig = {
@@ -194,18 +236,18 @@ async def test_rollback():
         manager = MigrationManager()
         manager.registerMigrations(MIGRATIONS)
 
-        initialVersion = await manager.getCurrentVersion(sqlProvider=provider)
+        initialVersion: int = await manager.getCurrentVersion(sqlProvider=provider)
         logger.info(f"Initial version: {initialVersion}")
 
         # Rollback to version 2 (to remove metadata column from migration 003)
         # This ensures the test works regardless of how many migrations exist
-        targetVersion = 2
-        stepsToRollback = initialVersion - targetVersion
+        targetVersion: int = 2
+        stepsToRollback: int = initialVersion - targetVersion
         logger.info(f"Rolling back {stepsToRollback} migrations to reach version {targetVersion}")
 
         await manager.rollback(steps=stepsToRollback, sqlProvider=provider)
 
-        newVersion = await manager.getCurrentVersion(sqlProvider=provider)
+        newVersion: int = await manager.getCurrentVersion(sqlProvider=provider)
         logger.info(f"Version after rollback: {newVersion}")
 
         assert newVersion == targetVersion, f"Expected version {targetVersion}, got {newVersion}"
@@ -213,7 +255,7 @@ async def test_rollback():
         # Check that metadata column is gone (migration 003 should be rolled back)
         provider = await db.manager.getProvider(readonly=True)
         rows = await provider.executeFetchAll("PRAGMA table_info(chat_users)")
-        columns = [row["name"] for row in rows]  # type: ignore[index]
+        columns: list[str] = [row["name"] for row in rows]  # type: ignore[index]
         assert "metadata" not in columns, "metadata column should be dropped"
 
         logger.info("✅ Rollback test PASSED")
@@ -225,24 +267,31 @@ async def test_rollback():
             os.unlink(dbPath)
 
 
-async def test_existing_database():
+async def test_existing_database() -> None:
     """Test upgrading existing database.
 
     Creates a temporary database and verifies that migrations
     run automatically during initialization, bringing the database
     to the latest version.
 
+    Args:
+        None
+
     Returns:
         None
+
+    Raises:
+        AssertionError: If current version doesn't match expected version
+        Exception: If database initialization or migration execution fails
     """
     logger.info("=" * 60)
     logger.info("TEST: Existing Database Upgrade")
     logger.info("=" * 60)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        dbPath = f.name
+        dbPath: str = f.name
 
-    db = None
+    db: Database | None = None
     try:
         # Create database - __init__ now automatically runs migrations
         config: DatabaseManagerConfig = {
@@ -264,7 +313,7 @@ async def test_existing_database():
         manager = MigrationManager()
         manager.registerMigrations(MIGRATIONS)
 
-        currentVersion = await manager.getCurrentVersion(sqlProvider=provider)
+        currentVersion: int = await manager.getCurrentVersion(sqlProvider=provider)
         logger.info(f"Current version after init: {currentVersion}")
 
         # With new multi-source architecture, migrations run automatically in __init__
@@ -281,15 +330,24 @@ async def test_existing_database():
             os.unlink(dbPath)
 
 
-async def test_auto_discovery():
+async def test_auto_discovery() -> None:
     """Test migration auto-discovery functionality.
 
     Verifies that DISCOVERED_MIGRATIONS is properly populated,
     matches the manual migrations list, and that all migration
     versions and descriptions are correct.
 
+    Args:
+        None
+
     Returns:
         None
+
+    Raises:
+        AssertionError: If DISCOVERED_MIGRATIONS is empty
+        AssertionError: If discovered migrations count doesn't match manual count
+        AssertionError: If discovered versions don't match manual versions
+        AssertionError: If migration descriptions don't match
     """
     logger.info("=" * 60)
     logger.info("TEST: Migration Auto-Discovery")
@@ -305,8 +363,8 @@ async def test_auto_discovery():
     ), f"Discovered {len(DISCOVERED_MIGRATIONS)} migrations, expected {len(MIGRATIONS)}"
 
     # Test that versions are correct
-    discoveredVersions = [m.version for m in DISCOVERED_MIGRATIONS]
-    manualVersions = [m.version for m in MIGRATIONS]
+    discoveredVersions: list[int] = [m.version for m in DISCOVERED_MIGRATIONS]
+    manualVersions: list[int] = [m.version for m in MIGRATIONS]
     assert (
         discoveredVersions == manualVersions
     ), f"Discovered versions {discoveredVersions} don't match manual {manualVersions}"
@@ -320,22 +378,31 @@ async def test_auto_discovery():
     logger.info("✅ Auto-discovery test PASSED")
 
 
-async def test_getMigration_functions():
+async def test_getMigration_functions() -> None:
     """Test that all migration files have getMigration() functions.
 
     Verifies that each migration module has a getMigration() function
     that returns the correct migration class with the proper version
     number.
 
+    Args:
+        None
+
     Returns:
         None
+
+    Raises:
+        AssertionError: If migration module is missing getMigration() function
+        AssertionError: If getMigration() returns wrong class name
+        AssertionError: If returned class has incorrect version number
+        ImportError: If migration module cannot be imported
     """
     logger.info("=" * 60)
     logger.info("TEST: getMigration() Functions")
     logger.info("=" * 60)
 
     # Known migration modules and their classes
-    expectedModules = {
+    expectedModules: dict[int, tuple[str, str]] = {
         1: ("migration_001_initial_schema", "Migration001InitialSchema"),
         2: ("migration_002_add_is_spammer_to_chat_users", "Migration002AddIsSpammerToChatUsers"),
         3: ("migration_003_add_metadata_to_chat_users", "Migration003AddMetadataToChatUsers"),
@@ -350,7 +417,7 @@ async def test_getMigration_functions():
         assert hasattr(module, "getMigration"), f"Module {moduleName} missing getMigration() function"
 
         # Test that getMigration() returns the correct class
-        returnedClass = module.getMigration()
+        returnedClass: type = module.getMigration()
         assert (
             returnedClass.__name__ == expectedClassName
         ), f"getMigration() in {moduleName} returned {returnedClass.__name__}, expected {expectedClassName}"
@@ -365,24 +432,33 @@ async def test_getMigration_functions():
     logger.info("✅ getMigration() functions test PASSED")
 
 
-async def test_loadMigrationsFromVersions():
+async def test_loadMigrationsFromVersions() -> None:
     """Test MigrationManager.loadMigrationsFromVersions() method.
 
     Creates a temporary database, uses the MigrationManager to load
     migrations from the versions directory, and verifies that all
     migrations are loaded correctly with matching versions.
 
+    Args:
+        None
+
     Returns:
         None
+
+    Raises:
+        AssertionError: If no migrations are loaded
+        AssertionError: If loaded migrations count doesn't match discovered count
+        AssertionError: If loaded versions don't match discovered versions
+        Exception: If database initialization or migration loading fails
     """
     logger.info("=" * 60)
     logger.info("TEST: loadMigrationsFromVersions() Method")
     logger.info("=" * 60)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        dbPath = f.name
+        dbPath: str = f.name
 
-    db = None
+    db: Database | None = None
     try:
         config: DatabaseManagerConfig = {
             "default": "default",
@@ -409,8 +485,8 @@ async def test_loadMigrationsFromVersions():
         ), f"Loaded {len(manager.migrations)} migrations, expected {len(DISCOVERED_MIGRATIONS)}"
 
         # Check that versions are correct
-        loadedVersions = [m.version for m in manager.migrations]
-        discoveredVersions = [m.version for m in DISCOVERED_MIGRATIONS]
+        loadedVersions: list[int] = [m.version for m in manager.migrations]
+        discoveredVersions: list[int] = [m.version for m in DISCOVERED_MIGRATIONS]
         assert (
             loadedVersions == discoveredVersions
         ), f"Loaded versions {loadedVersions} don't match discovered {discoveredVersions}"
@@ -424,24 +500,32 @@ async def test_loadMigrationsFromVersions():
             os.unlink(dbPath)
 
 
-async def test_database_auto_discovery():
+async def test_database_auto_discovery() -> None:
     """Test that Database uses auto-discovery.
 
     Creates a temporary database, initializes it, and verifies that
     the Database class uses auto-discovery to load and apply all
     migrations correctly.
 
+    Args:
+        None
+
     Returns:
         None
+
+    Raises:
+        AssertionError: If current version doesn't match expected version
+        AssertionError: If expected tables are not found in the database
+        Exception: If database initialization or migration execution fails
     """
     logger.info("=" * 60)
     logger.info("TEST: Database Auto-Discovery")
     logger.info("=" * 60)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        dbPath = f.name
+        dbPath: str = f.name
 
-    db = None
+    db: Database | None = None
     try:
         # Initialize database (should use auto-discovery)
         config: DatabaseManagerConfig = {
@@ -461,7 +545,7 @@ async def test_database_auto_discovery():
 
         # Check that all migrations were applied
         manager = MigrationManager()
-        currentVersion = await manager.getCurrentVersion(sqlProvider=provider)
+        currentVersion: int = await manager.getCurrentVersion(sqlProvider=provider)
 
         assert currentVersion == len(
             DISCOVERED_MIGRATIONS
@@ -469,7 +553,7 @@ async def test_database_auto_discovery():
 
         # Check that tables exist
         tables = await provider.executeFetchAll("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-        tableNames = [row["name"] for row in tables]
+        tableNames: list[str] = [row["name"] for row in tables]
         logger.info(f"Created tables: {', '.join(tableNames)}")
 
         # Verify key tables exist

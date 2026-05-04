@@ -60,28 +60,34 @@ class ChatMessagesRepository(BaseRepository):
         metadata: str = "",
         mediaGroupId: Optional[str] = None,
     ) -> bool:
-        """
-        Save a chat message with detailed information.
+        """Save a chat message with detailed information.
+
+        This method stores a chat message in the database along with its metadata,
+        updates related statistics (chat_users, chat_stats, chat_user_stats), and
+        handles threaded conversations and media groups.
 
         Args:
-            date: Message timestamp
-            chatId: Chat identifier (used for source routing)
-            userId: User identifier
-            messageId: Message identifier
-            replyId: Optional reply message ID
-            threadId: Optional thread ID
-            messageText: Message text content
-            messageType: Type of message
-            messageCategory: Message category
-            rootMessageId: Optional root message ID for threads
-            quoteText: Optional quoted text
-            mediaId: Optional media attachment ID
-            markup: Message markup (keyboard, inline buttons, etc.)
-            metadata: Additional metadata as JSON string
-            mediaGroupId: Optional media group identifier for grouped media
+            date (datetime.datetime): Message timestamp
+            chatId (int): Chat identifier (used for source routing)
+            userId (int): User identifier
+            messageId (MessageIdType): Message identifier
+            replyId (Optional[MessageIdType]): Optional reply message ID
+            threadId (Optional[int]): Optional thread ID (defaults to DEFAULT_THREAD_ID)
+            messageText (str): Message text content
+            messageType (MessageType): Type of message (e.g., TEXT, PHOTO, VIDEO)
+            messageCategory (MessageCategory): Message category for classification
+            rootMessageId (Optional[MessageIdType]): Optional root message ID for threads
+            quoteText (Optional[str]): Optional quoted text
+            mediaId (Optional[str]): Optional media attachment ID
+            markup (str): Message markup (keyboard, inline buttons, etc.)
+            metadata (str): Additional metadata as JSON string
+            mediaGroupId (Optional[str]): Optional media group identifier for grouped media
 
         Returns:
             bool: True if successful, False otherwise
+
+        Raises:
+            Exception: If database operation fails (caught and logged)
 
         Note:
             Writes are routed based on chatId mapping. Cannot write to readonly sources.
@@ -201,20 +207,25 @@ class ChatMessagesRepository(BaseRepository):
         *,
         dataSource: Optional[str] = None,
     ) -> List[ChatMessageDict]:
-        """
-        Get chat messages from a specific chat newer than the given date.
+        """Get chat messages from a specific chat newer than the given date.
+
+        Retrieves chat messages with optional filtering by date range, thread,
+        message category, and limit. Results are ordered by date descending.
 
         Args:
-            chatId: Chat identifier
-            sinceDateTime: Optional start date for message filtering
-            tillDateTime: Optional end date for message filtering
-            threadId: Optional thread identifier for filtering
-            limit: Optional maximum number of messages to return
-            messageCategory: Optional list of message categories to filter
-            dataSource: Optional data source name for explicit routing
+            chatId (int): Chat identifier
+            sinceDateTime (Optional[datetime.datetime]): Optional start date for message filtering
+            tillDateTime (Optional[datetime.datetime]): Optional end date for message filtering
+            threadId (Optional[int]): Optional thread identifier for filtering
+            limit (Optional[int]): Optional maximum number of messages to return
+            messageCategory (Optional[Sequence[MessageCategory]]): Optional list of message categories to filter
+            dataSource (Optional[str]): Optional data source name for explicit routing
 
         Returns:
-            List of ChatMessageDict objects matching the criteria
+            List[ChatMessageDict]: List of ChatMessageDict objects matching the criteria
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns empty list)
         """
         logger.debug(
             f"Getting chat messages for chat {chatId}:{threadId} "
@@ -265,16 +276,20 @@ class ChatMessagesRepository(BaseRepository):
     async def getChatMessageByMessageId(
         self, chatId: int, messageId: MessageIdType, *, dataSource: Optional[str] = None
     ) -> Optional[ChatMessageDict]:
-        """
-        Get a specific chat message by message_id, chat_id, and optional thread_id.
+        """Get a specific chat message by message_id and chat_id.
+
+        Retrieves a single chat message with its associated user information.
 
         Args:
-            chatId: Chat identifier
-            messageId: Message identifier
-            dataSource: Optional data source name for explicit routing
+            chatId (int): Chat identifier
+            messageId (MessageIdType): Message identifier
+            dataSource (Optional[str]): Optional data source name for explicit routing
 
         Returns:
-            ChatMessageDict or None if not found
+            Optional[ChatMessageDict]: ChatMessageDict if found, None otherwise
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns None)
         """
         logger.debug(f"Getting chat message for chat {chatId}, message_id {messageId}")
         messageId = str(messageId)
@@ -307,14 +322,20 @@ class ChatMessagesRepository(BaseRepository):
     ) -> List[ChatMessageDict]:
         """Get all chat messages in a conversation thread by root message ID.
 
+        Retrieves all messages that belong to a threaded conversation, ordered
+        chronologically (ascending by date).
+
         Args:
-            chatId: Chat identifier
-            rootMessageId: Root message ID to find thread messages for
-            threadId: Optional thread ID to filter by
-            dataSource: Optional data source identifier for multi-source database routing
+            chatId (int): Chat identifier
+            rootMessageId (MessageIdType): Root message ID to find thread messages for
+            threadId (Optional[int]): Optional thread ID to filter by
+            dataSource (Optional[str]): Optional data source identifier for multi-source database routing
 
         Returns:
-            List of chat message dictionaries in the thread
+            List[ChatMessageDict]: List of chat message dictionaries in the thread
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns empty list)
         """
         logger.debug(f"Getting chat messages for chat {chatId}, thread {threadId}, root_message_id {rootMessageId}")
         try:
@@ -346,17 +367,22 @@ class ChatMessagesRepository(BaseRepository):
     async def getChatMessagesByUser(
         self, chatId: int, userId: int, limit: int = 100, *, dataSource: Optional[str] = None
     ) -> List[ChatMessageDict]:
-        """
-        Get all chat messages by user ID.
+        """Get all chat messages by user ID.
+
+        Retrieves messages sent by a specific user in a chat, ordered by date
+        descending (most recent first).
 
         Args:
-            chatId: Chat identifier
-            userId: User identifier
-            limit: Maximum number of messages to return (default: 100)
-            dataSource: Optional data source name for explicit routing
+            chatId (int): Chat identifier
+            userId (int): User identifier
+            limit (int): Maximum number of messages to return (default: 100)
+            dataSource (Optional[str]): Optional data source name for explicit routing
 
         Returns:
-            List of ChatMessageDict
+            List[ChatMessageDict]: List of ChatMessageDict objects
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns empty list)
         """
         logger.debug(f"Getting chat messages for chat {chatId}, user {userId}")
         try:
@@ -390,17 +416,22 @@ class ChatMessagesRepository(BaseRepository):
         *,
         dataSource: Optional[str] = None,
     ) -> Optional[ChatMessageDict]:
-        """
-        Get the first (earliest) chat message with given media group ID.
+        """Get the first (earliest) chat message with given media group ID.
+
+        Retrieves the earliest message in a media group, which is typically the
+        message that should be displayed as the group's representative.
 
         Args:
-            chatId: Chat identifier
-            mediaGroupId: Media group identifier
-            threadId: Optional thread identifier for filtering
-            dataSource: Optional data source name for explicit routing
+            chatId (int): Chat identifier
+            mediaGroupId (str): Media group identifier
+            threadId (Optional[int]): Optional thread identifier for filtering
+            dataSource (Optional[str]): Optional data source name for explicit routing
 
         Returns:
-            ChatMessageDict or None if not found
+            Optional[ChatMessageDict]: ChatMessageDict if found, None otherwise
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns None)
         """
         # logger.debug(
         #     f"Getting first chat message for chat {chatId}, thread {threadId}, media_group_id {mediaGroupId}"
@@ -440,13 +471,19 @@ class ChatMessagesRepository(BaseRepository):
     ) -> bool:
         """Update the category of a chat message.
 
+        Changes the message category for classification purposes, such as marking
+        messages as important, spam, or other custom categories.
+
         Args:
-            chatId: Chat identifier
-            messageId: Message identifier
-            messageCategory: New message category to set
+            chatId (int): Chat identifier
+            messageId (MessageIdType): Message identifier
+            messageCategory (MessageCategory): New message category to set
 
         Returns:
             bool: True if successful, False otherwise
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns False)
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
@@ -477,13 +514,19 @@ class ChatMessagesRepository(BaseRepository):
     ) -> bool:
         """Update the metadata of a chat message.
 
+        Stores additional information about a message as JSON metadata, which can
+        include custom fields, processing flags, or other application-specific data.
+
         Args:
-            chatId: Chat identifier
-            messageId: Message identifier
-            metadata: New metadata value (string or any serializable type)
+            chatId (int): Chat identifier
+            messageId (MessageIdType): Message identifier
+            metadata (str | Any): New metadata value (string or any serializable type)
 
         Returns:
             bool: True if successful, False otherwise
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns False)
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)

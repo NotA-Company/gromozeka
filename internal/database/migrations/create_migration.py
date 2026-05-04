@@ -26,17 +26,20 @@ def getNextVersion() -> int:
 
     Returns:
         int: The next migration version number (1 if no migrations exist)
+
+    Raises:
+        OSError: If the versions directory cannot be accessed
     """
-    versionsDir = Path(__file__).parent / "versions"
+    versionsDir: Path = Path(__file__).parent / "versions"
 
     # Find all migration files
-    migrationFiles = list(versionsDir.glob("migration_*.py"))
+    migrationFiles: list[Path] = list(versionsDir.glob("migration_*.py"))
 
     if not migrationFiles:
         return 1
 
     # Extract version numbers
-    versions = []
+    versions: list[int] = []
     for file in migrationFiles:
         match = re.match(r"migration_(\d+)_", file.name)
         if match:
@@ -56,11 +59,14 @@ def to_snake_case(text: str) -> str:
 
     Returns:
         str: The text converted to snake_case format
+
+    Raises:
+        TypeError: If text is not a string
     """
     # Replace spaces and special chars with underscores
-    text = re.sub(r"[^\w\s]", "", text)
-    text = re.sub(r"\s+", "_", text)
-    return text.lower()
+    cleanedText: str = re.sub(r"[^\w\s]", "", text)
+    cleanedText = re.sub(r"\s+", "_", cleanedText)
+    return cleanedText.lower()
 
 
 def toPascalCase(text: str) -> str:
@@ -73,8 +79,12 @@ def toPascalCase(text: str) -> str:
 
     Returns:
         str: The text converted to PascalCase format
+
+    Raises:
+        TypeError: If text is not a string
     """
-    words = re.sub(r"[^\w\s]", "", text).split()
+    cleanedText: str = re.sub(r"[^\w\s]", "", text)
+    words: list[str] = cleanedText.split()
     return "".join(word.capitalize() for word in words)
 
 
@@ -89,20 +99,21 @@ def createMigration(description: str) -> None:
 
     Raises:
         SystemExit: If a migration file with the same version already exists
+        OSError: If the migration file cannot be written
     """
     # Get next version
-    version = getNextVersion()
+    version: int = getNextVersion()
 
     # Generate file names
-    snakeDesc = to_snake_case(description)
-    pascalDesc = toPascalCase(description)
+    snakeDesc: str = to_snake_case(description)
+    pascalDesc: str = toPascalCase(description)
 
-    filename = f"migration_{version:03d}_{snakeDesc}.py"
-    className = f"Migration{version:03d}{pascalDesc}"
+    filename: str = f"migration_{version:03d}_{snakeDesc}.py"
+    className: str = f"Migration{version:03d}{pascalDesc}"
 
     # Create file path
-    versionsDir = Path(__file__).parent / "versions"
-    filePath = versionsDir / filename
+    versionsDir: Path = Path(__file__).parent / "versions"
+    filePath: Path = versionsDir / filename
 
     # Check if file already exists
     if filePath.exists():
@@ -110,7 +121,7 @@ def createMigration(description: str) -> None:
         sys.exit(1)
 
     # Generate migration content
-    content = f'''"""Migration: {description} - v{version:03d}"""
+    content: str = f'''"""Migration: {description} - v{version:03d}"""
 
 from typing import Type
 
@@ -167,11 +178,14 @@ def getMigration() -> Type[BaseMigration]:
     print("✨ Auto-discovery is enabled! No manual registration needed")
 
 
-def main():
+def main() -> None:
     """Main entry point for the migration creation script.
 
     Parses command-line arguments and creates a new migration file with the
     provided description.
+
+    Returns:
+        None
 
     Raises:
         SystemExit: If no description is provided or if description is empty
@@ -183,7 +197,7 @@ def main():
         print('  ./venv/bin/python3 internal/database/migrations/create_migration.py "add user preferences table"')
         sys.exit(1)
 
-    description = " ".join(sys.argv[1:])
+    description: str = " ".join(sys.argv[1:])
 
     if not description:
         print("❌ Error: Description cannot be empty")

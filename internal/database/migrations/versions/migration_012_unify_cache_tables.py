@@ -1,8 +1,22 @@
-"""
-Unify cache tables migration - consolidates all cache tables into one.
+"""Migration 012: Unify cache tables into a single unified table.
 
-This migration replaces the 6 separate cache_{type} tables with a single
-unified_cache table that uses a namespace column to distinguish cache types.
+This migration consolidates multiple cache tables (cache_{type}) into a single
+unified cache table with a namespace column to distinguish between different
+cache types. This simplifies the database schema and makes cache management
+more efficient.
+
+The migration performs the following changes:
+- Creates a new unified `cache` table with namespace support
+- Adds indexes for efficient querying by namespace/key and TTL cleanup
+- Drops the old separate cache_{type} tables
+
+The unified cache table structure:
+- namespace: TEXT NOT NULL - identifies the cache type (e.g., 'llm', 'geocode')
+- key: TEXT NOT NULL - the cache key within the namespace
+- data: TEXT NOT NULL - the cached data (serialized)
+- created_at: TIMESTAMP NOT NULL - when the cache entry was created
+- updated_at: TIMESTAMP NOT NULL - when the cache entry was last updated
+- PRIMARY KEY: (namespace, key) - ensures uniqueness per namespace/key pair
 """
 
 from typing import Type
@@ -12,16 +26,29 @@ from ..base import BaseMigration
 
 
 class Migration012UnifyCacheTables(BaseMigration):
-    """Unify all cache tables into a single unified_cache table."""
+    """Migration to unify all cache tables into a single unified_cache table.
+
+    This migration replaces the 6 separate cache_{type} tables with a single
+    unified cache table that uses a namespace column to distinguish cache types.
+    This simplifies the database schema and improves cache management efficiency.
+
+    Attributes:
+        version: The migration version number (12).
+        description: A brief description of what this migration does.
+    """
 
     version = 12
     description = "Unify cache tables into single unified_cache table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create unified_cache table and drop old cache tables.
+        """Apply the migration: create unified cache table and drop old tables.
+
+        This method creates a new unified cache table with namespace support,
+        adds appropriate indexes for efficient querying, and drops the old
+        separate cache_{type} tables.
 
         Args:
-            sqlProvider: SQL provider for executing queries
+            sqlProvider: The SQL provider instance for executing database queries.
 
         Returns:
             None
@@ -57,10 +84,13 @@ class Migration012UnifyCacheTables(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Revert to separate cache tables.
+        """Rollback the migration: recreate separate cache tables and drop unified table.
+
+        This method recreates the old separate cache_{type} tables and drops
+        the unified cache table, reverting the database to its previous state.
 
         Args:
-            sqlProvider: SQL provider for executing queries
+            sqlProvider: The SQL provider instance for executing database queries.
 
         Returns:
             None
@@ -87,7 +117,10 @@ class Migration012UnifyCacheTables(BaseMigration):
 def getMigration() -> Type[BaseMigration]:
     """Return the migration class for this module.
 
+    This function is used by the migration system to discover and load
+    the migration class defined in this module.
+
     Returns:
-        Type[BaseMigration]: The migration class for this module
+        Type[BaseMigration]: The migration class (Migration012UnifyCacheTables).
     """
     return Migration012UnifyCacheTables

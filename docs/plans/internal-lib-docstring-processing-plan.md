@@ -153,52 +153,52 @@ This document provides a comprehensive plan for systematically adding and improv
 
 | Stage | Substage | File Path | Status | Notes |
 |-------|----------|-----------|--------|-------|
-| 2 | 2.1 | `internal/database/__init__.py` | [ ] | |
-| 2 | 2.1 | `internal/database/database.py` | [ ] | |
-| 2 | 2.1 | `internal/database/generic_cache.py` | [ ] | |
-| 2 | 2.1 | `internal/database/manager.py` | [ ] | |
-| 2 | 2.1 | `internal/database/models.py` | [ ] | |
-| 2 | 2.1 | `internal/database/test_utils.py` | [ ] | |
-| 2 | 2.1 | `internal/database/utils.py` | [ ] | |
-| 2 | 2.2 | `internal/database/providers/__init__.py` | [ ] | |
-| 2 | 2.2 | `internal/database/providers/base.py` | [ ] | |
-| 2 | 2.2 | `internal/database/providers/mysql.py` | [ ] | |
-| 2 | 2.2 | `internal/database/providers/postgresql.py` | [ ] | |
-| 2 | 2.2 | `internal/database/providers/sqlink.py` | [ ] | |
-| 2 | 2.2 | `internal/database/providers/sqlite3.py` | [ ] | |
-| 2 | 2.2 | `internal/database/providers/utils.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/__init__.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/base.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/cache.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/chat_info.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/chat_messages.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/chat_settings.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/chat_summarization.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/chat_users.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/common.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/delayed_tasks.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/media_attachments.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/spam.py` | [ ] | |
-| 2 | 3.1 | `internal/database/repositories/user_data.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/__init__.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/base.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/create_migration.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/manager.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/test_migrations.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/__init__.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_001_initial_schema.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_002_add_is_spammer_to_chat_users.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_003_add_metadata_to_chat_users.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_004_add_cache_storage_table.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_005_add_yandex_cache.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_006_new_cache_tables.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_007_messages_metadata.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_008_add_media_group_support.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_009_remove_is_spammer_from_chat_users.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_010_add_updated_by_to_chat_settings.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_012_unify_cache_tables.py` | [ ] | |
-| 2 | 4.1 | `internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py` | [ ] | |
+| 2 | 2.1 | `internal/database/__init__.py` | [x] | |
+| 2 | 2.1 | `internal/database/database.py` | [x] | |
+| 2 | 2.1 | `internal/database/generic_cache.py` | [x] | |
+| 2 | 2.1 | `internal/database/manager.py` | [x] | |
+| 2 | 2.1 | `internal/database/models.py` | [x] | |
+| 2 | 2.1 | `internal/database/test_utils.py` | [x] | |
+| 2 | 2.1 | `internal/database/utils.py` | [x] | |
+| 2 | 2.2 | `internal/database/providers/__init__.py` | [x] | |
+| 2 | 2.2 | `internal/database/providers/base.py` | [x] | |
+| 2 | 2.2 | `internal/database/providers/mysql.py` | [x] | |
+| 2 | 2.2 | `internal/database/providers/postgresql.py` | [x] | |
+| 2 | 2.2 | `internal/database/providers/sqlink.py` | [x] | |
+| 2 | 2.2 | `internal/database/providers/sqlite3.py` | [x] | |
+| 2 | 2.2 | `internal/database/providers/utils.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/__init__.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/base.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/cache.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/chat_info.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/chat_messages.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/chat_settings.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/chat_summarization.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/chat_users.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/common.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/delayed_tasks.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/media_attachments.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/spam.py` | [x] | |
+| 2 | 3.1 | `internal/database/repositories/user_data.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/__init__.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/base.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/create_migration.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/manager.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/test_migrations.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/__init__.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_001_initial_schema.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_002_add_is_spammer_to_chat_users.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_003_add_metadata_to_chat_users.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_004_add_cache_storage_table.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_005_add_yandex_cache.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_006_new_cache_tables.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_007_messages_metadata.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_008_add_media_group_support.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_009_remove_is_spammer_from_chat_users.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_010_add_updated_by_to_chat_settings.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_012_unify_cache_tables.py` | [x] | |
+| 2 | 4.1 | `internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py` | [x] | |
 
 ### Stage 3: Bot Core
 
@@ -745,6 +745,6 @@ Generate weekly progress reports:
 ---
 
 **Document Version**: 1.0  
-**Last Updated**: 2025-01-03  
+**Last Updated**: 2026-05-03
 **Maintainer**: Development Team  
 **Status**: Active

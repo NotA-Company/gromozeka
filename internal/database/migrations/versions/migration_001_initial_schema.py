@@ -1,7 +1,20 @@
-"""
-Initial schema migration - creates all base tables.
+"""Initial schema migration for the Gromozeka database.
 
-This migration extracts all table creation from the original _initDatabase() method.
+This migration creates all base tables required for the Gromozeka bot system,
+extracting table creation logic from the original _initDatabase() method.
+
+The migration creates the following table categories:
+- Chat-related tables: chat_messages, chat_settings, chat_users, chat_info,
+  chat_stats, chat_user_stats, chat_topics
+- Media and attachments: media_attachments
+- Task management: delayed_tasks
+- User data: user_data
+- Spam detection: spam_messages, ham_messages, bayes_tokens, bayes_classes
+- Caching: chat_summarization_cache and dynamic cache tables
+- Performance indexes for frequently queried columns
+
+This is the first migration (version 1) and establishes the foundational
+database schema for the entire application.
 """
 
 from typing import Type
@@ -11,22 +24,51 @@ from ..base import BaseMigration
 
 
 class Migration001InitialSchema(BaseMigration):
-    """Initial database schema migration."""
+    """Initial database schema migration for Gromozeka.
 
-    version = 1
-    description = "Create initial database schema"
+    This migration establishes the foundational database schema by creating all
+    necessary tables for the bot system. It is the first migration (version 1)
+    and should be applied to any new database instance.
+
+    Attributes:
+        version: The migration version number (1).
+        description: Human-readable description of the migration.
+    """
+
+    version: int = 1
+    description: str = "Create initial database schema"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create all initial tables.
+        """Create all initial database tables and indexes.
+
+        This method creates the complete initial schema including:
+        - Chat-related tables (messages, settings, users, info, stats, topics)
+        - Media attachments table
+        - Delayed tasks table
+        - User data table
+        - Spam/ham message tables for Bayes filter training
+        - Bayes filter statistics tables (tokens, classes)
+        - Chat summarization cache table with index
+        - Dynamic cache tables for each CacheType enum value
+        - Performance indexes for frequently queried columns
 
         Args:
-            sqlProvider: SQL provider to execute database commands
+            sqlProvider: SQL provider to execute database commands.
 
         Returns:
             None
         """
         # Import CacheType here to avoid circular dependency
         from ...models import CacheType
+
+        cacheTables: list[ParametrizedQuery] = [ParametrizedQuery(f"""
+                CREATE TABLE IF NOT EXISTS cache_{cacheType} (
+                    key TEXT PRIMARY KEY,
+                    data TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+                """) for cacheType in CacheType]
 
         await sqlProvider.batchExecute(
             [
@@ -246,32 +288,25 @@ class Migration001InitialSchema(BaseMigration):
             CREATE INDEX IF NOT EXISTS bayes_classes_chat_idx ON bayes_classes(chat_id)
         """),
             ]
-            + [
-                # Cache tables (for OpenWeatherMap for now)
-                ParametrizedQuery(f"""
-                CREATE TABLE IF NOT EXISTS cache_{cacheType} (
-                    key TEXT PRIMARY KEY,
-                    data TEXT NOT NULL,
-                    created_at TIMESTAMP NOT NULL,
-                    updated_at TIMESTAMP NOT NULL
-                )
-                """)
-                for cacheType in CacheType
-            ]
+            + cacheTables
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Drop all tables created by this migration.
+        """Drop all tables and indexes created by this migration.
+
+        This method removes all database objects created by the up() method,
+        including tables and indexes. It drops cache tables dynamically based
+        on the CacheType enum values.
 
         Args:
-            sqlProvider: SQL provider to execute database commands
+            sqlProvider: SQL provider to execute database commands.
 
         Returns:
             None
         """
         from ...models import CacheType
 
-        tables = [
+        tables: list[str] = [
             "chat_messages",
             "chat_settings",
             "chat_users",
@@ -288,31 +323,31 @@ class Migration001InitialSchema(BaseMigration):
             "bayes_tokens",
             "bayes_classes",
         ]
-        await sqlProvider.batchExecute(
-            [
-                # Drop all tables in reverse order
-                ParametrizedQuery(f"DROP TABLE IF EXISTS {table}")
-                for table in tables
-            ]
-            + [
-                # Drop indexes
-                ParametrizedQuery("DROP INDEX IF EXISTS chat_summarization_cache_ctfl_index"),
-                ParametrizedQuery("DROP INDEX IF EXISTS bayes_tokens_chat_idx"),
-                ParametrizedQuery("DROP INDEX IF EXISTS bayes_tokens_total_idx"),
-                ParametrizedQuery("DROP INDEX IF EXISTS bayes_classes_chat_idx"),
-            ]
-            + [
-                # Drop cache tables
-                ParametrizedQuery(f"DROP TABLE IF EXISTS cache_{cacheType}")
-                for cacheType in CacheType
-            ]
-        )
+        dropTableQueries: list[ParametrizedQuery] = [
+            ParametrizedQuery(f"DROP TABLE IF EXISTS {table}") for table in tables
+        ]
+
+        dropIndexQueries: list[ParametrizedQuery] = [
+            ParametrizedQuery("DROP INDEX IF EXISTS chat_summarization_cache_ctfl_index"),
+            ParametrizedQuery("DROP INDEX IF EXISTS bayes_tokens_chat_idx"),
+            ParametrizedQuery("DROP INDEX IF EXISTS bayes_tokens_total_idx"),
+            ParametrizedQuery("DROP INDEX IF EXISTS bayes_classes_chat_idx"),
+        ]
+
+        dropCacheQueries: list[ParametrizedQuery] = [
+            ParametrizedQuery(f"DROP TABLE IF EXISTS cache_{cacheType}") for cacheType in CacheType
+        ]
+
+        await sqlProvider.batchExecute(dropTableQueries + dropIndexQueries + dropCacheQueries)
 
 
 def getMigration() -> Type[BaseMigration]:
     """Return the migration class for this module.
 
+    This function is used by the migration system to dynamically load
+    the migration class from this module.
+
     Returns:
-        Type[BaseMigration]: The migration class for this module
+        Type[BaseMigration]: The Migration001InitialSchema class.
     """
     return Migration001InitialSchema

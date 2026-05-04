@@ -4,9 +4,34 @@ Migration manager for handling database migrations.
 This module provides functionality to manage database schema migrations,
 including tracking current version, discovering available migrations,
 executing migrations in order, handling failures, and supporting rollback operations.
+
+Key Components:
+    - MigrationError: Exception raised when migration operations fail
+    - MigrationManager: Main class for managing migration lifecycle
+
+Usage Example:
+    .. code-block:: python
+
+        from internal.database.migrations.manager import MigrationManager
+        from internal.database.providers import PostgreSQLProvider
+
+        # Create migration manager
+        manager = MigrationManager()
+
+        # Register migrations manually or auto-load
+        manager.loadMigrationsFromVersions()
+
+        # Run migrations
+        provider = PostgreSQLProvider(config)
+        await manager.migrate(sqlProvider=provider)
+
+        # Check status
+        status = await manager.getStatus(sqlProvider=provider)
+        print(f"Current version: {status['current_version']}")
 """
 
 import logging
+from datetime import datetime
 from typing import List, Optional, Type
 
 from ..providers import BaseSQLProvider
@@ -22,27 +47,38 @@ SETTINGS_TABLE = "settings"
 
 
 class MigrationError(Exception):
-    """Exception raised when migration fails."""
+    """Exception raised when migration operations fail.
+
+    This exception is raised when a migration cannot be applied or rolled back,
+    typically due to database errors, validation failures, or other runtime issues.
+    """
 
     pass
 
 
 class MigrationManager:
-    """
-    Manages database migrations.
+    """Manages database migrations lifecycle.
+
+    This class provides comprehensive migration management including version tracking,
+    migration discovery, execution, rollback, and status reporting. It maintains
+    migration state in a settings table and ensures migrations are applied in
+    the correct order.
+
+    Attributes:
+        migrations: List of registered migration classes sorted by version.
 
     Responsibilities:
-    - Track current migration version in settings table
-    - Discover available migrations
-    - Execute migrations in order
-    - Handle migration failures
-    - Support rollback operations
+        - Track current migration version in settings table
+        - Discover available migrations from versions package
+        - Execute migrations in order with error handling
+        - Support rollback operations for failed migrations
+        - Provide migration status and pending migration information
     """
 
     __slots__ = ("migrations",)
 
-    def __init__(self):
-        """Initialize migration manager."""
+    def __init__(self) -> None:
+        """Initialize migration manager with empty migration list."""
         self.migrations: List[Type[BaseMigration]] = []
 
     def registerMigrations(self, migrations: List[Type[BaseMigration]]) -> None:
@@ -65,11 +101,15 @@ class MigrationManager:
         logger.debug(f"Registered {len(self.migrations)} migrations")
 
     def loadMigrationsFromVersions(self) -> None:
-        """
-        Load migrations automatically from versions package.
+        """Load migrations automatically from versions package.
 
-        This replaces the need for manual registration by discovering
-        all migration classes from the versions module.
+        This method discovers and registers all migration classes from the
+        versions module, eliminating the need for manual registration.
+        Migrations are automatically sorted by version.
+
+        Raises:
+            MigrationError: If duplicate migration versions are detected
+                during auto-discovery.
         """
         from .versions import DISCOVERED_MIGRATIONS
 
@@ -77,15 +117,21 @@ class MigrationManager:
         logger.info(f"Auto-loaded {len(DISCOVERED_MIGRATIONS)} migrations")
 
     async def setSetting(self, key: str, value: str, *, sqlProvider: BaseSQLProvider) -> None:
-        """
-        Store a key-value pair in the settings table.
+        """Store a key-value pair in the settings table.
+
+        This method performs an upsert operation, creating a new setting if it
+        doesn't exist or updating an existing one. The operation uses the
+        settings table with conflict resolution on the key column.
 
         Args:
-            key: Setting key to store
-            value: Setting value to store
-            sqlProvider: SQL provider instance for database operations
+            key: Setting key to store.
+            value: Setting value to store.
+            sqlProvider: SQL provider instance for database operations.
+
+        Raises:
+            Exception: If the database operation fails.
         """
-        currentTimestamp = getCurrentTimestamp()
+        currentTimestamp: datetime = getCurrentTimestamp()
         await sqlProvider.upsert(
             table=SETTINGS_TABLE,
             values={
@@ -104,18 +150,19 @@ class MigrationManager:
     async def getSetting(
         self, key: str, default: Optional[str] = None, *, sqlProvider: BaseSQLProvider
     ) -> Optional[str]:
-        """
-        Retrieve a value from the settings table.
+        """Retrieve a value from the settings table.
 
         Args:
-            key: Setting key to retrieve
-            default: Default value to return if key not found
-            sqlProvider: SQL provider instance for database operations
+            key: Setting key to retrieve.
+            default: Default value to return if key not found. Defaults to None.
 
         Returns:
-            Setting value if found, otherwise the default value
+            Setting value if found, otherwise the default value.
+
+        Raises:
+            Exception: If the database query fails.
         """
-        result = await sqlProvider.executeFetchOne(
+        result: Optional[dict] = await sqlProvider.executeFetchOne(
             f"""
                     SELECT value FROM {SETTINGS_TABLE}
                     WHERE key = :key
@@ -128,68 +175,82 @@ class MigrationManager:
         return result["value"] if result else default
 
     async def getCurrentVersion(self, *, sqlProvider: BaseSQLProvider) -> int:
-        """
-        Get current migration version from settings table.
+        """Get current migration version from settings table.
 
         Args:
-            sqlProvider: SQL provider instance for database operations
+            sqlProvider: SQL provider instance for database operations.
 
         Returns:
-            Current migration version (0 if no migrations have been run)
+            Current migration version. Returns 0 if no migrations have been run
+            or if the version cannot be retrieved.
+
+        Raises:
+            Exception: Logged but not raised; returns 0 on error.
         """
         try:
-            versionStr = await self.getSetting(MIGRATION_VERSION_KEY, "0", sqlProvider=sqlProvider)
+            versionStr: Optional[str] = await self.getSetting(MIGRATION_VERSION_KEY, "0", sqlProvider=sqlProvider)
             return int(versionStr) if versionStr else 0
         except Exception as e:
             logger.error(f"Failed to get current migration version for {sqlProvider}: {e}")
             return 0
 
     async def _setVersion(self, version: int, *, sqlProvider: BaseSQLProvider) -> None:
-        """
-        Update migration version in settings table.
+        """Update migration version in settings table.
+
+        This private method updates both the migration version and the last run
+        timestamp in the settings table.
 
         Args:
-            version: New migration version number
-            sqlProvider: SQL provider instance for database operations
+            version: New migration version number.
+            sqlProvider: SQL provider instance for database operations.
+
+        Raises:
+            Exception: If the database operation fails.
         """
         await self.setSetting(MIGRATION_VERSION_KEY, str(version), sqlProvider=sqlProvider)
         await self.setSetting(MIGRATION_LAST_RUN_KEY, getCurrentTimestamp().isoformat(), sqlProvider=sqlProvider)
         logger.info(f"Updated migration in {sqlProvider} version to {version}")
 
     def getAvailableMigrations(self) -> List[Type[BaseMigration]]:
-        """
-        Get list of all available migrations.
+        """Get list of all available migrations.
 
         Returns:
-            List of migration classes sorted by version
+            List of migration classes sorted by version in ascending order.
         """
         return self.migrations
 
     async def getPendingMigrations(self, *, sqlProvider: BaseSQLProvider) -> List[Type[BaseMigration]]:
-        """
-        Get list of pending migrations.
+        """Get list of pending migrations.
 
         Args:
-            sqlProvider: SQL provider instance for database operations
+            sqlProvider: SQL provider instance for database operations.
 
         Returns:
-            List of migration classes that haven't been applied yet
+            List of migration classes that haven't been applied yet, sorted
+            by version in ascending order.
         """
-        currentVersion = await self.getCurrentVersion(sqlProvider=sqlProvider)
+        currentVersion: int = await self.getCurrentVersion(sqlProvider=sqlProvider)
         return [m for m in self.migrations if m.version > currentVersion]
 
     async def migrate(self, targetVersion: Optional[int] = None, *, sqlProvider: BaseSQLProvider) -> None:
-        """
-        Run migrations up to target version.
+        """Run migrations up to target version.
+
+        This method executes all pending migrations up to the specified target version.
+        If no target version is provided, it migrates to the latest available version.
+        Each migration is executed in order, and the version is updated after each
+        successful migration. If a migration fails, the process stops and raises
+        an exception.
 
         Args:
-            targetVersion: Target version to migrate to (None = latest available)
-            sqlProvider: SQL provider instance for database operations
+            targetVersion: Target version to migrate to. If None, migrates to the
+                latest available version. Defaults to None.
+            sqlProvider: SQL provider instance for database operations.
 
         Raises:
-            MigrationError: If migration fails or target version is invalid
+            MigrationError: If migration fails or target version is invalid.
+            Exception: If database operations fail during migration execution.
         """
-        currentVersion = await self.getCurrentVersion(sqlProvider=sqlProvider)
+        currentVersion: int = await self.getCurrentVersion(sqlProvider=sqlProvider)
         logger.info(f"Current migration version: {currentVersion}")
 
         # Determine target version
@@ -211,7 +272,9 @@ class MigrationManager:
             raise MigrationError(f"Target version {targetVersion} is higher than latest version")
 
         # Get migrations to run
-        pendingMigrations = [m for m in self.migrations if currentVersion < m.version <= targetVersion]
+        pendingMigrations: List[Type[BaseMigration]] = [
+            m for m in self.migrations if currentVersion < m.version <= targetVersion
+        ]
 
         if not pendingMigrations:
             logger.info("No pending migrations")
@@ -221,13 +284,13 @@ class MigrationManager:
 
         # Run each migration
         for migrationClass in pendingMigrations:
-            migration = migrationClass()
+            migration: BaseMigration = migrationClass()
             logger.info(f"Applying migration {migration.version}: {migration.description}")
 
             try:
-                startTime = getCurrentTimestamp()
+                startTime: datetime = getCurrentTimestamp()
                 await migration.up(sqlProvider)
-                duration = (getCurrentTimestamp() - startTime).total_seconds()
+                duration: float = (getCurrentTimestamp() - startTime).total_seconds()
 
                 await self._setVersion(migration.version, sqlProvider=sqlProvider)
                 logger.info(f"Migration {migration.version} completed in {duration:.2f}s")
@@ -239,24 +302,31 @@ class MigrationManager:
         logger.info("All migrations completed successfully")
 
     async def rollback(self, steps: int = 1, *, sqlProvider: BaseSQLProvider) -> None:
-        """
-        Rollback N migrations.
+        """Rollback N migrations.
+
+        This method rolls back the specified number of migrations in reverse order.
+        Each migration's down() method is called to undo the changes, and the
+        version is updated after each successful rollback. If a rollback fails,
+        the process stops and raises an exception.
 
         Args:
-            steps: Number of migrations to rollback
-            sqlProvider: SQL provider instance for database operations
+            steps: Number of migrations to rollback. Defaults to 1.
+            sqlProvider: SQL provider instance for database operations.
 
         Raises:
-            MigrationError: If rollback fails
+            MigrationError: If rollback fails.
+            Exception: If database operations fail during rollback execution.
         """
-        currentVersion = await self.getCurrentVersion(sqlProvider=sqlProvider)
+        currentVersion: int = await self.getCurrentVersion(sqlProvider=sqlProvider)
 
         if currentVersion == 0:
             logger.info("No migrations to rollback")
             return
 
         # Get migrations to rollback
-        migrationsToRollback = [m for m in reversed(self.migrations) if m.version <= currentVersion][:steps]
+        migrationsToRollback: List[Type[BaseMigration]] = [
+            m for m in reversed(self.migrations) if m.version <= currentVersion
+        ][:steps]
 
         if not migrationsToRollback:
             logger.info("No migrations to rollback")
@@ -266,16 +336,16 @@ class MigrationManager:
 
         # Rollback each migration
         for migrationClass in migrationsToRollback:
-            migration = migrationClass()
+            migration: BaseMigration = migrationClass()
             logger.info(f"Rolling back migration {migration.version}: {migration.description}")
 
             try:
-                startTime = getCurrentTimestamp()
+                startTime: datetime = getCurrentTimestamp()
                 await migration.down(sqlProvider)
-                duration = (getCurrentTimestamp() - startTime).total_seconds()
+                duration: float = (getCurrentTimestamp() - startTime).total_seconds()
 
                 # Set version to previous migration
-                newVersion = migration.version - 1
+                newVersion: int = migration.version - 1
                 await self._setVersion(newVersion, sqlProvider=sqlProvider)
                 logger.info(f"Migration {migration.version} rolled back in {duration:.2f}s")
             except Exception as e:
@@ -286,22 +356,28 @@ class MigrationManager:
         logger.info("Rollback completed successfully")
 
     async def getStatus(self, *, sqlProvider: BaseSQLProvider) -> dict:
-        """
-        Get migration status information.
+        """Get migration status information.
+
+        This method provides a comprehensive overview of the current migration state,
+        including version information, pending migrations, and execution history.
 
         Args:
-            sqlProvider: SQL provider instance for database operations
+            sqlProvider: SQL provider instance for database operations.
 
         Returns:
-            Dictionary containing:
-                - current_version: Current migration version
-                - latest_version: Latest available migration version
-                - pending_count: Number of pending migrations
-                - total_migrations: Total number of registered migrations
-                - last_run: Timestamp of last migration run
+            Dictionary containing migration status information with the following keys:
+                - current_version (int): Current migration version.
+                - latest_version (int): Latest available migration version.
+                - pending_count (int): Number of pending migrations.
+                - total_migrations (int): Total number of registered migrations.
+                - last_run (Optional[str]): Timestamp of last migration run in ISO format,
+                    or None if no migrations have been run.
+
+        Raises:
+            Exception: If database operations fail during status retrieval.
         """
-        currentVersion = await self.getCurrentVersion(sqlProvider=sqlProvider)
-        pendingMigrations = await self.getPendingMigrations(sqlProvider=sqlProvider)
+        currentVersion: int = await self.getCurrentVersion(sqlProvider=sqlProvider)
+        pendingMigrations: List[Type[BaseMigration]] = await self.getPendingMigrations(sqlProvider=sqlProvider)
 
         return {
             "current_version": currentVersion,
