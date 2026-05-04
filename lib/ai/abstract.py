@@ -1,5 +1,19 @@
-"""
-Abstract base class for LLM models, dood!
+"""Abstract base classes for LLM models and providers.
+
+This module defines the core abstractions for the AI library, providing interfaces
+for LLM model implementations and their providers. It includes:
+
+- AbstractModel: Base class for all LLM model implementations
+- AbstractLLMProvider: Base class for all LLM provider implementations
+
+These abstractions enable consistent interaction with different LLM providers
+(OpenAI, Yandex Cloud, OpenRouter, etc.) while allowing provider-specific
+customizations.
+
+Example:
+    To create a custom provider, inherit from AbstractLLMProvider and implement
+    the addModel method. To create a custom model, inherit from AbstractModel
+    and implement the _generateText and generateImage methods.
 """
 
 import datetime
@@ -17,7 +31,35 @@ logger = logging.getLogger(__name__)
 
 
 class AbstractModel(ABC):
-    """Abstract base class for all LLM models, dood!"""
+    """Abstract base class for all LLM model implementations.
+
+    This class provides the core interface for LLM models, including text and
+    image generation capabilities, token estimation, and JSON logging support.
+    Concrete implementations must inherit from this class and implement the
+    abstract methods.
+
+    Attributes:
+        provider: The LLM provider instance that created this model.
+        modelId: Unique identifier for the model.
+        modelVersion: Version string for the model.
+        temperature: Temperature setting for text generation (0.0 to 2.0).
+        contextSize: Maximum context size in tokens.
+        tiktokenEncoding: The tiktoken encoding name used for tokenization.
+        tokensCountCoeff: Coefficient for token count estimation (default: 1.1).
+        enableJSONLog: Whether JSON logging is enabled.
+        jsonLogFile: Path to the JSON log file.
+        jsonLogAddDateSuffix: Whether to append date suffix to log filename.
+
+    Example:
+        class CustomModel(AbstractModel):
+            async def _generateText(self, messages, tools=None):
+                # Implementation here
+                pass
+
+            async def generateImage(self, messages):
+                # Implementation here
+                pass
+    """
 
     def __init__(
         self,
@@ -28,14 +70,20 @@ class AbstractModel(ABC):
         contextSize: int,
         extraConfig: Dict[str, Any] = {},
     ):
-        """Initialize model with provider and configuration, dood!
+        """Initialize model with provider and configuration.
 
         Args:
-            provider: The LLM provider instance
-            model_id: Unique identifier for the model
-            model_version: Version of the model
-            temperature: Temperature setting for generation
-            context_size: Maximum context size in tokens
+            provider: The LLM provider instance that manages this model.
+            modelId: Unique identifier for the model (e.g., "gpt-4", "yandexgpt").
+            modelVersion: Version string for the model (e.g., "latest", "v1").
+            temperature: Temperature setting for generation (0.0 = deterministic,
+                2.0 = very creative).
+            contextSize: Maximum context size in tokens.
+            extraConfig: Additional configuration options for the model.
+
+        Raises:
+            ValueError: If temperature is not between 0.0 and 2.0.
+            ValueError: If contextSize is negative.
         """
         self._config = extraConfig
 
@@ -57,30 +105,46 @@ class AbstractModel(ABC):
     async def _generateText(
         self, messages: Sequence[ModelMessage], tools: Optional[Sequence[LLMAbstractTool]] = None
     ) -> ModelRunResult:
-        """Run the model with given messages, dood!
+        """Generate text using the model implementation.
+
+        This is the internal method that must be implemented by concrete model
+        classes. It handles the actual API call to the LLM provider.
 
         Args:
-            messages: List of message dictionaries with role and content
+            messages: Sequence of message objects containing role and content.
+            tools: Optional sequence of tools available to the model for function
+                calling.
 
         Returns:
-            Model response (type depends on implementation)
+            ModelRunResult containing the generated text, status, and metadata.
+
+        Raises:
+            NotImplementedError: If not implemented by subclass.
+            Exception: Provider-specific exceptions during generation.
         """
         raise NotImplementedError
 
     async def generateText(
         self, messages: Sequence[ModelMessage], tools: Optional[Sequence[LLMAbstractTool]] = None
     ) -> ModelRunResult:
-        """Generate text using the model with optional tools, dood!
+        """Generate text using the model with optional tools.
 
-        This method calls the internal _generateText method and optionally logs the
-        request/response in JSON format if JSON logging is enabled.
+        This is the public method for text generation. It performs token count
+        estimation, context size validation, calls the internal _generateText
+        method, and optionally logs the request/response in JSON format.
 
         Args:
-            messages: List of message dictionaries with role and content
-            tools: Optional list of tools available to the model
+            messages: Sequence of message objects containing role and content.
+            tools: Optional sequence of tools available to the model for function
+                calling.
 
         Returns:
-            ModelRunResult containing the generated text and metadata
+            ModelRunResult containing the generated text, status, and metadata.
+            Returns an error result if estimated tokens exceed twice the context size.
+
+        Raises:
+            Exception: If the model returns an error status (UNSPECIFIED,
+                CONTENT_FILTER, UNKNOWN, or ERROR).
         """
         tokensCount = self.getEstimateTokensCount(messages)
         logger.debug(
@@ -106,7 +170,23 @@ class AbstractModel(ABC):
 
     @abstractmethod
     async def generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
-        """Generate Image"""
+        """Generate an image using the model.
+
+        This method must be implemented by concrete model classes that support
+        image generation.
+
+        Args:
+            messages: Sequence of message objects containing the image generation
+                prompt and context.
+
+        Returns:
+            ModelRunResult containing the generated image URL or data, status,
+            and metadata.
+
+        Raises:
+            NotImplementedError: If not implemented by subclass.
+            Exception: Provider-specific exceptions during image generation.
+        """
         raise NotImplementedError
 
     async def generateTextWithFallBack(
@@ -115,7 +195,26 @@ class AbstractModel(ABC):
         fallbackModel: "AbstractModel",
         tools: Optional[Sequence[LLMAbstractTool]] = None,
     ) -> ModelRunResult:
-        """Run the model with given messages and fallback, dood!"""
+        """Generate text with automatic fallback to another model.
+
+        This method attempts to generate text using the current model. If the
+        generation fails or returns an error status, it automatically retries
+        using the fallback model.
+
+        Args:
+            messages: Sequence of message objects containing role and content.
+            fallbackModel: Alternative model to use if the primary model fails.
+            tools: Optional sequence of tools available to the model for function
+                calling.
+
+        Returns:
+            ModelRunResult containing the generated text, status, and metadata.
+            The result will have fallback flag set to True if the fallback model
+            was used.
+
+        Raises:
+            Exception: If both the primary and fallback models fail.
+        """
         try:
             ret = await self.generateText(messages, tools)
             if ret.status in [
@@ -138,7 +237,25 @@ class AbstractModel(ABC):
         messages: Sequence[ModelMessage],
         fallbackModel: "AbstractModel",
     ) -> ModelRunResult:
-        """Generate image with given messages and fallback, dood!"""
+        """Generate an image with automatic fallback to another model.
+
+        This method attempts to generate an image using the current model. If the
+        generation fails or returns an error status, it automatically retries
+        using the fallback model.
+
+        Args:
+            messages: Sequence of message objects containing the image generation
+                prompt and context.
+            fallbackModel: Alternative model to use if the primary model fails.
+
+        Returns:
+            ModelRunResult containing the generated image URL or data, status,
+            and metadata. The result will have fallback flag set to True if the
+            fallback model was used.
+
+        Raises:
+            Exception: If both the primary and fallback models fail.
+        """
         try:
             ret = await self.generateImage(messages)
             if ret.status in [
@@ -157,17 +274,24 @@ class AbstractModel(ABC):
             return ret
 
     def getEstimateTokensCount(self, data: Any) -> int:
-        """Get estimated number of tokens in given data, dood!
+        """Get estimated number of tokens in given data.
 
         This method estimates the token count by converting the data to a string
-        and using a simple heuristic: average token length is 4 characters.
-        The result is multiplied by a coefficient to ensure we don't underestimate.
+        and using a heuristic: average token length is 3.5 characters. The result
+        is multiplied by a coefficient (default 1.1) to ensure we don't underestimate.
 
         Args:
-            data: Data to estimate token count for (string or object convertible to JSON)
+            data: Data to estimate token count for. Can be a string or any object
+                convertible to JSON.
 
         Returns:
-            Estimated number of tokens in the data
+            Estimated number of tokens in the data.
+
+        Example:
+            >>> model.getEstimateTokensCount("Hello world")
+            4
+            >>> model.getEstimateTokensCount({"key": "value"})
+            3
         """
         text = ""
         if isinstance(data, str):
@@ -182,10 +306,38 @@ class AbstractModel(ABC):
         return int(tokensCount * self.tokensCountCoeff)
 
     def getInfo(self) -> Dict[str, Any]:
-        """Get model information, dood!
+        """Get model information and configuration.
+
+        Returns a dictionary containing the model's metadata including provider,
+        model ID, version, temperature, context size, and capabilities.
 
         Returns:
-            Dictionary with model metadata
+            Dictionary with model metadata containing:
+                - provider: Provider class name
+                - model_id: Model identifier
+                - model_version: Model version
+                - temperature: Temperature setting
+                - context_size: Maximum context size
+                - support_tools: Whether the model supports tools
+                - support_text: Whether the model supports text generation
+                - support_images: Whether the model supports image generation
+                - tier: Model tier (e.g., "bot_owner")
+                - extra: Additional configuration options
+
+        Example:
+            >>> model.getInfo()
+            {
+                'provider': 'OpenAIProvider',
+                'model_id': 'gpt-4',
+                'model_version': 'latest',
+                'temperature': 0.7,
+                'context_size': 8192,
+                'support_tools': True,
+                'support_text': True,
+                'support_images': False,
+                'tier': 'bot_owner',
+                'extra': {}
+            }
         """
         return {
             "provider": self.provider.__class__.__name__,
@@ -201,34 +353,51 @@ class AbstractModel(ABC):
         }
 
     def __str__(self) -> str:
-        """String representation of the model, dood!"""
+        """Return string representation of the model.
+
+        Returns:
+            String in format "modelId@modelVersion (provider: ProviderName)".
+        """
         return f"{self.modelId}@{self.modelVersion} (provider: {self.provider.__class__.__name__})"
 
     def setupJSONLogging(self, file: str, addDateSuffix: bool) -> None:
-        """Setup JSON logging of request-response pairs, dood!
+        """Setup JSON logging of request-response pairs.
 
         Configure the model to log requests and responses in JSON format to a file.
         When enabled, each request-response pair will be written as a JSON object
-        to the specified log file.
+        to the specified log file. This is useful for debugging, analysis, and
+        auditing model interactions.
 
         Args:
-            file: Path to the log file where JSON entries will be written
-            addDateSuffix: If True, append the current date (YYYY-MM-DD) to the filename
+            file: Path to the log file where JSON entries will be written.
+            addDateSuffix: If True, append the current date (YYYY-MM-DD) to the
+                filename, creating a new log file each day.
+
+        Example:
+            >>> model.setupJSONLogging("/tmp/model_logs.jsonl", True)
+            >>> # Logs will be written to /tmp/model_logs.jsonl.2025-01-15
         """
         self.enableJSONLog = True
         self.jsonLogFile = file
         self.jsonLogAddDateSuffix = addDateSuffix
 
     def printJSONLog(self, messages: Sequence[ModelMessage], result: ModelRunResult) -> None:
-        """Write a request-response pair to the JSON log file, dood!
+        """Write a request-response pair to the JSON log file.
 
         This method writes the conversation history (messages) and model response
         to a JSON log file. Each entry contains the timestamp, status, request,
         and response. Empty responses are not logged.
 
         Args:
-            messages: List of messages that were sent to the model
-            result: The model's response result
+            messages: List of message objects that were sent to the model.
+            result: The model's response result containing status, text, and metadata.
+
+        Raises:
+            IOError: If unable to write to the log file.
+
+        Note:
+            The log file is opened in append mode, so multiple sessions can write
+            to the same file. Each entry is written as a single line of JSON.
         """
         if not result.resultText:
             # Do not log empty results
@@ -255,13 +424,37 @@ class AbstractModel(ABC):
 
 
 class AbstractLLMProvider(ABC):
-    """Abstract base class for all LLM providers, dood!"""
+    """Abstract base class for all LLM provider implementations.
+
+    This class provides the core interface for LLM providers, which manage
+    multiple model instances. Concrete implementations must inherit from this
+    class and implement the addModel method.
+
+    Attributes:
+        config: Provider-specific configuration dictionary.
+        models: Dictionary mapping model names to AbstractModel instances.
+
+    Example:
+        class CustomProvider(AbstractLLMProvider):
+            def addModel(self, name, modelId, modelVersion, temperature,
+                        contextSize, extraConfig={}):
+                model = CustomModel(self, modelId, modelVersion, temperature,
+                                   contextSize, extraConfig)
+                self.models[name] = model
+                return model
+    """
 
     def __init__(self, config: Dict[str, Any]):
-        """Initialize provider with configuration, dood!
+        """Initialize provider with configuration.
 
         Args:
-            config: Provider-specific configuration dictionary
+            config: Provider-specific configuration dictionary. May include API
+                keys, endpoints, default settings, and other provider-specific
+                options.
+
+        Example:
+            >>> config = {"api_key": "sk-...", "endpoint": "https://api.example.com"}
+            >>> provider = CustomProvider(config)
         """
         self.config = config
         self.models: Dict[str, AbstractModel] = {}
@@ -276,59 +469,96 @@ class AbstractLLMProvider(ABC):
         contextSize: int,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
-        """Add a model to this provider, dood!
+        """Add a model to this provider.
+
+        This method must be implemented by concrete provider classes to create
+        and register a model instance with the provider.
 
         Args:
-            name: Human-readable name for the model
-            model_id: Provider-specific model identifier
-            model_version: Model version
-            temperature: Temperature setting
-            context_size: Maximum context size in tokens
+            name: Human-readable name for the model (used as key in models dict).
+            modelId: Provider-specific model identifier (e.g., "gpt-4", "yandexgpt").
+            modelVersion: Version string for the model (e.g., "latest", "v1").
+            temperature: Temperature setting for generation (0.0 to 2.0).
+            contextSize: Maximum context size in tokens.
+            extraConfig: Additional configuration options for the model.
 
         Returns:
-            Created model instance
+            The created AbstractModel instance.
+
+        Raises:
+            NotImplementedError: If not implemented by subclass.
+            ValueError: If a model with the same name already exists.
         """
         pass
 
     def getModel(self, name: str) -> Optional[AbstractModel]:
-        """Get a model by name, dood!
+        """Get a model by name.
+
+        Retrieve a model instance from the provider's model registry.
 
         Args:
-            name: Model name
+            name: The name of the model to retrieve.
 
         Returns:
-            Model instance or None if not found
+            The AbstractModel instance if found, None otherwise.
+
+        Example:
+            >>> model = provider.getModel("gpt4")
+            >>> if model:
+            ...     result = await model.generateText(messages)
         """
         return self.models.get(name)
 
     def listModels(self) -> List[str]:
-        """List all available model names, dood!
+        """List all available model names.
+
+        Returns a list of all model names registered with this provider.
 
         Returns:
-            List of model names
+            List of model names (keys from the models dictionary).
+
+        Example:
+            >>> provider.listModels()
+            ['gpt4', 'gpt35', 'claude3']
         """
         return list(self.models.keys())
 
     def getModelInfo(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get information about a specific model, dood!
+        """Get information about a specific model.
+
+        Retrieve detailed information about a model including its configuration
+        and capabilities.
 
         Args:
-            name: Model name
+            name: The name of the model to get information for.
 
         Returns:
-            Model information dictionary or None if not found
+            Dictionary with model information if the model exists, None otherwise.
+            See AbstractModel.getInfo() for the structure of the returned dict.
+
+        Example:
+            >>> info = provider.getModelInfo("gpt4")
+            >>> print(info['model_id'])
+            gpt-4
         """
         model = self.getModel(name)
         return model.getInfo() if model else None
 
     def deleteModel(self, name: str) -> bool:
-        """Delete a model from this provider, dood!
+        """Delete a model from this provider.
+
+        Remove a model from the provider's model registry.
 
         Args:
-            name: Model name to delete
+            name: The name of the model to delete.
 
         Returns:
-            True if model was deleted, False if not found
+            True if the model was found and deleted, False if the model was not
+            found.
+
+        Example:
+            >>> if provider.deleteModel("old_model"):
+            ...     print("Model deleted successfully")
         """
         if name in self.models:
             del self.models[name]
@@ -336,5 +566,10 @@ class AbstractLLMProvider(ABC):
         return False
 
     def __str__(self) -> str:
-        """String representation of the provider, dood!"""
+        """Return string representation of the provider.
+
+        Returns:
+            String in format "ProviderName (N models)" where N is the number of
+            registered models.
+        """
         return f"{self.__class__.__name__} ({len(self.models)} models)"

@@ -1,8 +1,19 @@
-"""Comprehensive tests for BasicOpenAIProvider and BasicOpenAIModel, dood!
+"""Comprehensive tests for BasicOpenAIProvider and BasicOpenAIModel.
 
 This module provides extensive test coverage for the BasicOpenAIProvider class
 and BasicOpenAIModel class, including initialization, model configuration,
 request formatting, response parsing, error handling, and tool call support.
+
+Test Categories:
+    - Provider Initialization Tests: Tests for provider setup and configuration
+    - Model Addition Tests: Tests for adding and managing models
+    - Model Initialization Tests: Tests for model instance creation
+    - Text Generation Tests: Tests for text generation with various scenarios
+    - Tool Call Tests: Tests for tool call functionality
+    - Request Formatting Tests: Tests for API request formatting
+    - Error Handling Tests: Tests for error scenarios
+    - Image Generation Tests: Tests for image generation capabilities
+    - Integration Tests: End-to-end workflow tests
 """
 
 import json
@@ -37,9 +48,24 @@ from lib.ai.providers.basic_openai_provider import (
 
 
 class MockOpenAIProvider(BasicOpenAIProvider):
-    """Mock implementation of BasicOpenAIProvider for testing, dood!"""
+    """Mock implementation of BasicOpenAIProvider for testing.
+
+    This class provides a concrete implementation of BasicOpenAIProvider for
+    testing purposes, using a fixed base URL and creating BasicOpenAIModel
+    instances with the provider's client.
+
+    Attributes:
+        config: Provider configuration dictionary containing API keys and settings.
+        _client: The AsyncOpenAI client instance for API communication.
+        models: Dictionary mapping model names to their model instances.
+    """
 
     def _getBaseUrl(self) -> str:
+        """Return the base URL for the OpenAI API.
+
+        Returns:
+            str: The base URL for the test API endpoint.
+        """
         return "https://test.api.example.com/v1"
 
     def _createModelInstance(
@@ -50,7 +76,20 @@ class MockOpenAIProvider(BasicOpenAIProvider):
         temperature: float,
         contextSize: int,
         extraConfig: Dict[str, Any] = {},
-    ):
+    ) -> BasicOpenAIModel:
+        """Create a new model instance for this provider.
+
+        Args:
+            name: The name to assign to the model.
+            modelId: The model identifier (e.g., "gpt-4").
+            modelVersion: The version of the model.
+            temperature: The sampling temperature for generation.
+            contextSize: The maximum context window size in tokens.
+            extraConfig: Additional configuration options for the model.
+
+        Returns:
+            BasicOpenAIModel: A new model instance configured with the provided parameters.
+        """
         return BasicOpenAIModel(
             provider=self,
             modelId=modelId,
@@ -68,8 +107,12 @@ class MockOpenAIProvider(BasicOpenAIProvider):
 
 
 @pytest.fixture
-def mockAsyncOpenAI():
-    """Create a mock AsyncOpenAI client, dood!"""
+def mockAsyncOpenAI() -> Mock:
+    """Create a mock AsyncOpenAI client for testing.
+
+    Returns:
+        Mock: A mock AsyncOpenAI client with mocked chat completions API.
+    """
     client = Mock(spec=AsyncOpenAI)
     client.chat = Mock()
     client.chat.completions = Mock()
@@ -78,8 +121,12 @@ def mockAsyncOpenAI():
 
 
 @pytest.fixture
-def providerConfig():
-    """Create provider configuration, dood!"""
+def providerConfig() -> Dict[str, Any]:
+    """Create provider configuration for testing.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing API key and timeout configuration.
+    """
     return {
         "api_key": "test-api-key-123",
         "timeout": 30,
@@ -87,8 +134,15 @@ def providerConfig():
 
 
 @pytest.fixture
-def testProvider(providerConfig):
-    """Create a test provider instance, dood!"""
+def testProvider(providerConfig: Dict[str, Any]) -> MockOpenAIProvider:
+    """Create a test provider instance for testing.
+
+    Args:
+        providerConfig: Provider configuration dictionary.
+
+    Returns:
+        MockOpenAIProvider: A configured provider instance for testing.
+    """
     with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = MockOpenAIProvider(providerConfig)
@@ -96,8 +150,16 @@ def testProvider(providerConfig):
 
 
 @pytest.fixture
-def testModel(testProvider, mockAsyncOpenAI):
-    """Create a test model instance, dood!"""
+def testModel(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> BasicOpenAIModel:
+    """Create a test model instance for testing.
+
+    Args:
+        testProvider: The test provider instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+
+    Returns:
+        BasicOpenAIModel: A configured model instance for testing.
+    """
     model = BasicOpenAIModel(
         provider=testProvider,
         modelId="test-model",
@@ -111,8 +173,12 @@ def testModel(testProvider, mockAsyncOpenAI):
 
 
 @pytest.fixture
-def sampleMessages():
-    """Create sample messages for testing, dood!"""
+def sampleMessages() -> list[ModelMessage]:
+    """Create sample messages for testing.
+
+    Returns:
+        list[ModelMessage]: A list of sample model messages including system and user messages.
+    """
     return [
         ModelMessage(role="system", content="You are a helpful assistant"),
         ModelMessage(role="user", content="Hello, how are you?"),
@@ -120,8 +186,12 @@ def sampleMessages():
 
 
 @pytest.fixture
-def sampleTools():
-    """Create sample tools for testing, dood!"""
+def sampleTools() -> list[LLMToolFunction]:
+    """Create sample tools for testing.
+
+    Returns:
+        list[LLMToolFunction]: A list of sample tool functions for testing tool call functionality.
+    """
     return [
         LLMToolFunction(
             name="getWeather",
@@ -143,8 +213,15 @@ def sampleTools():
 # ============================================================================
 
 
-def testProviderInitializationSuccess(providerConfig):
-    """Test provider initializes successfully with valid config, dood!"""
+def testProviderInitializationSuccess(providerConfig: Dict[str, Any]) -> None:
+    """Test provider initializes successfully with valid config.
+
+    Args:
+        providerConfig: Provider configuration dictionary.
+
+    Raises:
+        AssertionError: If provider initialization fails or attributes are incorrect.
+    """
     with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = MockOpenAIProvider(providerConfig)
@@ -155,16 +232,27 @@ def testProviderInitializationSuccess(providerConfig):
         assert len(provider.models) == 0
 
 
-def testProviderInitializationMissingApiKey():
-    """Test provider initialization fails without api_key, dood!"""
+def testProviderInitializationMissingApiKey() -> None:
+    """Test provider initialization fails without api_key.
+
+    Raises:
+        ValueError: If api_key is missing from configuration.
+    """
     config = {"timeout": 30}
 
     with pytest.raises(ValueError, match="api_key is required"):
         MockOpenAIProvider(config)
 
 
-def testProviderInitializationWithClientParams(providerConfig):
-    """Test provider initialization with custom client params, dood!"""
+def testProviderInitializationWithClientParams(providerConfig: Dict[str, Any]) -> None:
+    """Test provider initialization with custom client params.
+
+    Args:
+        providerConfig: Provider configuration dictionary.
+
+    Raises:
+        AssertionError: If custom client parameters are not passed correctly.
+    """
 
     class CustomProvider(MockOpenAIProvider):
         def _getClientParams(self) -> Dict[str, Any]:
@@ -181,8 +269,12 @@ def testProviderInitializationWithClientParams(providerConfig):
         assert callKwargs["max_retries"] == 3
 
 
-def testProviderGetBaseUrlNotImplemented():
-    """Test _getBaseUrl raises NotImplementedError in base class, dood!"""
+def testProviderGetBaseUrlNotImplemented() -> None:
+    """Test _getBaseUrl raises NotImplementedError in base class.
+
+    Raises:
+        NotImplementedError: If _getBaseUrl is called on base class.
+    """
     provider = BasicOpenAIProvider.__new__(BasicOpenAIProvider)
     provider.config = {"api_key": "test"}
 
@@ -190,8 +282,12 @@ def testProviderGetBaseUrlNotImplemented():
         provider._getBaseUrl()
 
 
-def testProviderCreateModelInstanceNotImplemented():
-    """Test _createModelInstance raises NotImplementedError in base class, dood!"""
+def testProviderCreateModelInstanceNotImplemented() -> None:
+    """Test _createModelInstance raises NotImplementedError in base class.
+
+    Raises:
+        NotImplementedError: If _createModelInstance is called on base class.
+    """
     provider = BasicOpenAIProvider.__new__(BasicOpenAIProvider)
     provider.config = {"api_key": "test"}
 
@@ -204,8 +300,16 @@ def testProviderCreateModelInstanceNotImplemented():
 # ============================================================================
 
 
-def testAddModelSuccess(testProvider, mockAsyncOpenAI):
-    """Test adding a model successfully, dood!"""
+def testAddModelSuccess(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test adding a model successfully.
+
+    Args:
+        testProvider: The test provider instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If model is not added correctly.
+    """
     testProvider._client = mockAsyncOpenAI
 
     model = testProvider.addModel(
@@ -225,8 +329,16 @@ def testAddModelSuccess(testProvider, mockAsyncOpenAI):
     assert model.contextSize == 8192
 
 
-def testAddModelDuplicate(testProvider, mockAsyncOpenAI):
-    """Test adding duplicate model returns existing model, dood!"""
+def testAddModelDuplicate(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test adding duplicate model returns existing model.
+
+    Args:
+        testProvider: The test provider instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If duplicate model handling is incorrect.
+    """
     testProvider._client = mockAsyncOpenAI
 
     model1 = testProvider.addModel("test-model", "gpt-4", "1.0", 0.7, 4096)
@@ -236,8 +348,12 @@ def testAddModelDuplicate(testProvider, mockAsyncOpenAI):
     assert len(testProvider.models) == 1
 
 
-def testAddModelWithoutClient():
-    """Test adding model without initialized client fails, dood!"""
+def testAddModelWithoutClient() -> None:
+    """Test adding model without initialized client fails.
+
+    Raises:
+        RuntimeError: If OpenAI client is not initialized.
+    """
     provider = MockOpenAIProvider.__new__(MockOpenAIProvider)
     provider.config = {"api_key": "test"}
     provider.models = {}
@@ -247,8 +363,16 @@ def testAddModelWithoutClient():
         provider.addModel("test", "model", "1.0", 0.7, 4096)
 
 
-def testAddModelWithExtraConfig(testProvider, mockAsyncOpenAI):
-    """Test adding model with extra configuration, dood!"""
+def testAddModelWithExtraConfig(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test adding model with extra configuration.
+
+    Args:
+        testProvider: The test provider instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If extra configuration is not applied correctly.
+    """
     testProvider._client = mockAsyncOpenAI
 
     extraConfig = {
@@ -267,7 +391,7 @@ def testAddModelWithExtraConfig(testProvider, mockAsyncOpenAI):
     )
 
     assert model._config == extraConfig
-    assert model._supportTools is True
+    assert model._supportTools is True  # type: ignore[attr-defined]
 
 
 # ============================================================================
@@ -275,8 +399,16 @@ def testAddModelWithExtraConfig(testProvider, mockAsyncOpenAI):
 # ============================================================================
 
 
-def testModelInitialization(testProvider, mockAsyncOpenAI):
-    """Test model initializes correctly, dood!"""
+def testModelInitialization(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test model initializes correctly.
+
+    Args:
+        testProvider: The test provider instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If model initialization fails or attributes are incorrect.
+    """
     model = BasicOpenAIModel(
         provider=testProvider,
         modelId="test-model",
@@ -293,16 +425,30 @@ def testModelInitialization(testProvider, mockAsyncOpenAI):
     assert model.temperature == 0.7
     assert model.contextSize == 4096
     assert model._client == mockAsyncOpenAI
-    assert model._supportTools is True
+    assert model._supportTools is True  # type: ignore[attr-defined]
 
 
-def testModelGetModelId(testModel):
-    """Test _getModelId returns correct model ID, dood!"""
+def testModelGetModelId(testModel: BasicOpenAIModel) -> None:
+    """Test _getModelId returns correct model ID.
+
+    Args:
+        testModel: The test model instance.
+
+    Raises:
+        AssertionError: If model ID is incorrect.
+    """
     assert testModel._getModelId() == "test-model"
 
 
-def testModelGetExtraParams(testModel):
-    """Test _getExtraParams returns empty dict by default, dood!"""
+def testModelGetExtraParams(testModel: BasicOpenAIModel) -> None:
+    """Test _getExtraParams returns empty dict by default.
+
+    Args:
+        testModel: The test model instance.
+
+    Raises:
+        AssertionError: If extra params are not empty by default.
+    """
     assert testModel._getExtraParams() == {}
 
 
@@ -312,8 +458,19 @@ def testModelGetExtraParams(testModel):
 
 
 @pytest.mark.asyncio
-async def testGenerateTextSuccess(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test successful text generation, dood!"""
+async def testGenerateTextSuccess(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test successful text generation.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If text generation fails or result is incorrect.
+    """
     # Create mock response
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
@@ -341,17 +498,36 @@ async def testGenerateTextSuccess(testModel, mockAsyncOpenAI, sampleMessages):
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithoutClient(testModel, sampleMessages):
-    """Test text generation fails without client, dood!"""
-    testModel._client = None
+async def testGenerateTextWithoutClient(testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]) -> None:
+    """Test text generation fails without client.
+
+    Args:
+        testModel: The test model instance.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        RuntimeError: If OpenAI client is not initialized.
+    """
+    testModel._client = None  # type: ignore[assignment]
 
     with pytest.raises(RuntimeError, match="OpenAI client not initialized"):
         await testModel.generateText(sampleMessages)
 
 
 @pytest.mark.asyncio
-async def testGenerateTextNotSupported(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test text generation fails when not supported, dood!"""
+async def testGenerateTextNotSupported(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test text generation fails when not supported.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        NotImplementedError: If text generation is not supported.
+    """
     testModel._config["support_text"] = False
 
     with pytest.raises(NotImplementedError, match="Text generation isn't supported"):
@@ -359,8 +535,19 @@ async def testGenerateTextNotSupported(testModel, mockAsyncOpenAI, sampleMessage
 
 
 @pytest.mark.asyncio
-async def testGenerateTextTruncated(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test text generation with truncated response, dood!"""
+async def testGenerateTextTruncated(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test text generation with truncated response.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If truncated response is not handled correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -385,8 +572,19 @@ async def testGenerateTextTruncated(testModel, mockAsyncOpenAI, sampleMessages):
 
 
 @pytest.mark.asyncio
-async def testGenerateTextContentFilter(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test text generation with content filter, dood!"""
+async def testGenerateTextContentFilter(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test text generation with content filter.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If content filter is not handled correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -411,8 +609,19 @@ async def testGenerateTextContentFilter(testModel, mockAsyncOpenAI, sampleMessag
 
 
 @pytest.mark.asyncio
-async def testGenerateTextUnknownFinishReason(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test text generation with unknown finish reason, dood!"""
+async def testGenerateTextUnknownFinishReason(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test text generation with unknown finish reason.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If unknown finish reason is not handled correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -436,8 +645,19 @@ async def testGenerateTextUnknownFinishReason(testModel, mockAsyncOpenAI, sample
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithNullContent(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test text generation with null content, dood!"""
+async def testGenerateTextWithNullContent(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test text generation with null content.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If null content is not handled correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -466,8 +686,23 @@ async def testGenerateTextWithNullContent(testModel, mockAsyncOpenAI, sampleMess
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithTools(testModel, mockAsyncOpenAI, sampleMessages, sampleTools):
-    """Test text generation with tool calls, dood!"""
+async def testGenerateTextWithTools(
+    testModel: BasicOpenAIModel,
+    mockAsyncOpenAI: Mock,
+    sampleMessages: list[ModelMessage],
+    sampleTools: list[LLMToolFunction],
+) -> None:
+    """Test text generation with tool calls.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+        sampleTools: Sample tools for testing.
+
+    Raises:
+        AssertionError: If tool calls are not handled correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -505,8 +740,23 @@ async def testGenerateTextWithTools(testModel, mockAsyncOpenAI, sampleMessages, 
 
 
 @pytest.mark.asyncio
-async def testGenerateTextWithMultipleToolCalls(testModel, mockAsyncOpenAI, sampleMessages, sampleTools):
-    """Test text generation with multiple tool calls, dood!"""
+async def testGenerateTextWithMultipleToolCalls(
+    testModel: BasicOpenAIModel,
+    mockAsyncOpenAI: Mock,
+    sampleMessages: list[ModelMessage],
+    sampleTools: list[LLMToolFunction],
+) -> None:
+    """Test text generation with multiple tool calls.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+        sampleTools: Sample tools for testing.
+
+    Raises:
+        AssertionError: If multiple tool calls are not handled correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -550,8 +800,23 @@ async def testGenerateTextWithMultipleToolCalls(testModel, mockAsyncOpenAI, samp
 
 
 @pytest.mark.asyncio
-async def testGenerateTextToolsNotSupported(testModel, mockAsyncOpenAI, sampleMessages, sampleTools):
-    """Test tools are ignored when not supported, dood!"""
+async def testGenerateTextToolsNotSupported(
+    testModel: BasicOpenAIModel,
+    mockAsyncOpenAI: Mock,
+    sampleMessages: list[ModelMessage],
+    sampleTools: list[LLMToolFunction],
+) -> None:
+    """Test tools are ignored when not supported.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+        sampleTools: Sample tools for testing.
+
+    Raises:
+        AssertionError: If tools are not ignored when not supported.
+    """
     testModel._supportTools = False
 
     mockResponse = Mock(spec=ChatCompletion)
@@ -579,8 +844,23 @@ async def testGenerateTextToolsNotSupported(testModel, mockAsyncOpenAI, sampleMe
 
 
 @pytest.mark.asyncio
-async def testGenerateTextToolsPassedToApi(testModel, mockAsyncOpenAI, sampleMessages, sampleTools):
-    """Test tools are correctly passed to API, dood!"""
+async def testGenerateTextToolsPassedToApi(
+    testModel: BasicOpenAIModel,
+    mockAsyncOpenAI: Mock,
+    sampleMessages: list[ModelMessage],
+    sampleTools: list[LLMToolFunction],
+) -> None:
+    """Test tools are correctly passed to API.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+        sampleTools: Sample tools for testing.
+
+    Raises:
+        AssertionError: If tools are not passed correctly to API.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -614,8 +894,19 @@ async def testGenerateTextToolsPassedToApi(testModel, mockAsyncOpenAI, sampleMes
 
 
 @pytest.mark.asyncio
-async def testRequestParametersFormatting(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test request parameters are formatted correctly, dood!"""
+async def testRequestParametersFormatting(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test request parameters are formatted correctly.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If request parameters are not formatted correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -644,8 +935,19 @@ async def testRequestParametersFormatting(testModel, mockAsyncOpenAI, sampleMess
 
 
 @pytest.mark.asyncio
-async def testMessagesConversion(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test messages are converted to correct format, dood!"""
+async def testMessagesConversion(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test messages are converted to correct format.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If messages are not converted correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -680,8 +982,19 @@ async def testMessagesConversion(testModel, mockAsyncOpenAI, sampleMessages):
 
 
 @pytest.mark.asyncio
-async def testGenerateTextApiError(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test handling of API errors, dood!"""
+async def testGenerateTextApiError(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test handling of API errors.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        Exception: If API error occurs.
+    """
     mockAsyncOpenAI.chat.completions.create.side_effect = Exception("API Error")
 
     with pytest.raises(Exception, match="API Error"):
@@ -689,8 +1002,23 @@ async def testGenerateTextApiError(testModel, mockAsyncOpenAI, sampleMessages):
 
 
 @pytest.mark.asyncio
-async def testGenerateTextInvalidToolCallJson(testModel, mockAsyncOpenAI, sampleMessages, sampleTools):
-    """Test handling of invalid tool call JSON, dood!"""
+async def testGenerateTextInvalidToolCallJson(
+    testModel: BasicOpenAIModel,
+    mockAsyncOpenAI: Mock,
+    sampleMessages: list[ModelMessage],
+    sampleTools: list[LLMToolFunction],
+) -> None:
+    """Test handling of invalid tool call JSON.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+        sampleTools: Sample tools for testing.
+
+    Raises:
+        json.JSONDecodeError: If tool call JSON is invalid.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -727,15 +1055,34 @@ async def testGenerateTextInvalidToolCallJson(testModel, mockAsyncOpenAI, sample
 
 
 @pytest.mark.asyncio
-async def testGenerateImageNotSupported(testModel, sampleMessages):
-    """Test image generation fails when not supported, dood!"""
+async def testGenerateImageNotSupported(testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]) -> None:
+    """Test image generation fails when not supported.
+
+    Args:
+        testModel: The test model instance.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        NotImplementedError: If image generation is not supported.
+    """
     with pytest.raises(NotImplementedError, match="Image generation isn't supported"):
         await testModel.generateImage(sampleMessages)
 
 
 @pytest.mark.asyncio
-async def testGenerateImageSuccess(testModel, mockAsyncOpenAI, sampleMessages):
-    """Test successful image generation, dood!"""
+async def testGenerateImageSuccess(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test successful image generation.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If image generation fails or result is incorrect.
+    """
     testModel._config["support_images"] = True
 
     mockResponse = Mock(spec=ChatCompletion)
@@ -771,10 +1118,18 @@ async def testGenerateImageSuccess(testModel, mockAsyncOpenAI, sampleMessages):
 
 
 @pytest.mark.asyncio
-async def testGenerateImageWithoutClient(testModel, sampleMessages):
-    """Test image generation fails without client, dood!"""
+async def testGenerateImageWithoutClient(testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]) -> None:
+    """Test image generation fails without client.
+
+    Args:
+        testModel: The test model instance.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AttributeError: If OpenAI client is not initialized.
+    """
     testModel._config["support_images"] = True
-    testModel._client = None
+    testModel._client = None  # type: ignore[assignment]
 
     with pytest.raises(AttributeError):
         await testModel.generateImage(sampleMessages)
@@ -786,8 +1141,16 @@ async def testGenerateImageWithoutClient(testModel, sampleMessages):
 
 
 @pytest.mark.asyncio
-async def testFullWorkflowAddModelAndGenerate(testProvider, mockAsyncOpenAI):
-    """Test full workflow: add model and generate text, dood!"""
+async def testFullWorkflowAddModelAndGenerate(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test full workflow: add model and generate text.
+
+    Args:
+        testProvider: The test provider instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If workflow fails or result is incorrect.
+    """
     testProvider._client = mockAsyncOpenAI
 
     # Add model
@@ -825,8 +1188,16 @@ async def testFullWorkflowAddModelAndGenerate(testProvider, mockAsyncOpenAI):
     assert result.resultText == "Test response"
 
 
-def testProviderModelManagement(testProvider, mockAsyncOpenAI):
-    """Test provider model management methods, dood!"""
+def testProviderModelManagement(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test provider model management methods.
+
+    Args:
+        testProvider: The test provider instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If model management methods fail.
+    """
     testProvider._client = mockAsyncOpenAI
 
     # Add models

@@ -1,8 +1,28 @@
-"""Comprehensive tests for LLMManager, dood!
+"""Comprehensive tests for LLMManager.
 
 This module provides extensive test coverage for the LLMManager class,
 including provider registration, model management, configuration loading,
 error handling, and multi-provider scenarios.
+
+Test Categories:
+    - Initialization Tests: Verify manager initialization with various configurations
+    - Provider Registration Tests: Test provider registration and error handling
+    - Model Management Tests: Test model listing, retrieval, and info access
+    - Provider Management Tests: Test provider listing and retrieval
+    - Model Initialization Tests: Test model initialization with edge cases
+    - Integration Tests: Test multi-provider scenarios and full workflows
+    - Edge Cases and Error Handling: Test boundary conditions and error scenarios
+
+Mock Classes:
+    MockModel: Mock implementation of AbstractModel for testing
+    MockProvider: Mock implementation of AbstractLLMProvider for testing
+
+Fixtures:
+    emptyConfig: Empty configuration dictionary
+    singleProviderConfig: Configuration with one provider and model
+    multiProviderConfig: Configuration with multiple providers and models
+    configWithDisabledModel: Configuration with enabled and disabled models
+    mockProviderClasses: Dictionary of mock provider classes for patching
 """
 
 import logging
@@ -21,18 +41,46 @@ from lib.ai.models import ModelResultStatus, ModelRunResult
 
 
 class MockModel(AbstractModel):
-    """Mock model for testing, dood!"""
+    """Mock model implementation for testing LLMManager.
 
-    async def _generateText(self, messages, tools=[]):
-        """Mock text generation, dood!"""
+    This class provides a mock implementation of AbstractModel that returns
+    predefined responses for text and image generation. It is used in tests
+    to verify LLMManager functionality without making actual API calls.
+
+    Attributes:
+        provider: The parent provider instance
+        modelId: The model identifier
+        modelVersion: The model version string
+        temperature: The temperature parameter for generation
+        contextSize: The maximum context window size
+        extraConfig: Additional configuration parameters
+    """
+
+    async def _generateText(self, messages: list, tools: list = []) -> ModelRunResult:
+        """Generate mock text response.
+
+        Args:
+            messages: List of message dictionaries for the conversation
+            tools: Optional list of tool definitions (default: [])
+
+        Returns:
+            ModelRunResult: Mock result with predefined text response
+        """
         return ModelRunResult(
             rawResult={"mock": "response"},
             status=ModelResultStatus.FINAL,
             resultText="Mock response",
         )
 
-    async def generateImage(self, messages):
-        """Mock image generation, dood!"""
+    async def generateImage(self, messages: list) -> ModelRunResult:
+        """Generate mock image response.
+
+        Args:
+            messages: List of message dictionaries for the conversation
+
+        Returns:
+            ModelRunResult: Mock result with predefined image data
+        """
         return ModelRunResult(
             rawResult={"mock": "image"},
             status=ModelResultStatus.FINAL,
@@ -42,7 +90,15 @@ class MockModel(AbstractModel):
 
 
 class MockProvider(AbstractLLMProvider):
-    """Mock provider for testing, dood!"""
+    """Mock LLM provider implementation for testing LLMManager.
+
+    This class provides a mock implementation of AbstractLLMProvider that
+    creates MockModel instances. It is used in tests to verify provider
+    registration and model management without making actual API calls.
+
+    Attributes:
+        models: Dictionary mapping model names to MockModel instances
+    """
 
     def addModel(
         self,
@@ -53,7 +109,19 @@ class MockProvider(AbstractLLMProvider):
         contextSize: int,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
-        """Add a mock model, dood!"""
+        """Add a mock model to the provider.
+
+        Args:
+            name: The unique name for the model
+            modelId: The model identifier
+            modelVersion: The model version string
+            temperature: The temperature parameter for generation
+            contextSize: The maximum context window size
+            extraConfig: Additional configuration parameters (default: {})
+
+        Returns:
+            AbstractModel: The created or existing MockModel instance
+        """
         if name in self.models:
             return self.models[name]
 
@@ -75,14 +143,23 @@ class MockProvider(AbstractLLMProvider):
 
 
 @pytest.fixture
-def emptyConfig():
-    """Create empty configuration, dood!"""
+def emptyConfig() -> Dict[str, Any]:
+    """Create empty configuration for testing.
+
+    Returns:
+        Dict[str, Any]: Configuration dictionary with empty providers and models
+    """
     return {"providers": {}, "models": {}}
 
 
 @pytest.fixture
-def singleProviderConfig():
-    """Create configuration with single provider, dood!"""
+def singleProviderConfig() -> Dict[str, Any]:
+    """Create configuration with single provider and model for testing.
+
+    Returns:
+        Dict[str, Any]: Configuration dictionary with one yc-openai provider
+            and one enabled model
+    """
     return {
         "providers": {
             "test-provider": {
@@ -105,8 +182,13 @@ def singleProviderConfig():
 
 
 @pytest.fixture
-def multiProviderConfig():
-    """Create configuration with multiple providers, dood!"""
+def multiProviderConfig() -> Dict[str, Any]:
+    """Create configuration with multiple providers and models for testing.
+
+    Returns:
+        Dict[str, Any]: Configuration dictionary with three providers
+            (yc-openai, openrouter, yc-sdk) and three models
+    """
     return {
         "providers": {
             "provider1": {
@@ -149,8 +231,13 @@ def multiProviderConfig():
 
 
 @pytest.fixture
-def configWithDisabledModel():
-    """Create configuration with disabled model, dood!"""
+def configWithDisabledModel() -> Dict[str, Any]:
+    """Create configuration with both enabled and disabled models for testing.
+
+    Returns:
+        Dict[str, Any]: Configuration dictionary with one provider and
+            two models (one enabled, one disabled)
+    """
     return {
         "providers": {
             "test-provider": {
@@ -180,8 +267,12 @@ def configWithDisabledModel():
 
 
 @pytest.fixture
-def mockProviderClasses():
-    """Create mock provider classes for patching, dood!"""
+def mockProviderClasses() -> Dict[str, type]:
+    """Create mock provider classes for patching in tests.
+
+    Returns:
+        Dict[str, type]: Dictionary mapping provider class names to MockProvider
+    """
     return {
         "YcOpenaiProvider": MockProvider,
         "OpenrouterProvider": MockProvider,
@@ -348,16 +439,25 @@ def testProviderRegistrationWithException(caplog):
 # ============================================================================
 
 
-def testListModelsEmpty(emptyConfig):
-    """Test listing models returns empty list, dood!"""
+def testListModelsEmpty(emptyConfig: Dict[str, Any]) -> None:
+    """Test listing models returns empty list when no models configured.
+
+    Args:
+        emptyConfig: Empty configuration dictionary fixture
+    """
     manager = LLMManager(emptyConfig)
     models = manager.listModels()
 
     assert models == []
 
 
-def testListModelsSingle(singleProviderConfig, mockProviderClasses):
-    """Test listing models with single model, dood!"""
+def testListModelsSingle(singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test listing models with single model configured.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -371,8 +471,13 @@ def testListModelsSingle(singleProviderConfig, mockProviderClasses):
         assert "test-model" in models
 
 
-def testListModelsMultiple(multiProviderConfig, mockProviderClasses):
-    """Test listing models with multiple models, dood!"""
+def testListModelsMultiple(multiProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test listing models with multiple models configured.
+
+    Args:
+        multiProviderConfig: Configuration with multiple providers and models
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -388,8 +493,13 @@ def testListModelsMultiple(multiProviderConfig, mockProviderClasses):
         assert "model3" in models
 
 
-def testGetModelSuccess(singleProviderConfig, mockProviderClasses):
-    """Test getting model by name succeeds, dood!"""
+def testGetModelSuccess(singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test getting model by name succeeds.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -404,16 +514,25 @@ def testGetModelSuccess(singleProviderConfig, mockProviderClasses):
         assert model.modelId == "gpt-4"
 
 
-def testGetModelNotFound(emptyConfig):
-    """Test getting non-existent model returns None, dood!"""
+def testGetModelNotFound(emptyConfig: Dict[str, Any]) -> None:
+    """Test getting non-existent model returns None.
+
+    Args:
+        emptyConfig: Empty configuration dictionary fixture
+    """
     manager = LLMManager(emptyConfig)
     model = manager.getModel("nonexistent-model")
 
     assert model is None
 
 
-def testGetModelProviderNotFound(singleProviderConfig, mockProviderClasses):
-    """Test getting model when provider is missing returns None, dood!"""
+def testGetModelProviderNotFound(singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test getting model when provider is missing returns None.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -428,8 +547,13 @@ def testGetModelProviderNotFound(singleProviderConfig, mockProviderClasses):
         assert model is None
 
 
-def testGetModelInfoSuccess(singleProviderConfig, mockProviderClasses):
-    """Test getting model info succeeds, dood!"""
+def testGetModelInfoSuccess(singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test getting model info succeeds.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -446,8 +570,12 @@ def testGetModelInfoSuccess(singleProviderConfig, mockProviderClasses):
         assert info["temperature"] == 0.7
 
 
-def testGetModelInfoNotFound(emptyConfig):
-    """Test getting info for non-existent model returns None, dood!"""
+def testGetModelInfoNotFound(emptyConfig: Dict[str, Any]) -> None:
+    """Test getting info for non-existent model returns None.
+
+    Args:
+        emptyConfig: Empty configuration dictionary fixture
+    """
     manager = LLMManager(emptyConfig)
     info = manager.getModelInfo("nonexistent-model")
 
@@ -459,16 +587,25 @@ def testGetModelInfoNotFound(emptyConfig):
 # ============================================================================
 
 
-def testListProvidersEmpty(emptyConfig):
-    """Test listing providers returns empty list, dood!"""
+def testListProvidersEmpty(emptyConfig: Dict[str, Any]) -> None:
+    """Test listing providers returns empty list when no providers configured.
+
+    Args:
+        emptyConfig: Empty configuration dictionary fixture
+    """
     manager = LLMManager(emptyConfig)
     providers = manager.listProviders()
 
     assert providers == []
 
 
-def testListProvidersSingle(singleProviderConfig, mockProviderClasses):
-    """Test listing providers with single provider, dood!"""
+def testListProvidersSingle(singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test listing providers with single provider configured.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -482,8 +619,13 @@ def testListProvidersSingle(singleProviderConfig, mockProviderClasses):
         assert "test-provider" in providers
 
 
-def testListProvidersMultiple(multiProviderConfig, mockProviderClasses):
-    """Test listing providers with multiple providers, dood!"""
+def testListProvidersMultiple(multiProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test listing providers with multiple providers configured.
+
+    Args:
+        multiProviderConfig: Configuration with multiple providers and models
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -499,8 +641,13 @@ def testListProvidersMultiple(multiProviderConfig, mockProviderClasses):
         assert "provider3" in providers
 
 
-def testGetProviderSuccess(singleProviderConfig, mockProviderClasses):
-    """Test getting provider by name succeeds, dood!"""
+def testGetProviderSuccess(singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test getting provider by name succeeds.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -514,8 +661,12 @@ def testGetProviderSuccess(singleProviderConfig, mockProviderClasses):
         assert isinstance(provider, MockProvider)
 
 
-def testGetProviderNotFound(emptyConfig):
-    """Test getting non-existent provider returns None, dood!"""
+def testGetProviderNotFound(emptyConfig: Dict[str, Any]) -> None:
+    """Test getting non-existent provider returns None.
+
+    Args:
+        emptyConfig: Empty configuration dictionary fixture
+    """
     manager = LLMManager(emptyConfig)
     provider = manager.getProvider("nonexistent-provider")
 
@@ -527,8 +678,15 @@ def testGetProviderNotFound(emptyConfig):
 # ============================================================================
 
 
-def testModelInitializationWithMissingProvider(caplog, mockProviderClasses):
-    """Test model initialization skips models with missing provider, dood!"""
+def testModelInitializationWithMissingProvider(
+    caplog: pytest.LogCaptureFixture, mockProviderClasses: Dict[str, type]
+) -> None:
+    """Test model initialization skips models with missing provider.
+
+    Args:
+        caplog: Pytest fixture for capturing log output
+        mockProviderClasses: Mock provider classes for patching
+    """
     config = {
         "providers": {
             "existing-provider": {
@@ -560,11 +718,18 @@ def testModelInitializationWithMissingProvider(caplog, mockProviderClasses):
             assert "Provider nonexistent-provider not available" in caplog.text
 
 
-def testModelInitializationWithException(caplog, mockProviderClasses):
-    """Test model initialization handles exceptions, dood!"""
+def testModelInitializationWithException(
+    caplog: pytest.LogCaptureFixture, mockProviderClasses: Dict[str, type]
+) -> None:
+    """Test model initialization handles exceptions.
+
+    Args:
+        caplog: Pytest fixture for capturing log output
+        mockProviderClasses: Mock provider classes for patching
+    """
 
     class FailingProvider(MockProvider):
-        def addModel(self, *args, **kwargs):
+        def addModel(self, *args: Any, **kwargs: Any) -> None:
             raise RuntimeError("Model addition failed")
 
     config = {
@@ -593,8 +758,12 @@ def testModelInitializationWithException(caplog, mockProviderClasses):
             assert "Failed to initialize model" in caplog.text
 
 
-def testModelInitializationWithDefaultValues(mockProviderClasses):
-    """Test model initialization uses default values, dood!"""
+def testModelInitializationWithDefaultValues(mockProviderClasses: Dict[str, type]) -> None:
+    """Test model initialization uses default values for optional fields.
+
+    Args:
+        mockProviderClasses: Mock provider classes for patching
+    """
     config = {
         "providers": {
             "test-provider": {
@@ -632,8 +801,13 @@ def testModelInitializationWithDefaultValues(mockProviderClasses):
 # ============================================================================
 
 
-def testMultiProviderModelSelection(multiProviderConfig, mockProviderClasses):
-    """Test selecting models from different providers, dood!"""
+def testMultiProviderModelSelection(multiProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test selecting models from different providers.
+
+    Args:
+        multiProviderConfig: Configuration with multiple providers and models
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -657,8 +831,12 @@ def testMultiProviderModelSelection(multiProviderConfig, mockProviderClasses):
         assert manager.modelRegistry["model3"] == "provider3"
 
 
-def testDuplicateModelNamesAcrossProviders(mockProviderClasses):
-    """Test handling duplicate model names across providers, dood!"""
+def testDuplicateModelNamesAcrossProviders(mockProviderClasses: Dict[str, type]) -> None:
+    """Test handling duplicate model names across providers.
+
+    Args:
+        mockProviderClasses: Mock provider classes for patching
+    """
     config = {
         "providers": {
             "provider1": {
@@ -709,8 +887,13 @@ def testDuplicateModelNamesAcrossProviders(mockProviderClasses):
         assert model2.modelId == "claude-3"
 
 
-def testModelAvailabilityChecking(singleProviderConfig, mockProviderClasses):
-    """Test checking model availability, dood!"""
+def testModelAvailabilityChecking(singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test checking model availability.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -726,8 +909,15 @@ def testModelAvailabilityChecking(singleProviderConfig, mockProviderClasses):
         assert manager.getModel("nonexistent-model") is None
 
 
-def testFullWorkflowInitializeAndUseModel(singleProviderConfig, mockProviderClasses):
-    """Test full workflow: initialize manager and use model, dood!"""
+def testFullWorkflowInitializeAndUseModel(
+    singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]
+) -> None:
+    """Test full workflow: initialize manager and use model.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -755,8 +945,13 @@ def testFullWorkflowInitializeAndUseModel(singleProviderConfig, mockProviderClas
         assert provider is not None
 
 
-def testConfigurationPersistence(singleProviderConfig, mockProviderClasses):
-    """Test configuration is persisted in manager, dood!"""
+def testConfigurationPersistence(singleProviderConfig: Dict[str, Any], mockProviderClasses: Dict[str, type]) -> None:
+    """Test configuration is persisted in manager.
+
+    Args:
+        singleProviderConfig: Configuration with one provider and model
+        mockProviderClasses: Mock provider classes for patching
+    """
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -776,8 +971,12 @@ def testConfigurationPersistence(singleProviderConfig, mockProviderClasses):
 # ============================================================================
 
 
-def testEmptyProvidersConfig():
-    """Test handling empty providers config, dood!"""
+def testEmptyProvidersConfig() -> None:
+    """Test handling empty providers configuration.
+
+    Verifies that the manager initializes correctly when no providers are
+    configured in the configuration dictionary.
+    """
     config = {"models": {}}
     manager = LLMManager(config)
 
@@ -785,8 +984,15 @@ def testEmptyProvidersConfig():
     assert len(manager.modelRegistry) == 0
 
 
-def testEmptyModelsConfig(mockProviderClasses):
-    """Test handling empty models config, dood!"""
+def testEmptyModelsConfig(mockProviderClasses: Dict[str, type]) -> None:
+    """Test handling empty models configuration.
+
+    Args:
+        mockProviderClasses: Mock provider classes for patching
+
+    Verifies that the manager initializes correctly when providers are
+    configured but no models are defined.
+    """
     config = {
         "providers": {
             "test-provider": {
@@ -808,8 +1014,15 @@ def testEmptyModelsConfig(mockProviderClasses):
         assert len(manager.modelRegistry) == 0
 
 
-def testModelWithExtraConfig(mockProviderClasses):
-    """Test model initialization with extra configuration, dood!"""
+def testModelWithExtraConfig(mockProviderClasses: Dict[str, type]) -> None:
+    """Test model initialization with extra configuration parameters.
+
+    Args:
+        mockProviderClasses: Mock provider classes for patching
+
+    Verifies that models can be initialized with additional custom
+    configuration parameters beyond the standard fields.
+    """
     config = {
         "providers": {
             "test-provider": {
