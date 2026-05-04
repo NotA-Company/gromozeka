@@ -249,8 +249,8 @@ This document provides a comprehensive plan for systematically adding and improv
 
 | Stage | Substage | File Path | Status | Notes |
 |-------|----------|-----------|--------|-------|
-| 4 | 4.1 | `internal/bot/max/__init__.py` | [ ] | |
-| 4 | 4.1 | `internal/bot/max/application.py` | [ ] | |
+| 4 | 4.1 | `internal/bot/max/__init__.py` | [x] | |
+| 4 | 4.1 | `internal/bot/max/application.py` | [x] | |
 
 ### Stage 5: AI Libraries
 
