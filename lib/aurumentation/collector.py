@@ -59,7 +59,15 @@ def substituteEnvVars(value: Any, loadDotenv: bool = True) -> Any:
 
 
 def sanitizeFilename(text: str) -> str:
-    """Convert text to safe filename."""
+    """Convert text to a safe filename by replacing special characters.
+
+    Args:
+        text: Input text to convert to a safe filename.
+
+    Returns:
+        A safe filename string with special characters replaced by underscores,
+        multiple consecutive underscores collapsed, and length limited to 100 characters.
+    """
     # Replace special characters
     safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in text)
     # Remove multiple underscores
@@ -81,11 +89,14 @@ async def collectGoldenData(
     Collect golden data for multiple scenarios using global httpx patching.
 
     Args:
-        scenarios: List of test scenarios to execute
-        outputDir: Directory to save golden data
-        secrets: List of secret values to mask also possible to pass environment variable names with secret
-        aenterCallback: Optional callback function to execute when entering the recording context
-        aexitCallback: Optional callback function to execute when exiting the recording context
+        scenarios: List of test scenarios to execute.
+        outputDir: Directory to save golden data.
+        secrets: List of secret values to mask. Can also pass environment variable names containing secrets.
+        aenterCallback: Optional callback function to execute when entering the recording context.
+        aexitCallback: Optional callback function to execute when exiting the recording context.
+
+    Returns:
+        None
     """
     outputDir.mkdir(parents=True, exist_ok=True)
 
@@ -157,15 +168,23 @@ async def collectGoldenData(
                     },
                 )
 
-                print(f"  ✓ Saved to {filename}")
+                print(f"  Saved to {filename}")
 
         except Exception as e:
-            print(f"  ✗ Failed to collect scenario '{scenario['description']}': {e}")
+            print(f"  Failed to collect scenario '{scenario['description']}': {e}")
             continue
 
 
-async def main():
-    """Main entry point."""
+async def main() -> None:
+    """Main entry point for the golden data collector CLI.
+
+    Parses command-line arguments, loads test scenarios from a JSON file,
+    collects golden data for each scenario, and saves the results to the
+    specified output directory.
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(description="Generic Golden Data Collector v2")
     parser.add_argument("--input", required=True, help="Input JSON file with test scenarios")
     parser.add_argument("--output", required=True, help="Output directory for golden data")

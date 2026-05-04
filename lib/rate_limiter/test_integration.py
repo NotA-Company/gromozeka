@@ -4,6 +4,18 @@ Integration tests for rate limiter library.
 This module contains comprehensive integration tests that verify the complete
 workflow of the rate limiter library, including real-world usage scenarios,
 multiple limiter coordination, and end-to-end functionality.
+
+Test Coverage:
+    - Complete workflow: setup, registration, queue binding, and usage
+    - Multiple rate limiters with different configurations
+    - Concurrent usage across multiple queues
+    - Statistics tracking across multiple limiters
+    - Cleanup and reinitialization scenarios
+    - Real-world scenarios (web API, database pooling, etc.)
+    - High concurrency scenarios
+    - Dynamic queue and limiter management
+    - Error recovery and system resilience
+    - Performance testing with many operations
 """
 
 import asyncio
@@ -15,20 +27,48 @@ from .sliding_window import QueueConfig, SlidingWindowRateLimiter
 
 
 class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
-    """Integration tests for complete rate limiter workflow."""
+    """Integration tests for complete rate limiter workflow.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures."""
+    This test suite verifies the end-to-end functionality of the rate limiter
+    library, including manager coordination, multiple limiter management,
+    queue binding, and real-world usage scenarios.
+
+    Attributes:
+        manager: The RateLimiterManager instance used for testing.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each test.
+
+        Initializes a clean RateLimiterManager instance and ensures it's
+        in a fresh state by destroying any existing state.
+        """
         # Get clean manager instance
         self.manager = RateLimiterManager.getInstance()
         await self.manager.destroy()
 
-    async def asyncTearDown(self):
-        """Clean up after tests."""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each test.
+
+        Destroys the RateLimiterManager to ensure clean state between tests.
+        """
         await self.manager.destroy()
 
-    async def testCompleteWorkflow(self):
-        """Test complete workflow: setup, bind queues, use them."""
+    async def testCompleteWorkflow(self) -> None:
+        """Test complete workflow: setup, bind queues, use them.
+
+        Verifies the entire rate limiter workflow including:
+        - Creating multiple rate limiters with different configurations
+        - Registering limiters with the manager
+        - Setting a default limiter
+        - Binding queues to specific limiters
+        - Applying rate limits through the manager
+        - Verifying different rate limits for different queues
+        - Testing default limiter fallback for unmapped queues
+
+        Raises:
+            AssertionError: If any workflow step fails or timing assertions fail.
+        """
         # Create different rate limiters for different purposes
         api_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=2))
         db_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=2))
@@ -87,8 +127,17 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             await api_limiter.destroy()
             await db_limiter.destroy()
 
-    async def testDifferentRateLimitsForDifferentQueues(self):
-        """Test different rate limits for different queues."""
+    async def testDifferentRateLimitsForDifferentQueues(self) -> None:
+        """Test different rate limits for different queues.
+
+        Verifies that queues bound to different rate limiters experience
+        different rate limiting behaviors. Creates a strict limiter (2 requests/second)
+        and a lenient limiter (10 requests/second) and verifies that the strict
+        limiter causes delays while the lenient limiter allows immediate requests.
+
+        Raises:
+            AssertionError: If timing assertions fail or rate limiting doesn't work as expected.
+        """
         # Create limiters with different configurations
         strict_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=2, windowSeconds=1))
         lenient_limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=1))
@@ -124,8 +173,17 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             await strict_limiter.destroy()
             await lenient_limiter.destroy()
 
-    async def testConcurrentUsageAcrossMultipleQueues(self):
-        """Test concurrent usage across multiple queues."""
+    async def testConcurrentUsageAcrossMultipleQueues(self) -> None:
+        """Test concurrent usage across multiple queues.
+
+        Verifies that multiple queues can be used concurrently without interference.
+        Creates three separate rate limiters and makes concurrent requests to
+        three different queues, verifying that they can be processed in parallel
+        while still respecting their individual rate limits.
+
+        Raises:
+            AssertionError: If concurrent processing fails or timing is incorrect.
+        """
         # Create multiple limiters
         limiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=2))
         limiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=2))
@@ -144,10 +202,15 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             self.manager.bindQueue("queue2", "service2")
             self.manager.bindQueue("queue3", "service3")
 
-            async def make_requests(queue_name, count):
-                """Helper to make multiple requests."""
+            async def make_requests(queueName: str, count: int) -> None:
+                """Helper to make multiple requests to a queue.
+
+                Args:
+                    queueName: The name of the queue to send requests to.
+                    count: The number of requests to make.
+                """
                 for i in range(count):
-                    await self.manager.applyLimit(queue_name)
+                    await self.manager.applyLimit(queueName)
 
             # Run concurrent requests across different queues
             tasks = [
@@ -169,8 +232,17 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             await limiter2.destroy()
             await limiter3.destroy()
 
-    async def testStatisticsTrackingAcrossMultipleLimiters(self):
-        """Test statistics tracking across multiple limiters."""
+    async def testStatisticsTrackingAcrossMultipleLimiters(self) -> None:
+        """Test statistics tracking across multiple limiters.
+
+        Verifies that statistics are correctly tracked and reported for each
+        queue/limiter combination. Creates two limiters with different limits,
+        makes requests to their bound queues, and verifies that statistics
+        accurately reflect the request counts and utilization percentages.
+
+        Raises:
+            AssertionError: If statistics don't match expected values.
+        """
         limiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=10))
         limiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=10))
 
@@ -207,8 +279,19 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             await limiter1.destroy()
             await limiter2.destroy()
 
-    async def testCleanupAndReinitialization(self):
-        """Test cleanup and reinitialization of the entire system."""
+    async def testCleanupAndReinitialization(self) -> None:
+        """Test cleanup and reinitialization of the entire system.
+
+        Verifies that the rate limiter system can be completely destroyed and
+        reinitialized. Tests that:
+        - All limiters and queue mappings are properly cleaned up
+        - The system can be reinitialized with new limiters
+        - New limiters work correctly after reinitialization
+        - Statistics are reset after reinitialization
+
+        Raises:
+            AssertionError: If cleanup or reinitialization fails.
+        """
         # Create and setup limiters
         limiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=1))
         limiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=1))
@@ -304,8 +387,20 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             await search_limiter.destroy()
             await cache_limiter.destroy()
 
-    async def testHighConcurrencyScenario(self):
-        """Test high concurrency scenario with many queues and limiters."""
+    async def testHighConcurrencyScenario(self) -> None:
+        """Test high concurrency scenario with many queues and limiters.
+
+        Creates a high-load scenario with:
+        - 5 rate limiters (5 requests/2 seconds each)
+        - 15 queues (3 per limiter)
+        - 8 concurrent requests per queue (exceeding limits)
+
+        Verifies that the system handles high concurrency gracefully, with
+        appropriate rate limiting delays but without excessive slowdown.
+
+        Raises:
+            AssertionError: If concurrent processing fails or timing is incorrect.
+        """
         # Create multiple limiters
         limiters = []
         for i in range(5):
@@ -323,10 +418,15 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
                     self.manager.bindQueue(queue_name, f"service_{i}")
                     queue_count += 1
 
-            async def burst_requests(queue_name, count):
-                """Make burst of requests to a queue."""
+            async def burst_requests(queueName: str, count: int) -> None:
+                """Make a burst of requests to a queue.
+
+                Args:
+                    queueName: The name of the queue to send requests to.
+                    count: The number of requests to make in the burst.
+                """
                 for _ in range(count):
-                    await self.manager.applyLimit(queue_name)
+                    await self.manager.applyLimit(queueName)
 
             # Create high concurrency scenario
             tasks = []
@@ -350,8 +450,18 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             for limiter in limiters:
                 await limiter.destroy()
 
-    async def testDynamicQueueAndLimiterManagement(self):
-        """Test dynamic addition and removal of queues and limiters."""
+    async def testDynamicQueueAndLimiterManagement(self) -> None:
+        """Test dynamic addition and removal of queues and limiters.
+
+        Verifies that the system supports dynamic management of limiters and queues:
+        - Adding new limiters after initial setup
+        - Binding new queues to existing limiters
+        - Rebinding queues to different limiters
+        - Verifying that rebinding changes the effective rate limit
+
+        Raises:
+            AssertionError: If dynamic management operations fail.
+        """
         # Start with one limiter
         limiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=2))
         await limiter1.initialize()
@@ -387,8 +497,19 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
         await limiter1.destroy()
         await limiter2.destroy()
 
-    async def testErrorRecoveryScenario(self):
-        """Test error recovery and system resilience."""
+    async def testErrorRecoveryScenario(self) -> None:
+        """Test error recovery and system resilience.
+
+        Verifies that the system can recover from errors:
+        - Normal operation with rate limiting
+        - Simulated limiter destruction (external error)
+        - Re-initialization of the limiter
+        - Continued operation after recovery
+        - Statistics reset after destroy/reinitialize cycle
+
+        Raises:
+            AssertionError: If error recovery fails or statistics are incorrect.
+        """
         limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=3, windowSeconds=1))
         await limiter.initialize()
 
@@ -413,8 +534,17 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
 
         await limiter.destroy()
 
-    async def testPerformanceWithManyOperations(self):
-        """Test performance with many rate limiting operations."""
+    async def testPerformanceWithManyOperations(self) -> None:
+        """Test performance with many rate limiting operations.
+
+        Verifies that the rate limiter performs efficiently with many operations:
+        - 50 requests within a 100 request limit
+        - Should complete quickly (< 1 second)
+        - Statistics should accurately reflect utilization
+
+        Raises:
+            AssertionError: If performance is poor or statistics are incorrect.
+        """
         limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=100, windowSeconds=5))
         await limiter.initialize()
 
@@ -441,19 +571,46 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
 
 
 class TestRateLimiterRealWorldScenarios(unittest.IsolatedAsyncioTestCase):
-    """Test suite for real-world usage scenarios."""
+    """Test suite for real-world usage scenarios.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures."""
+    This test suite validates the rate limiter library in realistic production
+    scenarios, including web API rate limiting, database connection pooling,
+    and other common use cases.
+
+    Attributes:
+        manager: The RateLimiterManager instance used for testing.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each test.
+
+        Initializes a clean RateLimiterManager instance and ensures it's
+        in a fresh state by destroying any existing state.
+        """
         self.manager = RateLimiterManager.getInstance()
         await self.manager.destroy()
 
-    async def asyncTearDown(self):
-        """Clean up after tests."""
+    async def asyncTearDown(self) -> None:
+        """Clean up after each test.
+
+        Destroys the RateLimiterManager to ensure clean state between tests.
+        """
         await self.manager.destroy()
 
-    async def testWebApiRateLimiting(self):
-        """Test rate limiting for web API scenarios."""
+    async def testWebApiRateLimiting(self) -> None:
+        """Test rate limiting for web API scenarios.
+
+        Simulates a realistic web API setup with different tiers:
+        - Public API: 10 requests/2 seconds (strict rate limiting)
+        - Premium API: 100 requests/60 seconds (moderate rate limiting)
+        - Internal API: 1000 requests/60 seconds (very lenient)
+
+        Verifies that different API tiers experience appropriate rate limiting
+        based on their configured limits.
+
+        Raises:
+            AssertionError: If rate limiting doesn't work as expected for different tiers.
+        """
 
         # Simulate different API endpoints with different limits
         public_api = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=2))
@@ -504,8 +661,21 @@ class TestRateLimiterRealWorldScenarios(unittest.IsolatedAsyncioTestCase):
             await premium_api.destroy()
             await internal_api.destroy()
 
-    async def testDatabaseConnectionPooling(self):
-        """Test rate limiting for database connection pooling."""
+    async def testDatabaseConnectionPooling(self) -> None:
+        """Test rate limiting for database connection pooling.
+
+        Simulates database connection pooling with different limits for read
+        and write operations:
+        - Read connections: 50 requests/second (high throughput for reads)
+        - Write connections: 10 requests/second (limited for writes)
+
+        Verifies that read operations can proceed quickly while write operations
+        are rate limited more strictly, which is a common pattern in database
+        systems to prevent write overload.
+
+        Raises:
+            AssertionError: If rate limiting doesn't work as expected for read vs write operations.
+        """
 
         # Simulate database connection limits
         read_connections = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=50, windowSeconds=1))

@@ -19,6 +19,10 @@ class SecretMasker:
     - Headers (e.g., Authorization: Bearer token)
     - Request/response bodies (JSON and text)
     - Recursive dict/list structures
+
+    Attributes:
+        DEFAULT_PATTERNS: Default regex patterns for identifying secret keys.
+        MASKED_PLACEHOLDER: Placeholder text used to replace masked secrets.
     """
 
     DEFAULT_PATTERNS = [

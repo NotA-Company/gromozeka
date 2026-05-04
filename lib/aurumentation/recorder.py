@@ -29,6 +29,15 @@ class GoldenDataRecorder:
     This class manages the recording process by patching httpx globally
     with RecordingTransport, collecting recorded recordings, and creating
     complete scenarios with metadata.
+
+    Attributes:
+        secrets: List of secrets to mask in recorded data
+        transport: The recording transport instance
+        originalClientClass: Original httpx.AsyncClient class before patching
+        asyncClientClass: Patched httpx.AsyncClient class
+        recordings: List of recorded HTTP calls
+        aenterCallback: Optional callback to execute when entering context
+        aexitCallback: Optional callback to execute when exiting context
     """
 
     def __init__(
@@ -36,11 +45,13 @@ class GoldenDataRecorder:
         secrets: Optional[List[str]] = None,
         aenterCallback: Optional[PatchingRecorderCallback] = None,
         aexitCallback: Optional[PatchingRecorderCallback] = None,
-    ):
+    ) -> None:
         """Initialize the recorder.
 
         Args:
             secrets: List of secrets to mask in recorded data
+            aenterCallback: Optional callback to execute when entering the async context manager
+            aexitCallback: Optional callback to execute when exiting the async context manager
         """
         self.secrets = secrets or []
         self.transport: Optional[RecordingTransport] = None
@@ -86,7 +97,12 @@ class GoldenDataRecorder:
         print("HttpxRecorder: Patched httpx.AsyncClient")
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[object],
+    ) -> None:
         """Exit the async context manager and restore httpx.
 
         Args:
@@ -159,11 +175,12 @@ class GoldenDataRecorder:
 
         Args:
             description: Description of the test scenario
+            scenarioName: Optional name for the scenario. If None, uses description
             module: Module path of the class being tested
-            class_name: Name of the class being tested
+            className: Name of the class being tested
             method: Name of the method being tested
             kwargs: Keyword arguments for the method
-            init_kwargs: Keyword arguments for class initialization
+            initKwargs: Keyword arguments for class initialization
             recordings: List of HttpCallDict objects. If None, uses recorded recordings.
 
         Returns:
