@@ -1,5 +1,5 @@
 """
-Media handling module for Gromozeka Telegram bot, dood!
+Media handling module for Gromozeka Telegram bot.
 
 This module provides handlers for media-related operations including:
 - Image generation via AI models (/draw command)
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 class MediaHandler(BaseBotHandler):
     """
-    Handler class for media-related bot operations, dood!
+    Handler class for media-related bot operations.
 
     This class manages all media-related functionality including:
     - AI-powered image generation with fallback support
@@ -76,9 +76,9 @@ class MediaHandler(BaseBotHandler):
 
     def __init__(
         self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    ) -> None:
         """
-        Initialize the MediaHandler with required dependencies, dood!
+        Initialize the MediaHandler with required dependencies.
 
         Sets up the handler by initializing the base class and registering
         the image generation tool with the LLM service. This allows AI
@@ -88,6 +88,7 @@ class MediaHandler(BaseBotHandler):
             configManager: Configuration manager for accessing bot settings
             database: Database wrapper for storing and retrieving messages
             llmManager: LLM manager for accessing AI models
+            botProvider: Bot provider (Telegram or Max)
 
         Side Effects:
             - Registers 'generate_and_send_image' tool with LLMService
@@ -128,14 +129,14 @@ class MediaHandler(BaseBotHandler):
         self, extraData: Optional[Dict[str, Any]], image_prompt: str, image_description: Optional[str] = None, **kwargs
     ) -> str:
         """
-        LLM tool handler for generating and sending images, dood!
+        LLM tool handler for generating and sending images.
 
         This method is registered as an LLM tool and can be called by the AI assistant
         when users request image generation. It uses the configured image generation
         model with fallback support.
 
         Args:
-            extraData: Dictionary containing context data, must include 'ensuredMessage'
+            extraData: Dictionary containing context data, must include 'ensuredMessage' and 'typingManager'
             image_prompt: Detailed prompt describing the image to generate
             image_description: Optional caption/description for the generated image
             **kwargs: Additional keyword arguments (ignored)
@@ -144,8 +145,8 @@ class MediaHandler(BaseBotHandler):
             JSON string with generation result: {"done": bool, "errorMessage": str (optional)}
 
         Raises:
-            RuntimeError: If extraData is None, missing ensuredMessage, or ensuredMessage
-                         is not an EnsuredMessage instance
+            RuntimeError: If extraData is None, missing ensuredMessage/typingManager, or
+                         ensuredMessage/typingManager are not of correct type
         """
         if extraData is None:
             raise RuntimeError("extraData should be provided")
@@ -223,7 +224,7 @@ class MediaHandler(BaseBotHandler):
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
-        Handle "what's there?" (что там) messages to retrieve media content, dood!
+        Handle "what's there?" (что там) messages to retrieve media content.
 
         This handler responds to messages that mention the bot with "что там" phrase
         when replying to another message. It retrieves and returns the parsed content
@@ -233,9 +234,8 @@ class MediaHandler(BaseBotHandler):
         it returns the stored media content (e.g., image description, transcription).
 
         Args:
-            update: Telegram update object
-            context: Telegram context for the handler
             ensuredMessage: Wrapped message object with additional metadata
+            updateObj: Update object containing the message
 
         Returns:
             HandlerResultStatus indicating how the message was processed:
@@ -382,7 +382,7 @@ class MediaHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /analyze <prompt> command to analyze media with AI, dood!
+        Handle /analyze <prompt> command to analyze media with AI.
 
         This command analyzes images or stickers from a replied message using the
         configured image parsing LLM model. The user provides a custom prompt
@@ -398,8 +398,11 @@ class MediaHandler(BaseBotHandler):
             Reply to an image with: /analyze What objects are in this image?
 
         Args:
-            update: Telegram update object containing the command message
-            context: Telegram context for the handler
+            ensuredMessage: Wrapped message object with additional metadata
+            command: Command name (e.g., "analyze")
+            args: Command arguments (the analysis prompt)
+            UpdateObj: Update object containing the command message
+            typingManager: Optional typing manager for showing typing status
 
         Returns:
             None. Sends analysis result or error message to the chat.
@@ -580,7 +583,7 @@ class MediaHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /draw [<prompt>] command to generate images with AI, dood!
+        Handle /draw [<prompt>] command to generate images with AI.
 
         This command generates images using the configured image generation LLM model
         with fallback support. The prompt can be provided in three ways:
@@ -602,8 +605,11 @@ class MediaHandler(BaseBotHandler):
             Reply with quote and send: /draw
 
         Args:
-            update: Telegram update object containing the command message
-            context: Telegram context for the handler
+            ensuredMessage: Wrapped message object with additional metadata
+            command: Command name (e.g., "draw")
+            args: Command arguments (optional image prompt)
+            UpdateObj: Update object containing the command message
+            typingManager: Optional typing manager for showing typing status
 
         Returns:
             None. Sends generated image or error message to the chat.

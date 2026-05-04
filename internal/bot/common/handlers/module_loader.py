@@ -1,5 +1,5 @@
 """
-Custom handler module loader for Gromozeka bot, dood!
+Custom handler module loader for Gromozeka bot.
 
 This module provides dynamic loading of custom handler modules via TOML configuration.
 Custom handlers extend BaseBotHandler and are inserted into the handler chain after
@@ -30,16 +30,16 @@ HandlerTuple = Tuple[BaseBotHandler, HandlerParallelism]
 
 class CustomHandlerLoadError(Exception):
     """
-    Raised when a custom handler fails to load, dood!
+    Raised when a custom handler fails to load.
 
     Attributes:
         handlerId: The id of the handler that failed
         reason: Human-readable description of the failure
     """
 
-    def __init__(self, handlerId: str, reason: str):
+    def __init__(self, handlerId: str, reason: str) -> None:
         """
-        Initialize the custom handler load error, dood!
+        Initialize the custom handler load error.
 
         Args:
             handlerId: The id of the handler that failed
@@ -52,7 +52,7 @@ class CustomHandlerLoadError(Exception):
 
 class CustomHandlerLoader:
     """
-    Loader for custom bot handlers from configuration, dood!
+    Loader for custom bot handlers from configuration.
 
     This class reads handler definitions from the TOML config and dynamically loads
     them from either Python import paths or local module files. Each handler is
@@ -72,9 +72,9 @@ class CustomHandlerLoader:
         database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
-    ):
+    ) -> None:
         """
-        Initialize the custom handler loader, dood!
+        Initialize the custom handler loader.
 
         Args:
             configManager: Configuration manager providing bot settings
@@ -90,7 +90,7 @@ class CustomHandlerLoader:
 
     def loadAll(self) -> List[HandlerTuple]:
         """
-        Load all enabled custom handlers from config, sorted by order, dood!
+        Load all enabled custom handlers from config, sorted by order.
 
         Reads the custom-handlers section from config, validates and loads each
         enabled handler, then returns them sorted by the order field. Individual
@@ -158,7 +158,7 @@ class CustomHandlerLoader:
 
     def _loadSingle(self, handlerConfig: Dict[str, Any], idx: int) -> HandlerTuple:
         """
-        Load a single custom handler from its config entry, dood!
+        Load a single custom handler from its config entry.
 
         Args:
             handlerConfig: Dict with handler configuration from TOML
@@ -232,7 +232,7 @@ class CustomHandlerLoader:
 
     def _importFromPath(self, importPath: str, handlerConfig: Dict[str, Any], handlerId: str) -> type:
         """
-        Import handler class from a fully qualified Python import path, dood!
+        Import handler class from a fully qualified Python import path.
 
         Args:
             importPath: Full dotted path like 'my_package.handlers.MyHandler'
@@ -267,7 +267,7 @@ class CustomHandlerLoader:
 
     def _importFromLocalModule(self, moduleFile: str, handlerConfig: Dict[str, Any], handlerId: str) -> type:
         """
-        Import handler class from a local module file, dood!
+        Import handler class from a local module file.
 
         Args:
             moduleFile: Module filename without .py extension
@@ -298,7 +298,7 @@ class CustomHandlerLoader:
 
     def _validateHandlerClass(self, handlerClass: type, handlerId: str) -> None:
         """
-        Validate that the loaded class is a proper BaseBotHandler subclass, dood!
+        Validate that the loaded class is a proper BaseBotHandler subclass.
 
         Args:
             handlerClass: The class to validate

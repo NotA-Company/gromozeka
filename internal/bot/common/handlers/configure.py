@@ -1,5 +1,4 @@
-"""
-Chat configuration handler for Gromozeka Telegram bot.
+"""Chat configuration handler for Gromozeka Telegram bot.
 
 This module provides interactive chat configuration functionality through a wizard-style
 interface. Users can configure bot behavior for chats where they have admin privileges
@@ -10,6 +9,9 @@ The configuration system supports:
 - Dynamic keyboard generation based on user permissions
 - Type-safe setting updates with validation
 - State management for active configuration sessions
+
+Classes:
+    ConfigureCommandHandler: Main handler for chat configuration commands and interactions.
 """
 
 import logging
@@ -51,8 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigureCommandHandler(BaseBotHandler):
-    """
-    Handler for chat configuration commands and interactions, dood!
+    """Handler for chat configuration commands and interactions.
 
     This handler manages the complete configuration workflow including:
     - Initiating configuration via /configure command
@@ -66,28 +67,29 @@ class ConfigureCommandHandler(BaseBotHandler):
     - ConfigureKey: Display options for specific setting
     - SetTrue/SetFalse/ResetValue/SetValue: Update setting values
     - Cancel: Exit configuration wizard
+
+    Attributes:
+        selectableModels: List of AI model names available for configuration.
     """
 
     def __init__(
         self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ):
-        """
-        Initialize the configuration handler with required dependencies, dood!
+    ) -> None:
+        """Initialize the configuration handler with required dependencies.
 
         Builds a list of selectable AI models that users can choose from during
         configuration.
-        Args:
-            configManager: Configuration manager instance for accessing bot settings
-            database: Database wrapper for data persistence operations
-            llmManager: LLM manager for accessing available AI models
 
-        Returns:
-            None
+        Args:
+            configManager: Configuration manager instance for accessing bot settings.
+            database: Database wrapper for data persistence operations.
+            llmManager: LLM manager for accessing available AI models.
+            botProvider: Bot provider instance for Telegram API interactions.
 
         Side Effects:
-            - Initializes parent BaseBotHandler
-            - Populates self.selectableModels with choosable model names
-            - Logs the list of selectable models at debug level
+            - Initializes parent BaseBotHandler.
+            - Populates self.selectableModels with choosable model names.
+            - Logs the list of selectable models at debug level.
         """
         super().__init__(configManager, database, llmManager, botProvider=botProvider)
 
@@ -103,23 +105,21 @@ class ConfigureCommandHandler(BaseBotHandler):
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
-        """
-        Handle text messages during active configuration sessions, dood!
+        """Handle text messages during active configuration sessions.
 
         This handler processes user text input when they are in an active configuration
         state (setting a value for a chat setting). It only operates in private chats
         and when the user has an active configuration session stored in cache.
 
         Args:
-            update: Telegram update object containing the message
-            context: Telegram context for the handler
-            ensuredMessage: Validated message object with user and chat info, or None
+            ensuredMessage: Validated message object with user and chat info.
+            updateObj: Telegram update object containing the message.
 
         Returns:
             HandlerResultStatus indicating the result:
-            - FINAL: Successfully processed configuration input
-            - SKIPPED: Not a private chat or no active configuration
-            - ERROR: Missing required data (chat, message, or ensured message)
+            - FINAL: Successfully processed configuration input.
+            - SKIPPED: Not a private chat or no active configuration.
+            - ERROR: Missing required data (chat, message, or ensured message).
 
         Note:
             The active configuration state is stored in cache with the key
@@ -162,30 +162,26 @@ class ConfigureCommandHandler(BaseBotHandler):
         user: MessageSender,
         chatId: Optional[int],
     ) -> None:
-        """TODO
-        Display the initial list of chats that the user can configure, dood!
+        """Display the initial list of chats that the user can configure.
 
         Shows all chats where the user has admin privileges and is allowed to change
         settings. Bot owners can see all chats. Each chat is presented as a button
         that leads to its configuration page.
 
         Args:
-            data: Callback data dictionary (unused in Init action)
-            messageId: ID of the message to edit with the chat list
-            user: Telegram user who initiated the configuration
-            chatId: Must be None for Init action (raises RuntimeError otherwise)
-            bot: Telegram bot instance for API calls
-
-        Returns:
-            None
+            data: Callback data dictionary (unused in Init action).
+            messageId: ID of the message to edit with the chat list.
+            messageChatId: ID of the chat containing the message to edit.
+            user: Telegram user who initiated the configuration.
+            chatId: Must be None for Init action (raises RuntimeError otherwise).
 
         Raises:
-            RuntimeError: If chatId is not None (invalid state for Init action)
+            RuntimeError: If chatId is not None (invalid state for Init action).
 
         Side Effects:
-            - Edits the message to show list of configurable chats
-            - Creates inline keyboard with chat selection buttons
-            - Shows error message if user has no configurable chats
+            - Edits the message to show list of configurable chats.
+            - Creates inline keyboard with chat selection buttons.
+            - Shows error message if user has no configurable chats.
         """
         if chatId is not None:
             raise RuntimeError("Init: chatId should be None in Init action")
@@ -247,28 +243,24 @@ class ConfigureCommandHandler(BaseBotHandler):
         user: MessageSender,
         chatId: Optional[int],
     ) -> None:
-        """
-        Display configuration settings page for a specific chat, dood!
+        """Display configuration settings page for a specific chat.
 
         Shows all available settings for the selected chat, organized by page
         (STANDART, ADVANCED, etc.). Each setting is displayed with its current
         status and whether it differs from the default value.
 
         Args:
-            data: Callback data dictionary containing chatId and optional page
-            messageId: ID of the message to edit with settings
-            user: Telegram user performing the configuration
-            chatId: ID of the chat being configured (must not be None)
-            bot: Telegram bot instance for API calls
-
-        Returns:
-            None
+            data: Callback data dictionary containing chatId and optional page.
+            messageId: ID of the message to edit with settings.
+            messageChatId: ID of the chat containing the message to edit.
+            user: Telegram user performing the configuration.
+            chatId: ID of the chat being configured (must not be None).
 
         Side Effects:
-            - Edits message to show chat settings page
-            - Creates inline keyboard with setting buttons
-            - Shows navigation buttons for other pages
-            - Displays error message if chat is invalid or not found
+            - Edits message to show chat settings page.
+            - Creates inline keyboard with setting buttons.
+            - Shows navigation buttons for other pages.
+            - Displays error message if chat is invalid or not found.
         """
         if chatId is None:
             logger.error(f"ConfigureChat: chatId is None in {data}")
@@ -404,28 +396,24 @@ class ConfigureCommandHandler(BaseBotHandler):
         user: MessageSender,
         chatId: Optional[int],
     ) -> None:
-        """
-        Display configuration options for a specific setting key, dood!
+        """Display configuration options for a specific setting key.
 
         Shows detailed information about a single setting including its description,
         type, current value, and default value. Provides appropriate input options
         based on the setting type (buttons for booleans/models, text input for others).
 
         Args:
-            data: Callback data dictionary containing chatId and key
-            messageId: ID of the message to edit with setting details
-            user: Telegram user configuring the setting
-            chatId: ID of the chat being configured (must not be None)
-            bot: Telegram bot instance for API calls
-
-        Returns:
-            None
+            data: Callback data dictionary containing chatId and key.
+            messageId: ID of the message to edit with setting details.
+            messageChatId: ID of the chat containing the message to edit.
+            user: Telegram user configuring the setting.
+            chatId: ID of the chat being configured (must not be None).
 
         Side Effects:
-            - Edits message to show setting configuration interface
-            - Creates inline keyboard with value selection buttons
-            - Stores active configuration state in cache for text input
-            - Shows error message if chat or key is invalid
+            - Edits message to show setting configuration interface.
+            - Creates inline keyboard with value selection buttons.
+            - Stores active configuration state in cache for text input.
+            - Shows error message if chat or key is invalid.
         """
         keyId = data.get(ButtonDataKey.Key, None)
 
@@ -635,31 +623,27 @@ class ConfigureCommandHandler(BaseBotHandler):
         user: MessageSender,
         chatId: Optional[int],
     ) -> None:
-        """
-        Update a chat setting with a new value, dood!
+        """Update a chat setting with a new value.
 
         Handles all setting update actions including SetTrue, SetFalse, ResetValue,
         and SetValue. Validates the new value based on the setting type and updates
         the database. Shows confirmation message with the new value.
 
         Args:
-            data: Callback data dictionary containing chatId, key, action, and optional value
-            messageId: ID of the message to edit with confirmation
-            user: Telegram user performing the update
-            chatId: ID of the chat being configured (must not be None)
-            bot: Telegram bot instance for API calls
-
-        Returns:
-            None
+            data: Callback data dictionary containing chatId, key, action, and optional value.
+            messageId: ID of the message to edit with confirmation.
+            messageChatId: ID of the chat containing the message to edit.
+            user: Telegram user performing the update.
+            chatId: ID of the chat being configured (must not be None).
 
         Raises:
-            RuntimeError: If action is not a valid setting update action
+            RuntimeError: If action is not a valid setting update action.
 
         Side Effects:
-            - Updates chat setting in database
-            - Edits message to show success confirmation
-            - Validates model index for MODEL type settings
-            - Shows error message if chat or key is invalid
+            - Updates chat setting in database.
+            - Edits message to show success confirmation.
+            - Validates model index for MODEL type settings.
+            - Shows error message if chat or key is invalid.
         """
         keyId = data.get(ButtonDataKey.Key, None)
         action = data.get(ButtonDataKey.ConfigureAction, None)
@@ -805,8 +789,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         messageChatId: int,
         user: MessageSender,
     ) -> None:
-        """
-        Route configuration actions to appropriate handlers with permission checks, dood!
+        """Route configuration actions to appropriate handlers with permission checks.
 
         Central dispatcher for all configuration actions. Validates user permissions
         before delegating to specific action handlers (Init, ConfigureChat, ConfigureKey,
@@ -814,19 +797,16 @@ class ConfigureCommandHandler(BaseBotHandler):
         admin privileges.
 
         Args:
-            data: Callback data dictionary containing action and parameters
-            messageId: ID of the message to edit
-            user: Telegram user performing the action
-            bot: Telegram bot instance for API calls
-
-        Returns:
-            None
+            data: Callback data dictionary containing action and parameters.
+            messageId: ID of the message to edit.
+            messageChatId: ID of the chat containing the message to edit.
+            user: Telegram user performing the action.
 
         Side Effects:
-            - Clears active configuration state from cache
-            - Validates user permissions for chat configuration
-            - Delegates to specific action handler based on action type
-            - Shows error message if user lacks permissions or action is unknown
+            - Clears active configuration state from cache.
+            - Validates user permissions for chat configuration.
+            - Delegates to specific action handler based on action type.
+            - Shows error message if user lacks permissions or action is unknown.
         """
 
         userId = user.id
@@ -937,24 +917,23 @@ class ConfigureCommandHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        Handle the /configure command to start configuration wizard, dood!
+        """Handle the /configure command to start configuration wizard.
 
         This command initiates the chat configuration process by displaying a loading
         message and then calling the configuration handler with the Init action.
         The command is only available in private chats.
 
         Args:
-            update: Telegram update object containing the command message
-            context: Telegram context for the handler
-
-        Returns:
-            None
+            ensuredMessage: Validated message object with user and chat info.
+            command: The command that was triggered (e.g., "configure").
+            args: Command arguments (optional chatId).
+            UpdateObj: Telegram update object containing the command message.
+            typingManager: Optional typing manager for showing typing status.
 
         Side Effects:
-            - Saves the command message to database
-            - Sends a loading message to user
-            - Initiates configuration wizard with chat selection
+            - Saves the command message to database.
+            - Sends a loading message to user.
+            - Initiates configuration wizard with chat selection.
 
         Note:
             The command is decorated with @commandHandler which restricts it to
@@ -998,8 +977,22 @@ class ConfigureCommandHandler(BaseBotHandler):
         user: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
-        """
-        TODO
+        """Handle callback queries from inline keyboard buttons.
+
+        Processes configuration-related callback queries and routes them to the
+        appropriate configuration handler. This method is called when users interact
+        with inline keyboard buttons during the configuration wizard.
+
+        Args:
+            ensuredMessage: Validated message object with user and chat info.
+            data: Callback data dictionary containing action and parameters.
+            user: Telegram user who triggered the callback.
+            updateObj: Telegram update object containing the callback query.
+
+        Returns:
+            HandlerResultStatus indicating the result:
+            - FINAL: Successfully processed configuration callback.
+            - SKIPPED: Not a configuration-related callback.
         """
 
         configureAction = data.get(ButtonDataKey.ConfigureAction, None)

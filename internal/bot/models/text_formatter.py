@@ -20,7 +20,10 @@ from lib import utils
 logger = logging.getLogger(__name__)
 
 FORMATER_ENCODING = "utf-16-le"
+"""Encoding used for text formatting operations (UTF-16 Little Endian)."""
+
 FORMATER_ENCODING_BYTES_PER_CHAR = 2
+"""Number of bytes per character in the formatter encoding (2 for UTF-16-LE)."""
 
 
 class FormatType(StrEnum):
@@ -81,10 +84,11 @@ class FormatType(StrEnum):
     """
 
     def getIndex(self) -> int:
-        """Get the index of the format type.
+        """Get the index of the format type for sorting purposes.
 
         Returns:
-            The index of the format type in its value string
+            int: The index of the format type in its value string (always 0).
+                 This is used for consistent sorting of format entities.
         """
         return self.value.index(self.value)
 
@@ -490,16 +494,25 @@ class FormatEntity:
     ) -> str:
         """Parse text with formatting entities and convert to the specified output format.
 
+        This method processes text with embedded formatting entities and converts it to
+        the desired output format. It handles nested entities and uses UTF-16 encoding
+        for proper Unicode character handling.
+
         Args:
-            text: The text to parse (string or bytes)
-            entities: A sequence of FormatEntity instances describing the formatting
-            outputFormat: The output format to use (default: OutputFormat.MARKDOWN)
-            _initialOffset: Internal parameter for handling nested entities (default: 0)
+            text: The text to parse (string or bytes). If bytes, it should be UTF-16 encoded.
+            entities: A sequence of FormatEntity instances describing the formatting to apply.
+            outputFormat: The output format to use (default: OutputFormat.MARKDOWN).
+            _initialOffset: Internal parameter for handling nested entities (default: 0).
+                           This parameter is used recursively and should not be set by callers.
 
         Returns:
-            The parsed and formatted text
+            str: The parsed and formatted text with markup applied according to the entities.
+
+        Note:
+            This method does not escape existing markup characters in the text. If the input
+            text contains markup characters that should be treated as literal text, they must
+            be escaped before calling this method.
         """
-        # TODO: Somehow escape markup, which already present in text
 
         # Use negative length as we want to sort from longer to shorter in case of same offset
         entities = sorted(entities, key=lambda v: (v.offset, -v.length, v.type.getIndex()))

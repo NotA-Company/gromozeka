@@ -1,5 +1,29 @@
-"""
-Bot handlers manager for coordinating message processing across multiple handlers.
+"""Bot handlers manager for coordinating message processing across multiple handlers.
+
+This module provides the core orchestration layer for the Gromozeka bot's message
+processing pipeline. It manages a collection of handlers that process incoming
+messages, commands, callbacks, and chat member events in a controlled order with
+support for both sequential and parallel execution.
+
+Key components:
+    - HandlerParallelism: Enum defining execution modes (SEQUENTIAL/PARALLEL)
+    - MessageQueueRecord: Represents a queued message with synchronization primitives
+    - ChatProcessingState: Manages message queue and processing state for a chat
+    - HandlersManager: Main coordinator that routes messages through handlers
+
+The manager implements a sophisticated queuing system that:
+    - Maintains per-chat message queues to ensure ordered processing
+    - Supports sequential handlers that wait for previous messages to complete
+    - Supports parallel handlers that can process messages concurrently
+    - Handles command parsing, permission checking, and routing
+    - Manages handler lifecycle and background task execution
+    - Provides cleanup of stale chat states and old data
+
+Example:
+    manager = HandlersManager(configManager, database, llmManager, BotProvider.TELEGRAM)
+    await manager.initialize(bot)
+    await manager.handleNewMessage(ensuredMessage, updateObj)
+    await manager.shutdown()
 """
 
 import asyncio
@@ -62,25 +86,50 @@ logger = logging.getLogger(__name__)
 
 
 class HandlerParallelism(IntEnum):
-    """
-    Enum for handler parallelism options.
+    """Enum for handler parallelism options.
+
+    Defines how handlers should be executed relative to other handlers:
+    - SEQUENTIAL: Handlers wait for the same step of previous messages to complete
+    - PARALLEL: Handlers execute independently without waiting for previous messages
     """
 
     SEQUENTIAL = auto()
+    """Handler waits for the same step of previous messages to complete."""
+
     PARALLEL = auto()
+    """Handler executes independently without waiting for previous messages."""
 
 
 HandlerTuple = Tuple[BaseBotHandler, HandlerParallelism]
 
 
 class MessageQueueRecord:
-    """
-    Represents a message queue record with a message and a semaphore.
+    """Represents a message queue record with synchronization primitives.
+
+    This class encapsulates a message being processed along with the original
+    update object and synchronization primitives for coordinating handler
+    execution across multiple messages in the same chat.
+
+    Attributes:
+        message: The normalized message object to be processed
+        updateObj: The original update object from the platform
+        lock: Async lock for thread-safe operations on this record
+        handled: Event that is set when the message has been fully processed
+        step: Current processing step index (which handler is processing)
+        _id: Cached unique identifier for this message record
+        _stateId: Cached state identifier for the chat/thread
     """
 
     __slots__ = ("message", "updateObj", "lock", "handled", "step", "_id", "_stateId")
 
-    def __init__(self, message: EnsuredMessage, updateObj: UpdateObjectType, stateId: Optional[str] = None):
+    def __init__(self, message: EnsuredMessage, updateObj: UpdateObjectType, stateId: Optional[str] = None) -> None:
+        """Initialize a message queue record.
+
+        Args:
+            message: The normalized message object to be processed
+            updateObj: The original update object from the platform
+            stateId: Optional pre-computed state identifier for the chat/thread
+        """
         self.message = message
         self.updateObj = updateObj
         self.lock: asyncio.Lock = asyncio.Lock()
@@ -90,36 +139,88 @@ class MessageQueueRecord:
         self._stateId = stateId
 
     def getId(self, forceRecalc: bool = False) -> str:
+        """Get unique identifier for this message record.
+
+        The ID is composed of the recipient chat ID and message ID.
+
+        Args:
+            forceRecalc: If True, recalculate the ID even if already cached
+
+        Returns:
+            Unique identifier string in format "chatId:messageId"
+        """
         if self._id is None or forceRecalc:
             self._id = f"{self.message.recipient.id}:{self.message.messageId}"
 
         return self._id
 
     def getStateId(self, forceRecalc: bool = False) -> str:
+        """Get state identifier for the chat/thread this message belongs to.
+
+        The state ID is composed of the recipient chat ID and thread ID.
+
+        Args:
+            forceRecalc: If True, recalculate the state ID even if already cached
+
+        Returns:
+            State identifier string in format "chatId:threadId"
+        """
         if self._stateId is None or forceRecalc:
             self._stateId = f"{self.message.recipient.id}:{self.message.threadId}"
 
         return self._stateId
 
     def __str__(self) -> str:
+        """Return string representation of the message queue record.
+
+        Returns:
+            String representation showing message, update object, and state
+        """
         return (
             f"MessageQueueRecord({self.message}, {self.updateObj}, <lock>, "
             f"{self.handled}, {self.step}, {self._id}, {self._stateId})"
         )
 
     async def awaitStepDone(self, step: int) -> None:
+        """Wait until a specific processing step is completed.
+
+        This method blocks until either the message is fully handled or
+        the processing reaches the specified step index.
+
+        Args:
+            step: The step index to wait for (0-based handler index)
+        """
         while not self.handled.is_set() and self.step < step:
             await asyncio.sleep(0.1)
 
 
 class ChatProcessingState:
-    """
-    Represents the state of a chat processing.
+    """Represents the processing state for a single chat or thread.
+
+    This class manages the message queue and processing state for a specific
+    chat or thread. It ensures messages are processed in order and provides
+    synchronization primitives for coordinating handler execution.
+
+    Attributes:
+        chatId: The unique identifier for the chat
+        threadId: Optional thread identifier for threaded conversations
+        queue: Deque of MessageQueueRecord objects awaiting processing
+        lock: Async lock for thread-safe queue operations
+        shutdownEvent: Event that is set when the chat state is shutting down
+        _queueKey: Cached unique key for this chat/thread state
+        _updateAt: Timestamp of the last state update (for cleanup)
     """
 
     __slots__ = ("chatId", "threadId", "queue", "lock", "shutdownEvent", "_queueKey", "_updateAt")
 
     def __init__(self, chatId: int, threadId: Optional[int] = None, queueKey: Optional[str] = None) -> None:
+        """Initialize a chat processing state.
+
+        Args:
+            chatId: The unique identifier for the chat
+            threadId: Optional thread identifier for threaded conversations
+            queueKey: Optional pre-computed queue key for this state
+        """
         self.chatId: int = chatId
         self.threadId: Optional[int] = threadId
         self.queue = deque[MessageQueueRecord]()
@@ -129,15 +230,43 @@ class ChatProcessingState:
         self._updateAt: float = time.time()
 
     def getUpdatedAt(self) -> float:
+        """Get the timestamp of the last state update.
+
+        Returns:
+            Unix timestamp of the last update
+        """
         return self._updateAt
 
     def getQueueKey(self, forceRecalc: bool = False) -> str:
+        """Get the unique queue key for this chat/thread state.
+
+        Args:
+            forceRecalc: If True, recalculate the key even if already cached
+
+        Returns:
+            Queue key string in format "chatId:threadId"
+        """
         if self._queueKey is None or forceRecalc:
             self._queueKey = f"{self.chatId}:{self.threadId}"
 
         return self._queueKey
 
     async def addMessage(self, message: EnsuredMessage, updateObj: UpdateObjectType) -> MessageQueueRecord:
+        """Add a message to the processing queue.
+
+        Creates a new MessageQueueRecord and appends it to the queue.
+        Updates the last update timestamp.
+
+        Args:
+            message: The normalized message to add to the queue
+            updateObj: The original update object from the platform
+
+        Returns:
+            The created MessageQueueRecord
+
+        Raises:
+            RuntimeError: If the chat state has been shut down
+        """
         if self.shutdownEvent.is_set():
             raise RuntimeError("Chat processing is shut down")
         record = MessageQueueRecord(message, updateObj, stateId=self.getQueueKey())
@@ -147,6 +276,19 @@ class ChatProcessingState:
         return record
 
     async def messageProcessed(self, message: MessageQueueRecord) -> None:
+        """Mark a message as processed and remove it from the queue.
+
+        Waits for all previous messages to be processed first, then removes
+        the specified message from the front of the queue. Updates the last
+        update timestamp.
+
+        Args:
+            message: The message record to mark as processed
+
+        Raises:
+            ValueError: If the message is not found in the queue
+            RuntimeError: If a race condition is detected
+        """
         if message not in self.queue:
             raise ValueError(f"Record {message} not found in queue {self.getQueueKey()}")
 
@@ -163,6 +305,17 @@ class ChatProcessingState:
             self.queue.popleft()
 
     async def getPreviousMessage(self, message: MessageQueueRecord) -> Optional[MessageQueueRecord]:
+        """Get the previous message in the queue before the specified message.
+
+        Args:
+            message: The message to find the predecessor of
+
+        Returns:
+            The previous MessageQueueRecord, or None if the message is first
+
+        Raises:
+            ValueError: If the message is not found in the queue
+        """
         messageId = message.getId()
         previousMessage: Optional[MessageQueueRecord] = None
         async with self.lock:
@@ -175,17 +328,48 @@ class ChatProcessingState:
 
 
 class HandlersManager(CommandHandlerGetterInterface):
-    """
-    Manages and coordinates multiple bot handlers for message processing.
+    """Manages and coordinates multiple bot handlers for message processing.
 
-    This class orchestrates the execution of various handlers in a specific order,
-    handles command parsing and routing, and manages handler lifecycle.
+    This class is the central orchestrator for the Gromozeka bot's message
+    processing pipeline. It manages a collection of handlers that process
+    incoming messages, commands, callbacks, and chat member events in a
+    controlled order with support for both sequential and parallel execution.
+
+    The manager implements a sophisticated queuing system that:
+        - Maintains per-chat message queues to ensure ordered processing
+        - Supports sequential handlers that wait for previous messages to complete
+        - Supports parallel handlers that can process messages concurrently
+        - Handles command parsing, permission checking, and routing
+        - Manages handler lifecycle and background task execution
+        - Provides cleanup of stale chat states and old data
+
+    Attributes:
+        configManager: Configuration manager instance for accessing bot settings
+        db: Database wrapper for data persistence operations
+        llmManager: LLM manager for AI model operations
+        botProvider: Bot provider type (TELEGRAM or MAX)
+        handlerTimeout: Default timeout for handler execution in seconds
+        _commands: Cached dictionary mapping command names to handler info
+        cache: Cache service for storing chat settings and user data
+        storage: Storage service for file operations
+        queueService: Queue service for delayed task execution
+        maxTasks: Maximum number of concurrent handler tasks
+        maxTasksPerChat: Maximum number of queued messages per chat
+        handlers: List of (handler, parallelism) tuples in execution order
+        chatStates: Dictionary mapping queue keys to ChatProcessingState objects
+        handlerTasks: Set of active handler tasks for tracking
+        stateLock: Global lock for queue management operations
+        _shutdownEvent: Event set when the manager is shutting down
     """
 
     def __init__(
         self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    ) -> None:
         """Initialize the handlers manager with required services.
+
+        Initializes all core services, sets up default chat settings, configures
+        handler limits, and builds the handler pipeline. Handlers are registered
+        in a specific order to ensure proper message processing flow.
 
         Args:
             configManager: Configuration manager instance
@@ -379,6 +563,14 @@ class HandlersManager(CommandHandlerGetterInterface):
                 self.chatStates.pop(stateName)
 
     async def _cleanupOldData(self) -> None:
+        """Clean up old data from the database.
+
+        Removes cache entries older than 90 days and completed delayed tasks
+        older than 30 days to prevent database bloat.
+
+        Returns:
+            None
+        """
         # Drop cache entries, that more than 3 month old
         await self.db.cache.clearOldCacheEntries(ttl=60 * 60 * 24 * 90)
         # Also drop completed tasks older than a month
@@ -776,6 +968,20 @@ class HandlersManager(CommandHandlerGetterInterface):
         user: MessageSender,
         updateObj: UpdateObjectType,
     ) -> None:
+        """Handle callback query from inline keyboard buttons.
+
+        This is a public wrapper that runs the callback handler asynchronously
+        with a timeout. The actual processing is delegated to _handleCallback.
+
+        Args:
+            ensuredMessage: Message associated with the callback
+            data: Callback data payload
+            user: User who triggered the callback
+            updateObj: Original update object from the platform
+
+        Returns:
+            None
+        """
         await self.runAsync(
             self._handleCallback(ensuredMessage, data, user, updateObj),
             timeout=self.handlerTimeout,
@@ -819,13 +1025,18 @@ class HandlersManager(CommandHandlerGetterInterface):
     ) -> None:
         """Handle new chat member events.
 
+        This is a public wrapper that runs the new chat member handler asynchronously
+        with a timeout. The actual processing is delegated to _handleNewChatMember.
+
         Args:
             targetChat: Chat where the new member joined
             messageId: Message ID associated with the join event, if available
             newMember: User who joined the chat
             updateObj: Original update object from the platform
-        """
 
+        Returns:
+            None
+        """
         await self.runAsync(
             self._handleNewChatMember(targetChat, messageId, newMember, updateObj),
             timeout=self.handlerTimeout,
@@ -840,13 +1051,18 @@ class HandlersManager(CommandHandlerGetterInterface):
     ) -> None:
         """Handle new chat member events.
 
+        Iterates through all registered handlers and calls their newChatMemberHandler
+        method. Stops early if a handler returns a final status.
+
         Args:
             targetChat: Chat where the new member joined
             messageId: Message ID associated with the join event, if available
             newMember: User who joined the chat
             updateObj: Original update object from the platform
-        """
 
+        Returns:
+            None
+        """
         retSet: Set[HandlerResultStatus] = set()
         for handler, _ in self.handlers:
             ret = await handler.newChatMemberHandler(
@@ -872,13 +1088,18 @@ class HandlersManager(CommandHandlerGetterInterface):
     ) -> None:
         """Handle left chat member events.
 
+        This is a public wrapper that runs the left chat member handler asynchronously
+        with a timeout. The actual processing is delegated to _handleLeftChatMember.
+
         Args:
-            targetChat: Chat where the new member joined
-            messageId: Message ID associated with the join event, if available
+            targetChat: Chat where the member left
+            messageId: Message ID associated with the leave event, if available
             leftMember: User who left the chat
             updateObj: Original update object from the platform
-        """
 
+        Returns:
+            None
+        """
         await self.runAsync(
             self._handleLeftChatMember(targetChat, messageId, leftMember, updateObj),
             timeout=self.handlerTimeout,
@@ -893,13 +1114,18 @@ class HandlersManager(CommandHandlerGetterInterface):
     ) -> None:
         """Handle left chat member events.
 
+        Iterates through all registered handlers and calls their leftChatMemberHandler
+        method. Stops early if a handler returns a final status.
+
         Args:
-            targetChat: Chat where the new member joined
-            messageId: Message ID associated with the join event, if available
+            targetChat: Chat where the member left
+            messageId: Message ID associated with the leave event, if available
             leftMember: User who left the chat
             updateObj: Original update object from the platform
-        """
 
+        Returns:
+            None
+        """
         retSet: Set[HandlerResultStatus] = set()
         for handler, _ in self.handlers:
             ret = await handler.leftChatMemberHandler(

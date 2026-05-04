@@ -204,46 +204,46 @@ This document provides a comprehensive plan for systematically adding and improv
 
 | Stage | Substage | File Path | Status | Notes |
 |-------|----------|-----------|--------|-------|
-| 3 | 3.1 | `internal/bot/__init__.py` | [ ] | |
-| 3 | 3.1 | `internal/bot/constants.py` | [ ] | |
-| 3 | 3.1 | `internal/bot/utils.py` | [ ] | |
-| 3 | 3.1 | `internal/bot/common/__init__.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/bot.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/typing_manager.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/__init__.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/base.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/common.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/configure.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/dev_commands.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/example_custom_handler.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/example.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/help_command.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/llm_messages.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/manager.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/media.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/message_preprocessor.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/module_loader.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/react_on_user.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/resender.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/spam.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/summarization.py` | [ ] | |
-| 3 | 3.2 | `internal/bot/common/handlers/test_module_loader.py` | [ ] | |
-| 3 | 2.2 | `internal/bot/common/handlers/topic_manager.py` | [ ] | |
-| 3 | 2.2 | `internal/bot/common/handlers/user_data.py` | [ ] | |
-| 3 | 2.2 | `internal/bot/common/handlers/weather.py` | [ ] | |
-| 3 | 2.2 | `internal/bot/common/handlers/yandex_search.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/common/models/__init__.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/common/models/chat_action.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/common/models/keyboard_button.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/common/models/wrappers.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/models/__init__.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/models/chat_settings.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/models/command_handlers.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/models/ensured_message.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/models/enums.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/models/media.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/models/text_formatter.py` | [ ] | |
-| 3 | 3.3 | `internal/bot/models/user_metadata.py` | [ ] | |
+| 3 | 3.1 | `internal/bot/__init__.py` | [x] | |
+| 3 | 3.1 | `internal/bot/constants.py` | [x] | |
+| 3 | 3.1 | `internal/bot/utils.py` | [x] | |
+| 3 | 3.1 | `internal/bot/common/__init__.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/bot.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/typing_manager.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/__init__.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/base.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/common.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/configure.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/dev_commands.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/example_custom_handler.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/example.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/help_command.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/llm_messages.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/manager.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/media.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/message_preprocessor.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/module_loader.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/react_on_user.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/resender.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/spam.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/summarization.py` | [x] | |
+| 3 | 3.2 | `internal/bot/common/handlers/test_module_loader.py` | [x] | |
+| 3 | 2.2 | `internal/bot/common/handlers/topic_manager.py` | [x] | |
+| 3 | 2.2 | `internal/bot/common/handlers/user_data.py` | [x] | |
+| 3 | 2.2 | `internal/bot/common/handlers/weather.py` | [x] | |
+| 3 | 2.2 | `internal/bot/common/handlers/yandex_search.py` | [x] | |
+| 3 | 3.3 | `internal/bot/common/models/__init__.py` | [x] | |
+| 3 | 3.3 | `internal/bot/common/models/chat_action.py` | [x] | |
+| 3 | 3.3 | `internal/bot/common/models/keyboard_button.py` | [x] | |
+| 3 | 3.3 | `internal/bot/common/models/wrappers.py` | [x] | |
+| 3 | 3.3 | `internal/bot/models/__init__.py` | [x] | |
+| 3 | 3.3 | `internal/bot/models/chat_settings.py` | [x] | |
+| 3 | 3.3 | `internal/bot/models/command_handlers.py` | [x] | |
+| 3 | 3.3 | `internal/bot/models/ensured_message.py` | [x] | |
+| 3 | 3.3 | `internal/bot/models/enums.py` | [x] | |
+| 3 | 3.3 | `internal/bot/models/media.py` | [x] | |
+| 3 | 3.3 | `internal/bot/models/text_formatter.py` | [x] | |
+| 3 | 3.3 | `internal/bot/models/user_metadata.py` | [x] | |
 
 ### Stage 4: Bot Platform
 

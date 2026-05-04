@@ -1,5 +1,8 @@
-"""
-TODO: write docstring
+"""Topic management handler for bot.
+
+This module provides functionality for managing Telegram forum topics through
+an interactive wizard interface. It allows administrators to rename topics
+in group chats where they have admin privileges.
 """
 
 import logging
@@ -32,15 +35,30 @@ logger = logging.getLogger(__name__)
 
 
 class TopicManagerHandler(BaseBotHandler):
-    """
-    TODO: write docstring
+    """Handler for managing Telegram forum topics.
+
+    Provides an interactive wizard interface that allows administrators to
+    rename topics in group chats where they have admin privileges. The handler
+    supports both command-based and callback-based interactions.
     """
 
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
-        """
-        TODO: write compact docstring
+        """Handle new messages during topic management workflow.
+
+        Processes user input when they are in the middle of renaming a topic.
+        Only processes messages from private chats where the user has an active
+        topic management state.
+
+        Args:
+            ensuredMessage: The ensured message object containing message details.
+            updateObj: The raw update object from the messaging platform.
+
+        Returns:
+            HandlerResultStatus.FINAL if the message was processed and topic
+                management workflow should continue, HandlerResultStatus.SKIPPED
+                if the message should be handled by other handlers.
         """
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             return HandlerResultStatus.SKIPPED
@@ -68,7 +86,22 @@ class TopicManagerHandler(BaseBotHandler):
         user: MessageSender,
         chatId: Optional[int],
     ) -> None:
-        """TODO write docstring"""
+        """Initialize the topic management wizard.
+
+        Displays a list of chats where the user is an administrator, allowing
+        them to select a chat for topic management. Only shows chats where the
+        user has admin privileges or if the user is the bot owner.
+
+        Args:
+            data: Payload dictionary containing action data.
+            messageId: The message ID to edit with the chat selection menu.
+            messageChatId: The chat ID where the message was sent.
+            user: The user who initiated the topic management.
+            chatId: Must be None for the Init action.
+
+        Raises:
+            RuntimeError: If chatId is not None (should be None for Init action).
+        """
         if chatId is not None:
             raise RuntimeError("Init: chatId should be None in Init action")
 
@@ -125,7 +158,19 @@ class TopicManagerHandler(BaseBotHandler):
         user: MessageSender,
         chatId: Optional[int],
     ) -> None:
-        """TODO write docstring"""
+        """Handle chat selection in topic management wizard.
+
+        Displays a list of topics in the selected chat, allowing the user to
+        choose a topic to rename. Includes a default topic option if no topics
+        exist in the chat.
+
+        Args:
+            data: Payload dictionary containing action data including chatId.
+            messageId: The message ID to edit with the topic selection menu.
+            messageChatId: The chat ID where the message was sent.
+            user: The user who selected the chat.
+            chatId: The ID of the selected chat.
+        """
         if chatId is None:
             logger.error(f"chatId is None in {data}")
             await self.editMessage(
@@ -207,7 +252,20 @@ class TopicManagerHandler(BaseBotHandler):
         user: MessageSender,
         chatId: Optional[int],
     ) -> None:
-        """TODO write docstring"""
+        """Handle topic selection in topic management wizard.
+
+        Either applies a new topic name if provided in the data, or prompts
+        the user to enter a new name for the selected topic. When prompting,
+        sets the user's active state to wait for their text input.
+
+        Args:
+            data: Payload dictionary containing action data including chatId,
+                topicId, and optionally the new topic name (Value).
+            messageId: The message ID to edit with the topic name prompt.
+            messageChatId: The chat ID where the message was sent.
+            user: The user who selected the topic.
+            chatId: The ID of the chat containing the topic.
+        """
         if chatId is None:
             logger.error(f"chatId is None in {data}")
             await self.editMessage(
@@ -330,9 +388,23 @@ class TopicManagerHandler(BaseBotHandler):
         messageId: MessageIdType,
         messageChatId: int,
         user: MessageSender,
-    ):
-        """
-        TODO: write docstring
+    ) -> None:
+        """Handle topic management actions.
+
+        Routes topic management actions to the appropriate handler method based
+        on the action type. Validates user permissions before processing actions
+        that require admin privileges.
+
+        Args:
+            data: Payload dictionary containing action data including the
+                TopicManagementAction and optionally chatId.
+            messageId: The message ID to edit with responses.
+            messageChatId: The chat ID where the message was sent.
+            user: The user performing the action.
+
+        Raises:
+            ValueError: If the action in the data is not a valid
+                ButtonTopicManagementAction.
         """
         self.cache.clearUserState(userId=user.id, stateKey=UserActiveActionEnum.TopicManagement)
         actionStr: Optional[str] = str(data.get(ButtonDataKey.TopicManagementAction, None))
@@ -395,8 +467,17 @@ class TopicManagerHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        TODO: write docstring
+        """Handle the /topic_management command.
+
+        Initiates the topic management wizard by displaying a loading message
+        and then showing the list of chats where the user can manage topics.
+
+        Args:
+            ensuredMessage: The ensured message object containing command details.
+            command: The command that was triggered (e.g., "topic_management").
+            args: Additional arguments provided with the command.
+            UpdateObj: The raw update object from the messaging platform.
+            typingManager: Optional typing manager for showing typing indicators.
         """
 
         msg = await self.sendMessage(
@@ -424,8 +505,22 @@ class TopicManagerHandler(BaseBotHandler):
         user: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
-        """
-        TODO write docstring
+        """Handle callback queries for topic management.
+
+        Processes callback button presses related to topic management and routes
+        them to the appropriate handler. Skips callbacks that are not related to
+        topic management.
+
+        Args:
+            ensuredMessage: The ensured message object containing callback details.
+            data: Payload dictionary containing callback data.
+            user: The user who triggered the callback.
+            updateObj: The raw update object from the messaging platform.
+
+        Returns:
+            HandlerResultStatus.FINAL if the callback was processed as a topic
+                management action, HandlerResultStatus.SKIPPED if the callback
+                should be handled by other handlers.
         """
 
         topicManagementAction = data.get(ButtonDataKey.TopicManagementAction, None)
