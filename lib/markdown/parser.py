@@ -1,8 +1,23 @@
 """
-Main Markdown Parser for Gromozeka Markdown Parser
+Main Markdown Parser for Gromozeka Markdown Parser.
 
 This module provides the main MarkdownParser class that orchestrates
-tokenization, block parsing, inline parsing, and rendering.
+tokenization, block parsing, inline parsing, and rendering. It serves as the
+primary entry point for parsing Markdown text and converting it to various
+output formats including HTML, normalized Markdown, and Telegram MarkdownV2.
+
+The parser follows a four-stage processing model:
+1. Tokenization: Split input into tokens
+2. Block Parsing: Identify and parse block-level elements
+3. Inline Parsing: Process inline elements within blocks
+4. Rendering: Convert parsed structure to output format
+
+Example:
+    >>> from lib.markdown.parser import MarkdownParser
+    >>> parser = MarkdownParser()
+    >>> document = parser.parse("# Hello World\\n\\nThis is **bold** text.")
+    >>> html = parser.parse_to_html("# Hello World\\n\\nThis is **bold** text.")
+    >>> markdownv2 = parser.parse_to_markdownv2("# Hello World\\n\\nThis is **bold** text.")
 """
 
 from typing import Any, Dict, Optional
@@ -24,35 +39,65 @@ class MarkdownParser:
     2. Block Parsing: Identify and parse block-level elements
     3. Inline Parsing: Process inline elements within blocks
     4. Rendering: Convert parsed structure to output format
+
+    Attributes:
+        options: Dictionary containing parser configuration options.
+        strict_mode: If True, raises exceptions on parsing errors. If False,
+            attempts to recover and return partial results.
+        enable_extensions: Whether to enable Markdown extensions.
+        max_nesting_depth: Maximum allowed nesting depth for nested elements.
+        preserve_leading_spaces: Whether to preserve leading spaces in text.
+        preserve_soft_line_breaks: Whether to preserve soft line breaks.
+        ignore_indented_code_blocks: Whether to ignore indented code blocks.
+        inline_parser: InlineParser instance for processing inline elements.
+        html_renderer: HTMLRenderer instance for HTML output.
+        markdown_renderer: MarkdownRenderer instance for normalized Markdown output.
+        markdownv2_renderer: MarkdownV2Renderer instance for Telegram MarkdownV2 output.
+        parse_stats: Dictionary containing parsing statistics from the last operation.
+
+    Example:
+        >>> parser = MarkdownParser({"strict_mode": True})
+        >>> document = parser.parse("# Header\\n\\nParagraph with **bold** text")
+        >>> html = parser.parse_to_html("# Header\\n\\nParagraph with **bold** text")
     """
 
-    def __init__(self, options: Optional[Dict[str, Any]] = None):
+    def __init__(self, options: Optional[Dict[str, Any]] = None) -> None:
         """
         Initialize the Markdown parser.
 
         Args:
-            options: Optional parser configuration
+            options: Optional parser configuration dictionary. Supported keys:
+                - strict_mode (bool): Raise exceptions on errors (default: False)
+                - enable_extensions (bool): Enable Markdown extensions (default: True)
+                - max_nesting_depth (int): Maximum nesting depth (default: 100)
+                - preserve_leading_spaces (bool): Preserve leading spaces (default: False)
+                - preserve_soft_line_breaks (bool): Preserve soft line breaks (default: False)
+                - ignore_indented_code_blocks (bool): Ignore indented code blocks (default: True)
+                - html_options (dict): Options for HTML renderer
+                - markdown_options (dict): Options for Markdown renderer
+                - markdownv2_options (dict): Options for MarkdownV2 renderer
+                - debug_mode (bool): Enable debug mode (default: False)
         """
         self.options = options or {}
 
         # Parser options
-        self.strict_mode = self.options.get("strict_mode", False)
-        self.enable_extensions = self.options.get("enable_extensions", True)
-        self.max_nesting_depth = self.options.get("max_nesting_depth", 100)
-        self.preserve_leading_spaces = self.options.get("preserve_leading_spaces", False)
-        self.preserve_soft_line_breaks = self.options.get("preserve_soft_line_breaks", False)
-        self.ignore_indented_code_blocks = self.options.get("ignore_indented_code_blocks", True)
+        self.strict_mode: bool = self.options.get("strict_mode", False)
+        self.enable_extensions: bool = self.options.get("enable_extensions", True)
+        self.max_nesting_depth: int = self.options.get("max_nesting_depth", 100)
+        self.preserve_leading_spaces: bool = self.options.get("preserve_leading_spaces", False)
+        self.preserve_soft_line_breaks: bool = self.options.get("preserve_soft_line_breaks", False)
+        self.ignore_indented_code_blocks: bool = self.options.get("ignore_indented_code_blocks", True)
 
         # Initialize components
-        self.inline_parser = InlineParser()
+        self.inline_parser: InlineParser = InlineParser()
 
         # Rendering options
-        self.html_renderer = HTMLRenderer(self.options.get("html_options", {}))
-        self.markdown_renderer = MarkdownRenderer(self.options.get("markdown_options", {}))
-        self.markdownv2_renderer = MarkdownV2Renderer(self.options.get("markdownv2_options", {}))
+        self.html_renderer: HTMLRenderer = HTMLRenderer(self.options.get("html_options", {}))
+        self.markdown_renderer: MarkdownRenderer = MarkdownRenderer(self.options.get("markdown_options", {}))
+        self.markdownv2_renderer: MarkdownV2Renderer = MarkdownV2Renderer(self.options.get("markdownv2_options", {}))
 
         # Statistics and debugging
-        self.parse_stats = {
+        self.parse_stats: Dict[str, Any] = {
             "tokens_processed": 0,
             "blocks_parsed": 0,
             "inline_elements_parsed": 0,
@@ -344,7 +389,18 @@ class MarkdownParser:
         Get parsing statistics from the last parse operation.
 
         Returns:
-            Dictionary containing parsing statistics
+            Dictionary containing parsing statistics with keys:
+                - tokens_processed (int): Number of tokens processed
+                - blocks_parsed (int): Number of block-level elements parsed
+                - inline_elements_parsed (int): Number of inline elements parsed
+                - errors (list[str]): List of error messages encountered
+
+        Example:
+            >>> parser = MarkdownParser()
+            >>> parser.parse("# Header\\n\\nParagraph")
+            >>> stats = parser.get_stats()
+            >>> print(stats["blocks_parsed"])
+            2
         """
         return self.parse_stats.copy()
 
@@ -352,9 +408,19 @@ class MarkdownParser:
         """
         Set a parser option.
 
+        This method allows dynamic configuration of parser options. Some
+        options prefixed with "html_", "markdown_", or "markdownv2_" will
+        automatically update the corresponding renderer.
+
         Args:
-            key: Option name
-            value: Option value
+            key: Option name. Can be any parser option or renderer-specific
+                option with appropriate prefix.
+            value: Option value to set.
+
+        Example:
+            >>> parser = MarkdownParser()
+            >>> parser.set_option("strict_mode", True)
+            >>> parser.set_option("html_escape_entities", True)
         """
         self.options[key] = value
 
@@ -383,30 +449,54 @@ class MarkdownParser:
         Get a parser option.
 
         Args:
-            key: Option name
-            default: Default value if option not found
+            key: Option name to retrieve.
+            default: Default value to return if option is not found
+                (default: None).
 
         Returns:
-            Option value or default
+            Option value if found, otherwise the default value.
+
+        Example:
+            >>> parser = MarkdownParser({"strict_mode": True})
+            >>> parser.get_option("strict_mode")
+            True
+            >>> parser.get_option("nonexistent", "default")
+            'default'
         """
         return self.options.get(key, default)
 
 
 class MarkdownParseError(Exception):
-    """Exception raised when Markdown parsing fails."""
+    """
+    Exception raised when Markdown parsing fails.
 
-    def __init__(self, message: str, line: Optional[int] = None, column: Optional[int] = None):
+    This exception provides detailed error information including the error
+    message and optional location information (line and column numbers).
+
+    Attributes:
+        message: The error message describing what went wrong.
+        line: Optional line number where the error occurred.
+        column: Optional column number where the error occurred.
+
+    Example:
+        >>> try:
+        ...     parser.parse("```\\ncode block without closing")
+        ... except MarkdownParseError as e:
+        ...     print(f"Error: {e.message} at line {e.line}")
+    """
+
+    def __init__(self, message: str, line: Optional[int] = None, column: Optional[int] = None) -> None:
         """
         Initialize parse error.
 
         Args:
-            message: Error message
-            line: Line number where error occurred
-            column: Column number where error occurred
+            message: Error message describing the parsing failure.
+            line: Optional line number where the error occurred.
+            column: Optional column number where the error occurred.
         """
-        self.message = message
-        self.line = line
-        self.column = column
+        self.message: str = message
+        self.line: Optional[int] = line
+        self.column: Optional[int] = column
 
         location = ""
         if line is not None:
@@ -420,61 +510,100 @@ class MarkdownParseError(Exception):
 # Convenience functions for quick parsing
 
 
-def parse_markdown(text: str, **options) -> MDDocument:
+def parse_markdown(text: str, **options: Any) -> MDDocument:
     """
     Parse Markdown text into an AST.
 
+    This is a convenience function that creates a MarkdownParser instance
+    and parses the text in one call.
+
     Args:
-        text: Markdown text to parse
-        **options: Parser options
+        text: Markdown text to parse.
+        **options: Parser options passed to MarkdownParser constructor.
 
     Returns:
-        MDDocument representing the parsed document
+        MDDocument representing the parsed document.
+
+    Example:
+        >>> doc = parse_markdown("# Header\\n\\nParagraph")
+        >>> print(doc.node_type)
+        NodeType.DOCUMENT
     """
     parser = MarkdownParser(options)
     return parser.parse(text)
 
 
-def markdown_to_html(text: str, **options) -> str:
+def markdown_to_html(text: str, **options: Any) -> str:
     """
     Convert Markdown text to HTML.
 
+    This is a convenience function that creates a MarkdownParser instance
+    and converts the text to HTML in one call.
+
     Args:
-        text: Markdown text to convert
-        **options: Parser and renderer options
+        text: Markdown text to convert.
+        **options: Parser and renderer options passed to MarkdownParser.
 
     Returns:
-        HTML string
+        HTML string representation of the Markdown.
+
+    Example:
+        >>> html = markdown_to_html("# Header\\n\\nParagraph with **bold**")
+        >>> print(html)
+        <h1>Header</h1>
+        <p>Paragraph with <strong>bold</strong></p>
     """
     parser = MarkdownParser(options)
     return parser.parse_to_html(text)
 
 
-def normalize_markdown(text: str, **options) -> str:
+def normalize_markdown(text: str, **options: Any) -> str:
     """
     Normalize Markdown text by parsing and re-rendering.
 
+    This is a convenience function that creates a MarkdownParser instance
+    and normalizes the text in one call. Useful for ensuring consistent
+    formatting.
+
     Args:
-        text: Markdown text to normalize
-        **options: Parser and renderer options
+        text: Markdown text to normalize.
+        **options: Parser and renderer options passed to MarkdownParser.
 
     Returns:
-        Normalized Markdown string
+        Normalized Markdown string with consistent formatting.
+
+    Example:
+        >>> normalized = normalize_markdown("#Header\\nParagraph")
+        >>> print(normalized)
+        # Header
+
+        Paragraph
     """
     parser = MarkdownParser(options)
     return parser.parse_to_markdown(text)
 
 
-def markdownToMarkdownV2(text: str, **options) -> str:
+def markdownToMarkdownV2(text: str, **options: Any) -> str:
     """
     Convert Markdown text to Telegram MarkdownV2 format.
 
+    This is a convenience function that creates a MarkdownParser instance
+    and converts the text to Telegram's MarkdownV2 format in one call.
+    Automatically enables preserve options for better Telegram compatibility.
+
     Args:
-        text: Markdown text to convert
-        **options: Parser and renderer options
+        text: Markdown text to convert.
+        **options: Parser and renderer options passed to MarkdownParser.
 
     Returns:
-        MarkdownV2 string
+        MarkdownV2 string representation with proper escaping for Telegram.
+
+    Example:
+        >>> mdv2 = markdownToMarkdownV2("# Header\\nText with *italic*")
+        >>> print(mdv2)
+        # Header
+
+        Text with \\*italic\\*
     """
     # Enable preserve options by default for MarkdownV2 conversion
     if "preserve_leading_spaces" not in options:
@@ -486,16 +615,28 @@ def markdownToMarkdownV2(text: str, **options) -> str:
     return parser.parse_to_markdownv2(text)
 
 
-def validate_markdown(text: str, **options) -> Dict[str, Any]:
+def validate_markdown(text: str, **options: Any) -> Dict[str, Any]:
     """
     Validate Markdown text.
 
+    This is a convenience function that creates a MarkdownParser instance
+    and validates the text in one call.
+
     Args:
-        text: Markdown text to validate
-        **options: Parser options
+        text: Markdown text to validate.
+        **options: Parser options passed to MarkdownParser.
 
     Returns:
-        Validation results dictionary
+        Validation results dictionary with keys:
+            - valid (bool): True if parsing succeeded without errors
+            - errors (list[str]): List of error messages
+            - warnings (list[str]): List of warning messages
+            - stats (dict): Parsing statistics
+
+    Example:
+        >>> result = validate_markdown("# Valid header")
+        >>> print(result["valid"])
+        True
     """
     parser = MarkdownParser(options)
     return parser.validate(text)

@@ -1,8 +1,19 @@
 """
-Inline Parser for Gromozeka Markdown Parser
+Inline Parser for Gromozeka Markdown Parser.
 
-This module handles parsing of inline elements like emphasis, links, images,
-code spans, and autolinks within block elements.
+This module provides the InlineParser class for parsing inline Markdown elements
+within block elements. It handles emphasis (bold, italic, strikethrough, underline,
+spoiler), links, images, code spans, and autolinks. The parser follows Telegram
+MarkdownV2 specification and supports both inline and reference link formats.
+
+Key features:
+- Emphasis parsing with multiple delimiter types (*, _, ~, +, |)
+- Link parsing with inline and reference formats
+- Image parsing with alt text and optional titles
+- Code span parsing with backtick delimiters
+- Autolink detection for URLs and email addresses
+- Proper precedence rules for nested inline elements
+- Reference link definition extraction and resolution
 """
 
 import re
@@ -25,11 +36,23 @@ class InlineParser:
     """
     Parser for inline Markdown elements.
 
-    Processes inline content within block elements and builds AST nodes
-    for emphasis, links, images, code spans, and other inline elements.
+    Processes inline content within block elements and builds AST nodes for
+    emphasis, links, images, code spans, and other inline elements. Supports
+    Telegram MarkdownV2 specification with proper precedence rules and nested
+    element handling.
+
+    Attributes:
+        reference_links: Dictionary mapping reference link labels to (url, title) tuples.
+            Keys are lowercase labels, values are tuples containing the URL and optional title.
+        ref_link_pattern: Compiled regex pattern for matching reference link definitions.
+        url_pattern: Compiled regex pattern for validating URL autolinks.
+        email_pattern: Compiled regex pattern for validating email autolinks.
+        emphasis_delims: Dictionary mapping delimiter characters to their emphasis types.
+            Maps characters (*, _, ~, +, |) to single/double/triple emphasis types.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize the InlineParser with empty reference links and compiled patterns."""
         # Reference link definitions
         self.reference_links: Dict[str, Tuple[str, Optional[str]]] = {}
 
@@ -37,7 +60,11 @@ class InlineParser:
         self._compile_patterns()
 
     def _compile_patterns(self) -> None:
-        """Compile regex patterns used for inline parsing."""
+        """Compile regex patterns used for inline parsing.
+
+        Initializes all regex patterns for efficient parsing of inline elements
+        including reference links, URLs, emails, and emphasis delimiters.
+        """
         # Link reference definitions
         self.ref_link_pattern = re.compile(r'^\s*\[([^\]]+)\]:\s*([^\s]+)(?:\s+"([^"]*)")?', re.MULTILINE)
 
@@ -63,14 +90,25 @@ class InlineParser:
         }
 
     def parse_inline_content(self, content: str) -> List[MDNode]:
-        """
-        Parse inline content and return list of inline nodes.
+        """Parse inline content and return list of inline nodes.
+
+        This is the main entry point for parsing inline Markdown elements. It extracts
+        reference link definitions, removes them from the content, and then parses the
+        remaining content for inline elements following proper precedence rules.
 
         Args:
-            content: Raw text content to parse for inline elements
+            content: Raw text content to parse for inline elements. May contain
+                reference link definitions in the format [label]: url "title".
 
         Returns:
-            List of MDNode objects representing inline elements
+            List of MDNode objects representing parsed inline elements. Returns an
+            empty list if the content is empty or contains only whitespace.
+
+        Example:
+            >>> parser = InlineParser()
+            >>> nodes = parser.parse_inline_content("Hello *world*!")
+            >>> len(nodes)
+            3
         """
         # First, extract reference link definitions
         self._extract_reference_links(content)
@@ -85,7 +123,19 @@ class InlineParser:
         return self._parse_inline_elements(content)
 
     def _extract_reference_links(self, content: str) -> None:
-        """Extract reference link definitions from content."""
+        """Extract reference link definitions from content.
+
+        Parses reference link definitions in the format [label]: url "title" and
+        stores them in the reference_links dictionary. Labels are converted to
+        lowercase for case-insensitive matching.
+
+        Args:
+            content: Text content that may contain reference link definitions.
+
+        Note:
+            Reference links are stored with lowercase labels to enable case-insensitive
+            matching. The title is optional and defaults to None if not provided.
+        """
         for match in self.ref_link_pattern.finditer(content):
             label = match.group(1).lower().strip()
             url = match.group(2)
@@ -93,7 +143,30 @@ class InlineParser:
             self.reference_links[label] = (url, title)
 
     def _parse_inline_elements(self, content: str) -> List[MDNode]:
-        """Parse inline elements with proper precedence."""
+        """Parse inline elements with proper precedence.
+
+        Iterates through the content and attempts to parse inline elements in order
+        of precedence: code spans, autolinks, images, links, emphasis, escaped
+        characters, and finally regular text. This ensures correct handling of
+        nested and overlapping elements.
+
+        Args:
+            content: Text content to parse for inline elements.
+
+        Returns:
+            List of MDNode objects representing parsed inline elements. Adjacent
+            text nodes are merged into single nodes for efficiency.
+
+        Note:
+            Precedence order (highest to lowest):
+            1. Code spans (backtick-delimited)
+            2. Autolinks (<url> or <email>)
+            3. Images (![alt](url))
+            4. Links ([text](url))
+            5. Emphasis (*, _, ~, +, |)
+            6. Escaped characters (\\char)
+            7. Regular text
+        """
         nodes = []
         pos = 0
 
@@ -164,7 +237,25 @@ class InlineParser:
         return self._merge_adjacent_text_nodes(nodes)
 
     def _try_parse_code_span(self, content: str, pos: int) -> Tuple[Optional[MDCodeSpan], int]:
-        """Try to parse a code span at the current position."""
+        """Try to parse a code span at the current position.
+
+        Attempts to parse a code span delimited by backticks. Supports multiple
+        backticks for code containing backticks. Leading and trailing spaces are
+        trimmed if both are present.
+
+        Args:
+            content: Text content to parse.
+            pos: Current position in the content.
+
+        Returns:
+            Tuple of (MDCodeSpan, new_position) if a valid code span is found,
+            otherwise (None, pos). The new_position points to the character after
+            the closing backticks.
+
+        Note:
+            Code spans can use multiple backticks to allow backticks within the code.
+            For example, `` `code` `` is a valid code span containing a single backtick.
+        """
         if pos >= len(content) or content[pos] != "`":
             return None, pos
 
@@ -202,7 +293,25 @@ class InlineParser:
         return None, start_pos
 
     def _try_parse_autolink(self, content: str, pos: int) -> Tuple[Optional[MDAutolink], int]:
-        """Try to parse an autolink at the current position."""
+        """Try to parse an autolink at the current position.
+
+        Attempts to parse an autolink in the format <url> or <email>. Validates
+        the content between angle brackets to ensure it's a valid URL or email address.
+
+        Args:
+            content: Text content to parse.
+            pos: Current position in the content.
+
+        Returns:
+            Tuple of (MDAutolink, new_position) if a valid autolink is found,
+            otherwise (None, pos). The new_position points to the character after
+            the closing angle bracket.
+
+        Note:
+            Only URLs starting with http:// or https:// are recognized. Email addresses
+            must contain an @ symbol and a domain with a dot. If the content doesn't
+            match either pattern, the opening < is not consumed.
+        """
         if pos >= len(content) or content[pos] != "<":
             return None, pos
 
@@ -224,7 +333,26 @@ class InlineParser:
         return None, pos
 
     def _try_parse_image(self, content: str, pos: int) -> Tuple[Optional[MDImage], int]:
-        """Try to parse an image at the current position."""
+        """Try to parse an image at the current position.
+
+        Attempts to parse an image in either inline format ![alt](url "title") or
+        reference format ![alt][ref]. The reference format looks up the URL and
+        title from previously extracted reference link definitions.
+
+        Args:
+            content: Text content to parse.
+            pos: Current position in the content.
+
+        Returns:
+            Tuple of (MDImage, new_position) if a valid image is found,
+            otherwise (None, pos). The new_position points to the character after
+            the closing parenthesis or bracket.
+
+        Note:
+            For reference images, if the reference label is empty, the alt text
+            is used as the label. Reference links must have been previously
+            extracted via _extract_reference_links().
+        """
         if pos >= len(content) or not content[pos:].startswith("!["):
             return None, pos
 
@@ -258,7 +386,27 @@ class InlineParser:
         return None, pos
 
     def _try_parse_link(self, content: str, pos: int) -> Tuple[Optional[MDLink], int]:
-        """Try to parse a link at the current position."""
+        """Try to parse a link at the current position.
+
+        Attempts to parse a link in either inline format [text](url "title") or
+        reference format [text][ref]. The link text is parsed for inline elements
+        (except nested links) to allow emphasis, code spans, etc. within links.
+
+        Args:
+            content: Text content to parse.
+            pos: Current position in the content.
+
+        Returns:
+            Tuple of (MDLink, new_position) if a valid link is found,
+            otherwise (None, pos). The new_position points to the character after
+            the closing parenthesis or bracket.
+
+        Note:
+            Nested links are not supported. The link text is parsed with
+            _parse_inline_elements_no_links() to prevent link nesting.
+            For reference links, if the reference label is empty, the link text
+            is used as the label.
+        """
         if pos >= len(content) or content[pos] != "[":
             return None, pos
 
@@ -306,7 +454,27 @@ class InlineParser:
         return None, pos
 
     def _try_parse_emphasis(self, content: str, pos: int) -> Tuple[Optional[MDEmphasis], int]:
-        """Try to parse emphasis at the current position."""
+        """Try to parse emphasis at the current position.
+
+        Attempts to parse emphasis delimiters and delegates to appropriate parsing
+        methods based on the delimiter character and count. Supports italic (1 or 3
+        delimiters), bold (2 or 3 delimiters), strikethrough (~~), underline (++),
+        and spoiler (||).
+
+        Args:
+            content: Text content to parse.
+            pos: Current position in the content.
+
+        Returns:
+            Tuple of (MDEmphasis, new_position) if valid emphasis is found,
+            otherwise (None, pos). The new_position points to the character after
+            the closing delimiter.
+
+        Note:
+            Underscore emphasis requires valid word boundaries (non-alphanumeric
+            before opening, non-alphanumeric after closing). Asterisk emphasis has
+            no such restriction.
+        """
         if pos >= len(content):
             return None, pos
 
@@ -340,13 +508,43 @@ class InlineParser:
         return None, start_pos
 
     def _parse_strikethrough(self, content: str, start_pos: int) -> Tuple[Optional[MDEmphasis], int]:
-        """Parse strikethrough emphasis (~~text~~)."""
+        """Parse strikethrough emphasis (~~text~~).
+
+        Parses text delimited by double tildes as strikethrough emphasis.
+
+        Args:
+            content: Text content to parse.
+            start_pos: Starting position of the opening delimiter.
+
+        Returns:
+            Tuple of (MDEmphasis, new_position) if valid strikethrough is found,
+            otherwise (None, start_pos).
+        """
         return self._parse_double_delimiter_emphasis(content, start_pos, "~~", EmphasisType.STRIKETHROUGH)
 
     def _parse_double_delimiter_emphasis(
         self, content: str, start_pos: int, delimiter: str, emphasis_type: EmphasisType
     ) -> Tuple[Optional[MDEmphasis], int]:
-        """Parse double-delimiter emphasis (~~text~~, ++text++, ||text||)."""
+        """Parse double-delimiter emphasis (~~text~~, ++text++, ||text||).
+
+        Parses text delimited by two identical characters as emphasis. The content
+        between delimiters is parsed for nested inline elements.
+
+        Args:
+            content: Text content to parse.
+            start_pos: Starting position of the opening delimiter.
+            delimiter: The delimiter string (e.g., "~~", "++", "||").
+            emphasis_type: The type of emphasis to create.
+
+        Returns:
+            Tuple of (MDEmphasis, new_position) if valid emphasis is found,
+            otherwise (None, start_pos). The new_position points to the character
+            after the closing delimiter.
+
+        Note:
+            The emphasis content must contain non-whitespace characters to be
+            considered valid. Empty or whitespace-only emphasis is not parsed.
+        """
         delim_len = len(delimiter)
         # Find closing delimiter
         pos = start_pos + delim_len
@@ -369,7 +567,28 @@ class InlineParser:
     def _parse_bold_italic_emphasis(
         self, content: str, start_pos: int, char: str, delim_count: int
     ) -> Tuple[Optional[MDEmphasis], int]:
-        """Parse bold/italic emphasis (*text*, **text**, ***text***)."""
+        """Parse bold/italic emphasis (*text*, **text**, ***text***).
+
+        Parses text delimited by asterisks or underscores as emphasis. Supports
+        italic (1 delimiter), bold (2 delimiters), and bold+italic (3 delimiters).
+        Underscore emphasis requires valid word boundaries.
+
+        Args:
+            content: Text content to parse.
+            start_pos: Starting position of the opening delimiter.
+            char: The delimiter character ('*' or '_').
+            delim_count: Number of consecutive delimiters (1, 2, or 3).
+
+        Returns:
+            Tuple of (MDEmphasis, new_position) if valid emphasis is found,
+            otherwise (None, start_pos). The new_position points to the character
+            after the closing delimiter.
+
+        Note:
+            Underscore emphasis requires valid word boundaries: opening delimiter
+            must not have alphanumeric before it, closing delimiter must not have
+            alphanumeric after it. Asterisk emphasis has no such restriction.
+        """
         # For underscore, check word boundaries
         if char == "_":
             if not self._is_valid_underscore_position(content, start_pos, delim_count):
@@ -408,7 +627,19 @@ class InlineParser:
         return None, start_pos
 
     def _parse_text(self, content: str, pos: int) -> Tuple[Optional[MDText], int]:
-        """Parse regular text until next special character."""
+        """Parse regular text until next special character.
+
+        Consumes consecutive non-special characters as plain text. Special
+        characters are those that start inline elements: *, _, ~, `, [, !, <, \\, +, |.
+
+        Args:
+            content: Text content to parse.
+            pos: Current position in the content.
+
+        Returns:
+            Tuple of (MDText, new_position) if text is found, otherwise (None, pos).
+            The new_position points to the first special character or end of content.
+        """
         if pos >= len(content):
             return None, pos
 
@@ -425,7 +656,28 @@ class InlineParser:
         return None, pos
 
     def _parse_link_destination_and_title(self, link_content: str) -> Tuple[str, Optional[str]]:
-        """Parse URL and optional title from link content."""
+        """Parse URL and optional title from link content.
+
+        Extracts the URL and optional title from link content in the format
+        "url" or "url 'title'" or 'url "title"'. Supports both single and double
+        quotes for the title.
+
+        Args:
+            link_content: Content between parentheses in inline links, e.g.,
+                "https://example.com" or "https://example.com 'Example Site'".
+
+        Returns:
+            Tuple of (url, title) where url is the link destination and title is
+            the optional link title (None if not present).
+
+        Example:
+            >>> parser = InlineParser()
+            >>> url, title = parser._parse_link_destination_and_title("https://example.com 'Example'")
+            >>> url
+            'https://example.com'
+            >>> title
+            'Example'
+        """
         link_content = link_content.strip()
 
         # Check for title in quotes
@@ -446,7 +698,24 @@ class InlineParser:
         return link_content, None
 
     def _parse_inline_elements_no_links(self, content: str) -> List[MDNode]:
-        """Parse inline elements but exclude links to prevent nesting."""
+        """Parse inline elements but exclude links to prevent nesting.
+
+        Similar to _parse_inline_elements() but skips link parsing to prevent
+        nested links within link text. Used when parsing the text content of
+        links and images.
+
+        Args:
+            content: Text content to parse for inline elements (excluding links).
+
+        Returns:
+            List of MDNode objects representing parsed inline elements. Adjacent
+            text nodes are merged into single nodes for efficiency.
+
+        Note:
+            This method parses code spans, emphasis, escaped characters, and
+            regular text, but intentionally skips link and image parsing to
+            prevent nested links.
+        """
         nodes = []
         pos = 0
 
@@ -485,7 +754,31 @@ class InlineParser:
         return self._merge_adjacent_text_nodes(nodes)
 
     def _is_valid_underscore_position(self, content: str, pos: int, delim_count: int) -> bool:
-        """Check if underscore emphasis is at valid word boundary."""
+        """Check if underscore emphasis is at valid word boundary.
+
+        Validates that underscore delimiters are at proper word boundaries to
+        distinguish emphasis from underscores within words. This follows CommonMark
+        rules for underscore emphasis.
+
+        Args:
+            content: Text content being parsed.
+            pos: Position of the underscore delimiter.
+            delim_count: Number of consecutive underscores.
+
+        Returns:
+            True if the underscore is at a valid word boundary, False otherwise.
+
+        Note:
+            Valid positions:
+            - Opening: no alphanumeric before, alphanumeric after (start of word)
+            - Closing: alphanumeric before, no alphanumeric after (end of word)
+            - Standalone: no alphanumeric on either side
+
+            Invalid positions:
+            - Alphanumeric on both sides (middle of word)
+            - Alphanumeric before but not after (not a closing delimiter)
+            - Alphanumeric after but not before (not an opening delimiter)
+        """
         # For opening underscore: should not have alphanumeric before, should have alphanumeric after
         # For closing underscore: should have alphanumeric before, should not have alphanumeric after
 
@@ -514,7 +807,26 @@ class InlineParser:
         return is_opening or is_closing or is_standalone
 
     def _merge_adjacent_text_nodes(self, nodes: List[MDNode]) -> List[MDNode]:
-        """Merge adjacent text nodes into single nodes."""
+        """Merge adjacent text nodes into single nodes.
+
+        Combines consecutive MDText nodes into a single node to optimize the
+        AST structure and reduce node count. Non-text nodes are preserved as-is.
+
+        Args:
+            nodes: List of MDNode objects that may contain adjacent text nodes.
+
+        Returns:
+            List of MDNode objects with adjacent text nodes merged. The order
+            of nodes is preserved.
+
+        Example:
+            >>> nodes = [MDText("Hello"), MDText(" "), MDText("world")]
+            >>> merged = InlineParser()._merge_adjacent_text_nodes(nodes)
+            >>> len(merged)
+            1
+            >>> merged[0].content
+            'Hello world'
+        """
         if not nodes:
             return nodes
 

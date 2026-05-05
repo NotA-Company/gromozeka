@@ -1,17 +1,60 @@
 """
-Tokenizer for Gromozeka Markdown Parser
+Tokenizer for Gromozeka Markdown Parser.
 
 This module provides tokenization functionality to break Markdown input
-into a stream of tokens for parsing.
+into a stream of tokens for parsing. The tokenizer recognizes both block-level
+and inline Markdown syntax, preserving position information for accurate error
+reporting and debugging.
+
+Classes:
+    TokenType: Enumeration of all token types recognized by the tokenizer.
+    Token: Named tuple representing a single token with position information.
+    Tokenizer: Main tokenizer class that converts Markdown text into tokens.
+
+Example:
+    >>> tokenizer = Tokenizer("# Hello World\\n")
+    >>> tokens = tokenizer.tokenize()
+    >>> for token in tokens:
+    ...     print(f"{token.type}: {token.content}")
+    HEADER_MARKER: #
+    SPACE:
+    TEXT: Hello World
+    NEWLINE:
+    EOF:
 """
 
 import re
 from enum import Enum
-from typing import Iterator, List, NamedTuple
+from typing import Callable, Iterator, List, NamedTuple
 
 
 class TokenType(Enum):
-    """Types of tokens recognized by the tokenizer."""
+    """Types of tokens recognized by the tokenizer.
+
+    This enumeration defines all token types that can be produced by the
+    tokenizer when parsing Markdown text. Each token type corresponds to
+    a specific Markdown syntax element.
+
+    Attributes:
+        TEXT: Regular text content.
+        NEWLINE: Line break character.
+        SPACE: Whitespace (spaces and tabs).
+        SPECIAL: Special Markdown characters (*_[]()~`>#+-=|{}.!).
+        CODE_FENCE: Code fence marker (``` or ~~~) with optional language.
+        HEADER_MARKER: Header marker (# through ######).
+        LIST_MARKER: List item marker (-, *, +, or 1., 2., etc.).
+        BLOCKQUOTE_MARKER: Blockquote marker (>).
+        HORIZONTAL_RULE: Horizontal rule (---, ***, or ___).
+        EMPHASIS_MARKER: Emphasis marker (*, _, **, __, or ~~).
+        LINK_START: Opening bracket for link text ([).
+        LINK_END: Closing bracket and URL for link (](url)).
+        IMAGE_START: Opening marker for image (![).
+        CODE_SPAN: Inline code span (enclosed in backticks).
+        AUTOLINK_START: Opening angle bracket for autolink (<).
+        AUTOLINK_END: Closing angle bracket for autolink (>).
+        ESCAPE: Escape character (\\).
+        EOF: End of file marker.
+    """
 
     TEXT = "text"
     NEWLINE = "newline"
@@ -34,7 +77,20 @@ class TokenType(Enum):
 
 
 class Token(NamedTuple):
-    """A token with type, content, line and column position."""
+    """A token with type, content, line and column position.
+
+    This named tuple represents a single token produced by the tokenizer.
+    It contains all necessary information about the token including its type,
+    content, and position in the original text for error reporting.
+
+    Attributes:
+        type: The type of token (from TokenType enum).
+        content: The actual text content of the token.
+        line: The line number where the token starts (1-indexed).
+        column: The column number where the token starts (1-indexed).
+        length: The length of the token in characters. Defaults to 0 and is
+            automatically calculated from content if not provided.
+    """
 
     type: TokenType
     content: str
@@ -42,21 +98,75 @@ class Token(NamedTuple):
     column: int
     length: int = 0
 
-    def __post_init__(self):
-        # Calculate length if not provided
+    def __post_init__(self) -> None:
+        """Calculate token length if not provided.
+
+        This method is called after the token is created to ensure the length
+        attribute is set correctly. If length is 0, it's calculated from the
+        content string.
+        """
         if self.length == 0:
             object.__setattr__(self, "length", len(self.content))
 
 
 class Tokenizer:
-    """
-    Tokenizer that converts Markdown text into a stream of tokens.
+    """Tokenizer that converts Markdown text into a stream of tokens.
 
     The tokenizer recognizes special Markdown syntax and creates appropriate
-    tokens while preserving position information for error reporting.
+    tokens while preserving position information for error reporting. It handles
+    both block-level elements (headers, lists, code blocks, etc.) and inline
+    elements (links, emphasis, code spans, etc.).
+
+    Attributes:
+        text: The input Markdown text to tokenize.
+        pos: Current position in the text (0-indexed).
+        line: Current line number (1-indexed).
+        column: Current column number (1-indexed).
+        tokens: List of tokens produced during tokenization.
+        header_pattern: Compiled regex for header markers.
+        code_fence_pattern: Compiled regex for code fences.
+        unordered_list_pattern: Compiled regex for unordered list markers.
+        ordered_list_pattern: Compiled regex for ordered list markers.
+        blockquote_pattern: Compiled regex for blockquote markers.
+        hr_pattern: Compiled regex for horizontal rules.
+        emphasis_pattern: Compiled regex for emphasis markers.
+        link_start_pattern: Compiled regex for link start marker.
+        image_start_pattern: Compiled regex for image start marker.
+        link_end_pattern: Compiled regex for link end with URL.
+        code_span_pattern: Compiled regex for inline code spans.
+        autolink_pattern: Compiled regex for autolinks.
+        escape_pattern: Compiled regex for escape sequences.
+        special_chars: Set of special characters that need tokenization.
+
+    Example:
+        >>> tokenizer = Tokenizer("# Hello\\n\\nThis is **bold** text.")
+        >>> tokens = tokenizer.tokenize()
+        >>> for token in tokens:
+        ...     print(f"{token.type}: '{token.content}'")
+        HEADER_MARKER: '#'
+        SPACE: ' '
+        TEXT: 'Hello'
+        NEWLINE: '
+        '
+        NEWLINE: '
+        '
+        TEXT: 'This'
+        SPACE: ' '
+        TEXT: 'is'
+        SPACE: ' '
+        EMPHASIS_MARKER: '**'
+        TEXT: 'bold'
+        EMPHASIS_MARKER: '**'
+        TEXT: 'text.'
+        EOF: ''
     """
 
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
+        """Initialize the tokenizer with input text.
+
+        Args:
+            text: The Markdown text to tokenize.
+        """
         self.text = text
         self.pos = 0
         self.line = 1
@@ -67,7 +177,12 @@ class Tokenizer:
         self._compile_patterns()
 
     def _compile_patterns(self) -> None:
-        """Compile regex patterns used for tokenization."""
+        """Compile regex patterns used for tokenization.
+
+        This method compiles all regular expression patterns used by the
+        tokenizer. Patterns are compiled once during initialization for
+        efficiency, as they will be used repeatedly during tokenization.
+        """
         # Header markers (1-6 # characters followed by space)
         self.header_pattern = re.compile(r"^(#{1,6})\s+", re.MULTILINE)
 
@@ -105,11 +220,21 @@ class Tokenizer:
         self.special_chars = set("*_[]()~`>#+-=|{}.!")
 
     def tokenize(self) -> List[Token]:
-        """
-        Tokenize the input text and return a list of tokens.
+        """Tokenize the input text and return a list of tokens.
+
+        This is the main entry point for tokenization. It resets the tokenizer
+        state and processes the entire input text, producing a list of tokens
+        that can be consumed by the parser.
 
         Returns:
-            List of Token objects representing the parsed input.
+            List of Token objects representing the parsed input, including an
+            EOF token at the end.
+
+        Example:
+            >>> tokenizer = Tokenizer("Hello **world**")
+            >>> tokens = tokenizer.tokenize()
+            >>> len(tokens)
+            5
         """
         self.tokens = []
         self.pos = 0
@@ -125,11 +250,16 @@ class Tokenizer:
         return self.tokens
 
     def _try_tokenize_special(self) -> bool:
-        """
-        Try to tokenize special Markdown syntax at current position.
+        """Try to tokenize special Markdown syntax at current position.
+
+        This method checks for special Markdown syntax at the current position
+        and tokenizes it if found. It handles newlines, whitespace, block-level
+        elements, and inline elements in order of priority.
 
         Returns:
             True if special syntax was found and tokenized, False otherwise.
+            If False is returned, the caller should treat the current character
+            as regular text.
         """
         # Check for newlines first
         if self._current_char() == "\n":
@@ -155,7 +285,16 @@ class Tokenizer:
         return self._try_tokenize_inline_elements()
 
     def _try_tokenize_block_elements(self) -> bool:
-        """Try to tokenize block-level elements."""
+        """Try to tokenize block-level elements.
+
+        This method attempts to tokenize block-level Markdown elements that
+        can only appear at the start of a line (or after leading whitespace).
+        These include headers, code fences, blockquotes, horizontal rules, and
+        list markers.
+
+        Returns:
+            True if a block-level element was found and tokenized, False otherwise.
+        """
         remaining = self.text[self.pos :]
 
         # Header markers
@@ -238,7 +377,15 @@ class Tokenizer:
         return False
 
     def _try_tokenize_inline_elements(self) -> bool:
-        """Try to tokenize inline elements."""
+        """Try to tokenize inline elements.
+
+        This method attempts to tokenize inline Markdown elements that can appear
+        anywhere in the text. These include escape sequences, code spans, autolinks,
+        links, images, emphasis markers, and special characters.
+
+        Returns:
+            True if an inline element was found and tokenized, False otherwise.
+        """
         remaining = self.text[self.pos :]
 
         # Check for code fences - but only if they're proper fenced code blocks
@@ -345,7 +492,12 @@ class Tokenizer:
         return False
 
     def _tokenize_text(self) -> None:
-        """Tokenize regular text content."""
+        """Tokenize regular text content.
+
+        This method consumes consecutive characters that are not special Markdown
+        syntax and creates a TEXT token. It stops when it encounters a special
+        character, newline, or whitespace.
+        """
         text = self._consume_while(
             lambda c: (
                 c not in self.special_chars
@@ -359,11 +511,23 @@ class Tokenizer:
             self._add_token(TokenType.TEXT, text)
 
     def _current_char(self) -> str:
-        """Get the current character or empty string if at end."""
+        """Get the current character or empty string if at end.
+
+        Returns:
+            The character at the current position, or an empty string if at
+            the end of the text.
+        """
         return self.text[self.pos] if self.pos < len(self.text) else ""
 
     def _advance(self, count: int = 1) -> None:
-        """Advance position by count characters."""
+        """Advance position by count characters.
+
+        This method moves the tokenizer's position forward by the specified
+        number of characters, updating line and column numbers appropriately.
+
+        Args:
+            count: The number of characters to advance. Defaults to 1.
+        """
         for _ in range(count):
             if self.pos < len(self.text):
                 if self.text[self.pos] == "\n":
@@ -373,26 +537,61 @@ class Tokenizer:
                     self.column += 1
                 self.pos += 1
 
-    def _consume_while(self, predicate) -> str:
-        """Consume characters while predicate is true."""
+    def _consume_while(self, predicate: Callable[[str], bool]) -> str:
+        """Consume characters while predicate is true.
+
+        This method advances the position while the predicate function returns
+        True for the current character, and returns the consumed text.
+
+        Args:
+            predicate: A function that takes a character and returns True if
+                the character should be consumed.
+
+        Returns:
+            The consumed text as a string.
+        """
         start = self.pos
         while self.pos < len(self.text) and predicate(self.text[self.pos]):
             self._advance()
         return self.text[start : self.pos]
 
     def _add_token(self, token_type: TokenType, content: str) -> None:
-        """Add a token to the token list."""
+        """Add a token to the token list.
+
+        This method creates a Token object with the specified type and content,
+        calculates its position based on the current line and column, and adds
+        it to the tokens list.
+
+        Args:
+            token_type: The type of token to add.
+            content: The text content of the token.
+        """
         token = Token(token_type, content, self.line, self.column - len(content), len(content))
         self.tokens.append(token)
 
     def _is_after_newline(self) -> bool:
-        """Check if we're at the start of a line (after newline)."""
+        """Check if we're at the start of a line (after newline).
+
+        Returns:
+            True if the current position is at the start of a line (either at
+            the beginning of the text or immediately after a newline character),
+            False otherwise.
+        """
         if self.pos == 0:
             return True
         return self.text[self.pos - 1] == "\n"
 
     def _is_after_line_start_spaces(self) -> bool:
-        """Check if we're after spaces at the start of a line."""
+        """Check if we're after spaces at the start of a line.
+
+        This method determines if the current position is after leading whitespace
+        at the start of a line, which is important for recognizing block-level
+        elements that can be indented.
+
+        Returns:
+            True if the current position is after only spaces/tabs since the last
+            newline (or at the start of the text), False otherwise.
+        """
         if self.pos == 0:
             return False
 
@@ -410,7 +609,26 @@ class Tokenizer:
         return True
 
     def __iter__(self) -> Iterator[Token]:
-        """Make tokenizer iterable."""
+        """Make tokenizer iterable.
+
+        This method allows the tokenizer to be used in for loops and other
+        iteration contexts. It automatically tokenizes the text if not already
+        done.
+
+        Returns:
+            An iterator over the token list.
+
+        Example:
+            >>> tokenizer = Tokenizer("Hello **world**")
+            >>> for token in tokenizer:
+            ...     print(f"{token.type}: {token.content}")
+            TEXT: Hello
+            SPACE:
+            EMPHASIS_MARKER: **
+            TEXT: world
+            EMPHASIS_MARKER: **
+            EOF:
+        """
         if not self.tokens:
             self.tokenize()
         return iter(self.tokens)
