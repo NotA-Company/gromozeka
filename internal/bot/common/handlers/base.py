@@ -877,6 +877,8 @@ class BaseBotHandler(CommandHandlerMixin):
         needChange = True
         now = utils.now()
         if storedChatInfo is not None:
+            # logger.debug(f"StoredFull: {storedChatInfo}")
+            # logger.debug(f"now: {now}, stored: {storedChatInfo['updated_at']}")
             timeDiff = now - storedChatInfo["updated_at"]
             needChange = timeDiff.total_seconds() > 60 * 60 * 12
 

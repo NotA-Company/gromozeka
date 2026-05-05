@@ -44,7 +44,7 @@ def telegramMessageFromDBMessage(
         ...     "chat_id": 123456789,
         ...     "user_id": 987654321,
         ...     "message_id": 1,
-        ...     "date": datetime.datetime.now(),
+        ...     "date": datetime.datetime.now(datetime.UTC),
         ...     "message_text": "Hello, world!",
         ...     "thread_id": 1,
         ...     "username": "john_doe",

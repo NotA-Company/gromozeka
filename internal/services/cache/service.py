@@ -617,6 +617,7 @@ class CacheService:
         info = chatCache.get("info", None)
 
         # If not in cache, try loading from database
+        # logger.debug(f"CHAT#{chatId} INFO: {info}")
         if info is None and self.database:
             info = await self.database.chatInfo.getChatInfo(chatId)
             if info:

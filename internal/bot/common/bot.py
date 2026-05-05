@@ -7,7 +7,6 @@ The main class, TheBot, abstracts platform-specific differences and provides a c
 API for bot operations across different messaging platforms.
 """
 
-import datetime
 import hashlib
 import logging
 from collections.abc import MutableSet, Sequence
@@ -1041,7 +1040,7 @@ class TheBot:
                 raise ValueError("Base message is not a telegram.Message")
             chat = baseMessage.chat
 
-            now = datetime.datetime.now()
+            now = utils.now()
             return {
                 "chat_id": chat.id,
                 "title": chat.title,
@@ -1062,7 +1061,7 @@ class TheBot:
                     if maxChatInfo.dialog_with_user.last_name:
                         chatUsername += " " + maxChatInfo.dialog_with_user.last_name
 
-            now = datetime.datetime.now()
+            now = utils.now()
             return {
                 "chat_id": maxChatInfo.chat_id,
                 "title": maxChatInfo.title,

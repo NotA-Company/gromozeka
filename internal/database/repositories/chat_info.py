@@ -117,6 +117,7 @@ class ChatInfoRepository(BaseRepository):
                     "chatId": chatId,
                 },
             )
+            # logger.debug(f"Chat#{chatId} info: {row}")
             return dbUtils.sqlToTypedDict(row, ChatInfoDict) if row else None
         except Exception as e:
             logger.error(f"Failed to get chat info: {e}")

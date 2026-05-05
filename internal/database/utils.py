@@ -97,8 +97,10 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
     if _checkType(data, expectedType):
         # Little trick fo forcing timezone
         if expectedType is datetime.datetime and isinstance(data, datetime.datetime):
+            # logger.debug(f"Got datetime: {repr(data)}")
             if data.tzinfo is None and FORCE_SQL_TIMEZONE is not None:
                 data = data.replace(tzinfo=FORCE_SQL_TIMEZONE)
+            # logger.debug(f"Converted datetime: {repr(data)}")
         return True, data  # pyright: ignore[reportReturnType]
 
     if isinstance(data, bytes):
@@ -167,9 +169,12 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
             elif expectedType in [dict, list]:
                 return True, json.loads(data)  # pyright: ignore[reportReturnType]
             elif expectedType is datetime.datetime:
+                # logger.debug(f"Str-Datetime: {repr(data)}")
                 dtRet = dateutil.parser.parse(data)
+                # logger.debug(f"Parsed datetime: {repr(dtRet)}")
                 if dtRet.tzinfo is None and FORCE_SQL_TIMEZONE is not None:
                     dtRet = dtRet.replace(tzinfo=FORCE_SQL_TIMEZONE)
+                # logger.debug(f"Converted datetime: {repr(dtRet)}")
                 return True, dtRet  # pyright: ignore[reportReturnType]
 
             # Handle generic types like dict[str, int] or list[str]
