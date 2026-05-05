@@ -7,7 +7,10 @@ captures only what an agent would likely get wrong without help.
 ## Stack snapshot
 
 - Python **3.12** only (pyright/black target = `py312`, line length **120**).
-- Single-process app, async, singleton services. SQLite + custom migrations.
+- Single-process app, async, singleton services. **SQLite today** behind a
+  provider abstraction; SQL must stay portable across SQLite/PostgreSQL/MySQL
+  (see "SQL portability" below). Custom migrations live under
+  [`internal/database/migrations/versions/`](internal/database/migrations/versions/).
 - Multi-platform bot: Telegram **and** Max Messenger. Mode picked by config
   (`bot.mode`), wired in [`main.py:54`](main.py:54).
 - Entry point: [`main.py`](main.py:1) → `GromozekBot` → `TelegramBotApplication`
@@ -97,6 +100,58 @@ Layout (see [`docs/llm/index.md`](docs/llm/index.md) §4 for line-level map):
 Handler ordering rule: `LLMMessageHandler` **must** be the last entry in the
 handler list (it's the catch-all). Registration site:
 [`internal/bot/common/handlers/manager.py`](internal/bot/common/handlers/manager.py).
+
+## SQL portability
+
+SQLite3 is the only backend wired up in production right now (the factory in
+[`internal/database/providers/__init__.py`](internal/database/providers/__init__.py)
+registers `sqlite3` + `sqlink`; `mysql.py` / `postgresql.py` providers exist
+but are not yet selectable). Even so, **all SQL the app emits must stay
+portable across SQLite, PostgreSQL, and MySQL** so the other providers can be
+turned on without rewriting queries. See
+[`docs/sql-portability-guide.md`](docs/sql-portability-guide.md) for the full
+analysis; key rules in practice:
+
+- Go through the provider, not raw `sqlite3` calls. Repositories use
+  `BaseSQLProvider` (see [`internal/database/providers/base.py`](internal/database/providers/base.py)) —
+  `execute` / `executeFetchOne` / `executeFetchAll` / `batchExecute` / `upsert`.
+- For upserts, call `provider.upsert(table, values, conflictColumns, updateExpressions=...)`
+  instead of writing `ON CONFLICT … DO UPDATE` by hand. Use the
+  `ExcludedValue` marker from `base.py` (translates to `excluded.col` on
+  SQLite/PostgreSQL, `VALUES(col)` on MySQL).
+- Use the provider hooks for things that differ across RDBMS instead of
+  hard-coding dialect:
+  - `provider.applyPagination(query, limit, offset)` — never append `LIMIT … OFFSET …` yourself.
+  - `provider.getTextType(maxLength=…)` — for migrations / DDL.
+  - `provider.getCaseInsensitiveComparison(column, param)` — `LOWER(...) = LOWER(...)` is the portable shape; don't use `COLLATE NOCASE`.
+- Timestamps: do **not** use `DEFAULT CURRENT_TIMESTAMP` in new schemas.
+  Migration 013 removed it from every table specifically for cross-DB
+  compatibility — application code sets `created_at` / `updated_at`
+  explicitly (see notes in [`docs/llm/database.md`](docs/llm/database.md) §7).
+- Stick to portable column types in migrations: `TEXT`, `INTEGER`, `REAL`,
+  `TIMESTAMP`, `BOOLEAN` (stored as int — see `convertToSQLite` in
+  [`internal/database/providers/utils.py`](internal/database/providers/utils.py)).
+  Store JSON as `TEXT`; don't reach for SQLite's `JSON1` functions.
+- **Primary keys: no `AUTOINCREMENT`.** SQLite `AUTOINCREMENT`, MySQL
+  `AUTO_INCREMENT`, and PostgreSQL `SERIAL` / `BIGSERIAL` all spell it
+  differently, so we sidestep the problem entirely. Pick one of these
+  instead, in order of preference:
+  1. **Composite natural key** from columns the app already has — e.g.
+     `PRIMARY KEY (chat_id, message_id)`, `PRIMARY KEY (namespace, key)`,
+     `PRIMARY KEY (chat_id, user_id)`. This is the dominant pattern in
+     existing migrations; copy it.
+  2. **Single natural key** when the row is identified by one external ID
+     (e.g. `file_unique_id TEXT PRIMARY KEY`, `chat_id INTEGER PRIMARY KEY`).
+  3. **Application-generated UUID / ULID** stored as `TEXT PRIMARY KEY
+     NOT NULL` (see `delayed_tasks.id` in `migration_001`/`013`). Generate
+     it in Python before insert; never delegate ID generation to the DB.
+- Booleans cross the wire as `0`/`1` (handled by `convertToSQLite`); don't
+  compare to `TRUE`/`FALSE` literals in SQL.
+- Parameter style: use `:named` placeholders consistently — the provider
+  translates them as needed.
+- If you genuinely need a dialect-specific feature, add a method to
+  `BaseSQLProvider` (abstract) and implement it in every provider, the same
+  way `applyPagination` / `getTextType` / `upsert` already are.
 
 ## Config system
 
