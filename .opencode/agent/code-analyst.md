@@ -73,6 +73,8 @@ description: >-
 
   </example>
 mode: all
+model: cheap
+temperature: 0.1
 color: "#FF2D55"
 permission:
   bash: deny

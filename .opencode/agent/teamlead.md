@@ -77,6 +77,7 @@ description: >-
 
   </example>
 mode: all
+model: smartest
 color: "#87CEEB"
 permission:
   bash: deny
