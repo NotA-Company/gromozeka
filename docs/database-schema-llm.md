@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 13 (up to `migration_013`)
+**Migrations**: 14 (up to `migration_014`)
 
 ---
 
@@ -374,6 +374,36 @@ CREATE TABLE cache_{type} (
 
 **Tables**: `cache_weather`, `cache_geocoding`, `cache_yandex_search`, `cache_geocode_maps_search`, `cache_geocode_maps_reverse`, `cache_geocode_maps_lookup`
 **TypedDict**: [`CacheDict`](../internal/database/models.py:190)
+
+---
+
+### divinations
+**Purpose**: Persisted tarot/runes readings (see `DivinationHandler`)
+**Primary Key**: `(chat_id, message_id)`
+
+```sql
+CREATE TABLE divinations (
+    chat_id        INTEGER NOT NULL,
+    message_id     TEXT    NOT NULL,
+    user_id        INTEGER NOT NULL,
+    system_id      TEXT    NOT NULL,                          -- 'tarot' | 'runes'
+    deck_id        TEXT    NOT NULL,                          -- e.g. 'rws', 'elder_futhark'
+    layout_id      TEXT    NOT NULL,                          -- e.g. 'three_card', 'three_runes'
+    question       TEXT    NOT NULL DEFAULT '',
+    draws_json     TEXT    NOT NULL,                          -- JSON list of drawn symbols
+    interpretation TEXT    NOT NULL DEFAULT '',
+    image_prompt   TEXT,
+    invoked_via    TEXT    NOT NULL,                          -- 'command' | 'llm_tool'
+    created_at     TIMESTAMP NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+)
+```
+
+**Indexes**: `idx_divinations_user_created` on `(chat_id, user_id, created_at)`
+
+**Repository**: `db.divinations.insertReading(...)`
+
+**Notes**: Only populated when `[divination] enabled = true`. No foreign-key relationship to other tables; image media is resolved via the normal message-history pipeline.
 
 ---
 

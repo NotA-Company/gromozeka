@@ -1,0 +1,157 @@
+[
+  {
+    "name": "tarot_three_card_career_ru",
+    "description": "Tarot — three-card spread, career question (Russian).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "meta-llama/llama-3.2-1b-instruct",
+      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "tarot",
+      "layoutId": "three_card",
+      "rngSeed": 42,
+      "userName": "Алиса",
+      "question": "Что меня ждёт в карьере в этом году?",
+      "lang": "ru"
+    }
+  },
+  {
+    "name": "tarot_celtic_cross_relationship_ru",
+    "description": "Tarot — Celtic Cross spread, relationship question (Russian).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "meta-llama/llama-3.2-1b-instruct",
+      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "tarot",
+      "layoutId": "celtic_cross",
+      "rngSeed": 1337,
+      "userName": "Боб",
+      "question": "Стоит ли мне переехать ради партнёра?",
+      "lang": "ru"
+    }
+  },
+  {
+    "name": "tarot_yes_no_job_en",
+    "description": "Tarot — yes/no spread, career question (English).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "meta-llama/llama-3.2-1b-instruct",
+      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "tarot",
+      "layoutId": "yes_no",
+      "rngSeed": 7,
+      "userName": "Carol",
+      "question": "Should I take the new job offer?",
+      "lang": "en"
+    }
+  },
+  {
+    "name": "runes_three_norns_health_ru",
+    "description": "Runes — three-runes (Norns) spread, health question (Russian).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "meta-llama/llama-3.2-1b-instruct",
+      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "runes",
+      "layoutId": "three_runes",
+      "rngSeed": 99,
+      "userName": "Дмитрий",
+      "question": "Что мне сейчас важно знать о моём здоровье?",
+      "lang": "ru"
+    }
+  },
+  {
+    "name": "runes_nine_grid_life_ru",
+    "description": "Runes — nine-runes spread, life-forces question (Russian).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "meta-llama/llama-3.2-1b-instruct",
+      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "runes",
+      "layoutId": "nine_runes",
+      "rngSeed": 256,
+      "userName": "Ева",
+      "question": "Какие силы влияют на мою жизнь сейчас?",
+      "lang": "ru"
+    }
+  }
+]

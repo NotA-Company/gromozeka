@@ -19,6 +19,7 @@ Key Components:
     ChatUsersRepository: Manages user-chat relationships and memberships.
     CommonFunctionsRepository: Provides common database utility functions.
     DelayedTasksRepository: Manages delayed task scheduling and execution.
+    DivinationsRepository: Persists tarot/runes divination readings.
     MediaAttachmentsRepository: Handles media attachment storage and metadata.
     SpamRepository: Manages spam detection and filtering data.
     UserDataRepository: Handles user-specific data and preferences.
@@ -52,6 +53,7 @@ from .chat_summarization import ChatSummarizationRepository
 from .chat_users import ChatUsersRepository
 from .common import CommonFunctionsRepository
 from .delayed_tasks import DelayedTasksRepository
+from .divinations import DivinationsRepository
 from .media_attachments import MediaAttachmentsRepository
 from .spam import SpamRepository
 from .user_data import UserDataRepository
@@ -66,6 +68,7 @@ __all__ = [
     "ChatUsersRepository",
     "CommonFunctionsRepository",
     "DelayedTasksRepository",
+    "DivinationsRepository",
     "MediaAttachmentsRepository",
     "SpamRepository",
     "UserDataRepository",

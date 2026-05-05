@@ -45,6 +45,7 @@
 | `chatSettings` | `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
 | `cache` | `clearOldCacheEntries(ttl)` | `None` | Cleanup stale cache |
 | `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `None` | Cleanup old tasks |
+| `divinations` | `insertReading(...)` | `None` | Persist a tarot/runes reading row in `divinations` |
 
 ---
 
@@ -325,7 +326,8 @@ Various spam classification reasons — used by `SpamHandler`, dood!
 - `mediaAttachments` — Media operations
 - `cache` — Cache operations
 - `delayedTasks` — Task operations
-- And 6 more specialized repositories
+- `divinations` — Tarot/runes reading persistence (`insertReading(...)`)
+- And 5 more specialized repositories
 
 **Adding methods to existing repository:**
 
@@ -450,10 +452,11 @@ class Database:
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_013` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_014` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
+- `migration_014`: Adds the [`divinations`](#divinations) table (composite PK `(chat_id, message_id)`) plus `idx_divinations_user_created` index for tarot/runes readings
 
 ---
 

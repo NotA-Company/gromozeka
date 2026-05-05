@@ -208,7 +208,7 @@ make test
 | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-| [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 18+ handler implementations |
+| [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 18+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |
@@ -243,6 +243,7 @@ make test
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
+| [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
 | [`lib/logging_utils.py`](../../lib/logging_utils.py) | `initLogging()` helper |
 
 ---

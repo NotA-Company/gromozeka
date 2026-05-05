@@ -32,6 +32,8 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
   - [Dynamic Cache Tables](#dynamic-cache-tables)
 - [Task Management Tables](#task-management-tables)
   - [delayed_tasks](#delayed_tasks)
+- [Divination Tables](#divination-tables)
+  - [divinations](#divinations)
 - [System Tables](#system-tables)
   - [settings](#settings)
 - [Enums](#enums)
@@ -148,6 +150,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 11 | [`migration_011_add_confidence_to_spam_messages.py`](../internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py:1) | Adds `confidence` column to [`spam_messages`](#spam_messages) and [`ham_messages`](#ham_messages) |
 | 12 | [`migration_012_unify_cache_tables.py`](../internal/database/migrations/versions/migration_012_unify_cache_tables.py:1) | Unifies all cache tables into single [`cache`](#cache) table |
 | 13 | [`migration_013_remove_timestamp_defaults.py`](../internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:1) | Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns |
+| 14 | [`migration_014_add_divinations_table.py`](../internal/database/migrations/versions/migration_014_add_divinations_table.py:1) | Creates [`divinations`](#divinations) table and `idx_divinations_user_created` index |
 
 ### Creating New Migrations
 
@@ -654,6 +657,36 @@ Stores tasks scheduled for delayed execution.
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:155)
+
+---
+
+## Divination Tables
+
+### divinations
+
+Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/bot/common/handlers/divination.py`](../internal/bot/common/handlers/divination.py:1)). One row per reading, keyed off the originating `/taro` / `/runes` user-command message — same composite-PK pattern as [`chat_messages`](#chat_messages), dood!
+
+**Primary Key**: `(chat_id, message_id)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `chat_id` | INTEGER | No | - | Chat identifier where the reading was requested |
+| `message_id` | TEXT | No | - | ID of the user command message that triggered the reading |
+| `user_id` | INTEGER | No | - | User who requested the reading |
+| `system_id` | TEXT | No | - | Divination system (`tarot`, `runes`) |
+| `deck_id` | TEXT | No | - | Deck identifier (e.g. `rws`, `elder_futhark`) |
+| `layout_id` | TEXT | No | - | Layout identifier (e.g. `three_card`, `celtic_cross`, `three_runes`) |
+| `question` | TEXT | No | `''` | User's question (may be empty) |
+| `draws_json` | TEXT | No | - | JSON-serialized list of drawn symbols with positions and reversed flags |
+| `interpretation` | TEXT | No | `''` | LLM-generated interpretation of the reading |
+| `image_prompt` | TEXT | Yes | NULL | Image prompt sent to image generator (when `image-generation = true`) |
+| `invoked_via` | TEXT | No | - | Either `'command'` (slash command) or `'llm_tool'` |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+
+**Indexes**:
+- `idx_divinations_user_created` on `(chat_id, user_id, created_at)` — for "recent readings by user" queries
+
+**Note**: Uses the same composite-PK convention as [`chat_messages`](#chat_messages). This table has no foreign-key relationships to other tables; image media is resolved via the normal message-history pipeline. Created by `migration_014`; only populated when `[divination] enabled = true`. See [`docs/llm/configuration.md`](llm/configuration.md) for feature config.
 
 ---
 
