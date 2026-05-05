@@ -1,8 +1,25 @@
 """
-Unit tests for Geocode Maps API Client
+Unit tests for Geocode Maps API Client.
 
 This module contains comprehensive unit tests for the GeocodeMapsClient class,
 testing caching, error handling, rate limiting, and coordinate processing.
+
+Test Coverage:
+    - Error handling for various HTTP status codes (401, 404, 429, 500)
+    - Network error handling (timeout, request errors)
+    - JSON decode error handling
+    - Rate limiter integration
+    - Cache behavior and error handling
+    - Parameter validation for search, reverse, and lookup methods
+    - Client initialization with various configurations
+    - Cache key generation and hit behavior
+
+Dependencies:
+    - pytest: Test framework
+    - httpx: HTTP client mocking
+    - lib.cache.DictCache: Cache implementation
+    - lib.cache.key_generator.JsonKeyGenerator: Cache key generation
+    - lib.geocode_maps.GeocodeMapsClient: Client under test
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,8 +33,21 @@ from lib.geocode_maps import GeocodeMapsClient
 
 
 @pytest.mark.asyncio
-async def test_error_handling_401():
-    """Test handling of authentication error, dood!"""
+async def test_error_handling_401() -> None:
+    """Test handling of authentication error (401 status code).
+
+    Verifies that the client returns None when the API returns a 401
+    Unauthorized status, indicating invalid or missing API credentials.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If result is not None
+    """
     client = GeocodeMapsClient(apiKey="invalid_key")
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -31,8 +61,21 @@ async def test_error_handling_401():
 
 
 @pytest.mark.asyncio
-async def test_rate_limiting():
-    """Test rate limiter integration, dood!"""
+async def test_rate_limiting() -> None:
+    """Test rate limiter integration.
+
+    Verifies that the rate limiter's applyLimit method is called with the
+    correct queue name when making API requests.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If rate limiter is not called with correct parameters
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     with patch.object(client._rateLimiter, "applyLimit") as mock_limit:
@@ -48,8 +91,22 @@ async def test_rate_limiting():
 
 
 @pytest.mark.asyncio
-async def test_cache_error_handling():
-    """Test cache error handling doesn't break API calls, dood!"""
+async def test_cache_error_handling() -> None:
+    """Test cache error handling doesn't break API calls.
+
+    Verifies that cache errors (both get and set operations) are handled
+    gracefully and don't prevent API calls from succeeding. The client
+    should fall back to making the API request when cache operations fail.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If result doesn't match expected API response
+    """
     cache = MagicMock()
     cache.get = AsyncMock(side_effect=Exception("Cache error"))
     cache.set = AsyncMock(side_effect=Exception("Cache error"))
@@ -72,8 +129,21 @@ async def test_cache_error_handling():
 
 
 @pytest.mark.asyncio
-async def test_error_handling_404():
-    """Test handling of not found error, dood!"""
+async def test_error_handling_404() -> None:
+    """Test handling of not found error (404 status code).
+
+    Verifies that the client returns None when the API returns a 404
+    Not Found status, indicating the requested resource doesn't exist.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If result is not None
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -87,8 +157,21 @@ async def test_error_handling_404():
 
 
 @pytest.mark.asyncio
-async def test_error_handling_429():
-    """Test handling of rate limit error, dood!"""
+async def test_error_handling_429() -> None:
+    """Test handling of rate limit error (429 status code).
+
+    Verifies that the client returns None when the API returns a 429
+    Too Many Requests status, indicating the rate limit has been exceeded.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If result is not None
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -102,8 +185,21 @@ async def test_error_handling_429():
 
 
 @pytest.mark.asyncio
-async def test_error_handling_500():
-    """Test handling of server error, dood!"""
+async def test_error_handling_500() -> None:
+    """Test handling of server error (500 status code).
+
+    Verifies that the client returns None when the API returns a 500
+    Internal Server Error status, indicating a server-side error.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If result is not None
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -117,8 +213,21 @@ async def test_error_handling_500():
 
 
 @pytest.mark.asyncio
-async def test_timeout_exception():
-    """Test handling of timeout exception, dood!"""
+async def test_timeout_exception() -> None:
+    """Test handling of timeout exception.
+
+    Verifies that the client returns None when an httpx.TimeoutException
+    is raised during the HTTP request.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If result is not None
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -130,8 +239,21 @@ async def test_timeout_exception():
 
 
 @pytest.mark.asyncio
-async def test_network_error():
-    """Test handling of network error, dood!"""
+async def test_network_error() -> None:
+    """Test handling of network error.
+
+    Verifies that the client returns None when an httpx.RequestError
+    is raised during the HTTP request, indicating a network-level error.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If result is not None
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -143,8 +265,21 @@ async def test_network_error():
 
 
 @pytest.mark.asyncio
-async def test_json_decode_error():
-    """Test handling of JSON decode error, dood!"""
+async def test_json_decode_error() -> None:
+    """Test handling of JSON decode error.
+
+    Verifies that the client returns None when an exception is raised
+    while attempting to decode the JSON response from the API.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If result is not None
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -159,8 +294,22 @@ async def test_json_decode_error():
 
 
 @pytest.mark.asyncio
-async def test_search_parameter_validation():
-    """Test search method with various parameters, dood!"""
+async def test_search_parameter_validation() -> None:
+    """Test search method with various parameters.
+
+    Verifies that the search method correctly transforms and passes all
+    parameters to the HTTP client, including boolean to integer conversion
+    and proper parameter naming.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If any parameter is not correctly passed to the API
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     mockResponse = [{"place_id": 123, "name": "Test", "lat": "52.5", "lon": "103.8"}]
@@ -202,8 +351,22 @@ async def test_search_parameter_validation():
 
 
 @pytest.mark.asyncio
-async def test_reverse_parameter_validation():
-    """Test reverse method with various parameters, dood!"""
+async def test_reverse_parameter_validation() -> None:
+    """Test reverse method with various parameters.
+
+    Verifies that the reverse method correctly transforms and passes all
+    parameters to the HTTP client, including boolean to integer conversion
+    and proper parameter naming.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If any parameter is not correctly passed to the API
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     mockResponse = {"place_id": 123, "name": "Test", "lat": "52.5", "lon": "103.8"}
@@ -234,8 +397,22 @@ async def test_reverse_parameter_validation():
 
 
 @pytest.mark.asyncio
-async def test_lookup_parameter_validation():
-    """Test lookup method with various parameters, dood!"""
+async def test_lookup_parameter_validation() -> None:
+    """Test lookup method with various parameters.
+
+    Verifies that the lookup method correctly transforms and passes all
+    parameters to the HTTP client, including sorting OSM IDs, boolean to
+    integer conversion, and proper parameter naming.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If any parameter is not correctly passed to the API
+    """
     client = GeocodeMapsClient(apiKey="test_key")
 
     mockResponse = [{"place_id": 123, "name": "Test", "lat": "52.5", "lon": "103.8"}]
@@ -275,8 +452,22 @@ async def test_lookup_parameter_validation():
 
 
 @pytest.mark.asyncio
-async def test_lookup_cache_behavior():
-    """Test lookup cache behavior, dood!"""
+async def test_lookup_cache_behavior() -> None:
+    """Test lookup cache behavior.
+
+    Verifies that the lookup method correctly uses cache and that cache
+    keys are order-independent for OSM IDs. The same set of IDs in
+    different orders should produce cache hits.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If cache behavior is incorrect or API is called multiple times
+    """
     cache = DictCache(keyGenerator=JsonKeyGenerator())
     client = GeocodeMapsClient(apiKey="test_key", lookupCache=cache)
 
@@ -302,8 +493,22 @@ async def test_lookup_cache_behavior():
 
 
 @pytest.mark.asyncio
-async def test_client_initialization():
-    """Test client initialization with various parameters, dood!"""
+async def test_client_initialization() -> None:
+    """Test client initialization with various parameters.
+
+    Verifies that the GeocodeMapsClient correctly initializes with both
+    minimal and full parameter sets, setting appropriate defaults and
+    storing all provided configuration values.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If any client attribute is not correctly initialized
+    """
     # Test with minimal parameters
     client1 = GeocodeMapsClient(apiKey="test_key")
     assert client1.apiKey == "test_key"

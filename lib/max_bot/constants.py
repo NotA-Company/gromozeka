@@ -1,7 +1,9 @@
-"""
-Max Bot API Constants
+"""Max Bot API Constants.
 
-This module contains all constants and enums for the Max Messenger Bot API.
+This module contains all constants and enums for the Max Messenger Bot API,
+including API configuration, HTTP methods, rate limiting settings, authentication
+parameters, content types, API endpoints, and enumerations for text formats,
+button types, and attachment types.
 """
 
 from enum import StrEnum
@@ -55,7 +57,16 @@ ENDPOINT_ANSWERS: Final[str] = "/answers"
 
 
 class TextFormat(StrEnum):
-    """Text format enum from OpenAPI specification"""
+    """Text format enum from OpenAPI specification.
+
+    Defines the supported text formatting options for messages sent through
+    the Max Messenger Bot API.
+
+    Attributes:
+        PLAIN: Plain text without any formatting.
+        MARKDOWN: Text formatted using Markdown syntax.
+        HTML: Text formatted using HTML tags.
+    """
 
     PLAIN = "plain"
     MARKDOWN = "markdown"
@@ -63,7 +74,19 @@ class TextFormat(StrEnum):
 
 
 class ButtonType(StrEnum):
-    """Button type enum from OpenAPI specification"""
+    """Button type enum from OpenAPI specification.
+
+    Defines the types of buttons that can be used in inline and reply keyboards.
+
+    Attributes:
+        CALLBACK: Button that triggers a callback query when pressed.
+        LINK: Button that opens a URL when pressed.
+        REQUEST_CONTACT: Button that requests the user's contact information.
+        REQUEST_GEO_LOCATION: Button that requests the user's geolocation.
+        CHAT: Button that opens a chat with the specified user or group.
+        OPEN_APP: Button that opens a specified application.
+        REPLY: Button that sends a reply message when pressed.
+    """
 
     CALLBACK = "callback"
     LINK = "link"
@@ -75,7 +98,24 @@ class ButtonType(StrEnum):
 
 
 class AttachmentType(StrEnum):
-    """Attachment type enum from OpenAPI specification"""
+    """Attachment type enum from OpenAPI specification.
+
+    Defines the types of attachments that can be sent with messages through
+    the Max Messenger Bot API.
+
+    Attributes:
+        PHOTO: Photo attachment.
+        VIDEO: Video attachment.
+        AUDIO: Audio attachment.
+        FILE: Generic file attachment.
+        CONTACT: Contact information attachment.
+        STICKER: Sticker attachment.
+        SHARE: Share attachment.
+        LOCATION: Geolocation attachment.
+        INLINE_KEYBOARD: Inline keyboard attachment.
+        REPLY_KEYBOARD: Reply keyboard attachment.
+        DATA: Data attachment.
+    """
 
     PHOTO = "photo"
     VIDEO = "video"

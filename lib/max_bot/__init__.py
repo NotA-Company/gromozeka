@@ -39,7 +39,7 @@ from .exceptions import (
     ServiceUnavailableError,
     ValidationError,
 )
-from .utils import MessageLinkToMessage
+from .utils import messageLinkToMessage
 
 # Public API
 __all__ = [
@@ -66,5 +66,5 @@ __all__ = [
     "ConfigurationError",
     "AttachmentNotReadyError",
     # Utils
-    "MessageLinkToMessage",
+    "messageLinkToMessage",
 ]

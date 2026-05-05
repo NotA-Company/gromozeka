@@ -14,7 +14,11 @@ from .base import BaseMaxBotModel
 
 
 class UploadType(StrEnum):
-    """Тип загружаемого файла"""
+    """Type of file to upload.
+
+    Enum representing the different types of files that can be uploaded
+    to the Max Messenger Bot API.
+    """
 
     IMAGE = "image"
     """Image file type."""
@@ -52,7 +56,11 @@ class AttachmentRequest(Attachment):
 
 
 class UploadEndpoint(BaseMaxBotModel):
-    """Точка доступа, куда следует загружать ваши бинарные файлы"""
+    """Upload endpoint for binary file uploads.
+
+    Contains the URL and optional token information needed to upload
+    files to the Max Messenger Bot API.
+    """
 
     __slots__ = ("url", "token")
 
@@ -66,9 +74,9 @@ class UploadEndpoint(BaseMaxBotModel):
         """
         super().__init__(api_kwargs=api_kwargs)
         self.url: str = url
-        """URL для загрузки файла"""
+        """URL endpoint for uploading the file."""
         self.token: Optional[str] = token
-        """Видео- или аудио-токен для отправки сообщения"""
+        """Video or audio token for sending messages."""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Self:
@@ -283,7 +291,7 @@ class PhotoAttachmentRequestPayload(BaseMaxBotModel):
         if noneCount == 3:
             raise ValueError("One of: url, token or photos should be not None")
         elif noneCount != 2:
-            raise ValueError("url, token and photos are mutualy exclusive")
+            raise ValueError("url, token and photos are mutually exclusive")
 
         self.url: Optional[str] = url
         self.token: Optional[str] = token

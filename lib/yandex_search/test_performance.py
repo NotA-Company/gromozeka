@@ -39,9 +39,18 @@ class MockYandexSearchClient(YandexSearchClient):
     performance characteristics for testing. It simulates network latency
     and returns consistent mock responses, enabling reliable performance
     measurements without external dependencies.
+
+    Attributes:
+        mockResponse: Dict containing mock search response data matching the
+                     expected API response structure.
+        requestCount: Counter tracking the number of requests made, used for
+                     rate limiting tests.
     """
 
-    def __init__(self, **kwargs):
+    mockResponse: dict
+    requestCount: int
+
+    def __init__(self, **kwargs) -> None:
         """Initialize the mock client with performance test settings.
 
         Sets up default test credentials for performance testing. Prepares mock
@@ -52,6 +61,9 @@ class MockYandexSearchClient(YandexSearchClient):
                      Default values are set for:
                      - iamToken: TEST_IAM_TOKEN
                      - folderId: TEST_FOLDER_ID
+
+        Returns:
+            None
         """
         # Set default test credentials
         kwargs.setdefault("iamToken", TEST_IAM_TOKEN)
@@ -84,7 +96,7 @@ class MockYandexSearchClient(YandexSearchClient):
         # Track request count for rate limiting tests
         self.requestCount = 0
 
-    async def _makeRequest(self, request):
+    async def _makeRequest(self, request: dict) -> dict:
         """Mock API request that simulates network latency.
 
         Simulates a realistic network delay and returns a consistent mock
@@ -96,6 +108,9 @@ class MockYandexSearchClient(YandexSearchClient):
 
         Returns:
             Dict: Mock search response matching the expected structure.
+
+        Raises:
+            None: This method does not raise exceptions.
         """
         # Simulate network delay
         await asyncio.sleep(0.1)  # 100ms delay
@@ -108,21 +123,45 @@ class MockYandexSearchClient(YandexSearchClient):
 
 
 @pytest.fixture
-def mockClient():
-    """Create a mock client for performance testing."""
+def mockClient() -> MockYandexSearchClient:
+    """Create a mock client for performance testing.
+
+    Returns:
+        MockYandexSearchClient: A mock client instance configured with test credentials
+                               and a 10-second request timeout.
+
+    Raises:
+        None: This fixture does not raise exceptions.
+    """
     return MockYandexSearchClient(iamToken=TEST_IAM_TOKEN, folderId=TEST_FOLDER_ID, requestTimeout=10)
 
 
 @pytest.fixture
-def cachedClient():
-    """Create a mock client with caching enabled."""
+def cachedClient() -> MockYandexSearchClient:
+    """Create a mock client with caching enabled.
+
+    Returns:
+        MockYandexSearchClient: A mock client instance with a DictCache configured
+                               for 1000 entries and 3600-second TTL.
+
+    Raises:
+        None: This fixture does not raise exceptions.
+    """
     cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), maxSize=1000, defaultTtl=3600)
     return MockYandexSearchClient(iamToken=TEST_IAM_TOKEN, folderId=TEST_FOLDER_ID, cache=cache, cacheTTL=3600)
 
 
 @pytest.fixture
-def rateLimiterManager():
-    """Create a rate limiter manager for testing."""
+def rateLimiterManager() -> RateLimiterManager:
+    """Create a rate limiter manager for testing.
+
+    Returns:
+        RateLimiterManager: A rate limiter manager instance with a default sliding
+                           window rate limiter configured for 1000 requests per second.
+
+    Raises:
+        None: This fixture does not raise exceptions.
+    """
     manager = RateLimiterManager.getInstance()
     if "default" not in manager.listRateLimiters():
         asyncio.run(
@@ -152,12 +191,24 @@ class TestSearchPerformance:
     """
 
     @pytest.mark.asyncio
-    async def testSingleSearchResponseTime(self, mockClient, rateLimiterManager):
+    async def testSingleSearchResponseTime(
+        self, mockClient: MockYandexSearchClient, rateLimiterManager: RateLimiterManager
+    ) -> None:
         """Test response time for a single search request.
 
         Measures the response time for a single search request and verifies
         that it falls within expected bounds, accounting for the simulated
         network delay in the mock client.
+
+        Args:
+            mockClient: Mock YandexSearchClient instance for testing.
+            rateLimiterManager: RateLimiterManager instance for rate limiting.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If response time exceeds 1.0 second or is less than 0.1 second.
         """
         startTime = time.time()
 
@@ -173,12 +224,24 @@ class TestSearchPerformance:
         logger.info(f"Single search response time: {responseTime:.3f}s")
 
     @pytest.mark.asyncio
-    async def testSequentialSearchPerformance(self, mockClient, rateLimiterManager):
+    async def testSequentialSearchPerformance(
+        self, mockClient: MockYandexSearchClient, rateLimiterManager: RateLimiterManager
+    ) -> None:
         """Test performance of multiple sequential searches.
 
         Measures the performance of executing multiple searches sequentially
         and verifies that the average response time remains within acceptable
         limits. Tests the client's performance under sustained load.
+
+        Args:
+            mockClient: Mock YandexSearchClient instance for testing.
+            rateLimiterManager: RateLimiterManager instance for rate limiting.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If total time exceeds 5.0 seconds or average time exceeds 0.5 seconds.
         """
         queries = [f"test query {i}" for i in range(10)]
 
@@ -201,13 +264,25 @@ class TestSearchPerformance:
         logger.info(f"Average time per search: {avgTime:.3f}s")
 
     @pytest.mark.asyncio
-    async def testConcurrentSearchPerformance(self, mockClient, rateLimiterManager):
+    async def testConcurrentSearchPerformance(
+        self, mockClient: MockYandexSearchClient, rateLimiterManager: RateLimiterManager
+    ) -> None:
         """Test performance of concurrent searches.
 
         Measures the performance of executing multiple searches concurrently
         and verifies that concurrent execution provides better throughput
         than sequential execution. Tests the client's ability to handle
         parallel requests efficiently.
+
+        Args:
+            mockClient: Mock YandexSearchClient instance for testing.
+            rateLimiterManager: RateLimiterManager instance for rate limiting.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If total time exceeds 10.0 seconds or average time exceeds 0.5 seconds.
         """
         queries = [f"test query {i}" for i in range(20)]
 
@@ -238,12 +313,25 @@ class TestMemoryAndResourceUsage:
     """
 
     @pytest.mark.asyncio
-    async def testConcurrentRequestResourceManagement(self, mockClient, rateLimiterManager):
+    async def testConcurrentRequestResourceManagement(
+        self, mockClient: MockYandexSearchClient, rateLimiterManager: RateLimiterManager
+    ) -> None:
         """Test resource management during concurrent requests.
 
         Verifies that the client properly manages resources during
         concurrent request processing, ensuring that resources are
         not exhausted or leaked during high-load scenarios.
+
+        Args:
+            mockClient: Mock YandexSearchClient instance for testing.
+            rateLimiterManager: RateLimiterManager instance for rate limiting.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If any concurrent request fails or if the client is not functional
+                           after concurrent execution.
         """
         # Create many concurrent tasks
         tasks = []
@@ -273,12 +361,21 @@ class TestPerformanceBenchmarks:
     """
 
     @pytest.mark.asyncio
-    async def benchmarkSearchThroughput(self, mockClient):
+    async def benchmarkSearchThroughput(self, mockClient: MockYandexSearchClient) -> None:
         """Benchmark search throughput (requests per second).
 
         Measures the maximum throughput the client can achieve for
         search requests, establishing a baseline performance metric
         for comparison and regression testing.
+
+        Args:
+            mockClient: Mock YandexSearchClient instance for testing.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If throughput is less than 5.0 requests per second.
         """
         numRequests = 100
 
@@ -301,12 +398,21 @@ class TestPerformanceBenchmarks:
         assert throughput >= 5.0
 
     @pytest.mark.asyncio
-    async def benchmarkCacheThroughput(self, cachedClient):
+    async def benchmarkCacheThroughput(self, cachedClient: MockYandexSearchClient) -> None:
         """Benchmark cache throughput (requests per second with cache).
 
         Measures the maximum throughput the client can achieve when
         serving requests from cache, demonstrating the performance
         benefits of caching and establishing cache performance metrics.
+
+        Args:
+            cachedClient: Mock YandexSearchClient instance with caching enabled.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If cache throughput is less than 100.0 requests per second.
         """
         query = "cache benchmark query"
 

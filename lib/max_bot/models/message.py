@@ -16,8 +16,9 @@ from .user import UserWithPhoto
 
 
 class Recipient(BaseMaxBotModel):
-    """
-    Новый получатель сообщения. Может быть пользователем или чатом
+    """Message recipient model for Max Messenger Bot API.
+
+    Represents a message recipient which can be either a user or a chat.
     """
 
     __slots__ = ("chat_id", "chat_type", "user_id")
@@ -30,6 +31,19 @@ class Recipient(BaseMaxBotModel):
         user_id: Optional[int] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize Recipient instance.
+
+        Args:
+            chat_id: Chat ID. Optional, defaults to None.
+            chat_type: Type of chat (user, chat, channel, etc.).
+            user_id: User ID if message was sent to a user. Optional, defaults to None.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            chat_id: Chat ID.
+            chat_type: Type of chat.
+            user_id: User ID if message was sent to a user.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.chat_id: Optional[int] = chat_id
         """ID чата"""
@@ -57,13 +71,23 @@ class Recipient(BaseMaxBotModel):
 
 
 class MessageStat(BaseMaxBotModel):
-    """
-    Статистика сообщения
+    """Message statistics model for Max Messenger Bot API.
+
+    Contains view count statistics for a message.
     """
 
     __slots__ = ("views",)
 
     def __init__(self, *, views: int, api_kwargs: Dict[str, Any] | None = None):
+        """Initialize MessageStat instance.
+
+        Args:
+            views: Number of views for the message.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            views: Number of views for the message.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.views = views
         """Количество просмотров"""
@@ -85,8 +109,9 @@ class MessageStat(BaseMaxBotModel):
 
 
 class MessageBody(BaseMaxBotModel):
-    """
-    Схема, представляющая тело сообщения
+    """Message body model for Max Messenger Bot API.
+
+    Represents the content of a message including text, attachments, and markup.
     """
 
     __slots__ = ("mid", "seq", "text", "attachments", "markup")
@@ -101,6 +126,23 @@ class MessageBody(BaseMaxBotModel):
         markup: Optional[List[MarkupElement]] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize MessageBody instance.
+
+        Args:
+            mid: Unique message ID.
+            seq: Message sequence ID in the chat.
+            text: Message text. Optional, defaults to None.
+            attachments: Message attachments. Can be any Attachment type. Optional, defaults to None.
+            markup: Text markup elements. See formatting documentation for details. Optional, defaults to None.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            mid: Unique message ID.
+            seq: Message sequence ID in the chat.
+            text: Message text.
+            attachments: Message attachments. Can be any Attachment type.
+            markup: Text markup elements.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.mid: str = mid
         """Уникальный ID сообщения"""
@@ -150,8 +192,9 @@ class MessageBody(BaseMaxBotModel):
 
 
 class LinkedMessage(BaseMaxBotModel):
-    """
-    Linked message model for forwards and replies
+    """Linked message model for forwards and replies in Max Messenger Bot API.
+
+    Represents a message that is linked to another message, such as a forward or reply.
     """
 
     __slots__ = ("type", "sender", "chat_id", "message")
@@ -165,6 +208,22 @@ class LinkedMessage(BaseMaxBotModel):
         message: MessageBody,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize LinkedMessage instance.
+
+        Args:
+            type: Type of linked message (forward, reply, etc.).
+            sender: User who sent the original message. Optional, defaults to None.
+            chat_id: Chat where the message was originally published. Only for forwarded
+                messages. Optional, defaults to None.
+            message: The linked message content.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            type: Type of linked message.
+            sender: User who sent the original message.
+            chat_id: Chat where the message was originally published. Only for forwarded messages.
+            message: The linked message content.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.type: MessageLinkType = type
         """Тип связанного сообщения"""
@@ -196,8 +255,9 @@ class LinkedMessage(BaseMaxBotModel):
 
 
 class Message(BaseMaxBotModel):
-    """
-    Сообщение в чате
+    """Message model for Max Messenger Bot API.
+
+    Represents a complete message in a chat with sender, recipient, content, and metadata.
     """
 
     __slots__ = ("sender", "recipient", "timestamp", "link", "body", "stat", "url")
@@ -214,6 +274,27 @@ class Message(BaseMaxBotModel):
         url: Optional[str] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize Message instance.
+
+        Args:
+            sender: User who sent the message.
+            recipient: Message recipient (user or chat).
+            timestamp: Message creation time in Unix timestamp format.
+            link: Forwarded or replied message. Optional, defaults to None.
+            body: Message content (text + attachments). Can be None if message only contains a linked message.
+            stat: Message statistics. Optional, defaults to None.
+            url: Public URL for the message. Can be None for private chats. Optional, defaults to None.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            sender: User who sent the message.
+            recipient: Message recipient (user or chat).
+            timestamp: Message creation time in Unix timestamp format.
+            link: Forwarded or replied message.
+            body: Message content (text + attachments).
+            stat: Message statistics.
+            url: Public URL for the message.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.sender: UserWithPhoto = sender
         """Пользователь, отправивший сообщение"""
@@ -270,13 +351,23 @@ class Message(BaseMaxBotModel):
 
 
 class MessageList(BaseMaxBotModel):
-    """
-    Пагинированный список сообщений
+    """Paginated message list model for Max Messenger Bot API.
+
+    Represents a paginated list of messages returned from the API.
     """
 
     __slots__ = ("messages",)
 
     def __init__(self, *, messages: List[Message], api_kwargs: Dict[str, Any] | None = None):
+        """Initialize MessageList instance.
+
+        Args:
+            messages: List of messages.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            messages: List of messages.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.messages: List[Message] = messages
         """Массив сообщений"""
@@ -299,8 +390,9 @@ class MessageList(BaseMaxBotModel):
 
 
 class NewMessageLink(BaseMaxBotModel):
-    """
-    Link model for new messages (forward/reply)
+    """Link model for new messages in Max Messenger Bot API.
+
+    Used to create forward or reply links when sending new messages.
     """
 
     __slots__ = ("type", "mid")
@@ -312,6 +404,17 @@ class NewMessageLink(BaseMaxBotModel):
         mid: str,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize NewMessageLink instance.
+
+        Args:
+            type: Type of message link (forward, reply, etc.).
+            mid: ID of the source message to link to.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            type: Type of message link.
+            mid: ID of the source message to link to.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.type: MessageLinkType = type
         """Тип ссылки сообщения"""
@@ -336,8 +439,9 @@ class NewMessageLink(BaseMaxBotModel):
 
 
 class NewMessageBody(BaseMaxBotModel):
-    """
-    New message body for sending messages
+    """New message body model for sending messages in Max Messenger Bot API.
+
+    Used to construct the content of a new message to be sent.
     """
 
     __slots__ = ("text", "attachments", "link", "notify", "format")
@@ -352,6 +456,23 @@ class NewMessageBody(BaseMaxBotModel):
         format: Optional[TextFormat] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize NewMessageBody instance.
+
+        Args:
+            text: Message text. Optional, defaults to None.
+            attachments: Message attachments. If empty, all attachments will be removed. Optional, defaults to None.
+            link: Link to another message (forward/reply). Optional, defaults to None.
+            notify: If False, chat participants will not be notified. Defaults to True. Optional, defaults to None.
+            format: Text format to use. See formatting documentation for details. Optional, defaults to None.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            text: Message text.
+            attachments: Message attachments. If empty, all attachments will be removed.
+            link: Link to another message (forward/reply).
+            notify: If False, chat participants will not be notified. Defaults to True.
+            format: Text format to use.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.text: Optional[str] = text
         """Новый текст сообщения"""
@@ -409,13 +530,23 @@ class NewMessageBody(BaseMaxBotModel):
 
 
 class SendMessageResult(BaseMaxBotModel):
-    """
-    Result of sending a message
+    """Send message result model for Max Messenger Bot API.
+
+    Represents the result of sending a message operation.
     """
 
     __slots__ = ("message",)
 
     def __init__(self, *, message: Message, api_kwargs: Dict[str, Any] | None = None):
+        """Initialize SendMessageResult instance.
+
+        Args:
+            message: The sent message.
+            api_kwargs: Additional API keyword arguments. Optional, defaults to None.
+
+        Attributes:
+            message: The sent message.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.message: Message = message
         """Sent message"""

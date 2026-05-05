@@ -1375,7 +1375,7 @@ class EnsuredMessage:
                 return None
             return EnsuredMessage.fromTelegramMessage(message.reply_to_message)
         elif isinstance(message, maxModels.Message):
-            linkedMessage = libMax.MessageLinkToMessage(message)
+            linkedMessage = libMax.messageLinkToMessage(message)
             if linkedMessage is None:
                 logger.error("getEnsuredRepliedToMessage(): message.link is None, but should be max Message()")
                 return None
