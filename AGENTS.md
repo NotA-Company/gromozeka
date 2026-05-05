@@ -23,13 +23,8 @@ make install            # creates ./venv and installs requirements.txt
 make format lint        # ALWAYS before AND after edits
 make test               # full suite, wrapped in `timeout 5m`; pass V=1 for -v
 make test-failed        # re-run pytest --last-failed
-make check              # what CI runs: lint + black --check (NO tests)
 ./venv/bin/pytest path/to/test_x.py::TestClass::testFn -v   # single test
 ```
-
-CI (`.sourcecraft/ci.yaml`) runs `make check && make test` on Alpine; system
-deps it installs reveal hidden requirements: `gcc git libmagic make musl-dev
-nodejs sqlite`. `libmagic` is a real runtime dep (file-type detection).
 
 ## Hard rules (enforced socially, not by tooling)
 
@@ -45,9 +40,6 @@ These come from [`docs/llm/index.md`](docs/llm/index.md):
 - Run Python via `./venv/bin/python3` — not `python` / `python3`.
 - Do **not** `cd` into subdirectories; run everything from repo root.
 - Do **not** use `python -c '...'` for ad-hoc tests — write a script file.
-- Project mascot speech tic: comments and user-facing strings often end with
-  ", dood!" (Prinny from Disgaea). Preserve it when editing existing strings;
-  don't strip it.
 
 ## Lint/format pipeline
 
