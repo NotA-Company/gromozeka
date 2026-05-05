@@ -1,9 +1,9 @@
 """
-User data management handlers for Gromozeka bot, dood!
+User data management handlers for Gromozeka bot.
 
 Provides handlers for user-specific data storage: viewing, deleting, clearing data,
 and LLM tool integration for AI-assisted data management. All data is scoped to
-specific chat and user combinations, dood!
+specific chat and user combinations.
 """
 
 import logging
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 class UserDataHandler(BaseBotHandler):
     """
-    Handler for user data management with LLM tool integration, dood!
+    Handler for user data management with LLM tool integration.
 
     Attributes:
         llmService (LLMService): Service for LLM tool registration and management.
@@ -51,14 +51,15 @@ class UserDataHandler(BaseBotHandler):
 
     def __init__(
         self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    ) -> None:
         """
-        Initialize handler and register 'add_user_data' LLM tool, dood!
+        Initialize handler and register 'add_user_data' LLM tool.
 
         Args:
             configManager (ConfigManager): Configuration manager instance.
             database (Database): Database object for data persistence.
             llmManager (LLMManager): LLM manager for AI model interactions.
+            botProvider (BotProvider): Bot provider instance.
         """
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
@@ -103,7 +104,7 @@ class UserDataHandler(BaseBotHandler):
 
     async def _llmToolSetUserData(self, extraData: Optional[Dict[str, Any]], key: str, data: str, **kwargs) -> str:
         """
-        LLM tool handler for storing user data, dood!
+        LLM tool handler for storing user data.
 
         Args:
             extraData (Optional[Dict[str, Any]]): Context with ensuredMessage object.
@@ -115,7 +116,7 @@ class UserDataHandler(BaseBotHandler):
             str: JSON with operation status, key, and data value.
 
         Raises:
-            RuntimeError: If extraData invalid or missing ensuredMessage, dood!
+            RuntimeError: If extraData is invalid or missing ensuredMessage.
         """
         if extraData is None:
             raise RuntimeError("extraData should be provided")
@@ -142,12 +143,11 @@ class UserDataHandler(BaseBotHandler):
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
-        Handle messages for user data configuration wizard in private chats, dood!
+        Handle messages for user data configuration wizard in private chats.
 
         Args:
-            update (Update): Telegram update object.
-            context (ContextTypes.DEFAULT_TYPE): Callback context.
-            ensuredMessage (Optional[EnsuredMessage]): Ensured message or None.
+            ensuredMessage (EnsuredMessage): Ensured message object.
+            updateObj (UpdateObjectType): Telegram update object.
 
         Returns:
             HandlerResultStatus: FINAL if handled, SKIPPED otherwise.
@@ -187,13 +187,13 @@ class UserDataHandler(BaseBotHandler):
         user: MessageSender,
     ) -> None:
         """
-        Initialize wizard with chat selection interface, dood!
+        Initialize wizard with chat selection interface.
 
         Args:
-            data (CallbackDataDict): Callback data from button press.
-            messageId (int): Message ID to edit.
-            user (User): Telegram user.
-            bot (telegram.Bot): Bot instance.
+            data (utils.PayloadDict): Callback data from button press.
+            messageId (MessageIdType): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): Telegram user.
         """
         # Print list of known chats
 
@@ -241,13 +241,13 @@ class UserDataHandler(BaseBotHandler):
         user: MessageSender,
     ) -> None:
         """
-        Display user data for selected chat with edit options, dood!
+        Display user data for selected chat with edit options.
 
         Args:
-            data (CallbackDataDict): Callback data with chat ID.
-            messageId (int): Message ID to edit.
-            user (User): Telegram user.
-            bot (telegram.Bot): Bot instance.
+            data (utils.PayloadDict): Callback data with chat ID.
+            messageId (MessageIdType): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): Telegram user.
         """
         exitButton = CallbackButton(
             "Закончить настройку",
@@ -345,13 +345,13 @@ class UserDataHandler(BaseBotHandler):
         user: MessageSender,
     ) -> None:
         """
-        Clear all user data for selected chat, dood!
+        Clear all user data for selected chat.
 
         Args:
-            data (CallbackDataDict): Callback data with chat ID.
-            messageId (int): Message ID to edit.
-            user (User): Telegram user.
-            bot (telegram.Bot): Bot instance.
+            data (utils.PayloadDict): Callback data with chat ID.
+            messageId (MessageIdType): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): Telegram user.
         """
         exitButton = CallbackButton(
             "Закончить настройку",
@@ -398,13 +398,13 @@ class UserDataHandler(BaseBotHandler):
         user: MessageSender,
     ) -> None:
         """
-        Delete specific user data key from selected chat, dood!
+        Delete specific user data key from selected chat.
 
         Args:
-            data (CallbackDataDict): Callback data with chat ID and key.
-            messageId (int): Message ID to edit.
-            user (User): Telegram user.
-            bot (telegram.Bot): Bot instance.
+            data (utils.PayloadDict): Callback data with chat ID and key.
+            messageId (MessageIdType): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): Telegram user.
         """
         exitButton = CallbackButton(
             "Закончить настройку",
@@ -455,13 +455,13 @@ class UserDataHandler(BaseBotHandler):
         user: MessageSender,
     ) -> None:
         """
-        Prompt user to enter value for key (new or existing), dood!
+        Prompt user to enter value for key (new or existing).
 
         Args:
-            data (CallbackDataDict): Callback data with chat ID and optional key.
-            messageId (int): Message ID to edit.
-            user (User): Telegram user.
-            bot (telegram.Bot): Bot instance.
+            data (utils.PayloadDict): Callback data with chat ID and optional key.
+            messageId (MessageIdType): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): Telegram user.
         """
         exitButton = CallbackButton(
             "Закончить настройку",
@@ -548,13 +548,13 @@ class UserDataHandler(BaseBotHandler):
         user: MessageSender,
     ) -> None:
         """
-        Set or update user data value, extracting key from message if needed, dood!
+        Set or update user data value, extracting key from message if needed.
 
         Args:
-            data (CallbackDataDict): Callback data with chat ID, optional key, and value.
-            messageId (int): Message ID to edit.
-            user (User): Telegram user.
-            bot (telegram.Bot): Bot instance.
+            data (utils.PayloadDict): Callback data with chat ID, optional key, and value.
+            messageId (MessageIdType): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): Telegram user.
         """
         exitButton = CallbackButton(
             "Закончить настройку",
@@ -618,13 +618,13 @@ class UserDataHandler(BaseBotHandler):
         user: MessageSender,
     ) -> None:
         """
-        Route configuration actions to appropriate handlers, dood!
+        Route configuration actions to appropriate handlers.
 
         Args:
-            data (CallbackDataDict): Callback data with action and parameters.
-            messageId (int): Message ID to edit.
-            user (User): Telegram user.
-            bot (telegram.Bot): Bot instance.
+            data (utils.PayloadDict): Callback data with action and parameters.
+            messageId (MessageIdType): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): Telegram user.
         """
 
         self.cache.clearUserState(userId=user.id, stateKey=UserActiveActionEnum.UserDataConfig)
@@ -682,15 +682,16 @@ class UserDataHandler(BaseBotHandler):
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
-        Handle button callbacks for user data configuration, dood!
+        Handle button callbacks for user data configuration.
 
         Args:
-            update (Update): Telegram update with callback query.
-            context (ContextTypes.DEFAULT_TYPE): Callback context.
-            data (CallbackDataDict): Parsed callback data.
+            ensuredMessage (EnsuredMessage): Ensured message object.
+            data (utils.PayloadDict): Parsed callback data.
+            user (MessageSender): Telegram user.
+            updateObj (UpdateObjectType): Telegram update object.
 
         Returns:
-            HandlerResultStatus: FINAL if handled, SKIPPED if not, FATAL if data missing.
+            HandlerResultStatus: FINAL if handled, SKIPPED if not.
         """
 
         userDataAction = data.get(ButtonDataKey.UserDataConfigAction, None)
@@ -727,12 +728,14 @@ class UserDataHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Display stored user data as JSON, dood!
+        Display stored user data as JSON.
 
         Args:
             ensuredMessage (EnsuredMessage): Ensured message object.
-            update (Update): Telegram update object.
-            context (ContextTypes.DEFAULT_TYPE): Callback context.
+            command (str): Command name.
+            args (str): Command arguments (optional chat ID).
+            UpdateObj (UpdateObjectType): Telegram update object.
+            typingManager (Optional[TypingManager]): Typing manager instance.
         """
 
         targetChatId = utils.extractInt(args.split(maxsplit=1))
@@ -765,12 +768,14 @@ class UserDataHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Start interactive user data configuration wizard (private chats only), dood!
+        Start interactive user data configuration wizard (private chats only).
 
         Args:
             ensuredMessage (EnsuredMessage): Ensured message object.
-            update (Update): Telegram update object.
-            context (ContextTypes.DEFAULT_TYPE): Callback context.
+            command (str): Command name.
+            args (str): Command arguments.
+            UpdateObj (UpdateObjectType): Telegram update object.
+            typingManager (Optional[TypingManager]): Typing manager instance.
         """
 
         msg = await self.sendMessage(

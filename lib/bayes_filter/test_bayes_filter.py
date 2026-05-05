@@ -1,13 +1,30 @@
 #!/usr/bin/env python3
 """
-Comprehensive test suite for Bayes spam filter, dood!
+Comprehensive test suite for Bayes spam filter.
 
-This test suite verifies the functionality of the Bayes filter with:
-- Basic functionality tests
-- Edge cases for tokenization
-- Performance tests with large datasets
-- Accuracy tests with realistic spam/ham data
-- Per-chat isolation validation
+This module provides extensive testing for the NaiveBayesFilter implementation,
+covering all aspects of the spam detection system including:
+
+- Basic functionality tests: Core operations like learning and classification
+- Edge cases for tokenization: Handling of empty messages, special characters,
+  Unicode, and various text formats
+- Performance tests: Large dataset training, classification speed, and
+  vocabulary management
+- Accuracy tests: Spam pattern recognition, false positive rates, and
+  confidence calculations
+- Per-chat isolation validation: Ensuring statistics and models are properly
+  isolated between different chat contexts
+
+The test suite includes:
+- MockBayesStorage: In-memory storage implementation for unit testing
+- Pytest fixtures: Reusable test components for filters and storage
+- Test classes: Organized test suites for different aspects of functionality
+- Integration tests: End-to-end workflow validation
+
+Example:
+    Run all tests: pytest lib/bayes_filter/test_bayes_filter.py -v
+    Run specific test class: pytest lib/bayes_filter/test_bayes_filter.py::TestBayesFilterEdgeCases -v
+    Run with slow tests: pytest lib/bayes_filter/test_bayes_filter.py -v -m slow
 """
 
 import logging
@@ -40,10 +57,35 @@ logger = logging.getLogger(__name__)
 
 
 class MockBayesStorage(BayesStorageInterface):
-    """Mock storage implementation for testing without database, dood!"""
+    """Mock storage implementation for testing without database.
 
-    def __init__(self):
-        """Initialize mock storage with in-memory data structures"""
+    This class provides an in-memory implementation of BayesStorageInterface
+    for unit testing purposes. It maintains token and class statistics in
+    Python dictionaries, allowing fast test execution without database
+    dependencies.
+
+    Attributes:
+        tokens: Dictionary mapping chat IDs to token statistics.
+            Format: {chat_id: {token: TokenStats}}
+        classStats: Dictionary mapping chat IDs to class statistics.
+            Format: {chat_id: {is_spam: ClassStats}}
+        globalTokens: Global token statistics (chat_id=None).
+            Format: {token: TokenStats}
+        globalClassStats: Global class statistics (chat_id=None).
+            Format: {is_spam: ClassStats}
+
+    Example:
+        storage = MockBayesStorage()
+        await storage.updateTokenStats("spam", True, 1, chat_id=123)
+        stats = await storage.getTokenStats(["spam"], chat_id=123)
+    """
+
+    def __init__(self) -> None:
+        """Initialize mock storage with in-memory data structures.
+
+        Creates empty dictionaries for per-chat statistics and initializes
+        global statistics with zero counts for both spam and ham classes.
+        """
         self.tokens: Dict[int, Dict[str, TokenStats]] = {}  # chat_id -> token -> stats
         self.classStats: Dict[int, Dict[bool, ClassStats]] = {}  # chat_id -> is_spam -> stats
         self.globalTokens: Dict[str, TokenStats] = {}
@@ -53,7 +95,15 @@ class MockBayesStorage(BayesStorageInterface):
         }
 
     def _getChatTokens(self, chatId: Optional[int]) -> Dict[str, TokenStats]:
-        """Get token storage for a specific chat or global"""
+        """Get token storage dictionary for a specific chat or global scope.
+
+        Args:
+            chatId: The chat ID to retrieve tokens for. If None, returns
+                global token storage.
+
+        Returns:
+            Dictionary mapping token strings to TokenStats objects.
+        """
         if chatId is None:
             return self.globalTokens
         if chatId not in self.tokens:
@@ -61,7 +111,15 @@ class MockBayesStorage(BayesStorageInterface):
         return self.tokens[chatId]
 
     def _getChatClassStats(self, chatId: Optional[int]) -> Dict[bool, ClassStats]:
-        """Get class stats for a specific chat or global"""
+        """Get class statistics dictionary for a specific chat or global scope.
+
+        Args:
+            chatId: The chat ID to retrieve class stats for. If None, returns
+                global class statistics.
+
+        Returns:
+            Dictionary mapping boolean (is_spam) to ClassStats objects.
+        """
         if chatId is None:
             return self.globalClassStats
         if chatId not in self.classStats:
@@ -72,7 +130,17 @@ class MockBayesStorage(BayesStorageInterface):
         return self.classStats[chatId]
 
     async def getTokenStats(self, tokens: Iterable[str], chatId: Optional[int] = None) -> Dict[str, TokenStats]:
-        """Get statistics for specific tokens"""
+        """Get statistics for specific tokens.
+
+        Args:
+            tokens: Iterable of token strings to retrieve statistics for.
+            chatId: The chat ID to retrieve token stats for. If None, uses
+                global token storage.
+
+        Returns:
+            Dictionary mapping token strings to TokenStats objects. Tokens
+            not found in storage are returned with zero counts.
+        """
         chatTokens = self._getChatTokens(chatId)
         return {
             token: chatTokens.get(token, TokenStats(token=token, spamCount=0, hamCount=0, totalCount=0))
@@ -80,14 +148,35 @@ class MockBayesStorage(BayesStorageInterface):
         }
 
     async def getClassStats(self, is_spam: bool, chat_id: Optional[int] = None) -> ClassStats:
-        """Get statistics for spam or ham class"""
+        """Get statistics for spam or ham class.
+
+        Args:
+            is_spam: True to get spam class statistics, False for ham.
+            chat_id: The chat ID to retrieve class stats for. If None, uses
+                global class statistics.
+
+        Returns:
+            ClassStats object containing message and token counts for the
+            specified class.
+        """
         stats = self._getChatClassStats(chat_id)
         return stats.get(is_spam, ClassStats(message_count=0, token_count=0))
 
     async def updateTokenStats(
         self, token: str, is_spam: bool, increment: int = 1, chat_id: Optional[int] = None
     ) -> bool:
-        """Update token statistics"""
+        """Update token statistics.
+
+        Args:
+            token: The token string to update.
+            is_spam: True if the token appeared in spam, False for ham.
+            increment: The amount to increment the count by (default: 1).
+            chat_id: The chat ID to update token stats for. If None, updates
+                global token storage.
+
+        Returns:
+            True if update was successful.
+        """
         chatTokens = self._getChatTokens(chat_id)
         if token not in chatTokens:
             chatTokens[token] = TokenStats(token=token, spamCount=0, hamCount=0, totalCount=0)
@@ -102,24 +191,60 @@ class MockBayesStorage(BayesStorageInterface):
     async def updateClassStats(
         self, isSpam: bool, messageIncrement: int = 1, tokenIncrement: int = 0, chatId: Optional[int] = None
     ) -> bool:
-        """Update class statistics"""
+        """Update class statistics.
+
+        Args:
+            isSpam: True to update spam class, False for ham.
+            messageIncrement: Number of messages to add (default: 1).
+            tokenIncrement: Number of tokens to add (default: 0).
+            chatId: The chat ID to update class stats for. If None, updates
+                global class statistics.
+
+        Returns:
+            True if update was successful.
+        """
         stats = self._getChatClassStats(chatId)
         stats[isSpam].message_count += messageIncrement
         stats[isSpam].token_count += tokenIncrement
         return True
 
     async def getAllTokens(self, chat_id: Optional[int] = None) -> List[str]:
-        """Get all known tokens"""
+        """Get all known tokens.
+
+        Args:
+            chat_id: The chat ID to retrieve tokens for. If None, returns
+                global tokens.
+
+        Returns:
+            List of all token strings in the specified scope.
+        """
         chatTokens = self._getChatTokens(chat_id)
         return list(chatTokens.keys())
 
     async def getVocabularySize(self, chatId: Optional[int] = None) -> int:
-        """Get vocabulary size"""
+        """Get vocabulary size.
+
+        Args:
+            chatId: The chat ID to get vocabulary size for. If None, returns
+                global vocabulary size.
+
+        Returns:
+            Number of unique tokens in the specified scope.
+        """
         chatTokens = self._getChatTokens(chatId)
         return len(chatTokens)
 
     async def getModelStats(self, chat_id: Optional[int] = None) -> BayesModelStats:
-        """Get overall model statistics"""
+        """Get overall model statistics.
+
+        Args:
+            chat_id: The chat ID to get model stats for. If None, returns
+                global model statistics.
+
+        Returns:
+            BayesModelStats object containing total spam/ham messages,
+            total tokens, vocabulary size, and chat ID.
+        """
         stats = self._getChatClassStats(chat_id)
         vocabSize = await self.getVocabularySize(chat_id)
         totalTokens = stats[True].token_count + stats[False].token_count
@@ -133,7 +258,15 @@ class MockBayesStorage(BayesStorageInterface):
         )
 
     async def clearStats(self, chat_id: Optional[int] = None) -> bool:
-        """Clear all statistics"""
+        """Clear all statistics.
+
+        Args:
+            chat_id: The chat ID to clear stats for. If None, clears global
+                statistics.
+
+        Returns:
+            True if clear was successful.
+        """
         if chat_id is None:
             self.globalTokens.clear()
             self.globalClassStats = {
@@ -151,13 +284,33 @@ class MockBayesStorage(BayesStorageInterface):
         return True
 
     async def batchUpdateTokens(self, token_updates: List[Dict[str, Any]], chat_id: Optional[int] = None) -> bool:
-        """Batch update tokens"""
+        """Batch update tokens.
+
+        Args:
+            token_updates: List of dictionaries containing update information.
+                Each dict must have keys: 'token', 'is_spam', 'increment'.
+            chat_id: The chat ID to update tokens for. If None, updates
+                global tokens.
+
+        Returns:
+            True if all updates were successful.
+        """
         for update in token_updates:
             await self.updateTokenStats(update["token"], update["is_spam"], update["increment"], chat_id)
         return True
 
     async def getTopSpamTokens(self, limit: int = 10, chat_id: Optional[int] = None) -> List[TokenStats]:
-        """Get top spam tokens"""
+        """Get top spam tokens.
+
+        Args:
+            limit: Maximum number of tokens to return (default: 10).
+            chat_id: The chat ID to get tokens for. If None, returns global
+                tokens.
+
+        Returns:
+            List of TokenStats objects sorted by spam ratio (spamCount /
+            totalCount) in descending order.
+        """
         chatTokens = self._getChatTokens(chat_id)
         sortedTokens = sorted(
             chatTokens.values(), key=lambda t: t.spamCount / max(1, t.spamCount + t.hamCount), reverse=True
@@ -165,7 +318,17 @@ class MockBayesStorage(BayesStorageInterface):
         return sortedTokens[:limit]
 
     async def getTopHamTokens(self, limit: int = 10, chat_id: Optional[int] = None) -> List[TokenStats]:
-        """Get top ham tokens"""
+        """Get top ham tokens.
+
+        Args:
+            limit: Maximum number of tokens to return (default: 10).
+            chat_id: The chat ID to get tokens for. If None, returns global
+                tokens.
+
+        Returns:
+            List of TokenStats objects sorted by ham ratio (hamCount /
+            totalCount) in descending order.
+        """
         chatTokens = self._getChatTokens(chat_id)
         sortedTokens = sorted(
             chatTokens.values(), key=lambda t: t.hamCount / max(1, t.spamCount + t.hamCount), reverse=True
@@ -173,7 +336,17 @@ class MockBayesStorage(BayesStorageInterface):
         return sortedTokens[:limit]
 
     async def cleanupRareTokens(self, min_count: int = 2, chat_id: Optional[int] = None) -> int:
-        """Remove rare tokens"""
+        """Remove rare tokens.
+
+        Args:
+            min_count: Minimum total count required to keep a token
+                (default: 2).
+            chat_id: The chat ID to cleanup tokens for. If None, cleans up
+                global tokens.
+
+        Returns:
+            Number of tokens removed.
+        """
         chatTokens = self._getChatTokens(chat_id)
         toRemove = [token for token, stats in chatTokens.items() if stats.totalCount < min_count]
         for token in toRemove:
@@ -187,21 +360,42 @@ class MockBayesStorage(BayesStorageInterface):
 
 
 @pytest.fixture
-async def mockStorage():
-    """Create a mock storage instance for testing"""
+async def mockStorage() -> MockBayesStorage:
+    """Create a mock storage instance for testing.
+
+    Returns:
+        MockBayesStorage instance with empty in-memory storage.
+    """
     return MockBayesStorage()
 
 
 @pytest.fixture
-async def bayesFilter(mockStorage):
-    """Create a Bayes filter with mock storage"""
+async def bayesFilter(mockStorage: MockBayesStorage) -> NaiveBayesFilter:
+    """Create a Bayes filter with mock storage.
+
+    Args:
+        mockStorage: Mock storage fixture.
+
+    Returns:
+        NaiveBayesFilter instance configured with per-chat statistics,
+        alpha=1.0, minTokenCount=1, and debug logging disabled.
+    """
     config = BayesConfig(perChatStats=True, alpha=1.0, minTokenCount=1, debugLogging=False)
     return NaiveBayesFilter(mockStorage, config)
 
 
 @pytest.fixture
-async def trainedFilter(bayesFilter):
-    """Create a pre-trained Bayes filter for testing"""
+async def trainedFilter(bayesFilter: NaiveBayesFilter) -> NaiveBayesFilter:
+    """Create a pre-trained Bayes filter for testing.
+
+    Trains the filter with 5 spam messages and 5 ham messages for chat ID 12345.
+
+    Args:
+        bayesFilter: Bayes filter fixture.
+
+    Returns:
+        NaiveBayesFilter instance trained with sample spam and ham messages.
+    """
     # Train with spam messages
     spamMessages = [
         "Buy cheap products now!",
@@ -233,8 +427,22 @@ async def trainedFilter(bayesFilter):
 
 
 @pytest.mark.asyncio
-async def test_bayes_filter():
-    """Test basic Bayes filter functionality, dood!"""
+async def test_bayes_filter() -> None:
+    """Test basic Bayes filter functionality.
+
+    This comprehensive test validates:
+    - Classification without training returns neutral score (50.0)
+    - Learning spam and ham messages
+    - Model statistics accuracy
+    - Classification of spam-like and ham-like messages
+    - Per-chat isolation
+    - Batch learning
+    - Storage interface methods
+    - Token cleanup
+
+    Raises:
+        AssertionError: If any test assertion fails.
+    """
 
     # Create temporary database
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
@@ -382,8 +590,17 @@ async def test_bayes_filter():
 
 
 @pytest.mark.asyncio
-async def test_tokenizer():
-    """Test tokenizer functionality, dood!"""
+async def test_tokenizer() -> None:
+    """Test tokenizer functionality.
+
+    Validates:
+    - Basic tokenization of text with URLs and mentions
+    - Tokenization with different configurations
+    - Spam indicator estimation
+
+    Raises:
+        AssertionError: If any test assertion fails.
+    """
     logger.info("=== Testing Tokenizer, dood! ===")
 
     # Test basic tokenization
@@ -413,48 +630,95 @@ async def test_tokenizer():
 
 
 class TestBayesFilterEdgeCases:
-    """Test edge cases for tokenization and message handling, dood!"""
+    """Test edge cases for tokenization and message handling.
+
+    This test class validates the filter's behavior with unusual or
+    problematic inputs including empty messages, special characters,
+    Unicode text, very long messages, and mixed languages.
+    """
 
     @pytest.mark.asyncio
-    async def test_empty_message(self, bayesFilter):
-        """Test classification of empty message"""
+    async def test_empty_message(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test classification of empty message.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If empty message doesn't return neutral score.
+        """
         result = await bayesFilter.classify("", chatId=12345)
         assert result.score == 50.0
         assert result.confidence == 0.0
         assert not result.isSpam
 
     @pytest.mark.asyncio
-    async def test_whitespace_only_message(self, bayesFilter):
-        """Test classification of whitespace-only message"""
+    async def test_whitespace_only_message(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test classification of whitespace-only message.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If whitespace message doesn't return neutral score.
+        """
         result = await bayesFilter.classify("   \t\n  ", chatId=12345)
         assert result.score == 50.0
         assert result.confidence == 0.0
 
     @pytest.mark.asyncio
-    async def test_special_characters_only(self, bayesFilter):
-        """Test message with only special characters"""
+    async def test_special_characters_only(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test message with only special characters.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If special characters don't return neutral score.
+        """
         result = await bayesFilter.classify("!@#$%^&*()", chatId=12345)
         assert result.score == 50.0
         assert result.confidence == 0.0
 
     @pytest.mark.asyncio
-    async def test_emojis_only(self, bayesFilter):
-        """Test message with only emojis"""
+    async def test_emojis_only(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test message with only emojis.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If emojis don't return neutral score.
+        """
         result = await bayesFilter.classify("😀😃😄😁🤣", chatId=12345)
         # Should return neutral since emojis are removed by default
         assert result.score == 50.0
 
     @pytest.mark.asyncio
-    async def test_very_long_message(self, trainedFilter):
-        """Test classification of very long message (10,000+ characters)"""
+    async def test_very_long_message(self, trainedFilter: NaiveBayesFilter) -> None:
+        """Test classification of very long message (10,000+ characters).
+
+        Args:
+            trainedFilter: Pre-trained Bayes filter fixture.
+
+        Raises:
+            AssertionError: If long message classification fails.
+        """
         longMessage = "spam " * 2500  # 12,500 characters
         result = await trainedFilter.classify(longMessage, chatId=12345)
         # Should still classify (tokens limited by config)
         assert 0 <= result.score <= 100
 
     @pytest.mark.asyncio
-    async def test_mixed_languages(self, bayesFilter):
-        """Test message with mixed Russian and English"""
+    async def test_mixed_languages(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test message with mixed Russian and English.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If mixed language classification fails.
+        """
         await bayesFilter.learnSpam("Купить cheap products сейчас!", chatId=12345)
         await bayesFilter.learnHam("Привет how are you?", chatId=12345)
 
@@ -462,8 +726,15 @@ class TestBayesFilterEdgeCases:
         assert 0 <= result.score <= 100
 
     @pytest.mark.asyncio
-    async def test_urls_and_emails(self, bayesFilter):
-        """Test message with URLs and email addresses"""
+    async def test_urls_and_emails(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test message with URLs and email addresses.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If URL/email handling fails.
+        """
         await bayesFilter.learnSpam("Visit http://spam.com and email spam@example.com", chatId=12345)
         await bayesFilter.learnHam("Check out my website", chatId=12345)
         result = await bayesFilter.classify("Check https://test.com", chatId=12345)
@@ -471,23 +742,46 @@ class TestBayesFilterEdgeCases:
         assert 0 <= result.score <= 100
 
     @pytest.mark.asyncio
-    async def test_repeated_characters(self, bayesFilter):
-        """Test message with repeated characters"""
+    async def test_repeated_characters(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test message with repeated characters.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If repeated character pattern isn't recognized.
+        """
         await bayesFilter.learnSpam("aaaaaaaaaa bbbbbbbbbb", chatId=12345)
         await bayesFilter.learnHam("normal text here", chatId=12345)
         result = await bayesFilter.classify("aaaaaaaaaa", chatId=12345)
         assert result.score > 50.0  # Should recognize pattern
 
     @pytest.mark.asyncio
-    async def test_numbers_only(self, bayesFilter):
-        """Test message with numbers only"""
+    async def test_numbers_only(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test message with numbers only.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If numbers-only message doesn't return neutral.
+        """
         result = await bayesFilter.classify("123456789", chatId=12345)
         # Numbers might be removed depending on config
         assert result.score == 50.0
 
     @pytest.mark.asyncio
-    async def test_unicode_edge_cases(self, bayesFilter):
-        """Test various Unicode edge cases"""
+    async def test_unicode_edge_cases(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test various Unicode edge cases.
+
+        Tests Chinese, Arabic, Cyrillic, emojis, and accented characters.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If Unicode handling fails.
+        """
         unicodeMessages = [
             "Hello 世界",  # Chinese characters
             "مرحبا hello",  # Arabic
@@ -501,14 +795,28 @@ class TestBayesFilterEdgeCases:
             assert 0 <= result.score <= 100
 
     @pytest.mark.asyncio
-    async def test_learn_empty_message(self, bayesFilter):
-        """Test learning from empty message"""
+    async def test_learn_empty_message(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test learning from empty message.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If learning empty message doesn't fail gracefully.
+        """
         success = await bayesFilter.learnSpam("", chatId=12345)
         assert not success  # Should fail gracefully
 
     @pytest.mark.asyncio
-    async def test_single_character_tokens(self, bayesFilter):
-        """Test handling of single character tokens"""
+    async def test_single_character_tokens(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test handling of single character tokens.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If single character tokens aren't filtered.
+        """
         # Single chars should be filtered by min_token_length
         await bayesFilter.learnSpam("a b c d e", chatId=12345)
         stats = await bayesFilter.getModelInfo(chat_id=12345)
@@ -522,12 +830,25 @@ class TestBayesFilterEdgeCases:
 
 
 class TestBayesFilterPerformance:
-    """Performance tests with large datasets, dood!"""
+    """Performance tests with large datasets.
+
+    This test class validates the filter's performance characteristics
+    including training speed, classification speed, and vocabulary
+    management with large datasets. Tests are marked with @pytest.mark.slow
+    and can be skipped during normal test runs.
+    """
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_large_dataset_training(self, bayesFilter):
-        """Test training with 10,000+ messages"""
+    async def test_large_dataset_training(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test training with 10,000+ messages.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If training fails or takes too long.
+        """
         startTime = time.time()
 
         # Generate large dataset
@@ -553,8 +874,15 @@ class TestBayesFilterPerformance:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_classification_speed(self, trainedFilter):
-        """Test classification speed with trained model"""
+    async def test_classification_speed(self, trainedFilter: NaiveBayesFilter) -> None:
+        """Test classification speed with trained model.
+
+        Args:
+            trainedFilter: Pre-trained Bayes filter fixture.
+
+        Raises:
+            AssertionError: If classification is too slow (>100ms per message).
+        """
         testMessages = [
             "Buy cheap products now!",
             "Hello how are you?",
@@ -575,8 +903,15 @@ class TestBayesFilterPerformance:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_large_vocabulary_performance(self, bayesFilter):
-        """Test performance with large vocabulary"""
+    async def test_large_vocabulary_performance(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test performance with large vocabulary.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If performance degrades with large vocabulary.
+        """
         # Train with many unique words
         for i in range(1000):
             await bayesFilter.learnSpam(f"unique_spam_word_{i} buy now", chatId=12345)
@@ -596,8 +931,15 @@ class TestBayesFilterPerformance:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_token_cleanup_performance(self, bayesFilter):
-        """Test token cleanup performance"""
+    async def test_token_cleanup_performance(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test token cleanup performance.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If cleanup takes too long (>5 seconds).
+        """
         # Add many rare tokens
         for i in range(5000):
             await bayesFilter.learnSpam(f"rare_token_{i}", chatId=12345)
@@ -617,11 +959,23 @@ class TestBayesFilterPerformance:
 
 
 class TestBayesFilterAccuracy:
-    """Test classification accuracy with realistic data, dood!"""
+    """Test classification accuracy with realistic data.
+
+    This test class validates the filter's accuracy in recognizing
+    spam patterns, normal conversation patterns, borderline cases,
+    false positive rates, and confidence calculations.
+    """
 
     @pytest.mark.asyncio
-    async def test_common_spam_patterns(self, bayesFilter):
-        """Test recognition of common spam patterns"""
+    async def test_common_spam_patterns(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test recognition of common spam patterns.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If common spam patterns aren't detected.
+        """
         # Train with common spam patterns
         spamPatterns = [
             "Buy now! Limited time offer!",
@@ -661,8 +1015,15 @@ class TestBayesFilterAccuracy:
             assert result.score > 50.0, f"Failed to detect spam: {msg}"
 
     @pytest.mark.asyncio
-    async def test_normal_conversation_patterns(self, bayesFilter):
-        """Test recognition of normal conversation patterns"""
+    async def test_normal_conversation_patterns(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test recognition of normal conversation patterns.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If normal messages are incorrectly classified as spam.
+        """
         # Train with normal conversations
         hamMessages = [
             "Good morning! How are you?",
@@ -700,8 +1061,15 @@ class TestBayesFilterAccuracy:
             assert result.score < 50.0, f"False positive on ham: {msg}"
 
     @pytest.mark.asyncio
-    async def test_borderline_cases(self, bayesFilter):
-        """Test classification of borderline spam/ham messages"""
+    async def test_borderline_cases(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test classification of borderline spam/ham messages.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If borderline cases produce invalid scores.
+        """
         # Train model
         await bayesFilter.learnSpam("Buy products online", chatId=12345)
         await bayesFilter.learnSpam("Click here for deals", chatId=12345)
@@ -720,8 +1088,15 @@ class TestBayesFilterAccuracy:
             assert 0 <= result.score <= 100, f"Invalid score for borderline: {msg}"
 
     @pytest.mark.asyncio
-    async def test_false_positive_rate(self, bayesFilter):
-        """Test false positive rate on legitimate messages"""
+    async def test_false_positive_rate(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test false positive rate on legitimate messages.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If false positive rate is unacceptably high.
+        """
         # Train with balanced dataset
         spamMessages = ["Buy now!", "Click here!", "Free money!"] * 10
         hamMessages = ["Hello friend", "How are you?", "See you later"] * 10
@@ -753,8 +1128,15 @@ class TestBayesFilterAccuracy:
         assert falsePositiveRate <= 1.0  # Valid rate
 
     @pytest.mark.asyncio
-    async def test_confidence_calculation(self, bayesFilter):
-        """Test confidence calculation accuracy"""
+    async def test_confidence_calculation(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test confidence calculation accuracy.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If confidence doesn't increase with more training data.
+        """
         # Train with minimal data (need both spam and ham to avoid log(0))
         await bayesFilter.learnSpam("spam word", chatId=12345)
         await bayesFilter.learnHam("normal word", chatId=12345)
@@ -777,11 +1159,23 @@ class TestBayesFilterAccuracy:
 
 
 class TestBayesFilterChatIsolation:
-    """Test per-chat isolation functionality, dood!"""
+    """Test per-chat isolation functionality.
+
+    This test class validates that statistics, models, and operations
+    are properly isolated between different chat contexts, ensuring
+    that training and classification in one chat don't affect others.
+    """
 
     @pytest.mark.asyncio
-    async def test_separate_chat_models(self, bayesFilter):
-        """Test that different chats have separate models"""
+    async def test_separate_chat_models(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test that different chats have separate models.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If chat isolation fails.
+        """
         # Train chat 1 with spam and some ham for balance
         await bayesFilter.learnSpam("Buy cheap products!", chatId=111)
         await bayesFilter.learnSpam("Click here now!", chatId=111)
@@ -801,8 +1195,15 @@ class TestBayesFilterChatIsolation:
         assert result1.score > result2.score, "Chat 1 should score higher (spam) than chat 2 (ham)"
 
     @pytest.mark.asyncio
-    async def test_training_isolation(self, bayesFilter):
-        """Test that training in one chat doesn't affect another"""
+    async def test_training_isolation(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test that training in one chat doesn't affect another.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If training isolation fails.
+        """
         # Train only chat 1
         for i in range(10):
             await bayesFilter.learnSpam(f"spam {i}", chatId=111)
@@ -820,8 +1221,15 @@ class TestBayesFilterChatIsolation:
         assert result.score == 50.0
 
     @pytest.mark.asyncio
-    async def test_statistics_per_chat(self, bayesFilter):
-        """Test that statistics are tracked per-chat"""
+    async def test_statistics_per_chat(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test that statistics are tracked per-chat.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If statistics aren't properly isolated.
+        """
         # Train different amounts in different chats
         for i in range(5):
             await bayesFilter.learnSpam(f"spam {i}", chatId=111)
@@ -840,8 +1248,15 @@ class TestBayesFilterChatIsolation:
         assert stats3.total_spam_messages == 15
 
     @pytest.mark.asyncio
-    async def test_cleanup_per_chat(self, bayesFilter):
-        """Test that cleanup is per-chat"""
+    async def test_cleanup_per_chat(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test that cleanup is per-chat.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If cleanup affects other chats.
+        """
         # Add tokens to multiple chats
         await bayesFilter.learnSpam("rare_token", chatId=111)
         await bayesFilter.learnSpam("rare_token", chatId=222)
@@ -857,8 +1272,15 @@ class TestBayesFilterChatIsolation:
         assert stats2.vocabulary_size == 1
 
     @pytest.mark.asyncio
-    async def test_reset_per_chat(self, bayesFilter):
-        """Test that reset is per-chat"""
+    async def test_reset_per_chat(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test that reset is per-chat.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If reset affects other chats.
+        """
         # Train multiple chats
         await bayesFilter.learnSpam("spam", chatId=111)
         await bayesFilter.learnSpam("spam", chatId=222)
@@ -876,8 +1298,15 @@ class TestBayesFilterChatIsolation:
         assert stats2.total_spam_messages == 1
 
     @pytest.mark.asyncio
-    async def test_vocabulary_isolation(self, bayesFilter):
-        """Test that vocabulary is isolated per-chat"""
+    async def test_vocabulary_isolation(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test that vocabulary is isolated per-chat.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If vocabulary isn't properly isolated.
+        """
         # Train different vocabularies
         await bayesFilter.learnSpam("apple banana", chatId=111)
         await bayesFilter.learnSpam("orange grape", chatId=222)
@@ -895,8 +1324,15 @@ class TestBayesFilterChatIsolation:
         assert vocab1 > 0 and vocab2 > 0
 
     @pytest.mark.asyncio
-    async def test_batch_learning_isolation(self, bayesFilter):
-        """Test that batch learning respects chat isolation"""
+    async def test_batch_learning_isolation(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test that batch learning respects chat isolation.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If batch learning doesn't respect chat isolation.
+        """
         messages = [
             ("spam 1", True, 111),
             ("spam 2", True, 222),
@@ -920,11 +1356,20 @@ class TestBayesFilterChatIsolation:
 
 
 class TestBayesFilterConfiguration:
-    """Test configuration validation and edge cases, dood!"""
+    """Test configuration validation and edge cases.
+
+    This test class validates that BayesConfig properly validates
+    input parameters and that custom configurations are correctly
+    applied to the filter and tokenizer.
+    """
 
     @pytest.mark.asyncio
-    async def test_invalid_alpha(self):
-        """Test that invalid alpha raises error"""
+    async def test_invalid_alpha(self) -> None:
+        """Test that invalid alpha raises error.
+
+        Raises:
+            AssertionError: If invalid alpha values don't raise ValueError.
+        """
         with pytest.raises(ValueError, match="Alpha must be positive"):
             BayesConfig(alpha=0)
 
@@ -932,8 +1377,12 @@ class TestBayesFilterConfiguration:
             BayesConfig(alpha=-1.0)
 
     @pytest.mark.asyncio
-    async def test_invalid_threshold(self):
-        """Test that invalid threshold raises error"""
+    async def test_invalid_threshold(self) -> None:
+        """Test that invalid threshold raises error.
+
+        Raises:
+            AssertionError: If invalid threshold values don't raise ValueError.
+        """
         with pytest.raises(ValueError, match="threshold must be between 0 and 100"):
             BayesConfig(defaultThreshold=-10)
 
@@ -941,8 +1390,12 @@ class TestBayesFilterConfiguration:
             BayesConfig(defaultThreshold=150)
 
     @pytest.mark.asyncio
-    async def test_invalid_confidence(self):
-        """Test that invalid min confidence raises error"""
+    async def test_invalid_confidence(self) -> None:
+        """Test that invalid min confidence raises error.
+
+        Raises:
+            AssertionError: If invalid confidence values don't raise ValueError.
+        """
         with pytest.raises(ValueError, match="confidence must be between 0 and 1"):
             BayesConfig(minConfidence=-0.1)
 
@@ -950,8 +1403,15 @@ class TestBayesFilterConfiguration:
             BayesConfig(minConfidence=1.5)
 
     @pytest.mark.asyncio
-    async def test_custom_tokenizer_config(self, mockStorage):
-        """Test filter with custom tokenizer configuration"""
+    async def test_custom_tokenizer_config(self, mockStorage: MockBayesStorage) -> None:
+        """Test filter with custom tokenizer configuration.
+
+        Args:
+            mockStorage: Mock storage fixture.
+
+        Raises:
+            AssertionError: If custom config isn't properly applied.
+        """
         tokenizerConfig = TokenizerConfig(min_token_length=3, max_token_length=20, use_bigrams=False, remove_urls=False)
         config = BayesConfig(tokenizerConfig=tokenizerConfig)
         bayesFilter = NaiveBayesFilter(mockStorage, config)
@@ -961,8 +1421,15 @@ class TestBayesFilterConfiguration:
         assert bayesFilter.tokenizer.config.use_bigrams is False
 
     @pytest.mark.asyncio
-    async def test_config_validation(self, mockStorage):
-        """Test configuration validation"""
+    async def test_config_validation(self, mockStorage: MockBayesStorage) -> None:
+        """Test configuration validation.
+
+        Args:
+            mockStorage: Mock storage fixture.
+
+        Raises:
+            AssertionError: If default config validation fails.
+        """
         config = BayesConfig()
         bayesFilter = NaiveBayesFilter(mockStorage, config)
 
@@ -971,11 +1438,20 @@ class TestBayesFilterConfiguration:
 
 
 class TestTokenizerEdgeCases:
-    """Additional tokenizer edge case tests, dood!"""
+    """Additional tokenizer edge case tests.
+
+    This test class validates tokenizer behavior with various
+    edge cases including stopwords, n-grams, token length filtering,
+    URL/mention/emoji removal, and case normalization.
+    """
 
     @pytest.mark.asyncio
-    async def test_stopwords_filtering(self):
-        """Test that stopwords are properly filtered"""
+    async def test_stopwords_filtering(self) -> None:
+        """Test that stopwords are properly filtered.
+
+        Raises:
+            AssertionError: If stopwords aren't filtered correctly.
+        """
         tokenizer = MessageTokenizer()
         tokens = tokenizer.tokenize("the quick brown fox")
 
@@ -984,8 +1460,12 @@ class TestTokenizerEdgeCases:
         assert "quick" in tokens or "brown" in tokens or "fox" in tokens
 
     @pytest.mark.asyncio
-    async def test_bigram_generation(self):
-        """Test bigram generation"""
+    async def test_bigram_generation(self) -> None:
+        """Test bigram generation.
+
+        Raises:
+            AssertionError: If bigrams aren't generated correctly.
+        """
         config = TokenizerConfig(use_bigrams=True, use_trigrams=False)
         tokenizer = MessageTokenizer(config)
         tokens = tokenizer.tokenize("buy cheap products")
@@ -998,8 +1478,12 @@ class TestTokenizerEdgeCases:
         assert len(bigrams) > 0
 
     @pytest.mark.asyncio
-    async def test_trigram_generation(self):
-        """Test trigram generation"""
+    async def test_trigram_generation(self) -> None:
+        """Test trigram generation.
+
+        Raises:
+            AssertionError: If trigrams aren't generated correctly.
+        """
         config = TokenizerConfig(use_bigrams=True, use_trigrams=True)
         tokenizer = MessageTokenizer(config)
         tokens = tokenizer.tokenize("buy cheap products now")
@@ -1009,8 +1493,12 @@ class TestTokenizerEdgeCases:
         assert len(trigrams) > 0
 
     @pytest.mark.asyncio
-    async def test_token_length_filtering(self):
-        """Test token length filtering"""
+    async def test_token_length_filtering(self) -> None:
+        """Test token length filtering.
+
+        Raises:
+            AssertionError: If token length filtering doesn't work.
+        """
         config = TokenizerConfig(min_token_length=5, max_token_length=10)
         tokenizer = MessageTokenizer(config)
         tokens = tokenizer.tokenize("hi hello wonderful extraordinarily")
@@ -1023,8 +1511,12 @@ class TestTokenizerEdgeCases:
         assert "extraordinarily" not in tokens
 
     @pytest.mark.asyncio
-    async def test_url_removal(self):
-        """Test URL removal"""
+    async def test_url_removal(self) -> None:
+        """Test URL removal.
+
+        Raises:
+            AssertionError: If URLs aren't removed correctly.
+        """
         tokenizer = MessageTokenizer(TokenizerConfig(remove_urls=True))
         tokens = tokenizer.tokenize("Visit https://example.com for deals")
 
@@ -1033,8 +1525,12 @@ class TestTokenizerEdgeCases:
         assert not any("https" in t for t in tokens)
 
     @pytest.mark.asyncio
-    async def test_mention_removal(self):
-        """Test mention removal"""
+    async def test_mention_removal(self) -> None:
+        """Test mention removal.
+
+        Raises:
+            AssertionError: If mentions aren't removed correctly.
+        """
         tokenizer = MessageTokenizer(TokenizerConfig(remove_mentions=True))
         tokens = tokenizer.tokenize("Hello @user123 how are you")
 
@@ -1043,8 +1539,12 @@ class TestTokenizerEdgeCases:
         assert not any("user123" in t for t in tokens)
 
     @pytest.mark.asyncio
-    async def test_emoji_removal(self):
-        """Test emoji removal"""
+    async def test_emoji_removal(self) -> None:
+        """Test emoji removal.
+
+        Raises:
+            AssertionError: If emojis aren't removed correctly.
+        """
         tokenizer = MessageTokenizer(TokenizerConfig(remove_emoji=True))
         tokens = tokenizer.tokenize("Hello 😀 world 🎉")
 
@@ -1053,8 +1553,12 @@ class TestTokenizerEdgeCases:
         assert not any("🎉" in t for t in tokens)
 
     @pytest.mark.asyncio
-    async def test_case_normalization(self):
-        """Test case normalization"""
+    async def test_case_normalization(self) -> None:
+        """Test case normalization.
+
+        Raises:
+            AssertionError: If case normalization doesn't work.
+        """
         tokenizer = MessageTokenizer(TokenizerConfig(lowercase=True))
         tokens = tokenizer.tokenize("BUY Cheap PRODUCTS")
 
@@ -1062,8 +1566,12 @@ class TestTokenizerEdgeCases:
         assert all(t.islower() or "_" in t for t in tokens)
 
     @pytest.mark.asyncio
-    async def test_get_token_stats(self):
-        """Test token frequency statistics"""
+    async def test_get_token_stats(self) -> None:
+        """Test token frequency statistics.
+
+        Raises:
+            AssertionError: If token stats aren't calculated correctly.
+        """
         tokenizer = MessageTokenizer()
         stats = tokenizer.get_token_stats("hello world hello")
 
@@ -1071,8 +1579,12 @@ class TestTokenizerEdgeCases:
         assert stats["hello"] >= 2  # Should count frequency
 
     @pytest.mark.asyncio
-    async def test_get_unique_tokens(self):
-        """Test unique token extraction"""
+    async def test_get_unique_tokens(self) -> None:
+        """Test unique token extraction.
+
+        Raises:
+            AssertionError: If unique tokens aren't extracted correctly.
+        """
         tokenizer = MessageTokenizer()
         uniqueTokens = tokenizer.get_unique_tokens("hello world hello")
 
@@ -1081,8 +1593,12 @@ class TestTokenizerEdgeCases:
         assert len(uniqueTokens) >= 2
 
     @pytest.mark.asyncio
-    async def test_spam_indicators(self):
-        """Test spam indicator estimation"""
+    async def test_spam_indicators(self) -> None:
+        """Test spam indicator estimation.
+
+        Raises:
+            AssertionError: If spam indicators aren't estimated correctly.
+        """
         tokenizer = MessageTokenizer()
         indicators = tokenizer.estimate_spam_indicators("BUY NOW!!! Visit http://spam.com")
 
@@ -1097,11 +1613,22 @@ class TestTokenizerEdgeCases:
 
 
 class TestBayesFilterIntegration:
-    """Integration tests combining multiple features, dood!"""
+    """Integration tests combining multiple features.
+
+    This test class validates end-to-end workflows combining
+    training, classification, cleanup, and reset operations.
+    """
 
     @pytest.mark.asyncio
-    async def test_full_workflow(self, bayesFilter):
-        """Test complete workflow from training to classification"""
+    async def test_full_workflow(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test complete workflow from training to classification.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If any step in the workflow fails.
+        """
         chatId = 12345
 
         # Step 1: Train model
@@ -1138,8 +1665,15 @@ class TestBayesFilterIntegration:
         assert statsAfter.total_ham_messages == 0
 
     @pytest.mark.asyncio
-    async def test_multi_chat_workflow(self, bayesFilter):
-        """Test workflow with multiple chats"""
+    async def test_multi_chat_workflow(self, bayesFilter: NaiveBayesFilter) -> None:
+        """Test workflow with multiple chats.
+
+        Args:
+            bayesFilter: Bayes filter fixture.
+
+        Raises:
+            AssertionError: If multi-chat workflow fails.
+        """
         # Train different patterns in different chats (with balance)
         await bayesFilter.learnSpam("spam pattern", chatId=111)
         await bayesFilter.learnHam("normal text", chatId=111)

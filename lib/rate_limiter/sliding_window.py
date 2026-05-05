@@ -1,3 +1,27 @@
+"""Sliding window rate limiter implementation.
+
+This module provides a sliding window rate limiter that tracks request
+timestamps and enforces rate limits across multiple queues. The implementation
+uses asyncio for concurrent operations and provides thread-safe rate limiting
+through per-queue locks.
+
+Key Components:
+    QueueConfig: Configuration for rate limiting parameters
+    SlidingWindowRateLimiter: Main rate limiter implementation
+
+Usage:
+    Create a SlidingWindowRateLimiter instance with a QueueConfig, initialize it,
+    then call applyLimit() before each rate-limited operation. Multiple queues
+    can share the same rate limit configuration.
+
+Example:
+    >>> limiter = SlidingWindowRateLimiter(
+    ...     QueueConfig(maxRequests=20, windowSeconds=60)
+    ... )
+    >>> await limiter.initialize()
+    >>> await limiter.applyLimit("api_queue")
+"""
+
 import asyncio
 import logging
 import time

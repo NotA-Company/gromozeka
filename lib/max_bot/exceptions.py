@@ -1,7 +1,21 @@
-"""
-Max Bot API Exceptions
+"""Max Bot API Exceptions.
 
-This module contains custom exception classes for handling Max Messenger Bot API errors.
+This module provides custom exception classes for handling Max Messenger Bot API errors.
+All exceptions inherit from MaxBotError and include support for error codes and raw API responses.
+
+The module includes specific exceptions for common API error scenarios:
+- AuthenticationError: Invalid or expired tokens
+- APIError: General API errors
+- RateLimitError: Rate limit exceeded
+- AttachmentNotReadyError: Attachment still processing
+- ValidationError: Request validation failures
+- NotFoundError: Resource not found
+- MethodNotAllowedError: Invalid HTTP method
+- ServiceUnavailableError: Service temporarily unavailable
+- NetworkError: Network-related issues
+- ConfigurationError: Client configuration errors
+
+The parseApiError function provides automatic error parsing from API responses.
 """
 
 import logging
@@ -21,15 +35,20 @@ logger = logging.getLogger(__name__)
 
 
 class MaxBotError(Exception):
-    """Base exception class for all Max Bot API errors, dood!
+    """Base exception class for all Max Bot API errors.
 
     All other exceptions in this module inherit from this base class.
     Provides common functionality for error handling and logging.
 
+    Args:
+        message: Human-readable error message describing the error.
+        code: API error code from the Max Bot API, if available.
+        response: Raw API response data as a dictionary, if available.
+
     Attributes:
-        message: Human-readable error message
-        code: API error code (if available)
-        response: Raw API response data (if available)
+        message: Human-readable error message describing the error.
+        code: API error code from the Max Bot API, if available.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -38,6 +57,13 @@ class MaxBotError(Exception):
         code: Optional[str] = None,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize MaxBotError with message, code, and response.
+
+        Args:
+            message: Human-readable error message describing the error.
+            code: API error code from the Max Bot API, if available.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message)
         self.message = message
         self.code = code
@@ -45,6 +71,11 @@ class MaxBotError(Exception):
         logger.debug(f"MaxBotError: {message} (code: {code})")
 
     def __str__(self) -> str:
+        """Return string representation of the error.
+
+        Returns:
+            Error message with error code if available, otherwise just the message.
+        """
         if self.code:
             return f"{self.message} (code: {self.code})"
         return self.message
@@ -57,6 +88,11 @@ class AuthenticationError(MaxBotError):
     - The access token is invalid or expired
     - No access token is provided
     - The token doesn't have sufficient permissions
+
+    Args:
+        message: Human-readable error message. Defaults to "Authentication failed. Check your access token."
+        code: API error code. Defaults to ERROR_CODE_INVALID_TOKEN.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -65,6 +101,13 @@ class AuthenticationError(MaxBotError):
         code: Optional[str] = ERROR_CODE_INVALID_TOKEN,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize AuthenticationError with message, code, and response.
+
+        Args:
+            message: Human-readable error message. Defaults to "Authentication failed. Check your access token."
+            code: API error code. Defaults to ERROR_CODE_INVALID_TOKEN.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -73,11 +116,23 @@ class APIError(MaxBotError):
 
     This is a general-purpose exception for API errors that don't
     fit into more specific categories like authentication or rate limiting.
+
+    Args:
+        message: Human-readable error message describing the API error.
+        code: API error code. Defaults to ERROR_CODE_INVALID_REQUEST.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
         self, message: str, code: Optional[str] = ERROR_CODE_INVALID_REQUEST, response: Optional[Dict[str, Any]] = None
     ) -> None:
+        """Initialize APIError with message, code, and response.
+
+        Args:
+            message: Human-readable error message describing the API error.
+            code: API error code. Defaults to ERROR_CODE_INVALID_REQUEST.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -86,6 +141,11 @@ class RateLimitError(MaxBotError):
 
     This occurs when too many requests are sent in a short time period.
     The client should implement exponential backoff and retry logic.
+
+    Args:
+        message: Human-readable error message. Defaults to "Rate limit exceeded. Please try again later."
+        code: API error code. Defaults to ERROR_CODE_RATE_LIMIT_EXCEEDED.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -94,6 +154,13 @@ class RateLimitError(MaxBotError):
         code: Optional[str] = ERROR_CODE_RATE_LIMIT_EXCEEDED,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize RateLimitError with message, code, and response.
+
+        Args:
+            message: Human-readable error message. Defaults to "Rate limit exceeded. Please try again later."
+            code: API error code. Defaults to ERROR_CODE_RATE_LIMIT_EXCEEDED.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -102,6 +169,11 @@ class AttachmentNotReadyError(MaxBotError):
 
     This occurs when an attachment is still being processed by the API.
     The client should wait for the attachment to be ready before sending it.
+
+    Args:
+        message: Human-readable error message. Defaults to "Attachment not ready."
+        code: API error code. Defaults to ERROR_CODE_ATTACHMENT_NOT_READY.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -110,6 +182,13 @@ class AttachmentNotReadyError(MaxBotError):
         code: Optional[str] = ERROR_CODE_ATTACHMENT_NOT_READY,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize AttachmentNotReadyError with message, code, and response.
+
+        Args:
+            message: Human-readable error message. Defaults to "Attachment not ready."
+            code: API error code. Defaults to ERROR_CODE_ATTACHMENT_NOT_READY.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -118,6 +197,11 @@ class ValidationError(MaxBotError):
 
     This occurs when the request data doesn't match the API schema,
     such as invalid parameters, missing required fields, or data type mismatches.
+
+    Args:
+        message: Human-readable error message describing the validation error.
+        code: API error code. Defaults to ERROR_CODE_INVALID_REQUEST.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -126,6 +210,13 @@ class ValidationError(MaxBotError):
         code: Optional[str] = ERROR_CODE_INVALID_REQUEST,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize ValidationError with message, code, and response.
+
+        Args:
+            message: Human-readable error message describing the validation error.
+            code: API error code. Defaults to ERROR_CODE_INVALID_REQUEST.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -134,6 +225,11 @@ class NotFoundError(MaxBotError):
 
     This occurs when trying to access a chat, message, or other resource
     that doesn't exist or the bot doesn't have access to.
+
+    Args:
+        message: Human-readable error message. Defaults to "Resource not found."
+        code: API error code. Defaults to ERROR_CODE_RESOURCE_NOT_FOUND.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -142,6 +238,13 @@ class NotFoundError(MaxBotError):
         code: Optional[str] = ERROR_CODE_RESOURCE_NOT_FOUND,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize NotFoundError with message, code, and response.
+
+        Args:
+            message: Human-readable error message. Defaults to "Resource not found."
+            code: API error code. Defaults to ERROR_CODE_RESOURCE_NOT_FOUND.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -150,6 +253,11 @@ class MethodNotAllowedError(MaxBotError):
 
     This occurs when trying to use GET on an endpoint that only accepts POST,
     or similar method/endpoint mismatches.
+
+    Args:
+        message: Human-readable error message. Defaults to "Method not allowed for this endpoint."
+        code: API error code. Defaults to ERROR_CODE_METHOD_NOT_ALLOWED.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -158,6 +266,13 @@ class MethodNotAllowedError(MaxBotError):
         code: Optional[str] = ERROR_CODE_METHOD_NOT_ALLOWED,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize MethodNotAllowedError with message, code, and response.
+
+        Args:
+            message: Human-readable error message. Defaults to "Method not allowed for this endpoint."
+            code: API error code. Defaults to ERROR_CODE_METHOD_NOT_ALLOWED.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -166,6 +281,11 @@ class ServiceUnavailableError(MaxBotError):
 
     This occurs when the API is down for maintenance or experiencing
     temporary issues. The client should retry with exponential backoff.
+
+    Args:
+        message: Human-readable error message. Defaults to "Service temporarily unavailable. Please try again later."
+        code: API error code. Defaults to ERROR_CODE_SERVICE_UNAVAILABLE.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -174,6 +294,14 @@ class ServiceUnavailableError(MaxBotError):
         code: Optional[str] = ERROR_CODE_SERVICE_UNAVAILABLE,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize ServiceUnavailableError with message, code, and response.
+
+        Args:
+            message: Human-readable error message. Defaults to "Service temporarily
+                unavailable. Please try again later."
+            code: API error code. Defaults to ERROR_CODE_SERVICE_UNAVAILABLE.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -182,6 +310,11 @@ class NetworkError(MaxBotError):
 
     This includes connection timeouts, DNS resolution failures,
     and other network-level issues that prevent communication with the API.
+
+    Args:
+        message: Human-readable error message. Defaults to "Network error occurred."
+        code: API error code, if available. Defaults to None.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(
@@ -190,6 +323,13 @@ class NetworkError(MaxBotError):
         code: Optional[str] = None,
         response: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize NetworkError with message, code, and response.
+
+        Args:
+            message: Human-readable error message. Defaults to "Network error occurred."
+            code: API error code, if available. Defaults to None.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
@@ -198,21 +338,39 @@ class ConfigurationError(MaxBotError):
 
     This occurs when the client is misconfigured, such as missing
     required parameters or invalid configuration values.
+
+    Args:
+        message: Human-readable error message describing the configuration error.
+        code: API error code, if available. Defaults to None.
+        response: Raw API response data as a dictionary, if available.
     """
 
     def __init__(self, message: str, code: Optional[str] = None, response: Optional[Dict[str, Any]] = None) -> None:
+        """Initialize ConfigurationError with message, code, and response.
+
+        Args:
+            message: Human-readable error message describing the configuration error.
+            code: API error code, if available. Defaults to None.
+            response: Raw API response data as a dictionary, if available.
+        """
         super().__init__(message, code, response)
 
 
 def parseApiError(statusCode: int, responseData: Dict[str, Any]) -> MaxBotError:
     """Parse API error response and return appropriate exception.
 
+    This function analyzes the HTTP status code and API response data to determine
+    the most appropriate exception type to raise. It first checks for specific error
+    codes in the response, then falls back to status code mapping.
+
     Args:
-        statusCode: HTTP status code
-        responseData: Parsed JSON response from API
+        statusCode: HTTP status code from the API response.
+        responseData: Parsed JSON response from API containing error details.
 
     Returns:
-        Appropriate exception instance based on error code and status
+        Appropriate MaxBotError subclass instance based on error code and status.
+        Returns specific exceptions like AuthenticationError, RateLimitError, etc.
+        when error codes match, otherwise returns a generic APIError.
 
     Example:
         >>> try:

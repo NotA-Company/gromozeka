@@ -1,5 +1,5 @@
 """
-Comprehensive unit tests for CustomHandlerLoader, dood!
+Comprehensive unit tests for CustomHandlerLoader.
 
 This module contains thorough tests for the custom handler module loader
 functionality, including config handling, import mechanisms, validation,
@@ -21,7 +21,7 @@ from .module_loader import CustomHandlerLoader
 
 
 class MockValidHandler(BaseBotHandler):
-    """Mock handler that properly extends BaseBotHandler for testing, dood!"""
+    """Mock handler that properly extends BaseBotHandler for testing."""
 
     def __init__(
         self,
@@ -29,9 +29,9 @@ class MockValidHandler(BaseBotHandler):
         database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
-    ):
+    ) -> None:
         """
-        Initialize mock handler with standard dependencies, dood!
+        Initialize mock handler with standard dependencies.
 
         Args:
             configManager: Configuration manager instance
@@ -47,7 +47,7 @@ class MockValidHandler(BaseBotHandler):
 
 
 class MockInvalidHandler:
-    """Mock handler that DOES NOT extend BaseBotHandler, dood!"""
+    """Mock handler that DOES NOT extend BaseBotHandler."""
 
     def __init__(
         self,
@@ -55,9 +55,9 @@ class MockInvalidHandler:
         database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
-    ):
+    ) -> None:
         """
-        Initialize invalid handler, dood!
+        Initialize invalid handler.
 
         Args:
             configManager: Configuration manager instance
@@ -69,7 +69,7 @@ class MockInvalidHandler:
 
 
 class MockBrokenHandler(BaseBotHandler):
-    """Mock handler that raises exception during instantiation, dood!"""
+    """Mock handler that raises exception during instantiation."""
 
     def __init__(
         self,
@@ -77,9 +77,9 @@ class MockBrokenHandler(BaseBotHandler):
         database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
-    ):
+    ) -> None:
         """
-        Initialize broken handler that raises exception, dood!
+        Initialize broken handler that raises exception.
 
         Args:
             configManager: Configuration manager instance
@@ -94,9 +94,9 @@ class MockBrokenHandler(BaseBotHandler):
 
 
 @pytest.fixture
-def mockDependencies():
+def mockDependencies() -> dict:
     """
-    Create mock dependencies for CustomHandlerLoader, dood!
+    Create mock dependencies for CustomHandlerLoader.
 
     Returns:
         Dict containing mock instances of all required dependencies
@@ -115,9 +115,9 @@ def mockDependencies():
 
 
 @pytest.fixture
-def loader(mockDependencies):
+def loader(mockDependencies: dict) -> CustomHandlerLoader:
     """
-    Create CustomHandlerLoader instance with mock dependencies, dood!
+    Create CustomHandlerLoader instance with mock dependencies.
 
     Args:
         mockDependencies: Fixture providing mock dependency instances
@@ -129,11 +129,11 @@ def loader(mockDependencies):
 
 
 class TestCustomHandlerLoaderConfigHandling:
-    """Test suite for configuration handling scenarios, dood!"""
+    """Test suite for configuration handling scenarios."""
 
-    def testDisabledConfig(self, loader, mockDependencies):
+    def testDisabledConfig(self, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that disabled config returns empty list, dood!
+        Test that disabled config returns empty list.
 
         Args:
             loader: CustomHandlerLoader fixture
@@ -146,9 +146,9 @@ class TestCustomHandlerLoaderConfigHandling:
         assert result == []
         mockDependencies["configManager"].get.assert_called_once_with("custom-handlers", {})
 
-    def testMissingConfig(self, loader, mockDependencies):
+    def testMissingConfig(self, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that missing config section returns empty list, dood!
+        Test that missing config section returns empty list.
 
         Args:
             loader: CustomHandlerLoader fixture
@@ -160,9 +160,9 @@ class TestCustomHandlerLoaderConfigHandling:
 
         assert result == []
 
-    def testEmptyHandlersList(self, loader, mockDependencies):
+    def testEmptyHandlersList(self, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that empty handlers list returns empty list, dood!
+        Test that empty handlers list returns empty list.
 
         Args:
             loader: CustomHandlerLoader fixture
@@ -176,12 +176,14 @@ class TestCustomHandlerLoaderConfigHandling:
 
 
 class TestCustomHandlerLoaderImportPath:
-    """Test suite for import-path loading mechanism, dood!"""
+    """Test suite for import-path loading mechanism."""
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testSuccessfulImportPathLoading(self, mockImport, loader, mockDependencies):
+    def testSuccessfulImportPathLoading(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test successful handler loading via import-path, dood!
+        Test successful handler loading via import-path.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -214,9 +216,11 @@ class TestCustomHandlerLoaderImportPath:
         mockImport.assert_called_once_with("my_package.handlers")
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testImportPathWithExplicitClass(self, mockImport, loader, mockDependencies):
+    def testImportPathWithExplicitClass(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test import-path with explicit class override, dood!
+        Test import-path with explicit class override.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -248,13 +252,15 @@ class TestCustomHandlerLoaderImportPath:
 
 
 class TestCustomHandlerLoaderLocalModule:
-    """Test suite for local module loading mechanism, dood!"""
+    """Test suite for local module loading mechanism."""
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
     @patch("internal.bot.common.handlers.module_loader.os.path.isdir")
-    def testSuccessfulLocalModuleLoading(self, mockIsDir, mockImport, loader, mockDependencies):
+    def testSuccessfulLocalModuleLoading(
+        self, mockIsDir: MagicMock, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test successful handler loading from local module, dood!
+        Test successful handler loading from local module.
 
         Args:
             mockIsDir: Mock for os.path.isdir
@@ -290,9 +296,11 @@ class TestCustomHandlerLoaderLocalModule:
         mockImport.assert_called_with("my_local_module")
 
     @patch("internal.bot.common.handlers.module_loader.os.path.isdir")
-    def testLocalModuleMissingClassField(self, mockIsDir, loader, mockDependencies):
+    def testLocalModuleMissingClassField(
+        self, mockIsDir: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test local module without class field is skipped, dood!
+        Test local module without class field is skipped.
 
         Args:
             mockIsDir: Mock for os.path.isdir
@@ -321,12 +329,14 @@ class TestCustomHandlerLoaderLocalModule:
 
 
 class TestCustomHandlerLoaderValidation:
-    """Test suite for handler validation scenarios, dood!"""
+    """Test suite for handler validation scenarios."""
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testInvalidClassNotBaseBotHandler(self, mockImport, loader, mockDependencies):
+    def testInvalidClassNotBaseBotHandler(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that non-BaseBotHandler class is skipped with error, dood!
+        Test that non-BaseBotHandler class is skipped with error.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -354,9 +364,9 @@ class TestCustomHandlerLoaderValidation:
         assert result == []
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testImportError(self, mockImport, loader, mockDependencies):
+    def testImportError(self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that import error is caught and handler is skipped, dood!
+        Test that import error is caught and handler is skipped.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -382,9 +392,11 @@ class TestCustomHandlerLoaderValidation:
         assert result == []
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testInstantiationError(self, mockImport, loader, mockDependencies):
+    def testInstantiationError(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that instantiation error is caught and handler is skipped, dood!
+        Test that instantiation error is caught and handler is skipped.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -412,9 +424,9 @@ class TestCustomHandlerLoaderValidation:
         assert result == []
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testGetAttrFailure(self, mockImport, loader, mockDependencies):
+    def testGetAttrFailure(self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that missing class name in module is handled, dood!
+        Test that missing class name in module is handled.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -444,12 +456,12 @@ class TestCustomHandlerLoaderValidation:
 
 
 class TestCustomHandlerLoaderOrdering:
-    """Test suite for handler ordering functionality, dood!"""
+    """Test suite for handler ordering functionality."""
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testHandlerOrdering(self, mockImport, loader, mockDependencies):
+    def testHandlerOrdering(self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that handlers are sorted by order field, dood!
+        Test that handlers are sorted by order field.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -467,7 +479,7 @@ class TestCustomHandlerLoaderOrdering:
         class Handler3(MockValidHandler):
             pass
 
-        def mockImportSideEffect(modulePath):
+        def mockImportSideEffect(modulePath: str) -> MagicMock:
             mockModule = MagicMock()
             if "handler1" in modulePath:
                 mockModule.Handler = Handler1
@@ -513,9 +525,9 @@ class TestCustomHandlerLoaderOrdering:
         assert isinstance(result[2][0], Handler2)
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testDefaultOrderValue(self, mockImport, loader, mockDependencies):
+    def testDefaultOrderValue(self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that handlers without order field get default value 100, dood!
+        Test that handlers without order field get default value 100.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -529,7 +541,7 @@ class TestCustomHandlerLoaderOrdering:
         class HandlerB(MockValidHandler):
             pass
 
-        def mockImportSideEffect(modulePath):
+        def mockImportSideEffect(modulePath: str) -> MagicMock:
             mockModule = MagicMock()
             if "handlerA" in modulePath:
                 mockModule.Handler = HandlerA
@@ -567,12 +579,14 @@ class TestCustomHandlerLoaderOrdering:
 
 
 class TestCustomHandlerLoaderEnabledDisabled:
-    """Test suite for enabled/disabled handler filtering, dood!"""
+    """Test suite for enabled/disabled handler filtering."""
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testDisabledHandlerSkipped(self, mockImport, loader, mockDependencies):
+    def testDisabledHandlerSkipped(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that handler with enabled=false is skipped, dood!
+        Test that handler with enabled=false is skipped.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -600,9 +614,11 @@ class TestCustomHandlerLoaderEnabledDisabled:
         assert result == []
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testMixedEnabledDisabled(self, mockImport, loader, mockDependencies):
+    def testMixedEnabledDisabled(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test filtering of mixed enabled/disabled handlers, dood!
+        Test filtering of mixed enabled/disabled handlers.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -616,7 +632,7 @@ class TestCustomHandlerLoaderEnabledDisabled:
         class DisabledHandler(MockValidHandler):
             pass
 
-        def mockImportSideEffect(modulePath):
+        def mockImportSideEffect(modulePath: str) -> MagicMock:
             mockModule = MagicMock()
             if "enabled" in modulePath:
                 mockModule.Handler = EnabledHandler
@@ -649,9 +665,11 @@ class TestCustomHandlerLoaderEnabledDisabled:
         assert isinstance(result[0][0], EnabledHandler)
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testDefaultEnabledTrue(self, mockImport, loader, mockDependencies):
+    def testDefaultEnabledTrue(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that handlers without enabled field default to True, dood!
+        Test that handlers without enabled field default to True.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -680,12 +698,14 @@ class TestCustomHandlerLoaderEnabledDisabled:
 
 
 class TestCustomHandlerLoaderParallelism:
-    """Test suite for parallelism configuration, dood!"""
+    """Test suite for parallelism configuration."""
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testDefaultParallelism(self, mockImport, loader, mockDependencies):
+    def testDefaultParallelism(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that parallelism defaults to PARALLEL when not specified, dood!
+        Test that parallelism defaults to PARALLEL when not specified.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -715,9 +735,11 @@ class TestCustomHandlerLoaderParallelism:
         assert parallelism == HandlerParallelism.PARALLEL
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testSequentialParallelism(self, mockImport, loader, mockDependencies):
+    def testSequentialParallelism(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that parallelism=sequential uses SEQUENTIAL, dood!
+        Test that parallelism=sequential uses SEQUENTIAL.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -747,9 +769,11 @@ class TestCustomHandlerLoaderParallelism:
         assert parallelism == HandlerParallelism.SEQUENTIAL
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testExplicitParallelParallelism(self, mockImport, loader, mockDependencies):
+    def testExplicitParallelParallelism(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that parallelism=parallel uses PARALLEL, dood!
+        Test that parallelism=parallel uses PARALLEL.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -779,9 +803,11 @@ class TestCustomHandlerLoaderParallelism:
         assert parallelism == HandlerParallelism.PARALLEL
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testInvalidParallelismDefaultsToParallel(self, mockImport, loader, mockDependencies):
+    def testInvalidParallelismDefaultsToParallel(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that invalid parallelism value defaults to PARALLEL, dood!
+        Test that invalid parallelism value defaults to PARALLEL.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -812,11 +838,11 @@ class TestCustomHandlerLoaderParallelism:
 
 
 class TestCustomHandlerLoaderMissingFields:
-    """Test suite for missing required fields scenarios, dood!"""
+    """Test suite for missing required fields scenarios."""
 
-    def testMissingIdField(self, loader, mockDependencies):
+    def testMissingIdField(self, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that handler without id field is skipped, dood!
+        Test that handler without id field is skipped.
 
         Args:
             loader: CustomHandlerLoader fixture
@@ -837,9 +863,9 @@ class TestCustomHandlerLoaderMissingFields:
 
         assert result == []
 
-    def testMissingBothImportPathAndModule(self, loader, mockDependencies):
+    def testMissingBothImportPathAndModule(self, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that handler without import-path or module is skipped, dood!
+        Test that handler without import-path or module is skipped.
 
         Args:
             loader: CustomHandlerLoader fixture
@@ -860,9 +886,9 @@ class TestCustomHandlerLoaderMissingFields:
 
         assert result == []
 
-    def testBothImportPathAndModuleSpecified(self, loader, mockDependencies):
+    def testBothImportPathAndModuleSpecified(self, loader: CustomHandlerLoader, mockDependencies: dict) -> None:
         """
-        Test that handler with both import-path and module is skipped, dood!
+        Test that handler with both import-path and module is skipped.
 
         Args:
             loader: CustomHandlerLoader fixture
@@ -887,12 +913,14 @@ class TestCustomHandlerLoaderMissingFields:
 
 
 class TestCustomHandlerLoaderEdgeCases:
-    """Test suite for edge cases and complex scenarios, dood!"""
+    """Test suite for edge cases and complex scenarios."""
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testMultipleHandlersPartialFailure(self, mockImport, loader, mockDependencies):
+    def testMultipleHandlersPartialFailure(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that some handlers can fail while others succeed, dood!
+        Test that some handlers can fail while others succeed.
 
         Args:
             mockImport: Mock for importlib.import_module
@@ -903,7 +931,7 @@ class TestCustomHandlerLoaderEdgeCases:
         class GoodHandler(MockValidHandler):
             pass
 
-        def mockImportSideEffect(modulePath):
+        def mockImportSideEffect(modulePath: str) -> MagicMock:
             mockModule = MagicMock()
             if "good" in modulePath:
                 mockModule.Handler = GoodHandler
@@ -945,9 +973,11 @@ class TestCustomHandlerLoaderEdgeCases:
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
     @patch("internal.bot.common.handlers.module_loader.os.path.isdir")
-    def testModulesDirectorySysPathManipulation(self, mockIsDir, mockImport, loader, mockDependencies):
+    def testModulesDirectorySysPathManipulation(
+        self, mockIsDir: MagicMock, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that modules directory is added to sys.path, dood!
+        Test that modules directory is added to sys.path.
 
         Args:
             mockIsDir: Mock for os.path.isdir
@@ -973,16 +1003,18 @@ class TestCustomHandlerLoaderEdgeCases:
         }
         mockDependencies["configManager"].get.return_value = config
 
-        with patch("internal.bot.common.handlers.module_loader.sys.path", []):
+        with patch("internal.bot.common.handlers.module_loader.sys.path", []):  # type: ignore
             result = loader.loadAll()
 
             # Verify sys.path was manipulated
             assert len(result) == 1
 
     @patch("internal.bot.common.handlers.module_loader.importlib.import_module")
-    def testCaseSensitivityInParallelism(self, mockImport, loader, mockDependencies):
+    def testCaseSensitivityInParallelism(
+        self, mockImport: MagicMock, loader: CustomHandlerLoader, mockDependencies: dict
+    ) -> None:
         """
-        Test that parallelism string is case-insensitive, dood!
+        Test that parallelism string is case-insensitive.
 
         Args:
             mockImport: Mock for importlib.import_module

@@ -15,16 +15,35 @@ from .sliding_window import QueueConfig, SlidingWindowRateLimiter
 
 
 class TestQueueConfig(unittest.TestCase):
-    """Test suite for QueueConfig dataclass validation."""
+    """Test suite for QueueConfig dataclass validation.
 
-    def testValidConfig(self):
-        """Test QueueConfig creation with valid parameters."""
+    This test class validates the QueueConfig dataclass behavior, including:
+    - Valid configuration creation
+    - Validation of maxRequests parameter
+    - Validation of windowSeconds parameter
+    - Boundary value handling
+    """
+
+    def testValidConfig(self) -> None:
+        """Test QueueConfig creation with valid parameters.
+
+        Verifies that QueueConfig can be instantiated with valid maxRequests
+        and windowSeconds values.
+        """
         config = QueueConfig(maxRequests=10, windowSeconds=60)
         self.assertEqual(config.maxRequests, 10)
         self.assertEqual(config.windowSeconds, 60)
 
-    def testInvalidMaxRequests(self):
-        """Test QueueConfig validation rejects non-positive maxRequests."""
+    def testInvalidMaxRequests(self) -> None:
+        """Test QueueConfig validation rejects non-positive maxRequests.
+
+        Verifies that QueueConfig raises ValueError when maxRequests is
+        zero or negative.
+
+        Raises:
+            AssertionError: If validation does not raise ValueError for
+                invalid maxRequests values.
+        """
         with self.assertRaises(ValueError) as context:
             QueueConfig(maxRequests=0, windowSeconds=60)
         self.assertIn("maxRequests must be positive", str(context.exception))
@@ -33,8 +52,16 @@ class TestQueueConfig(unittest.TestCase):
             QueueConfig(maxRequests=-5, windowSeconds=60)
         self.assertIn("maxRequests must be positive", str(context.exception))
 
-    def testInvalidWindowSeconds(self):
-        """Test QueueConfig validation rejects non-positive windowSeconds."""
+    def testInvalidWindowSeconds(self) -> None:
+        """Test QueueConfig validation rejects non-positive windowSeconds.
+
+        Verifies that QueueConfig raises ValueError when windowSeconds is
+        zero or negative.
+
+        Raises:
+            AssertionError: If validation does not raise ValueError for
+                invalid windowSeconds values.
+        """
         with self.assertRaises(ValueError) as context:
             QueueConfig(maxRequests=10, windowSeconds=0)
         self.assertIn("windowSeconds must be positive", str(context.exception))
@@ -43,31 +70,63 @@ class TestQueueConfig(unittest.TestCase):
             QueueConfig(maxRequests=10, windowSeconds=-30)
         self.assertIn("windowSeconds must be positive", str(context.exception))
 
-    def testValidBoundaryValues(self):
-        """Test QueueConfig accepts minimum valid values."""
+    def testValidBoundaryValues(self) -> None:
+        """Test QueueConfig accepts minimum valid values.
+
+        Verifies that QueueConfig can be instantiated with the minimum
+        valid values (maxRequests=1, windowSeconds=1).
+        """
         config = QueueConfig(maxRequests=1, windowSeconds=1)
         self.assertEqual(config.maxRequests, 1)
         self.assertEqual(config.windowSeconds, 1)
 
 
 class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
-    """Test cases for SlidingWindowRateLimiter functionality."""
+    """Test cases for SlidingWindowRateLimiter functionality.
 
-    def setUp(self):
-        """Set up test fixtures."""
+    This test class validates the SlidingWindowRateLimiter implementation,
+    including:
+    - Initialization and destruction
+    - Rate limiting behavior
+    - Sliding window mechanics
+    - Multiple queue management
+    - Concurrent access safety
+    - Statistics tracking
+    - Edge cases and boundary conditions
+    """
+
+    def setUp(self) -> None:
+        """Set up test fixtures.
+
+        Creates a QueueConfig with maxRequests=3 and windowSeconds=2,
+        and instantiates a SlidingWindowRateLimiter for testing.
+        """
         self.config = QueueConfig(maxRequests=3, windowSeconds=2)
         self.limiter = SlidingWindowRateLimiter(config=self.config)
 
-    async def asyncSetUp(self):
-        """Async set up for test fixtures."""
+    async def asyncSetUp(self) -> None:
+        """Async set up for test fixtures.
+
+        Initializes the rate limiter before each test.
+        """
         await self.limiter.initialize()
 
-    async def asyncTearDown(self):
-        """Clean up after tests."""
+    async def asyncTearDown(self) -> None:
+        """Clean up after tests.
+
+        Destroys the rate limiter and releases resources after each test.
+        """
         await self.limiter.destroy()
 
-    async def testInitialization(self):
-        """Test limiter initialization."""
+    async def testInitialization(self) -> None:
+        """Test limiter initialization.
+
+        Verifies that the limiter can be initialized correctly and that
+        double initialization triggers a warning.
+
+        Raises:
+            AssertionError: If initialization state is not correctly managed.
+        """
         limiter = SlidingWindowRateLimiter(config=self.config)
         self.assertFalse(limiter._initialized)
 
@@ -79,8 +138,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
             await limiter.initialize()
             mock_logger.warning.assert_called_with("SlidingWindowRateLimiter already initialized")
 
-    async def testDestruction(self):
-        """Test limiter cleanup."""
+    async def testDestruction(self) -> None:
+        """Test limiter cleanup.
+
+        Verifies that the limiter properly cleans up internal state
+        including request times and locks when destroyed.
+
+        Raises:
+            AssertionError: If cleanup does not properly reset internal state.
+        """
         # Add some data first
         self.limiter._ensureQueue("test_queue")
         self.limiter._requestTimes["test_queue"] = [time.time()]
@@ -92,8 +158,16 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.limiter._requestTimes), 0)
         self.assertEqual(len(self.limiter._locks), 0)
 
-    def testEnsureQueue(self):
-        """Test automatic queue registration."""
+    def testEnsureQueue(self) -> None:
+        """Test automatic queue registration.
+
+        Verifies that _ensureQueue creates a new queue with empty request
+        times and a lock, and that calling it multiple times does not
+        create duplicate locks.
+
+        Raises:
+            AssertionError: If queue registration does not work as expected.
+        """
         # Queue should not exist initially
         self.assertNotIn("new_queue", self.limiter._requestTimes)
         self.assertNotIn("new_queue", self.limiter._locks)
@@ -111,8 +185,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         self.limiter._ensureQueue("new_queue")
         self.assertIs(self.limiter._locks["new_queue"], original_lock)
 
-    async def testApplyLimitBasic(self):
-        """Test basic rate limiting functionality."""
+    async def testApplyLimitBasic(self) -> None:
+        """Test basic rate limiting functionality.
+
+        Verifies that requests up to the limit complete quickly without
+        rate limiting delays, and that the queue is automatically registered.
+
+        Raises:
+            AssertionError: If basic rate limiting does not work correctly.
+        """
         start_time = time.time()
 
         # Make requests up to the limit
@@ -126,8 +207,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         # Verify queue was auto-registered
         self.assertIn("test_queue", self.limiter.listQueues())
 
-    async def testRateLimitingEnforcement(self):
-        """Test that rate limiting actually delays requests."""
+    async def testRateLimitingEnforcement(self) -> None:
+        """Test that rate limiting actually delays requests.
+
+        Verifies that requests exceeding the limit are delayed according
+        to the sliding window algorithm.
+
+        Raises:
+            AssertionError: If rate limiting does not properly delay requests.
+        """
         start_time = time.time()
 
         # Make requests exceeding the limit
@@ -139,8 +227,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         # Should have taken at least some time due to rate limiting
         self.assertGreaterEqual(elapsed, 1.0)  # Allow some tolerance
 
-    async def testSlidingWindowBehavior(self):
-        """Test that old requests are removed from the sliding window."""
+    async def testSlidingWindowBehavior(self) -> None:
+        """Test that old requests are removed from the sliding window.
+
+        Verifies that requests older than the window duration are removed
+        from the sliding window, allowing new requests to proceed without delay.
+
+        Raises:
+            AssertionError: If sliding window cleanup does not work correctly.
+        """
         # Make requests up to the limit
         for i in range(3):
             await self.limiter.applyLimit("sliding_test")
@@ -155,8 +250,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
 
         self.assertLess(elapsed, 0.1)  # Should be immediate
 
-    async def testMultipleQueues(self):
-        """Test rate limiting with multiple independent queues."""
+    async def testMultipleQueues(self) -> None:
+        """Test rate limiting with multiple independent queues.
+
+        Verifies that different queues operate independently, with rate
+        limits applied separately to each queue.
+
+        Raises:
+            AssertionError: If multiple queues do not operate independently.
+        """
         start_time = time.time()
 
         # Fill up first queue
@@ -175,11 +277,23 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         elapsed = time.time() - start_time
         self.assertGreaterEqual(elapsed, 1.0)
 
-    async def testConcurrentAccess(self):
-        """Test thread safety with concurrent access to same queue."""
+    async def testConcurrentAccess(self) -> None:
+        """Test thread safety with concurrent access to same queue.
 
-        async def make_requests(queue_name, count):
-            """Helper to make multiple requests."""
+        Verifies that the limiter handles concurrent requests to the same
+        queue safely without race conditions.
+
+        Raises:
+            AssertionError: If concurrent access causes errors or incorrect behavior.
+        """
+
+        async def make_requests(queue_name: str, count: int) -> None:
+            """Helper to make multiple requests.
+
+            Args:
+                queue_name: Name of the queue to send requests to.
+                count: Number of requests to make.
+            """
             for i in range(count):
                 await self.limiter.applyLimit(queue_name)
 
@@ -196,8 +310,16 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         # Should complete without errors and respect rate limits
         self.assertGreaterEqual(elapsed, 1.0)  # Some delay expected
 
-    async def testGetStats(self):
-        """Test statistics retrieval."""
+    async def testGetStats(self) -> None:
+        """Test statistics retrieval.
+
+        Verifies that getStats returns accurate statistics including
+        requestsInWindow, maxRequests, windowSeconds, resetTime, and
+        utilizationPercent.
+
+        Raises:
+            AssertionError: If statistics are not calculated correctly.
+        """
         # Make some requests
         for i in range(2):
             await self.limiter.applyLimit("stats_test")
@@ -210,14 +332,28 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(stats["resetTime"], time.time())
         self.assertAlmostEqual(stats["utilizationPercent"], 66.67, places=1)
 
-    async def testGetStatsNonExistentQueue(self):
-        """Test getStats raises error for non-existent queue."""
+    async def testGetStatsNonExistentQueue(self) -> None:
+        """Test getStats raises error for non-existent queue.
+
+        Verifies that getStats raises ValueError when called with a
+        queue name that does not exist.
+
+        Raises:
+            AssertionError: If ValueError is not raised for non-existent queue.
+        """
         with self.assertRaises(ValueError) as context:
             self.limiter.getStats("nonexistent_queue")
         self.assertIn("Queue 'nonexistent_queue' does not exist", str(context.exception))
 
-    async def testGetStatsEmptyQueue(self):
-        """Test getStats for queue with no recent requests."""
+    async def testGetStatsEmptyQueue(self) -> None:
+        """Test getStats for queue with no recent requests.
+
+        Verifies that getStats returns zero values for a queue that
+        exists but has no requests in the current window.
+
+        Raises:
+            AssertionError: If empty queue statistics are not correct.
+        """
         # Create queue but don't make requests
         self.limiter._ensureQueue("empty_test")
 
@@ -226,8 +362,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["requestsInWindow"], 0)
         self.assertEqual(stats["utilizationPercent"], 0.0)
 
-    async def testListQueues(self):
-        """Test queue listing functionality."""
+    async def testListQueues(self) -> None:
+        """Test queue listing functionality.
+
+        Verifies that listQueues returns a list of all registered queues
+        without duplicates.
+
+        Raises:
+            AssertionError: If queue listing does not work correctly.
+        """
         # Initially should be empty
         self.assertEqual(self.limiter.listQueues(), [])
 
@@ -241,16 +384,30 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         self.assertIn("queue1", queues)
         self.assertIn("queue2", queues)
 
-    async def testZeroRequestsInWindow(self):
-        """Test behavior with zero requests in time window."""
+    async def testZeroRequestsInWindow(self) -> None:
+        """Test behavior with zero requests in time window.
+
+        Verifies that statistics correctly report zero requests for a
+        queue with no activity.
+
+        Raises:
+            AssertionError: If zero request statistics are not correct.
+        """
         self.limiter._ensureQueue("zero_test")
 
         stats = self.limiter.getStats("zero_test")
         self.assertEqual(stats["requestsInWindow"], 0)
         self.assertEqual(stats["utilizationPercent"], 0.0)
 
-    async def testBoundaryConditions(self):
-        """Test boundary conditions and edge cases."""
+    async def testBoundaryConditions(self) -> None:
+        """Test boundary conditions and edge cases.
+
+        Verifies that the limiter works correctly with minimum valid
+        configuration values (maxRequests=1, windowSeconds=1).
+
+        Raises:
+            AssertionError: If boundary conditions are not handled correctly.
+        """
         # Test with very small window
         small_config = QueueConfig(maxRequests=1, windowSeconds=1)
         small_limiter = SlidingWindowRateLimiter(config=small_config)
@@ -268,8 +425,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         finally:
             await small_limiter.destroy()
 
-    async def testWaitTimeCalculation(self):
-        """Test accurate wait time calculation."""
+    async def testWaitTimeCalculation(self) -> None:
+        """Test accurate wait time calculation.
+
+        Verifies that the limiter calculates and applies the correct
+        wait time when the rate limit is exceeded.
+
+        Raises:
+            AssertionError: If wait time calculation is not accurate.
+        """
         # Fill up the limit
         for i in range(3):
             await self.limiter.applyLimit("wait_test")
@@ -283,8 +447,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(elapsed, 1.5)  # Should be close to window duration
         self.assertLess(elapsed, 2.5)  # But not too long
 
-    async def testCleanupAfterWaiting(self):
-        """Test that old requests are cleaned up after waiting."""
+    async def testCleanupAfterWaiting(self) -> None:
+        """Test that old requests are cleaned up after waiting.
+
+        Verifies that old requests are removed from the sliding window
+        after a rate-limited request completes.
+
+        Raises:
+            AssertionError: If cleanup does not work correctly after waiting.
+        """
         # Fill up the limit
         for i in range(3):
             await self.limiter.applyLimit("cleanup_test")
@@ -296,8 +467,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         stats = self.limiter.getStats("cleanup_test")
         self.assertLessEqual(stats["requestsInWindow"], 3)
 
-    async def testDefaultQueue(self):
-        """Test default queue behavior."""
+    async def testDefaultQueue(self) -> None:
+        """Test default queue behavior.
+
+        Verifies that applyLimit() uses the "default" queue when no
+        queue name is specified.
+
+        Raises:
+            AssertionError: If default queue is not used correctly.
+        """
         # Make request without specifying queue
         await self.limiter.applyLimit()
 
@@ -306,8 +484,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         stats = self.limiter.getStats("default")
         self.assertEqual(stats["requestsInWindow"], 1)
 
-    async def testLargeNumberOfRequests(self):
-        """Test behavior with many requests over time."""
+    async def testLargeNumberOfRequests(self) -> None:
+        """Test behavior with many requests over time.
+
+        Verifies that the limiter correctly handles a large number of
+        requests over an extended period while respecting rate limits.
+
+        Raises:
+            AssertionError: If large request volumes are not handled correctly.
+        """
         # Make requests over a longer period
         for i in range(10):
             await self.limiter.applyLimit("large_test")
@@ -318,8 +503,15 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         stats = self.limiter.getStats("large_test")
         self.assertLessEqual(stats["requestsInWindow"], 3)  # Should respect limit
 
-    async def testConfigImmutability(self):
-        """Test that config remains immutable after limiter creation."""
+    async def testConfigImmutability(self) -> None:
+        """Test that config remains immutable after limiter creation.
+
+        Verifies that the configuration values do not change during
+        limiter operation.
+
+        Raises:
+            AssertionError: If configuration values are modified during operation.
+        """
         original_max_requests = self.limiter._config.maxRequests
         original_window_seconds = self.limiter._config.windowSeconds
 
@@ -332,19 +524,41 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSlidingWindowRateLimiterErrorHandling(unittest.IsolatedAsyncioTestCase):
-    """Test suite for error handling scenarios."""
+    """Test suite for error handling scenarios.
 
-    async def asyncSetUp(self):
-        """Set up test fixtures."""
+    This test class validates error handling and edge cases in the
+    SlidingWindowRateLimiter, including:
+    - Uninitialized limiter behavior
+    - Destroyed limiter behavior
+    - Re-initialization after destruction
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures.
+
+        Creates a SlidingWindowRateLimiter with minimal configuration
+        for error handling tests.
+        """
         self.limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1, windowSeconds=1))
 
-    async def asyncTearDown(self):
-        """Clean up after tests."""
+    async def asyncTearDown(self) -> None:
+        """Clean up after tests.
+
+        Destroys the rate limiter if it was initialized, ensuring
+        proper cleanup between tests.
+        """
         if hasattr(self.limiter, "_initialized") and self.limiter._initialized:
             await self.limiter.destroy()
 
-    async def testUninitializedLimiter(self):
-        """Test behavior when using uninitialized limiter."""
+    async def testUninitializedLimiter(self) -> None:
+        """Test behavior when using uninitialized limiter.
+
+        Verifies that the limiter can still function correctly even
+        when used without explicit initialization.
+
+        Raises:
+            AssertionError: If uninitialized limiter does not work correctly.
+        """
         limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1, windowSeconds=1))
 
         # Should still work (initialization is mostly for logging)
@@ -353,8 +567,15 @@ class TestSlidingWindowRateLimiterErrorHandling(unittest.IsolatedAsyncioTestCase
         stats = limiter.getStats("test")
         self.assertEqual(stats["requestsInWindow"], 1)
 
-    async def testDestroyedLimiter(self):
-        """Test behavior after limiter destruction."""
+    async def testDestroyedLimiter(self) -> None:
+        """Test behavior after limiter destruction.
+
+        Verifies that the limiter can be re-initialized and used after
+        being destroyed.
+
+        Raises:
+            AssertionError: If re-initialization after destruction does not work.
+        """
         limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1, windowSeconds=1))
         await limiter.initialize()
         await limiter.destroy()

@@ -1,5 +1,26 @@
-"""
-Cache service: Singleton cache service with LRU eviction and selective persistence
+"""Cache service module for Gromozeka bot.
+
+This module provides a singleton cache service with LRU (Least Recently Used) eviction
+and selective persistence capabilities. It manages multiple cache namespaces for different
+types of data including chat settings, user data, and persistent cache entries.
+
+The cache service integrates with the database for persistence and provides thread-safe
+operations through the use of locks. It supports automatic eviction when cache size
+exceeds limits and tracks dirty keys for selective persistence.
+
+Key Features:
+    - Thread-safe LRU cache implementation
+    - Multiple cache namespaces (CHATS, CHAT_PERSISTENT, CHAT_USERS, USERS)
+    - Selective persistence based on namespace configuration
+    - Automatic cache eviction when capacity is exceeded
+    - Database integration for persistent storage
+    - Dirty key tracking for efficient persistence
+
+Example:
+    >>> cache = CacheService.getInstance()
+    >>> cache.injectDatabase(dbWrapper)
+    >>> cache.setChatSetting(123, ChatSettingsKey.LANGUAGE, ChatSettingsValue("en"), userId=1)
+    >>> settings = await cache.getChatSettings(123)
 """
 
 import json
@@ -37,11 +58,39 @@ logger = logging.getLogger(__name__)
 
 
 class LRUCache[K, V](OrderedDict[K, V]):
-    """Simple LRU cache implementation with thread safety"""
+    """Thread-safe LRU (Least Recently Used) cache implementation.
 
-    def __init__(self, maxSize: int = 1000):
-        """
-        Initialize LRU cache with maximum size and thread safety.
+    This class provides a simple LRU cache with automatic eviction of the oldest
+    entries when the cache size exceeds the specified maximum. All operations are
+    thread-safe through the use of a reentrant lock.
+
+    The cache maintains entries in order of access, with the most recently used
+    items at the end. When the cache is full, the least recently used item is
+    automatically evicted.
+
+    Type Parameters:
+        K: The type of keys in the cache
+        V: The type of values in the cache
+
+    Attributes:
+        maxSize: Maximum number of entries before eviction occurs
+        lock: Reentrant lock for thread-safe operations
+
+    Example:
+        >>> cache = LRUCache[int, str](maxSize=100)
+        >>> cache.set(1, "value1")
+        >>> value = cache.get(1, "default")
+        >>> cache.delete(1)
+    """
+
+    maxSize: int
+    """Maximum number of entries before eviction occurs."""
+
+    lock: RLock
+    """Reentrant lock for thread-safe operations."""
+
+    def __init__(self, maxSize: int = 1000) -> None:
+        """Initialize LRU cache with maximum size and thread safety.
 
         Args:
             maxSize: Maximum number of entries before eviction (default: 1000)
@@ -51,7 +100,19 @@ class LRUCache[K, V](OrderedDict[K, V]):
         self.lock = RLock()
 
     def get(self, key: K, default: V) -> V:  # pyright: ignore[reportIncompatibleMethodOverride]
-        """Get value from cache, moving it to end (most recently used)"""
+        """Get value from cache, moving it to end (most recently used).
+
+        Retrieves the value associated with the key and moves it to the end of
+        the ordered dictionary to mark it as most recently used. If the key is
+        not found, returns the default value.
+
+        Args:
+            key: The key to retrieve from the cache
+            default: The value to return if the key is not found
+
+        Returns:
+            The cached value if found, otherwise the default value
+        """
         with self.lock:
             if key not in self:
                 return default
@@ -60,7 +121,17 @@ class LRUCache[K, V](OrderedDict[K, V]):
             return self[key]
 
     def set(self, key: K, value: V) -> None:
-        """Set value in cache, evicting oldest if over capacity"""
+        """Set value in cache, evicting oldest if over capacity.
+
+        Stores the key-value pair in the cache. If the key already exists,
+        its value is updated and it's moved to the end (most recently used).
+        If the cache exceeds maxSize after insertion, the least recently used
+        entry is evicted.
+
+        Args:
+            key: The key to store in the cache
+            value: The value to associate with the key
+        """
         with self.lock:
             if key in self:
                 # Update and move to end
@@ -72,7 +143,16 @@ class LRUCache[K, V](OrderedDict[K, V]):
                 logger.debug(f"LRU evicted key: {oldest[0]}")
 
     def delete(self, key: K) -> bool:
-        """Delete key from cache"""
+        """Delete key from cache.
+
+        Removes the specified key and its associated value from the cache.
+
+        Args:
+            key: The key to delete from the cache
+
+        Returns:
+            True if the key was found and deleted, False otherwise
+        """
         with self.lock:
             if key in self:
                 del self[key]
@@ -80,30 +160,52 @@ class LRUCache[K, V](OrderedDict[K, V]):
             return False
 
     def clear(self) -> None:
-        """Clear all entries"""
+        """Clear all entries from the cache.
+
+        Removes all key-value pairs from the cache, resetting it to an empty state.
+        """
         with self.lock:
             super().clear()
 
 
 class CacheService:
-    """
-    Singleton cache service for Gromozeka bot.
+    """Singleton cache service for Gromozeka bot with LRU eviction and selective persistence.
 
-    Usage:
-        cache = CacheService.getInstance()
-        cache.injectDatabase(dbWrapper)
+    This service provides a centralized caching mechanism with multiple namespaces for
+    different types of data. It implements the singleton pattern to ensure only one
+    instance exists throughout the application lifecycle. The cache supports automatic
+    eviction when capacity is exceeded and selective persistence based on namespace
+    configuration.
 
-        # Access namespaces directly
-        cache.chats[123] = {"settings": {...}}
-        settings = cache.chats.get(123)
+    The service integrates with the database for persistent storage and tracks dirty
+    keys to optimize persistence operations. It automatically persists cache data on
+    shutdown and loads persisted data on startup.
 
-        # Or use convenience methods
-        cache.getChatSettings(123)
-        cache.setUserData(123, 456, "key", "value")
+    Namespaces:
+        - CHATS: Chat-specific data including settings, info, and topics
+        - CHAT_PERSISTENT: Persistent chat data like spam warning messages
+        - CHAT_USERS: User data scoped to specific chats
+        - USERS: User-specific state and configuration data
+
+    Example:
+        >>> cache = CacheService.getInstance()
+        >>> cache.injectDatabase(dbWrapper)
+        >>>
+        >>> # Access namespaces directly
+        >>> cache.chats[123] = {"settings": {...}}
+        >>> settings = cache.chats.get(123)
+        >>>
+        >>> # Or use convenience methods
+        >>> settings = await cache.getChatSettings(123)
+        >>> await cache.setChatSetting(123, ChatSettingsKey.LANGUAGE, ChatSettingsValue("en"), userId=1)
+        >>> await cache.setUserData(123, 456, "key", "value")
     """
 
     _instance: Optional["CacheService"] = None
-    _lock = RLock()
+    """Singleton instance of the CacheService."""
+
+    _lock: RLock = RLock()
+    """Class-level lock for thread-safe singleton instantiation."""
 
     def __new__(cls) -> "CacheService":
         """
@@ -128,7 +230,10 @@ class CacheService:
         """
         if not hasattr(self, "initialized"):
             self.database: Optional["Database"] = None
+            """Database wrapper for persistence operations."""
+
             self.maxCacheSize = 1000  # Per namespace
+            """Maximum number of entries per namespace before eviction occurs."""
 
             # Initialize namespaces with LRU caches
             self._caches: Dict[
@@ -143,6 +248,7 @@ class CacheService:
                 CacheNamespace.CHAT_USERS: LRUCache[str, HCChatUserCacheDict](self.maxCacheSize),
                 CacheNamespace.USERS: LRUCache[int, HCUserCacheDict](self.maxCacheSize),
             }
+            """Dictionary mapping cache namespaces to their LRU cache instances."""
 
             # Track what needs persistence
             self.dirtyKeys: Dict[CacheNamespace, set[str | int]] = {
@@ -151,46 +257,98 @@ class CacheService:
                 CacheNamespace.CHAT_USERS: set(),
                 CacheNamespace.USERS: set(),
             }
+            """Dictionary tracking keys that have been modified and need persistence."""
 
             # Register on shutdown handler
             QueueService.getInstance().registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
             self.initialized = True
+            """Flag indicating whether the service has been initialized."""
             logger.info("CacheService initialized, dood!")
 
     @classmethod
     def getInstance(cls) -> "CacheService":
-        """Get singleton instance"""
+        """Get singleton instance.
+
+        Returns the singleton CacheService instance, creating it if necessary.
+        This is the preferred way to access the cache service.
+
+        Returns:
+            The singleton CacheService instance
+        """
         return cls()
 
     @property
     def chats(self) -> LRUCache[int | str, HCChatCacheDict]:
-        """Access chats namespace"""
+        """Access chats namespace.
+
+        Provides direct access to the CHATS namespace cache which stores
+        chat-specific data including settings, info, topics, and admins.
+
+        Returns:
+            The LRU cache for the CHATS namespace
+        """
         return self._caches[CacheNamespace.CHATS]  # pyright: ignore[reportReturnType]
 
     @property
     def chatUsers(self) -> LRUCache[str, HCChatUserCacheDict]:
-        """Access chatUsers namespace"""
+        """Access chatUsers namespace.
+
+        Provides direct access to the CHAT_USERS namespace cache which stores
+        user data scoped to specific chats.
+
+        Returns:
+            The LRU cache for the CHAT_USERS namespace
+        """
         return self._caches[CacheNamespace.CHAT_USERS]  # pyright: ignore[reportReturnType]
 
     @property
     def users(self) -> LRUCache[int, HCUserCacheDict]:
-        """Access users namespace"""
+        """Access users namespace.
+
+        Provides direct access to the USERS namespace cache which stores
+        user-specific state and configuration data.
+
+        Returns:
+            The LRU cache for the USERS namespace
+        """
         return self._caches[CacheNamespace.USERS]  # pyright: ignore[reportReturnType]
 
     @property
     def chatPersistent(self) -> LRUCache[int, HCChatPersistentCacheDict]:
-        """Access chatPersistent namespace"""
+        """Access chatPersistent namespace.
+
+        Provides direct access to the CHAT_PERSISTENT namespace cache which stores
+        persistent chat data like spam warning messages.
+
+        Returns:
+            The LRU cache for the CHAT_PERSISTENT namespace
+        """
         return self._caches[CacheNamespace.CHAT_PERSISTENT]  # pyright: ignore[reportReturnType]
 
     async def injectDatabase(self, database: "Database") -> None:
-        """Inject database wrapper for persistence"""
+        """Inject database wrapper for persistence.
+
+        Sets the database wrapper for persistence operations and loads any
+        previously persisted cache data from the database. This should be
+        called once during application initialization.
+
+        Args:
+            database: The database wrapper instance for persistence operations
+        """
         self.database = database
         # Load persisted data on injection
         await self.loadFromDatabase()
         logger.info("Database injected into CacheService, dood!")
 
     async def _doExitHandler(self, task: DelayedTask) -> None:
-        """Handle delayed exit task"""
+        """Handle delayed exit task.
+
+        Called when the application is shutting down to persist all dirty
+        cache entries to the database before termination.
+
+        Args:
+            task: The delayed task triggering the exit handler
+        """
         logger.info("doExit: persisting cache to database")
         if self.database:
             await self.persistAll()
@@ -207,13 +365,14 @@ class CacheService:
         doesn't exist in the cache, a new entry will be created. The settings
         are stored under the 'settings' key in the chat cache dictionary.
 
+        Note:
+            This method only updates the in-memory cache and does not persist
+            to the database. Settings may be lost if evicted from cache.
+
         Args:
             key: The key to identify the chat settings (typically chat ID or 'default')
             value: A dictionary mapping ChatSettingsKey to ChatSettingsValue
                    containing the settings to be stored
-
-        Returns:
-            None
         """
         key = str(key)
         chatCache = self.chats.get(key, {})
@@ -230,6 +389,10 @@ class CacheService:
         If the key doesn't exist in the cache or has no settings, an empty
         dictionary is returned.
 
+        Note:
+            This method only reads from the in-memory cache and does not load
+            from the database. Returns a copy to prevent mutation of cached data.
+
         Args:
             key: The key to identify the chat settings (typically chat ID or 'default')
 
@@ -244,7 +407,19 @@ class CacheService:
         return chatCache.get("settings", {}).copy()
 
     async def getChatSettings(self, chatId: int) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
-        """Get chat settings with cache"""
+        """Get chat settings with cache and database fallback.
+
+        Retrieves chat settings from the cache. If not present in cache, loads
+        them from the database and caches the result. Returns an empty dictionary
+        if settings are not found in either cache or database.
+
+        Args:
+            chatId: The unique identifier of the chat to get settings for
+
+        Returns:
+            A dictionary mapping ChatSettingsKey to ChatSettingsValue containing
+            the chat settings, or an empty dictionary if no settings exist
+        """
         # Preventing circullar dependencies TODO: Do something with it
         from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
 
@@ -266,7 +441,7 @@ class CacheService:
     async def setChatSetting(
         self, chatId: int, key: "ChatSettingsKey", value: "ChatSettingsValue", *, userId: int
     ) -> None:
-        """Update a single chat setting for a specific chat, dood!
+        """Update a single chat setting for a specific chat.
 
         Updates one setting key-value pair in the cache and persists it to the database
         if available. Existing settings are preserved and only the specified key is updated.
@@ -275,13 +450,15 @@ class CacheService:
             chatId: The unique identifier of the chat to update settings for
             key: The setting key to update
             value: The new value for the setting
+            userId: The ID of the user making the change (for audit trail)
 
         Side Effects:
+            - Clears any cached settings for the chat
             - Loads existing chat settings from database if not already in cache
             - Updates the in-memory cache for the specified chat with the new key-value pair
-            - If dbWrapper is available:
+            - If database is available:
                 - Persists the setting to the database (converted to string via value.toStr())
-            - If dbWrapper is not available:
+            - If database is not available:
                 - Logs an error message
             - Logs debug information about the update
 
@@ -308,7 +485,25 @@ class CacheService:
         logger.debug(f"Updated chat settings for {chatId}, dood!")
 
     async def unsetChatSetting(self, chatId: int, key: "ChatSettingsKey") -> None:
-        """Unset specified chat setting for a specific chat, dood!"""
+        """Unset specified chat setting for a specific chat.
+
+        Removes the specified setting key from the chat's settings in both cache
+        and database. If the key doesn't exist, the operation is a no-op.
+
+        Args:
+            chatId: The unique identifier of the chat to update settings for
+            key: The setting key to remove
+
+        Side Effects:
+            - Clears any cached settings for the chat
+            - Loads existing chat settings from database if not already in cache
+            - Removes the specified key from the in-memory cache
+            - If database is available:
+                - Removes the setting from the database
+            - If database is not available:
+                - Logs an error message
+            - Logs debug information about the update
+        """
 
         self.clearCachedChatSettings(chatId)
 
@@ -330,7 +525,20 @@ class CacheService:
     def getCachedChatSettings(
         self, chatId: int, ttl: Optional[int] = 600
     ) -> Optional[Dict["ChatSettingsKey", "ChatSettingsValue"]]:
-        """Get chat info from cache or database"""
+        """Get cached chat settings with TTL validation.
+
+        Retrieves cached chat settings if they exist and haven't expired based on
+        the time-to-live (TTL) parameter. Returns None if settings are not cached
+        or have expired.
+
+        Args:
+            chatId: The unique identifier of the chat to get cached settings for
+            ttl: Time-to-live in seconds for the cached settings (default: 600).
+                 If None, TTL validation is skipped
+
+        Returns:
+            The cached settings dictionary if found and not expired, None otherwise
+        """
         # Preventing circullar dependencies TODO: Do something with it
         from internal.bot.models.chat_settings import ChatSettingsKey
 
@@ -348,8 +556,20 @@ class CacheService:
         return cachedSettings
 
     def cacheChatSettings(self, chatId: int, settings: Dict["ChatSettingsKey", "ChatSettingsValue"]) -> None:
-        """
-        TODO: write docstring
+        """Cache chat settings with a timestamp for TTL validation.
+
+        Stores the provided settings in the cache with a timestamp that can be used
+        for time-to-live (TTL) validation. This is useful for caching settings that
+        may change frequently and need to be refreshed periodically.
+
+        Args:
+            chatId: The unique identifier of the chat to cache settings for
+            settings: A dictionary mapping ChatSettingsKey to ChatSettingsValue
+                     containing the settings to cache
+
+        Note:
+            A CACHED_TS timestamp is automatically added to the settings for TTL
+            validation purposes.
         """
         # Preventing circullar dependencies TODO: Do something with it
         from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
@@ -363,7 +583,15 @@ class CacheService:
         logger.debug(f"cache chat settings for {chatId}, dood!")
 
     def clearCachedChatSettings(self, chatId: int) -> None:
-        """Clear cached chat settings for a specific chat, dood!"""
+        """Clear cached chat settings for a specific chat.
+
+        Removes the cached settings for the specified chat from the cache. This
+        forces the next call to getCachedChatSettings to return None, which will
+        trigger a reload from the database.
+
+        Args:
+            chatId: The unique identifier of the chat to clear cached settings for
+        """
         chatCache = self.chats.get(chatId, {})
         if "cachedSettings" in chatCache:
             del chatCache["cachedSettings"]
@@ -373,7 +601,18 @@ class CacheService:
     # # Chat Info
 
     async def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
-        """Get chat info from cache or database"""
+        """Get chat info from cache or database.
+
+        Retrieves chat information from the cache. If not present in cache, loads
+        it from the database and caches the result. Returns None if chat info is
+        not found in either cache or database.
+
+        Args:
+            chatId: The unique identifier of the chat to get info for
+
+        Returns:
+            A ChatInfoDict containing the chat information, or None if not found
+        """
         chatCache = self.chats.get(chatId, {})
         info = chatCache.get("info", None)
 
@@ -388,7 +627,23 @@ class CacheService:
         return info
 
     async def setChatInfo(self, chatId: int, info: ChatInfoDict) -> None:
-        """Update chat info in cache"""
+        """Update chat info in cache and database.
+
+        Updates the chat information in the cache and persists it to the database
+        if available. This method should be called when chat information changes.
+
+        Args:
+            chatId: The unique identifier of the chat to update info for
+            info: A ChatInfoDict containing the updated chat information
+
+        Side Effects:
+            - Updates the in-memory cache with the new chat info
+            - If database is available:
+                - Persists the chat info to the database
+            - If database is not available:
+                - Logs an error message
+            - Logs debug information about the update
+        """
         chatCache = self.chats.get(chatId, {})
         chatCache["info"] = info
         self.chats.set(chatId, chatCache)
@@ -407,7 +662,19 @@ class CacheService:
     # # Chat Topics Info
 
     async def getChatTopicsInfo(self, chatId: int) -> Dict[int, ChatTopicInfoDict]:
-        """Get all known topics info from cache or DB"""
+        """Get all known topics info from cache or database.
+
+        Retrieves all topic information for a chat from the cache. If not present
+        in cache, loads them from the database and caches the result. Returns an
+        empty dictionary if no topics are found or database is unavailable.
+
+        Args:
+            chatId: The unique identifier of the chat to get topics info for
+
+        Returns:
+            A dictionary mapping topic IDs to ChatTopicInfoDict containing the
+            topic information, or an empty dictionary if no topics exist
+        """
         chatCache = self.chats.get(chatId, {})
 
         if "topicInfo" not in chatCache:
@@ -425,13 +692,43 @@ class CacheService:
         return chatCache["topicInfo"]
 
     async def getChatTopicInfo(self, chatId: int, topicId: int) -> Optional[ChatTopicInfoDict]:
-        """Get topic info from cache"""
+        """Get topic info from cache.
+
+        Retrieves information for a specific topic within a chat. Loads all topics
+        from the database if not already cached, then returns the requested topic.
+
+        Args:
+            chatId: The unique identifier of the chat
+            topicId: The unique identifier of the topic to get info for
+
+        Returns:
+            A ChatTopicInfoDict containing the topic information, or None if the
+            topic is not found
+        """
         # Populate given chat topics from DB if any
         allTopicsInfo = await self.getChatTopicsInfo(chatId)
         return allTopicsInfo.get(topicId, None)
 
     async def setChatTopicInfo(self, chatId: int, topicId: int, info: ChatTopicInfoDict) -> None:
-        """Update topic info in cache"""
+        """Update topic info in cache and database.
+
+        Updates the topic information in the cache and persists it to the database
+        if available. This method should be called when topic information changes.
+
+        Args:
+            chatId: The unique identifier of the chat
+            topicId: The unique identifier of the topic to update
+            info: A ChatTopicInfoDict containing the updated topic information
+
+        Side Effects:
+            - Loads all topics from database if not already cached
+            - Updates the in-memory cache with the new topic info
+            - If database is available:
+                - Persists the topic info to the database
+            - If database is not available:
+                - Logs an error message
+            - Logs debug information about the update
+        """
         # Populate topics info from db if any
         await self.getChatTopicsInfo(chatId)
         chatCache = self.chats.get(chatId, {})
@@ -454,7 +751,21 @@ class CacheService:
 
     # Chat admin list
     def getChatAdmins(self, chatId: int, ttl: Optional[int] = 300) -> Optional[Dict[int, Tuple[str, str]]]:
-        """Get chat info from cache or database"""
+        """Get chat admins from cache with TTL validation.
+
+        Retrieves the cached list of chat administrators if they exist and haven't
+        expired based on the time-to-live (TTL) parameter. Returns None if admins
+        are not cached or have expired.
+
+        Args:
+            chatId: The unique identifier of the chat to get admins for
+            ttl: Time-to-live in seconds for the cached admins (default: 300).
+                 If None, TTL validation is skipped
+
+        Returns:
+            A dictionary mapping user IDs to tuples of (username, full_name) for
+            each admin, or None if not cached or expired
+        """
         chatCache = self.chats.get(chatId, {})
         admins = chatCache.get("admins", None)
 
@@ -469,7 +780,20 @@ class CacheService:
         return admins["admins"]
 
     def setChatAdmins(self, chatId: int, admins: Dict[int, Tuple[str, str]]) -> None:
-        """Update chat info in cache"""
+        """Update chat admins in cache with timestamp.
+
+        Stores the list of chat administrators in the cache with a timestamp for
+        TTL validation. This is useful for caching admin lists that may change
+        periodically and need to be refreshed.
+
+        Args:
+            chatId: The unique identifier of the chat to update admins for
+            admins: A dictionary mapping user IDs to tuples of (username, full_name)
+                   for each admin
+
+        Note:
+            An updatedAt timestamp is automatically added for TTL validation purposes.
+        """
         chatCache = self.chats.get(chatId, {})
         adminsDict: HCChatAdminsDict = {
             "admins": admins.copy(),
@@ -481,11 +805,35 @@ class CacheService:
 
     # ## ChatUser UserData
     def _getChatUserKey(self, chatId: int, userId: int) -> str:
-        """Get key for chat user data"""
+        """Generate a unique key for chat user data.
+
+        Creates a composite key string from chat ID and user ID for storing
+        user data scoped to a specific chat.
+
+        Args:
+            chatId: The unique identifier of the chat
+            userId: The unique identifier of the user
+
+        Returns:
+            A string key in the format "chatId:userId"
+        """
         return f"{chatId}:{userId}"
 
     async def getChatUserData(self, chatId: int, userId: int) -> UserDataType:
-        """Get user data for a specific chat"""
+        """Get user data for a specific chat.
+
+        Retrieves user data scoped to a specific chat from the cache. If not
+        present in cache, loads it from the database and caches the result.
+        Returns an empty dictionary if no data is found or database is unavailable.
+
+        Args:
+            chatId: The unique identifier of the chat
+            userId: The unique identifier of the user
+
+        Returns:
+            A UserDataType dictionary containing the user's data for the chat,
+            or an empty dictionary if no data exists
+        """
         userKey = self._getChatUserKey(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
 
@@ -507,7 +855,28 @@ class CacheService:
         return userCache.get("data", {})
 
     async def setChatUserData(self, chatId: int, userId: int, key: str, value: UserDataValueType) -> None:
-        """Set user data for a specific chat"""
+        """Set user data for a specific chat.
+
+        Stores a key-value pair in the user data scoped to a specific chat.
+        The data is persisted to the database immediately and marked as dirty
+        for cache persistence.
+
+        Args:
+            chatId: The unique identifier of the chat
+            userId: The unique identifier of the user
+            key: The data key to set
+            value: The data value to store
+
+        Side Effects:
+            - Loads existing user data from database if not already cached
+            - Updates the in-memory cache with the new key-value pair
+            - Marks the user key as dirty for persistence
+            - If database is available:
+                - Persists the data to the database immediately
+            - If database is not available:
+                - Logs an error message
+            - Logs debug information about the update
+        """
         userKey = self._getChatUserKey(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
         # load userData from DB or initialise as empty dict
@@ -531,7 +900,25 @@ class CacheService:
         logger.debug(f"Updated user data for {userKey}, key={key}, dood!")
 
     async def unsetChatUserData(self, chatId: int, userId: int, key: str) -> None:
-        """Unset user data for a specific chat"""
+        """Unset user data for a specific chat.
+
+        Removes a specific key from the user data scoped to a specific chat.
+        The key is removed from both the cache and the database.
+
+        Args:
+            chatId: The unique identifier of the chat
+            userId: The unique identifier of the user
+            key: The data key to remove
+
+        Side Effects:
+            - Loads existing user data from database if not already cached
+            - Removes the specified key from the in-memory cache
+            - If database is available:
+                - Removes the key from the database
+            - If database is not available:
+                - Logs an error message
+            - Logs debug information about the update
+        """
         userKey = self._getChatUserKey(chatId, userId)
         # Populate UserData from DB if any
         await self.getChatUserData(chatId, userId)
@@ -550,7 +937,23 @@ class CacheService:
         logger.debug(f"Unset user data for {userKey}, key={key}, dood!")
 
     async def clearChatUserData(self, chatId: int, userId: int) -> None:
-        """Clear user data for a specific chat"""
+        """Clear all user data for a specific chat.
+
+        Removes all user data scoped to a specific chat from both the cache
+        and the database.
+
+        Args:
+            chatId: The unique identifier of the chat
+            userId: The unique identifier of the user
+
+        Side Effects:
+            - If database is available:
+                - Removes all user data from the database
+            - If database is not available:
+                - Logs an error message
+            - Removes all user data from the in-memory cache
+            - Logs debug information about the update
+        """
         userKey = self._getChatUserKey(chatId, userId)
 
         if self.database:
@@ -571,12 +974,40 @@ class CacheService:
     def getUserState(
         self, userId: int, stateKey: UserActiveActionEnum, default: Optional[UserActiveConfigurationDict] = None
     ) -> Optional[UserActiveConfigurationDict]:
-        """Get temporary user state (persisted on shutdown)"""
+        """Get temporary user state.
+
+        Retrieves a temporary user state value that is persisted on shutdown.
+        This is useful for storing user-specific state that should survive
+        application restarts.
+
+        Args:
+            userId: The unique identifier of the user
+            stateKey: The state key to retrieve
+            default: The default value to return if the state key is not found
+
+        Returns:
+            The user state value if found, otherwise the default value
+        """
         userState = self.users.get(userId, {})
         return userState.get(stateKey, default)
 
     def setUserState(self, userId: int, stateKey: UserActiveActionEnum, value: UserActiveConfigurationDict) -> None:
-        """Set temporary user state (persisted on shutdown)"""
+        """Set temporary user state.
+
+        Stores a temporary user state value that is persisted on shutdown.
+        This is useful for storing user-specific state that should survive
+        application restarts.
+
+        Args:
+            userId: The unique identifier of the user
+            stateKey: The state key to set
+            value: The state value to store
+
+        Side Effects:
+            - Updates the in-memory cache with the new state value
+            - Marks the user as dirty for persistence
+            - Logs debug information about the update
+        """
         userState = self.users.get(userId, {})
         userState[stateKey] = value
         self.users.set(userId, userState)
@@ -584,8 +1015,7 @@ class CacheService:
         logger.debug(f"Updated user state for {userId}, key={stateKey}, dood!")
 
     def clearUserState(self, userId: int, stateKey: Optional[UserActiveActionEnum] = None) -> None:
-        """
-        Clear user state from cache.
+        """Clear user state from cache.
 
         Removes one or all state keys for a user. If the user has no cached state,
         the operation is skipped. The user is marked as dirty for persistence.
@@ -594,6 +1024,11 @@ class CacheService:
             userId: The user ID whose state should be cleared
             stateKey: Specific state key to clear. If None, clears all state keys
                      from UserActiveActionEnum
+
+        Side Effects:
+            - Removes the specified state key or all state keys from the cache
+            - Marks the user as dirty for persistence
+            - Logs debug information about the update
         """
         if userId not in self.users:
             logger.debug(f"No cache for user #{userId}, nothing to clear")
@@ -661,14 +1096,42 @@ class CacheService:
 
     # Common methods
     def clearNamespace(self, namespace: CacheNamespace) -> None:
-        """Clear all entries in a namespace"""
+        """Clear all entries in a namespace.
+
+        Removes all entries from the specified cache namespace and marks all
+        keys as dirty for deletion from the database on the next persist operation.
+
+        Args:
+            namespace: The cache namespace to clear
+
+        Side Effects:
+            - Marks all keys in the namespace as dirty
+            - Clears all entries from the in-memory cache
+            - Logs information about the operation
+        """
         # Mark all keys dirty for deleteing them on save
         self.dirtyKeys[namespace].update(self._caches[namespace].keys())
         self._caches[namespace].clear()
         logger.info(f"Cleared namespace {namespace.value}, dood!")
 
     async def persistAll(self) -> None:
-        """Persist all dirty entries to database"""
+        """Persist all dirty entries to database.
+
+        Persists all modified cache entries to the database based on their
+        namespace's persistence level. Entries with no data are removed from
+        the database to prevent loading stale data on startup.
+
+        Note:
+            - MEMORY_ONLY namespaces are skipped
+            - Only dirty keys are persisted
+            - Empty entries are removed from the database
+
+        Side Effects:
+            - Persists dirty cache entries to the database
+            - Removes empty entries from the database
+            - Clears dirty markers for persisted entries
+            - Logs statistics about the operation
+        """
         if not self.database:
             logger.error("Cannot persist: no database wrapper, dood!")
             return
@@ -706,7 +1169,22 @@ class CacheService:
         logger.info(f"Persisted {totalPersisted} and dropped {totalDropped} cache entries, dood!")
 
     async def loadFromDatabase(self) -> None:
-        """Load persisted cache from database on startup"""
+        """Load persisted cache from database on startup.
+
+        Loads all previously persisted cache entries from the database and
+        populates the in-memory cache. Invalid or empty entries are skipped.
+
+        Note:
+            - MEMORY_ONLY namespaces are skipped
+            - Invalid JSON values are logged and skipped
+            - Empty values are logged and skipped
+            - Unknown namespaces are logged and skipped
+
+        Side Effects:
+            - Populates the in-memory cache with data from the database
+            - Logs statistics about loaded and ignored entries
+            - Logs errors for invalid entries
+        """
         if not self.database:
             logger.warning("Cannot load: no database wrapper, dood!")
             return
@@ -768,7 +1246,20 @@ class CacheService:
             logger.exception(e)
 
     async def _persistCacheEntry(self, namespace: CacheNamespace, key: str, value: Dict[str, Any]) -> None:
-        """Persist a single cache entry"""
+        """Persist a single cache entry to the database.
+
+        Serializes and stores a cache entry in the database. Errors are logged
+        but do not prevent other entries from being persisted.
+
+        Args:
+            namespace: The cache namespace for the entry
+            key: The cache key for the entry
+            value: The cache value to persist
+
+        Side Effects:
+            - Stores the serialized cache entry in the database
+            - Logs errors if persistence fails
+        """
         if not self.database:
             return
 
@@ -783,7 +1274,18 @@ class CacheService:
             logger.error(f"Error persisting cache entry {namespace.value}:{key}: {e}, dood!")
 
     def getStats(self) -> Dict[str, Any]:
-        """Get cache statistics"""
+        """Get cache statistics.
+
+        Returns statistics about the current state of all cache namespaces,
+        including size, maximum size, dirty key count, and persistence level.
+
+        Returns:
+            A dictionary mapping namespace names to their statistics, including:
+            - size: Current number of entries in the namespace
+            - maxSize: Maximum number of entries before eviction
+            - dirty: Number of dirty keys pending persistence
+            - persistenceLevel: The persistence level of the namespace
+        """
         stats = {}
 
         for namespace in CacheNamespace:

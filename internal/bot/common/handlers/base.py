@@ -404,16 +404,46 @@ class BaseBotHandler(CommandHandlerMixin):
     ###
 
     async def getBotId(self) -> int:
+        """
+        Get the bot's ID from the bot instance, dood!
+
+        Returns:
+            The bot's ID as an integer
+
+        Raises:
+            ValueError: If bot is not initialized
+        """
         if self._bot is None:
             raise ValueError("Bot is not initialized")
         return await self._bot.getBotId()
 
     async def getBotUserName(self) -> Optional[str]:
+        """
+        Get the bot's username from the bot instance, dood!
+
+        Returns:
+            The bot's username as a string, or None if not available
+
+        Raises:
+            ValueError: If bot is not initialized
+        """
         if self._bot is None:
             raise ValueError("Bot is not initialized")
         return await self._bot.getBotUserName()
 
     def isBotOwner(self, user: MessageSender) -> bool:
+        """
+        Check if a user is a bot owner, dood!
+
+        Args:
+            user: The user to check
+
+        Returns:
+            True if the user is a bot owner, False otherwise
+
+        Raises:
+            ValueError: If bot is not initialized
+        """
         if self._bot is None:
             raise ValueError("Bot is not initialized")
         return self._bot.isBotOwner(user=user)
@@ -449,6 +479,22 @@ class BaseBotHandler(CommandHandlerMixin):
         inlineKeyboard: Optional[Sequence[Sequence[CallbackButton]]] = None,
         useMarkdown: bool = True,
     ) -> bool:
+        """
+        Edit an existing message in a chat, dood!
+
+        Args:
+            messageId: The ID of the message to edit
+            chatId: The ID of the chat containing the message
+            text: New text for the message (optional)
+            inlineKeyboard: New inline keyboard markup (optional)
+            useMarkdown: Whether to use MarkdownV2 formatting (default: True)
+
+        Returns:
+            True if the message was edited successfully, False otherwise
+
+        Raises:
+            ValueError: If bot is not initialized
+        """
         if self._bot is None:
             raise ValueError("Bot is not initialized")
         return await self._bot.editMessage(
@@ -482,6 +528,40 @@ class BaseBotHandler(CommandHandlerMixin):
         attachmentList: Optional[Sequence[Tuple[bytes, MessageType, Optional[str]]]] = None,
         toolsHistory: Optional[Sequence[ModelMessage]] = None,
     ) -> List[EnsuredMessage]:
+        """
+        Send a message to a chat with optional media and formatting, dood!
+
+        This method handles sending messages with various options including text,
+        photos, attachments, inline keyboards, and MarkdownV2 formatting. It also
+        processes media attachments and saves messages to the database.
+
+        Args:
+            replyToMessage: Message to reply to (optional)
+            messageText: Text content of the message (optional)
+            addMessagePrefix: Prefix to add to the message text (default: "")
+            photoData: Binary photo data to send (optional)
+            sendMessageKWargs: Additional keyword arguments for the send message API call (optional)
+            tryMarkdownV2: Whether to attempt MarkdownV2 formatting (default: True)
+            tryParseInputJSON: Whether to try parsing input as JSON (optional)
+            sendErrorIfAny: Whether to send error messages to the chat (default: True)
+            skipLogs: Whether to skip logging this message (default: False)
+            mediaPrompt: Optional prompt for media processing (optional)
+            messageCategory: Category of the message for database storage (default: BOT)
+            inlineKeyboard: Inline keyboard markup for the message (optional)
+            typingManager: Typing manager for showing typing status (optional)
+            splitIfTooLong: Whether to split long messages (default: True)
+            chatId: Target chat ID (optional, defaults to replyToMessage's chat)
+            threadId: Target thread ID for forum topics (optional)
+            notify: Whether to send notification (optional)
+            attachmentList: List of attachments as (data, type, filename) tuples (optional)
+            toolsHistory: History of tool calls used (optional)
+
+        Returns:
+            List of EnsuredMessage objects representing sent messages
+
+        Raises:
+            ValueError: If bot is not initialized
+        """
         if self._bot is None:
             raise ValueError("Bot is not initialized")
         ret = await self._bot.sendMessage(
@@ -584,6 +664,21 @@ class BaseBotHandler(CommandHandlerMixin):
         ensuredMessage: EnsuredMessage,
         condenseThread: bool = True,
     ) -> Sequence[ModelMessage]:
+        """
+        Get the conversation thread for a message formatted for LLM processing, dood!
+
+        Retrieves the message thread (conversation history) for a given message,
+        formats it according to chat settings, and optionally condenses it to fit
+        within token limits. Handles both standalone messages and reply chains.
+
+        Args:
+            ensuredMessage: The message to get the thread for
+            condenseThread: Whether to condense the thread if it exceeds token limits (default: True)
+
+        Returns:
+            Sequence of ModelMessage objects representing the conversation thread,
+            including system prompt and formatted messages
+        """
 
         dbMessage = await self.db.chatMessages.getChatMessageByMessageId(
             ensuredMessage.recipient.id, ensuredMessage.messageId
@@ -1095,8 +1190,16 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def getUserChats(self, userId: int) -> List[ChatInfoDict]:
         """
-        Get chats for the given user.
-        Skip chats that the user has left.
+        Get all chats for a given user, excluding chats they have left, dood!
+
+        Retrieves all chats where the user is a member, filtering out chats
+        where the user has left based on their metadata.
+
+        Args:
+            userId: Telegram user ID
+
+        Returns:
+            List of ChatInfoDict objects representing chats the user is in
         """
         userChats = await self.db.chatUsers.getUserChats(userId)
         ret: List[ChatInfoDict] = []
@@ -1313,6 +1416,23 @@ class BaseBotHandler(CommandHandlerMixin):
     async def processTelegramMedia(
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> Optional[MediaProcessingInfo]:
+        """
+        Process Telegram media attachments from a message, dood!
+
+        Detects and processes various media types (images, stickers, videos, audio, etc.)
+        from Telegram messages. Routes to appropriate processing methods based on
+        message type.
+
+        Args:
+            ensuredMessage: Message containing media attachments
+            prompt: Optional prompt for media processing
+
+        Returns:
+            MediaProcessingInfo if media was processed, None if no media or unsupported type
+
+        Raises:
+            RuntimeError: If base message is not a Telegram Message
+        """
         baseMessage = ensuredMessage.getBaseMessage()
         if not isinstance(baseMessage, telegram.Message):
             raise RuntimeError(f"Base message is not Message, but {type(baseMessage)}")
@@ -1393,6 +1513,20 @@ class BaseBotHandler(CommandHandlerMixin):
     async def processMaxMedia(
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> List[MediaProcessingInfo]:
+        """
+        Process Max messenger media attachments from a message, dood!
+
+        Extracts and processes various attachment types (images, stickers, videos,
+        audio, files) from Max messenger messages. Handles special cases like
+        animated sticker stubs.
+
+        Args:
+            ensuredMessage: Message containing media attachments
+            prompt: Optional prompt for media processing
+
+        Returns:
+            List of MediaProcessingInfo objects for each processed attachment
+        """
         baseMessage = ensuredMessage.getBaseMessage()
         ret: List[MediaProcessingInfo] = []
         if not isinstance(baseMessage, maxModels.Message):
@@ -1746,6 +1880,19 @@ class BaseBotHandler(CommandHandlerMixin):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
+        """
+        Handle new message events, dood!
+
+        Base implementation that returns SKIPPED. Subclasses should override
+        to implement custom message handling logic.
+
+        Args:
+            ensuredMessage: The validated message object
+            updateObj: The raw update object from the bot platform
+
+        Returns:
+            HandlerResultStatus indicating processing result (default: SKIPPED)
+        """
         # By default, skip processing
         return HandlerResultStatus.SKIPPED
 
@@ -1806,5 +1953,20 @@ class BaseBotHandler(CommandHandlerMixin):
         user: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
+        """
+        Handle callback query events (inline button presses), dood!
+
+        Base implementation that returns SKIPPED. Subclasses should override
+        to implement custom callback handling logic.
+
+        Args:
+            ensuredMessage: The validated message object
+            data: Callback data payload as a dictionary
+            user: The user who triggered the callback
+            updateObj: The raw update object from the bot platform
+
+        Returns:
+            HandlerResultStatus indicating processing result (default: SKIPPED)
+        """
         # By default, skip processing
         return HandlerResultStatus.SKIPPED

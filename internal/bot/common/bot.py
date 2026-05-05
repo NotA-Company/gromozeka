@@ -1,7 +1,10 @@
 """Multi-platform bot implementation for Telegram and Max Messenger.
 
-Provides unified bot interface supporting both Telegram and Max Messenger platforms
-with message handling, media processing, and administrative operations.
+This module provides a unified bot interface supporting both Telegram and Max Messenger
+platforms with message handling, media processing, and administrative operations.
+
+The main class, TheBot, abstracts platform-specific differences and provides a consistent
+API for bot operations across different messaging platforms.
 """
 
 import datetime
@@ -34,11 +37,23 @@ class TheBot:
     Provides unified interface for bot operations across different messaging platforms
     including message sending, media handling, user management, and administrative functions.
 
+    Attributes:
+        botProvider: Platform type (BotProvider.TELEGRAM or BotProvider.MAX)
+        config: Configuration dictionary containing bot settings
+        maxBot: Max Messenger bot client instance (None if not using Max)
+        tgBot: Telegram bot client instance (None if not using Telegram)
+        botOwnersUsername: Set of bot owner usernames (lowercase, without @)
+        botOwnersId: Set of bot owner user IDs
+        cache: Cache service instance for storing temporary data
+
     Args:
-        botProvider: Platform type (Telegram or Max)
-        config: Bot configuration dictionary
+        botProvider: Platform type (BotProvider.TELEGRAM or BotProvider.MAX)
+        config: Bot configuration dictionary containing bot settings and owner information
         maxBot: Max Messenger bot client instance (required if botProvider is MAX)
         tgBot: Telegram bot client instance (required if botProvider is TELEGRAM)
+
+    Raises:
+        ValueError: If required bot client is not provided for the specified platform
     """
 
     # TODO Add __slots__
@@ -55,12 +70,13 @@ class TheBot:
 
         Args:
             botProvider: Platform type (BotProvider.TELEGRAM or BotProvider.MAX)
-            config: Configuration dictionary containing bot settings
+            config: Configuration dictionary containing bot settings and owner information
             maxBot: Max Messenger bot client (required if botProvider is MAX)
             tgBot: Telegram bot client (required if botProvider is TELEGRAM)
 
         Raises:
-            ValueError: If required bot client is not provided for the specified platform
+            ValueError: If required bot client is not provided for the specified platform,
+                       or if bot owner configuration contains invalid values
         """
 
         self.botProvider: BotProvider = botProvider
@@ -236,9 +252,25 @@ class TheBot:
         return user.id in chatAdmins
 
     def _keyboardToTelegram(self, keyboard: Sequence[Sequence[CallbackButton]]) -> telegram.InlineKeyboardMarkup:
+        """Convert generic keyboard format to Telegram inline keyboard markup.
+
+        Args:
+            keyboard: 2D sequence of CallbackButton objects representing keyboard layout
+
+        Returns:
+            Telegram InlineKeyboardMarkup object ready for use in Telegram API calls
+        """
         return telegram.InlineKeyboardMarkup([[btn.toTelegram() for btn in row] for row in keyboard])
 
     def _keyboardToMax(self, keyboard: Sequence[Sequence[CallbackButton]]) -> maxModels.InlineKeyboardAttachmentRequest:
+        """Convert generic keyboard format to Max inline keyboard attachment request.
+
+        Args:
+            keyboard: 2D sequence of CallbackButton objects representing keyboard layout
+
+        Returns:
+            Max InlineKeyboardAttachmentRequest object ready for use in Max API calls
+        """
         return maxModels.InlineKeyboardAttachmentRequest(
             payload=maxModels.Keyboard(buttons=[[btn.toMax() for btn in row] for row in keyboard])
         )
@@ -405,6 +437,38 @@ class TheBot:
         notify: Optional[bool] = None,
         attachmentList: Optional[Sequence[Tuple[bytes, MessageType, Optional[str]]]] = None,
     ) -> List[EnsuredMessage]:
+        """Send message via Max Messenger platform.
+
+        Handles sending text messages, photos, and attachments through Max Messenger API.
+        Supports Markdown formatting, inline keyboards, and automatic message splitting
+        for long messages. Photo data is automatically converted to attachment format.
+
+        Args:
+            replyToMessage: Message to reply to (provides chatId and replyToMessageId)
+            messageText: Text content to send (required if no attachments)
+            addMessagePrefix: Prefix to add before message text
+            photoData: Photo bytes to send (converted to attachment automatically)
+            sendMessageKWargs: Additional Max-specific parameters for send_message
+            tryMarkdownV2: Whether to parse text as Markdown
+            sendErrorIfAny: Whether to send error message to chat on failure
+            skipLogs: Whether to skip debug logging
+            inlineKeyboard: Max inline keyboard attachment request
+            typingManager: Manager for typing indicators (stopped before sending)
+            splitIfTooLong: Whether to split long messages into multiple parts
+            chatId: Chat ID to send message to (required if replyToMessage is None)
+            threadId: Thread ID (unused in Max, kept for interface compatibility)
+            notify: Whether to send notification (None uses platform default)
+            attachmentList: List of (data, type, filename) tuples for attachments
+
+        Returns:
+            List of sent EnsuredMessage objects (empty list on failure)
+
+        Raises:
+            RuntimeError: If Max bot client is not configured
+            ValueError: If neither messageText nor attachments provided,
+                       or if chatId is not provided when replyToMessage is None,
+                       or if chat type is not PRIVATE or GROUP
+        """
         if self.maxBot is None:
             raise RuntimeError("Max bot is Undefined")
 
@@ -844,7 +908,21 @@ class TheBot:
         return False
 
     async def sendChatAction(self, ensuredMessage: EnsuredMessage, typingAction: TypingAction) -> bool:
-        """TODO: write docstring"""
+        """Send chat action (typing indicator) to show bot activity.
+
+        Sends a typing action or other status indicator to inform users that the bot
+        is processing their request. Different platforms support different action types.
+
+        Args:
+            ensuredMessage: Message containing chat information (recipient and threadId)
+            typingAction: Type of action to send (e.g., typing, uploading_photo)
+
+        Returns:
+            True if action was sent successfully, False otherwise
+
+        Raises:
+            ValueError: If platform is not supported (neither Telegram nor Max)
+        """
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
             return await self.tgBot.send_chat_action(
                 chat_id=ensuredMessage.recipient.id,

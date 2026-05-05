@@ -1,8 +1,18 @@
-"""Comprehensive tests for OpenRouterProvider and OpenrouterModel, dood!
+"""Comprehensive tests for OpenRouterProvider and OpenrouterModel.
 
 This module provides extensive test coverage for the OpenRouterProvider class
 and OpenrouterModel class, including initialization, model configuration,
 OpenRouter-specific headers, request formatting, and API integration.
+
+Test Coverage:
+    - Provider initialization and configuration
+    - Model addition and management
+    - OpenRouter-specific headers and parameters
+    - Text generation with various scenarios
+    - Tool support and function calling
+    - Error handling (API errors, rate limits, authentication)
+    - Integration workflows
+    - Edge cases and boundary conditions
 """
 
 from unittest.mock import AsyncMock, Mock, patch
@@ -22,8 +32,12 @@ from lib.ai.providers.openrouter_provider import OpenrouterModel, OpenrouterProv
 
 
 @pytest.fixture
-def mockAsyncOpenAI():
-    """Create a mock AsyncOpenAI client, dood!"""
+def mockAsyncOpenAI() -> Mock:
+    """Create a mock AsyncOpenAI client for testing.
+
+    Returns:
+        Mock: A mock AsyncOpenAI client with mocked chat completions API.
+    """
     client = Mock(spec=AsyncOpenAI)
     client.chat = Mock()
     client.chat.completions = Mock()
@@ -32,8 +46,12 @@ def mockAsyncOpenAI():
 
 
 @pytest.fixture
-def providerConfig():
-    """Create OpenRouter provider configuration, dood!"""
+def providerConfig() -> dict:
+    """Create OpenRouter provider configuration for testing.
+
+    Returns:
+        dict: Configuration dictionary with api_key and timeout settings.
+    """
     return {
         "api_key": "sk-or-test-key-123",
         "timeout": 30,
@@ -41,8 +59,15 @@ def providerConfig():
 
 
 @pytest.fixture
-def openrouterProvider(providerConfig):
-    """Create an OpenRouter provider instance, dood!"""
+def openrouterProvider(providerConfig: dict) -> OpenrouterProvider:
+    """Create an OpenRouter provider instance for testing.
+
+    Args:
+        providerConfig: Configuration dictionary for the provider.
+
+    Returns:
+        OpenrouterProvider: An initialized OpenRouter provider instance.
+    """
     with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = OpenrouterProvider(providerConfig)
@@ -50,8 +75,16 @@ def openrouterProvider(providerConfig):
 
 
 @pytest.fixture
-def openrouterModel(openrouterProvider, mockAsyncOpenAI):
-    """Create an OpenRouter model instance, dood!"""
+def openrouterModel(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> OpenrouterModel:
+    """Create an OpenRouter model instance for testing.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Returns:
+        OpenrouterModel: An initialized OpenRouter model instance.
+    """
     model = OpenrouterModel(
         provider=openrouterProvider,
         modelId="anthropic/claude-3-opus",
@@ -65,8 +98,12 @@ def openrouterModel(openrouterProvider, mockAsyncOpenAI):
 
 
 @pytest.fixture
-def sampleMessages():
-    """Create sample messages for testing, dood!"""
+def sampleMessages() -> list[ModelMessage]:
+    """Create sample messages for testing.
+
+    Returns:
+        list[ModelMessage]: A list of sample ModelMessage objects.
+    """
     return [
         ModelMessage(role="system", content="You are a helpful assistant"),
         ModelMessage(role="user", content="What is the capital of France?"),
@@ -78,8 +115,15 @@ def sampleMessages():
 # ============================================================================
 
 
-def testOpenrouterProviderInitialization(providerConfig):
-    """Test OpenRouter provider initializes correctly, dood!"""
+def testOpenrouterProviderInitialization(providerConfig: dict) -> None:
+    """Test OpenRouter provider initializes correctly.
+
+    Args:
+        providerConfig: Configuration dictionary for the provider.
+
+    Raises:
+        AssertionError: If provider initialization fails or attributes are incorrect.
+    """
     with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         provider = OpenrouterProvider(providerConfig)
@@ -90,22 +134,40 @@ def testOpenrouterProviderInitialization(providerConfig):
         assert len(provider.models) == 0
 
 
-def testOpenrouterProviderGetBaseUrl(openrouterProvider):
-    """Test OpenRouter provider returns correct base URL, dood!"""
+def testOpenrouterProviderGetBaseUrl(openrouterProvider: OpenrouterProvider) -> None:
+    """Test OpenRouter provider returns correct base URL.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+
+    Raises:
+        AssertionError: If base URL is incorrect.
+    """
     baseUrl = openrouterProvider._getBaseUrl()
     assert baseUrl == "https://openrouter.ai/api/v1"
 
 
-def testOpenrouterProviderInitializationMissingApiKey():
-    """Test OpenRouter provider initialization fails without api_key, dood!"""
+def testOpenrouterProviderInitializationMissingApiKey() -> None:
+    """Test OpenRouter provider initialization fails without api_key.
+
+    Raises:
+        ValueError: If api_key is missing from configuration.
+    """
     config = {"timeout": 30}
 
     with pytest.raises(ValueError, match="api_key is required"):
         OpenrouterProvider(config)
 
 
-def testOpenrouterProviderClientInitialization(providerConfig):
-    """Test OpenRouter provider initializes AsyncOpenAI client correctly, dood!"""
+def testOpenrouterProviderClientInitialization(providerConfig: dict) -> None:
+    """Test OpenRouter provider initializes AsyncOpenAI client correctly.
+
+    Args:
+        providerConfig: Configuration dictionary for the provider.
+
+    Raises:
+        AssertionError: If client initialization parameters are incorrect.
+    """
     with patch("openai.AsyncOpenAI") as mockClient:
         mockClient.return_value = Mock(spec=AsyncOpenAI)
         testProvider = OpenrouterProvider(providerConfig)
@@ -123,8 +185,16 @@ def testOpenrouterProviderClientInitialization(providerConfig):
 # ============================================================================
 
 
-def testAddOpenrouterModel(openrouterProvider, mockAsyncOpenAI):
-    """Test adding an OpenRouter model, dood!"""
+def testAddOpenrouterModel(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test adding an OpenRouter model.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If model addition fails or attributes are incorrect.
+    """
     openrouterProvider._client = mockAsyncOpenAI
 
     model = openrouterProvider.addModel(
@@ -144,8 +214,16 @@ def testAddOpenrouterModel(openrouterProvider, mockAsyncOpenAI):
     assert model.contextSize == 200000
 
 
-def testAddMultipleOpenrouterModels(openrouterProvider, mockAsyncOpenAI):
-    """Test adding multiple OpenRouter models, dood!"""
+def testAddMultipleOpenrouterModels(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test adding multiple OpenRouter models.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If models are not added correctly.
+    """
     openrouterProvider._client = mockAsyncOpenAI
 
     model1 = openrouterProvider.addModel(
@@ -171,8 +249,12 @@ def testAddMultipleOpenrouterModels(openrouterProvider, mockAsyncOpenAI):
     assert model2.modelId == "openai/gpt-4-turbo"
 
 
-def testAddOpenrouterModelWithoutClient():
-    """Test adding model without initialized client fails, dood!"""
+def testAddOpenrouterModelWithoutClient() -> None:
+    """Test adding model without initialized client fails.
+
+    Raises:
+        RuntimeError: If OpenAI client is not initialized.
+    """
     provider = OpenrouterProvider.__new__(OpenrouterProvider)
     provider.config = {"api_key": "test"}
     provider.models = {}
@@ -182,8 +264,16 @@ def testAddOpenrouterModelWithoutClient():
         provider.addModel("test", "model", "1.0", 0.7, 4096)
 
 
-def testCreateModelInstance(openrouterProvider, mockAsyncOpenAI):
-    """Test _createModelInstance creates OpenrouterModel, dood!"""
+def testCreateModelInstance(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test _createModelInstance creates OpenrouterModel.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If model creation fails.
+    """
     openrouterProvider._client = mockAsyncOpenAI
 
     openrouterProvider._createModelInstance(
@@ -204,8 +294,16 @@ def testCreateModelInstance(openrouterProvider, mockAsyncOpenAI):
 # ============================================================================
 
 
-def testOpenrouterModelInitialization(openrouterProvider, mockAsyncOpenAI):
-    """Test OpenRouter model initializes correctly, dood!"""
+def testOpenrouterModelInitialization(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test OpenRouter model initializes correctly.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If model initialization fails or attributes are incorrect.
+    """
     model = OpenrouterModel(
         provider=openrouterProvider,
         modelId="anthropic/claude-3-opus",
@@ -222,11 +320,18 @@ def testOpenrouterModelInitialization(openrouterProvider, mockAsyncOpenAI):
     assert model.temperature == 0.7
     assert model.contextSize == 200000
     assert model._client == mockAsyncOpenAI
-    assert model._supportTools is True
+    assert model._supportTools is True  # type: ignore[attr-defined]
 
 
-def testOpenrouterModelGetModelId(openrouterModel):
-    """Test OpenRouter model returns correct model ID, dood!"""
+def testOpenrouterModelGetModelId(openrouterModel: OpenrouterModel) -> None:
+    """Test OpenRouter model returns correct model ID.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+
+    Raises:
+        AssertionError: If model ID is incorrect.
+    """
     modelId = openrouterModel._getModelId()
     assert modelId == "anthropic/claude-3-opus"
 
@@ -236,8 +341,15 @@ def testOpenrouterModelGetModelId(openrouterModel):
 # ============================================================================
 
 
-def testOpenrouterModelGetExtraParams(openrouterModel):
-    """Test OpenRouter model returns correct extra parameters, dood!"""
+def testOpenrouterModelGetExtraParams(openrouterModel: OpenrouterModel) -> None:
+    """Test OpenRouter model returns correct extra parameters.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+
+    Raises:
+        AssertionError: If extra parameters are incorrect.
+    """
     extraParams = openrouterModel._getExtraParams()
 
     assert "extra_headers" in extraParams
@@ -250,8 +362,15 @@ def testOpenrouterModelGetExtraParams(openrouterModel):
     assert headers["X-Title"] == "Gromozeka AI Bot"
 
 
-def testOpenrouterModelExtraHeadersFormat(openrouterModel):
-    """Test OpenRouter extra headers are properly formatted, dood!"""
+def testOpenrouterModelExtraHeadersFormat(openrouterModel: OpenrouterModel) -> None:
+    """Test OpenRouter extra headers are properly formatted.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+
+    Raises:
+        AssertionError: If headers are not properly formatted.
+    """
     extraParams = openrouterModel._getExtraParams()
     headers = extraParams["extra_headers"]
 
@@ -270,8 +389,19 @@ def testOpenrouterModelExtraHeadersFormat(openrouterModel):
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextSuccess(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test successful text generation with OpenRouter, dood!"""
+async def testOpenrouterGenerateTextSuccess(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test successful text generation with OpenRouter.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If text generation fails or result is incorrect.
+    """
     # Create mock response
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
@@ -298,8 +428,19 @@ async def testOpenrouterGenerateTextSuccess(openrouterModel, mockAsyncOpenAI, sa
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextWithExtraHeaders(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test text generation includes OpenRouter extra headers, dood!"""
+async def testOpenrouterGenerateTextWithExtraHeaders(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test text generation includes OpenRouter extra headers.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If extra headers are not included in request.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -329,8 +470,19 @@ async def testOpenrouterGenerateTextWithExtraHeaders(openrouterModel, mockAsyncO
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextRequestParameters(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test request parameters are correctly formatted for OpenRouter, dood!"""
+async def testOpenrouterGenerateTextRequestParameters(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test request parameters are correctly formatted for OpenRouter.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If request parameters are incorrect.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -359,8 +511,18 @@ async def testOpenrouterGenerateTextRequestParameters(openrouterModel, mockAsync
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextWithDifferentModels(openrouterProvider, mockAsyncOpenAI):
-    """Test text generation with different OpenRouter models, dood!"""
+async def testOpenrouterGenerateTextWithDifferentModels(
+    openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock
+) -> None:
+    """Test text generation with different OpenRouter models.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If different models are not used correctly.
+    """
     openrouterProvider._client = mockAsyncOpenAI
 
     # Test with Claude
@@ -417,8 +579,19 @@ async def testOpenrouterGenerateTextWithDifferentModels(openrouterProvider, mock
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextWithTools(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test text generation with tools on OpenRouter, dood!"""
+async def testOpenrouterGenerateTextWithTools(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test text generation with tools on OpenRouter.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If tools are not passed correctly.
+    """
     from lib.ai.models import LLMFunctionParameter, LLMParameterType, LLMToolFunction
 
     tools = [
@@ -467,8 +640,19 @@ async def testOpenrouterGenerateTextWithTools(openrouterModel, mockAsyncOpenAI, 
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextApiError(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test handling of OpenRouter API errors, dood!"""
+async def testOpenrouterGenerateTextApiError(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test handling of OpenRouter API errors.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        Exception: If API error occurs.
+    """
     mockAsyncOpenAI.chat.completions.create.side_effect = Exception("OpenRouter API Error")
 
     with pytest.raises(Exception, match="OpenRouter API Error"):
@@ -476,8 +660,19 @@ async def testOpenrouterGenerateTextApiError(openrouterModel, mockAsyncOpenAI, s
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextRateLimitError(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test handling of rate limit errors, dood!"""
+async def testOpenrouterGenerateTextRateLimitError(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test handling of rate limit errors.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        RateLimitError: If rate limit is exceeded.
+    """
     from openai import RateLimitError
 
     mockAsyncOpenAI.chat.completions.create.side_effect = RateLimitError(
@@ -491,8 +686,19 @@ async def testOpenrouterGenerateTextRateLimitError(openrouterModel, mockAsyncOpe
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextAuthenticationError(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test handling of authentication errors, dood!"""
+async def testOpenrouterGenerateTextAuthenticationError(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test handling of authentication errors.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AuthenticationError: If authentication fails.
+    """
     from openai import AuthenticationError
 
     mockAsyncOpenAI.chat.completions.create.side_effect = AuthenticationError(
@@ -511,8 +717,16 @@ async def testOpenrouterGenerateTextAuthenticationError(openrouterModel, mockAsy
 
 
 @pytest.mark.asyncio
-async def testOpenrouterFullWorkflow(openrouterProvider, mockAsyncOpenAI):
-    """Test full workflow with OpenRouter provider, dood!"""
+async def testOpenrouterFullWorkflow(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test full workflow with OpenRouter provider.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If workflow fails at any step.
+    """
     openrouterProvider._client = mockAsyncOpenAI
 
     # Add model
@@ -554,8 +768,16 @@ async def testOpenrouterFullWorkflow(openrouterProvider, mockAsyncOpenAI):
     assert "extra_headers" in callKwargs
 
 
-def testOpenrouterProviderModelManagement(openrouterProvider, mockAsyncOpenAI):
-    """Test OpenRouter provider model management, dood!"""
+def testOpenrouterProviderModelManagement(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test OpenRouter provider model management.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If model management operations fail.
+    """
     openrouterProvider._client = mockAsyncOpenAI
 
     # Add models
@@ -591,8 +813,12 @@ def testOpenrouterProviderModelManagement(openrouterProvider, mockAsyncOpenAI):
 # ============================================================================
 
 
-def testOpenrouterProviderWithCustomConfig():
-    """Test OpenRouter provider with custom configuration, dood!"""
+def testOpenrouterProviderWithCustomConfig() -> None:
+    """Test OpenRouter provider with custom configuration.
+
+    Raises:
+        AssertionError: If custom configuration is not applied correctly.
+    """
     config = {
         "api_key": "sk-or-custom-key",
         "timeout": 60,
@@ -608,8 +834,16 @@ def testOpenrouterProviderWithCustomConfig():
         assert provider.config["max_retries"] == 5
 
 
-def testOpenrouterModelWithCustomExtraConfig(openrouterProvider, mockAsyncOpenAI):
-    """Test OpenRouter model with custom extra configuration, dood!"""
+def testOpenrouterModelWithCustomExtraConfig(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
+    """Test OpenRouter model with custom extra configuration.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+
+    Raises:
+        AssertionError: If extra configuration is not applied correctly.
+    """
     openrouterProvider._client = mockAsyncOpenAI
 
     extraConfig = {
@@ -628,7 +862,7 @@ def testOpenrouterModelWithCustomExtraConfig(openrouterProvider, mockAsyncOpenAI
     )
 
     assert model._config == extraConfig
-    assert model._supportTools is True
+    assert model._supportTools is True  # type: ignore[attr-defined]
 
 
 # ============================================================================
@@ -637,8 +871,19 @@ def testOpenrouterModelWithCustomExtraConfig(openrouterProvider, mockAsyncOpenAI
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextEmptyResponse(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test handling of empty response from OpenRouter, dood!"""
+async def testOpenrouterGenerateTextEmptyResponse(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test handling of empty response from OpenRouter.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If empty response is not handled correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -663,8 +908,19 @@ async def testOpenrouterGenerateTextEmptyResponse(openrouterModel, mockAsyncOpen
 
 
 @pytest.mark.asyncio
-async def testOpenrouterGenerateTextNullContent(openrouterModel, mockAsyncOpenAI, sampleMessages):
-    """Test handling of null content from OpenRouter, dood!"""
+async def testOpenrouterGenerateTextNullContent(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test handling of null content from OpenRouter.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If null content is not handled correctly.
+    """
     mockResponse = Mock(spec=ChatCompletion)
     mockChoice = Mock(spec=Choice)
     mockMessage = Mock(spec=ChatCompletionMessage)
@@ -687,15 +943,29 @@ async def testOpenrouterGenerateTextNullContent(openrouterModel, mockAsyncOpenAI
     assert result.resultText == ""
 
 
-def testOpenrouterProviderStringRepresentation(openrouterProvider):
-    """Test OpenRouter provider string representation, dood!"""
+def testOpenrouterProviderStringRepresentation(openrouterProvider: OpenrouterProvider) -> None:
+    """Test OpenRouter provider string representation.
+
+    Args:
+        openrouterProvider: The OpenRouter provider instance.
+
+    Raises:
+        AssertionError: If string representation is incorrect.
+    """
     strRepr = str(openrouterProvider)
     assert "OpenrouterProvider" in strRepr
     assert "0 models" in strRepr
 
 
-def testOpenrouterModelStringRepresentation(openrouterModel):
-    """Test OpenRouter model string representation, dood!"""
+def testOpenrouterModelStringRepresentation(openrouterModel: OpenrouterModel) -> None:
+    """Test OpenRouter model string representation.
+
+    Args:
+        openrouterModel: The OpenRouter model instance.
+
+    Raises:
+        AssertionError: If string representation is incorrect.
+    """
     strRepr = str(openrouterModel)
     assert "anthropic/claude-3-opus" in strRepr
     assert "latest" in strRepr

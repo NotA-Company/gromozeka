@@ -1,4 +1,14 @@
-"""Type definitions for the rate limiter library."""
+"""Type definitions for the rate limiter library.
+
+This module provides TypedDict classes for configuring rate limiters and their
+management. These types are used throughout the rate limiter library to ensure
+type safety and clear configuration structures.
+
+The module defines:
+- RateLimiterConfig: Configuration for individual rate limiter instances
+- RateLimiterManagerConfig: Configuration for the rate limiter manager that
+  manages multiple rate limiters and queue mappings
+"""
 
 import sys
 from typing import Any, Dict, NotRequired

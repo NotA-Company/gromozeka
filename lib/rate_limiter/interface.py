@@ -1,3 +1,17 @@
+"""Rate limiter interface module.
+
+This module defines the abstract base class for rate limiter implementations.
+Rate limiters control the rate at which operations can be performed, preventing
+system overload and ensuring fair resource allocation. The interface supports
+multiple independent queues with dynamic registration, allowing different
+components to have separate rate limits.
+
+Example:
+    A rate limiter can be used to throttle API calls, database queries,
+    or any operation that needs to respect rate limits. Each queue maintains
+    its own sliding window counter and can be configured independently.
+"""
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 

@@ -1,5 +1,7 @@
-"""
-Telegram bot chat settings.
+"""Telegram bot chat settings models and enums.
+
+This module defines the data structures used for managing chat settings in the Gromozeka bot,
+including chat tiers, settings pages, settings keys, and settings values.
 """
 
 import logging
@@ -13,24 +15,31 @@ logger = logging.getLogger(__name__)
 
 
 class ChatTier(StrEnum):
+    """Chat tier levels for determining user access and capabilities.
+
+    Defines different access levels for users and chats, from banned to bot owners.
+    Each tier has different permissions and capabilities within the bot system.
+    """
 
     BANNED = "banned"
-    """Tier for banned users"""
+    """Tier for banned users."""
     FREE = "free"
-    """Tier for free chats"""
+    """Tier for free chats."""
     FREE_PERSONAL = "free-personal"
-    """Tier for free private chats, allow a bit more"""
-
+    """Tier for free private chats, allows a bit more capabilities."""
     PAID = "paid"
-    """Paid chats of users"""
-
+    """Paid chats of users."""
     FRIEND = "friend"
-    """Friends with maximum abilities"""
+    """Friends with maximum abilities."""
     BOT_OWNER = "bot-owner"
-    """Bot owners - can do anything"""
+    """Bot owners - can do anything."""
 
     def emoji(self) -> str:
-        """Return emoji, associated with given tier"""
+        """Return emoji associated with given tier.
+
+        Returns:
+            str: Emoji representing the tier.
+        """
         # ⭐️🌟😎🤩💰🚫⛔️✅🆓
         match self:
             case ChatTier.BANNED:
@@ -49,26 +58,58 @@ class ChatTier(StrEnum):
                 return "🚫"
 
     def getId(self) -> int:
-        """Return some unique id
-        WARNING: Do not store it anywhere, it can be changed on app reload
+        """Return unique numeric ID for the tier.
+
+        WARNING: Do not store this ID anywhere, it can be changed on app reload.
+
+        Returns:
+            int: Unique numeric ID for the tier (1-based index).
         """
         # Use element index
         return list(self.__class__).index(self) + 1
 
     @classmethod
     def fromId(cls, value: int) -> Self:
-        """Get value by it's int id"""
+        """Get ChatTier value by its numeric ID.
+
+        Args:
+            value: Numeric ID of the tier (1-based index).
+
+        Returns:
+            ChatTier: The tier corresponding to the numeric ID.
+
+        Raises:
+            ValueError: If no tier exists with the given numeric value.
+        """
         try:
             return list(cls)[value - 1]
         except IndexError:
             raise ValueError(f"No {cls.__name__} with numeric value {value}")
 
     def isBetterOrEqualThan(self, other: Self) -> bool:
+        """Check if this tier is better or equal than another tier.
+
+        Args:
+            other: Another ChatTier to compare against.
+
+        Returns:
+            bool: True if this tier's ID is greater than or equal to the other's.
+        """
         return self.getId() >= other.getId()
 
     @classmethod
     def best(cls, *args: Self) -> Self:
-        """Return the element with the highest ID from the provided arguments."""
+        """Return the element with the highest ID from the provided arguments.
+
+        Args:
+            *args: One or more ChatTier instances to compare.
+
+        Returns:
+            ChatTier: The tier with the highest ID.
+
+        Raises:
+            ValueError: If no arguments are provided.
+        """
         if not args:
             raise ValueError("At least one argument is required")
 
@@ -76,7 +117,14 @@ class ChatTier(StrEnum):
 
     @classmethod
     def fromStr(cls, v: str) -> Optional[Self]:
-        """Return chat tier from string. Or none if wrong sting passed"""
+        """Return chat tier from string.
+
+        Args:
+            v: String representation of the tier.
+
+        Returns:
+            Optional[ChatTier]: The corresponding ChatTier, or None if invalid string.
+        """
         try:
             return cls(v)
         except ValueError:
@@ -84,21 +132,28 @@ class ChatTier(StrEnum):
 
 
 class ChatSettingsPage(IntEnum):
-    """Page, where Setting is located"""
+    """Pages where chat settings are organized in the UI.
+
+    Defines different pages/categories for organizing chat settings in the bot interface.
+    Each page has a minimum tier requirement for access.
+    """
 
     STANDART = auto()
     EXTENDED = auto()
     SPAM = auto()
-
     LLM_BASE = auto()
     LLM_PAID = auto()
-
     PAID = auto()
     FRIEND = auto()
     BOT_OWNER = auto()
     BOT_OWNER_SYSTEM = auto()
 
     def getName(self) -> str:
+        """Get the display name of the settings page.
+
+        Returns:
+            str: Human-readable name of the page in Russian.
+        """
         match self:
             case ChatSettingsPage.STANDART:
                 return "Стандартные настройки"
@@ -122,6 +177,14 @@ class ChatSettingsPage(IntEnum):
                 return f"{self.name}"
 
     def minTier(self) -> ChatTier:
+        """Get the minimum tier required to access this settings page.
+
+        Returns:
+            ChatTier: The minimum tier required to view/modify settings on this page.
+
+        Raises:
+            NotImplementedError: If the page has no minimum tier configured.
+        """
         match self:
             case ChatSettingsPage.STANDART:
                 return ChatTier.FREE
@@ -145,11 +208,11 @@ class ChatSettingsPage(IntEnum):
                 raise NotImplementedError(f"Page {self} has no minTier configured")
 
     def next(self) -> Optional[Self]:
-        """
-        Return next page in enum order.
+        """Return next page in enum order.
 
         Returns:
-            Next ChatSettingsPage if it exists, None if current page is the last one.
+            Optional[ChatSettingsPage]: Next ChatSettingsPage if it exists,
+                None if current page is the last one.
         """
         allPages = list(self.__class__)
         currentIndex = allPages.index(self)
@@ -161,24 +224,31 @@ class ChatSettingsPage(IntEnum):
 
 
 class ChatSettingsType(StrEnum):
-    """Enum for chat settings."""
+    """Data types for chat settings values.
+
+    Defines the valid data types that chat settings can have.
+    """
 
     STRING = "string"
     INT = "int"
     FLOAT = "float"
     BOOL = "bool"
     MODEL = "model"
-    """Model Name, can be choosen from list of choosable models"""
+    """Model name, can be chosen from list of choosable models."""
     IMAGE_MODEL = "image-model"
-    """Image-generation model name, can be choosen from list of choosable models"""
+    """Image-generation model name, can be chosen from list of choosable models."""
 
 
 class ChatSettingsKey(StrEnum):
-    """Enum for chat settings."""
+    """Keys for all available chat settings.
+
+    Defines all possible settings keys that can be configured for a chat.
+    Each key has associated metadata including type, description, and page location.
+    """
 
     UNKNOWN = "unknown"
 
-    # # LLM Models
+    # LLM Models
     CHAT_MODEL = "chat-model"
     FALLBACK_MODEL = "fallback-model"
     SUMMARY_MODEL = "summary-model"
@@ -189,7 +259,7 @@ class ChatSettingsKey(StrEnum):
     IMAGE_GENERATION_FALLBACK_MODEL = "image-generation-fallback-model"
     CONDENSING_MODEL = "condensing-model"
 
-    # # Prompts for different actions
+    # Prompts for different actions
     SUMMARY_PROMPT = "summary-prompt"
     PARSE_IMAGE_PROMPT = "parse-image-prompt"
     CHAT_PROMPT = "chat-prompt"
@@ -197,7 +267,7 @@ class ChatSettingsKey(StrEnum):
     CONDENSING_PROMPT = "condensing-prompt"
     DOCUMET_CONDENSING_PROMPT = "document-condensing-prompt"
 
-    # # Some system settings
+    # System settings
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
     BOT_NICKNAMES = "bot-nicknames"
     LLM_MESSAGE_FORMAT = "llm-message-format"
@@ -211,18 +281,18 @@ class ChatSettingsKey(StrEnum):
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
     INTERMEDIATE_MESSAGE_PREFIX = "intermediate-message-prefix"
 
-    # # Allowing different commands in chat
+    # Allowing different commands in chat
     ALLOW_TOOLS_COMMANDS = "allow-tools-commands"
     # Should bot delete /command command if command wasn't allowed
     DELETE_DENIED_COMMANDS = "delete-denied-commands"
 
-    # # Allowing different reactions in chat (to mention/reply/random)
+    # Allowing different reactions in chat (to mention/reply/random)
     ALLOW_MENTION = "allow-mention"
     ALLOW_REPLY = "allow-reply"
     RANDOM_ANSWER_PROBABILITY = "random-answer-probability"
     RANDOM_ANSWER_TO_ADMIN = "random-answer-to-admin"
 
-    # # Spam-related settings
+    # Spam-related settings
     ALLOW_USER_SPAM_COMMAND = "allow-user-spam-command"
     SPAM_DELETE_ALL_USER_MESSAGES = "spam-delete-all-user-messages"
     DETECT_SPAM = "detect-spam"
@@ -231,7 +301,7 @@ class ChatSettingsKey(StrEnum):
     SPAM_BAN_TRESHOLD = "spam-ban-treshold"
     SPAM_WARN_TRESHOLD = "spam-warn-treshold"
 
-    # # Bayes filter settings, dood!
+    # Bayes filter settings
     BAYES_ENABLED = "bayes-enabled"
     BAYES_MIN_CONFIDENCE = "bayes-min-confidence"
     BAYES_AUTO_LEARN = "bayes-auto-learn"
@@ -239,11 +309,11 @@ class ChatSettingsKey(StrEnum):
     BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM = "bayes-min-confedence-to-autolearn-spam"
     BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_HAM = "bayes-min-confedence-to-autolearn-ham"
 
-    # # Reaction settings
+    # Reaction settings
     # JSON-serialized Dict(userID|"username" -> "emoji")
     REACTION_AUTHOR_TO_EMOJI_MAP = "reaction-author-to-emoji-map"
 
-    #
+    # Message management
     DELETE_JOIN_MESSAGES = "delete-join-messages"
     DELETE_LEFT_MESSAGES = "delete-left-messages"
 
@@ -254,20 +324,34 @@ class ChatSettingsKey(StrEnum):
 
     LLM_RATELIMITER = "llm-ratelimiter"
 
-    # System settings. Not to be used\configured
+    # System settings. Not to be used/configured
     CACHED_TS = "cached-ts"
-    """TS when chat settings were cached, to be used in Cache Service only"""
+    """Timestamp when chat settings were cached, to be used in Cache Service only."""
 
     def getId(self) -> int:
-        """Return some unique id
-        WARNING: Do not store it anywhere, it can be changed on app reload
+        """Return unique numeric ID for the settings key.
+
+        WARNING: Do not store this ID anywhere, it can be changed on app reload.
+
+        Returns:
+            int: Unique numeric ID for the key (1-based index).
         """
         # Используем hash или порядковый номер
         return list(self.__class__).index(self) + 1
 
     @classmethod
     def fromId(cls, value: int) -> "ChatSettingsKey":
-        """Get value by it's int id"""
+        """Get ChatSettingsKey value by its numeric ID.
+
+        Args:
+            value: Numeric ID of the settings key (1-based index).
+
+        Returns:
+            ChatSettingsKey: The key corresponding to the numeric ID.
+
+        Raises:
+            ValueError: If no key exists with the given numeric value.
+        """
         try:
             return list(cls)[value - 1]
         except IndexError:
@@ -275,24 +359,54 @@ class ChatSettingsKey(StrEnum):
 
 
 class ChatSettingsValue:
-    """Value of chat settings."""
+    """Value wrapper for chat settings.
+
+    Provides type conversion methods for converting string values to different types.
+    Tracks which user last updated the setting.
+    """
 
     __slots__ = ("value", "updatedBy")
 
-    def __init__(self, value: Any, updatedBy: Optional[int] = None):
+    def __init__(self, value: Any, updatedBy: Optional[int] = None) -> None:
+        """Initialize a chat settings value.
+
+        Args:
+            value: The value to store (will be converted to string).
+            updatedBy: User ID who last updated this setting, or 0 if unknown.
+        """
         self.value = str(value).strip()
         self.updatedBy = updatedBy if updatedBy is not None else 0
 
     def __repr__(self) -> str:
+        """Return string representation of the settings value.
+
+        Returns:
+            str: String representation showing value and updater.
+        """
         return f"{type(self).__name__}(value='{self.value}', updatedBy={self.updatedBy})"
 
     def __str__(self) -> str:
+        """Return string representation of the value.
+
+        Returns:
+            str: The string value.
+        """
         return self.toStr()
 
     def toStr(self) -> str:
+        """Convert value to string.
+
+        Returns:
+            str: The string value.
+        """
         return str(self.value)
 
     def toInt(self) -> int:
+        """Convert value to integer.
+
+        Returns:
+            int: The integer value, or 0 if conversion fails.
+        """
         try:
             return int(self.value)
         except ValueError:
@@ -300,6 +414,11 @@ class ChatSettingsValue:
             return 0
 
     def toFloat(self) -> float:
+        """Convert value to float.
+
+        Returns:
+            float: The float value, or 0.0 if conversion fails.
+        """
         try:
             return float(self.value)
         except ValueError:
@@ -307,12 +426,37 @@ class ChatSettingsValue:
             return 0.0
 
     def toBool(self) -> bool:
+        """Convert value to boolean.
+
+        Returns:
+            bool: True if value is "true" or "1" (case-insensitive), False otherwise.
+        """
         return self.value.lower().strip() in ("true", "1")
 
     def toList(self, separator: str = ",", dropEmpty: bool = True) -> List[str]:
+        """Convert value to list of strings.
+
+        Args:
+            separator: String to split the value on. Defaults to ",".
+            dropEmpty: Whether to remove empty strings from the result. Defaults to True.
+
+        Returns:
+            List[str]: List of string values.
+        """
         return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]
 
     def toModel(self, modelManager: LLMManager) -> AbstractModel:
+        """Convert value to an LLM model instance.
+
+        Args:
+            modelManager: The LLM manager to retrieve the model from.
+
+        Returns:
+            AbstractModel: The model instance.
+
+        Raises:
+            ValueError: If the model is not found in the manager.
+        """
         ret = modelManager.getModel(self.value)
         if ret is None:
             logger.error(f"Model {self.value} not found")
@@ -698,5 +842,14 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
 
 
 def getChatSettingsInfo() -> Dict[ChatSettingsKey, ChatSettingsInfoValue]:
-    # TODO: Add ability to return different settings for diffenet chats in future
+    """Get information about all available chat settings.
+
+    Returns a copy of the settings info dictionary containing metadata for all
+    chat settings keys, including their types, descriptions, and page locations.
+
+    Returns:
+        Dict[ChatSettingsKey, ChatSettingsInfoValue]: Dictionary mapping settings keys
+            to their metadata (type, short description, long description, page).
+    """
+    # TODO: Add ability to return different settings for different chats in future
     return _chatSettingsInfo.copy()

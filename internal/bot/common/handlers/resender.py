@@ -74,7 +74,7 @@ class ResendJob:
         lastMessageDate: Optional[datetime.datetime | str] = None,
         notification: Optional[bool] = None,
         mediaGroupDelaySecs: float = 10.0,
-    ):
+    ) -> None:
         """
         Initialize a resend job with the specified configuration.
 
@@ -204,7 +204,7 @@ class ResenderHandler(BaseBotHandler):
         database: Database,
         llmManager: LLMManager,
         botProvider: BotProvider,
-    ):
+    ) -> None:
         """
         Initialize the resender handler with configuration and services.
 

@@ -86,7 +86,7 @@ class YandexSearchHandler(BaseBotHandler):
 
     def __init__(
         self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    ) -> None:
         """
         Initialize the Yandex Search handler with required services and configuration.
 
@@ -95,9 +95,10 @@ class YandexSearchHandler(BaseBotHandler):
         initializes default search parameters.
 
         Args:
-            configManager (ConfigManager): Configuration manager providing bot settings
-            database (Database): Database object for data persistence
-            llmManager (LLMManager): LLM manager for AI model operations
+            configManager: Configuration manager providing bot settings
+            database: Database object for data persistence
+            llmManager: LLM manager for AI model operations
+            botProvider: Bot provider for messaging operations
 
         Raises:
             RuntimeError: If Yandex Search integration is not enabled in configuration
@@ -224,16 +225,22 @@ class YandexSearchHandler(BaseBotHandler):
     ) -> str:
         """Perform web search using Yandex Search API.
 
+        This method executes a web search query through the Yandex Search API and
+        returns formatted results. It can optionally fetch and parse the content of
+        found pages, apply content filtering, and limit the number of results.
+
         Args:
             extraData: Optional additional data for the operation
-            query: Search query string
+            query: Search query string to search for
             return_page_content: Whether to download and parse content of found pages
-            enable_content_filter: Whether to enable content filtering (default: False)
-            max_results: Maximum number of results to return (default: 5)
+            enable_content_filter: Whether to enable family-safe content filtering
+            max_results: Maximum number of results to return (clamped between 1 and 10)
             **kwargs: Additional keyword arguments
 
         Returns:
-            JSON string containing search results or page contents with status information
+            JSON string containing search results or page contents with status information.
+            Format includes 'done' flag, 'error' field if failed, and either 'pages' with
+            content or search result groups.
         """
 
         async def fetchUrlContent(urls: Sequence[Optional[str]]) -> Optional[Dict[str, str]]:
@@ -333,23 +340,28 @@ class YandexSearchHandler(BaseBotHandler):
         max_size: int = 10240,
         **kwargs,
     ) -> str:
-        """
-        LLM tool handler to fetch content from a URL, dood!
+        """LLM tool handler to fetch content from a URL.
 
         This tool is registered with the LLM service and can be called by AI models
-        to retrieve web content during conversations. Currently returns raw content
-        as a string.
+        to retrieve web content during conversations. It supports caching, HTML to
+        Markdown conversion, and content condensing for large pages.
 
         Args:
-            extraData: Optional extra data passed by the LLM service (unused)
+            extraData: Optional extra data passed by the LLM service, must contain
+                'ensuredMessage' key with EnsuredMessage instance
             url: The URL to fetch content from
-            parse_to_markdown: Whether to parse the content to Markdown (default: True)
-            max_size: Max size returned, will be condensed via LLM if page is bigger
-            **kwargs: Additional keyword arguments (unused)
+            parse_to_markdown: Whether to parse HTML content to Markdown format
+            max_size: Maximum size of returned content in bytes. If page content
+                exceeds this size, it will be condensed via LLM
+            **kwargs: Additional keyword arguments
 
         Returns:
-            str: The content from the URL as a string, or a JSON error object
-                 if the request fails
+            The content from the URL as a string, or a JSON error object if the
+            request fails. Content may be raw HTML, converted Markdown, or condensed
+            text depending on parameters and content size.
+
+        Raises:
+            RuntimeError: If extraData is None or does not contain 'ensuredMessage'
         """
         if extraData is None:
             raise RuntimeError("extraData should be provided")
@@ -444,6 +456,26 @@ class YandexSearchHandler(BaseBotHandler):
             return utils.jsonDumps({"done": False, "error": str(e)})
 
     async def _downloadUrl(self, url: str) -> Dict[str, Any]:
+        """Download content from a URL using HTTP client.
+
+        This method performs an HTTP GET request to fetch content from the specified
+        URL. It handles redirects, sets appropriate headers, and returns the response
+        content along with metadata.
+
+        Args:
+            url: The URL to download content from
+
+        Returns:
+            Dictionary containing download result with keys:
+                - 'done' (bool): True if download succeeded, False otherwise
+                - 'content' (str): The downloaded content if successful
+                - 'contentType' (str): The content type from response headers
+                - 'error' (str): Error message if download failed
+
+        Note:
+            Uses HTTP/2 with a 60-second timeout, follows up to 5 redirects,
+            and sets a user agent header to avoid blocking.
+        """
         try:
             async with httpx.AsyncClient(
                 http2=True,
@@ -548,13 +580,16 @@ class YandexSearchHandler(BaseBotHandler):
         """Handle /web_search command for direct user web searches.
 
         This method processes the /web_search command, allowing users to search
-        the web directly through the bot. It validates user permissions, parses
-        the search query from command arguments, performs the search via Yandex
-        Search API, and formats the results for Telegram display.
+        the web directly through the bot. It validates the search query from
+        command arguments, performs the search via Yandex Search API, applies
+        rate limiting, and formats the results for Telegram display.
 
         Args:
-            update (Update): Telegram update object containing the command message
-            context (ContextTypes.DEFAULT_TYPE): Telegram context with command arguments
+            ensuredMessage: Ensured message object containing message details
+            command: The command that triggered this handler
+            args: Command arguments containing the search query
+            UpdateObj: Telegram update object containing the command message
+            typingManager: Optional typing manager for showing typing status
 
         Returns:
             None: This method sends messages directly via Telegram API

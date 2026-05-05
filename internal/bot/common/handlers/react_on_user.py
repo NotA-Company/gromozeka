@@ -1,8 +1,11 @@
-"""
-Add reaction to user messages
-https://docs.python-telegram-bot.org/en/stable/telegram.bot.html#telegram.Bot.set_message_reaction
+"""Handler for adding reactions to user messages.
 
+This module provides functionality to automatically add emoji reactions to messages
+from specific users in Telegram chats. It allows administrators to configure which
+emoji should be used for reactions based on message authors.
 
+Reference:
+    https://docs.python-telegram-bot.org/en/stable/telegram.bot.html#telegram.Bot.set_message_reaction
 """
 
 import json
@@ -35,8 +38,11 @@ logger = logging.getLogger(__name__)
 
 
 class ReactOnUserMessageHandler(BaseBotHandler):
-    """
-    Example bot Handler
+    """Handler for automatically adding reactions to messages from specific users.
+
+    This handler allows administrators to configure emoji reactions that will be
+    automatically added to messages from specific users in Telegram chats. It supports
+    both user IDs and usernames for matching message authors.
     """
 
     ###
@@ -44,6 +50,19 @@ class ReactOnUserMessageHandler(BaseBotHandler):
     ###
 
     def _getMessageAuthor(self, message: telegram.Message) -> MessageSender:
+        """Extract the author information from a Telegram message.
+
+        This method determines the actual author of a message, handling both regular
+        messages and forwarded messages. For forwarded messages, it extracts the
+        original author's information from the forward origin.
+
+        Args:
+            message: The Telegram message to extract author information from.
+
+        Returns:
+            A MessageSender object containing the author's ID and username.
+            Returns an empty MessageSender if the author cannot be determined.
+        """
         # We use MessageSender here to not invent new type
         ret = MessageSender(0, "", "")
         if message.forward_origin:
@@ -74,6 +93,18 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         return ret
 
     async def _getAuthorToEmojiMap(self, chatId: int) -> Dict[str | int, str]:
+        """Retrieve the author-to-emoji mapping for a specific chat.
+
+        This method fetches the chat settings and parses the JSON string that maps
+        user IDs and usernames to their corresponding emoji reactions.
+
+        Args:
+            chatId: The ID of the chat to retrieve the mapping for.
+
+        Returns:
+            A dictionary mapping user IDs (int) or usernames (str) to emoji strings.
+            Returns an empty dictionary if the setting is not configured or invalid.
+        """
         chatSettings = await self.getChatSettings(chatId)
         authorToEmojiMapStr = chatSettings[ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP].toStr()
 
@@ -97,7 +128,21 @@ class ReactOnUserMessageHandler(BaseBotHandler):
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
-        """ """
+        """Handle new messages and add reactions based on author configuration.
+
+        This method is called for each new message and checks if the message author
+        has a configured emoji reaction. If a reaction is configured, it adds the
+        reaction to the message.
+
+        Args:
+            ensuredMessage: The ensured message object containing message details.
+            updateObj: The update object from the messaging platform.
+
+        Returns:
+            HandlerResultStatus.NEXT if a reaction was successfully added,
+            HandlerResultStatus.SKIPPED if no reaction was needed or configured,
+            HandlerResultStatus.ERROR if an error occurred while adding the reaction.
+        """
         message = ensuredMessage.getBaseMessage()
 
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
@@ -140,7 +185,22 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """TODO"""
+        """Configure an emoji reaction for messages from a specific user.
+
+        This command allows administrators to set an emoji that will be automatically
+        added to all future messages from the author of the replied-to message. The
+        command must be sent as a reply to a message from the target user.
+
+        Args:
+            ensuredMessage: The ensured message object containing command details.
+            command: The command name that was triggered.
+            args: Command arguments. Format: [<chatId>] <emoji>.
+            UpdateObj: The update object from the messaging platform.
+            typingManager: Optional typing manager for showing typing status.
+
+        Returns:
+            None
+        """
         message = ensuredMessage.getBaseMessage()
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
             logger.error("ReactOnUserMessageHandler support Telegram only for now")
@@ -238,11 +298,21 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        Remove a reaction from a message, dood!
+        """Remove the configured emoji reaction for messages from a specific user.
 
-        This command allows removing reactions that were previously added to messages.
-        The command must be sent as a reply to the message from which to remove the reaction.
+        This command allows administrators to remove the emoji reaction configuration
+        for the author of the replied-to message. The command must be sent as a reply
+        to a message from the target user.
+
+        Args:
+            ensuredMessage: The ensured message object containing command details.
+            command: The command name that was triggered.
+            args: Command arguments. Format: [<chatId>].
+            UpdateObj: The update object from the messaging platform.
+            typingManager: Optional typing manager for showing typing status.
+
+        Returns:
+            None
         """
         message = ensuredMessage.getBaseMessage()
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
@@ -330,11 +400,21 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        Dump reaction statistics for a chat, dood!
+        """Display the current author-to-emoji mapping for a chat.
 
-        This command displays statistics about reactions in the specified chat,
-        including the number of reactions and which users have reacted to messages.
+        This command outputs the JSON configuration of which users have emoji reactions
+        configured in the specified chat. This is useful for reviewing and debugging
+        reaction settings.
+
+        Args:
+            ensuredMessage: The ensured message object containing command details.
+            command: The command name that was triggered.
+            args: Command arguments. Format: [<chatId>].
+            UpdateObj: The update object from the messaging platform.
+            typingManager: Optional typing manager for showing typing status.
+
+        Returns:
+            None
         """
         argList = args.split()
 

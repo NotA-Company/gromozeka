@@ -7,6 +7,40 @@ and domain-specific queries.
 
 All repositories inherit from BaseRepository and require a DatabaseManager instance
 for database access.
+
+Key Components:
+    BaseRepository: Abstract base class defining the common interface and
+        functionality for all repository implementations.
+    CacheRepository: Handles cache-related database operations.
+    ChatInfoRepository: Manages chat metadata and information.
+    ChatMessagesRepository: Handles message storage and retrieval.
+    ChatSettingsRepository: Manages chat-specific settings and configurations.
+    ChatSummarizationRepository: Handles chat summarization data.
+    ChatUsersRepository: Manages user-chat relationships and memberships.
+    CommonFunctionsRepository: Provides common database utility functions.
+    DelayedTasksRepository: Manages delayed task scheduling and execution.
+    MediaAttachmentsRepository: Handles media attachment storage and metadata.
+    SpamRepository: Manages spam detection and filtering data.
+    UserDataRepository: Handles user-specific data and preferences.
+
+Usage Example:
+    >>> from internal.database.repositories import ChatInfoRepository
+    >>> from internal.database.manager import DatabaseManager
+    >>>
+    >>> db_manager = DatabaseManager()
+    >>> chat_repo = ChatInfoRepository(db_manager)
+    >>> chat_info = chat_repo.getChatInfo(chat_id=12345)
+
+Architecture:
+    The repository pattern implemented here separates data access logic from
+    business logic, providing a clean abstraction layer over the database.
+    Each repository is responsible for a specific domain entity and provides
+    type-safe methods for data manipulation.
+
+Note:
+    All repositories require a DatabaseManager instance to be passed during
+    initialization. The DatabaseManager handles connection pooling, transaction
+    management, and provides access to the underlying database connection.
 """
 
 from .base import BaseRepository

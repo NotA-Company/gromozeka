@@ -1,5 +1,4 @@
-"""
-Common bot commands handler module, dood!
+"""Common bot commands handler module.
 
 This module contains the CommonHandler class which provides base bot functionality including:
 - Basic bot commands (/start, /remind, /list_chats)
@@ -43,8 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class CommonHandler(BaseBotHandler):
-    """
-    Common bot handler class providing core bot functionality, dood!
+    """Common bot handler class providing core bot functionality.
 
     This handler class manages:
     - Basic user commands (/start, /remind, /list_chats)
@@ -53,14 +51,13 @@ class CommonHandler(BaseBotHandler):
     - Message helper utilities for delayed operations
 
     Attributes:
-        llmService: LLM service instance for tool registration and management
+        llmService: LLM service instance for tool registration and management.
     """
 
     def __init__(
         self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
     ):
-        """
-        Initialize the CommonHandler with required services, dood!
+        """Initialize the CommonHandler with required services.
 
         Sets up the handler by:
         1. Initializing the base handler with config, database, and LLM manager
@@ -68,9 +65,10 @@ class CommonHandler(BaseBotHandler):
         3. Registering delayed queue task handlers (send_message, delete_message)
 
         Args:
-            configManager: Configuration manager instance for accessing bot settings
-            database: Database wrapper instance for data persistence
-            llmManager: LLM manager instance for AI model interactions
+            configManager: Configuration manager instance for accessing bot settings.
+            database: Database wrapper instance for data persistence.
+            llmManager: LLM manager instance for AI model interactions.
+            botProvider: Bot provider instance for platform-specific operations.
         """
         # Initialize the mixin (discovers handlers)
         super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
@@ -97,8 +95,7 @@ class CommonHandler(BaseBotHandler):
     # Delayed Queue Handlers
     ###
     async def _dqSendMessageHandler(self, delayedTask: DelayedTask) -> None:
-        """
-        Handle delayed message sending from the queue, dood!
+        """Handle delayed message sending from the queue.
 
         This handler is triggered when a delayed SEND_MESSAGE task is ready for execution.
         It reconstructs the message context from the task kwargs and sends the message
@@ -106,13 +103,13 @@ class CommonHandler(BaseBotHandler):
 
         Args:
             delayedTask: The delayed task containing message details in kwargs:
-                - messageId: Original message ID
-                - chatId: Target chat ID
-                - chatType: Type of chat (private, group, supergroup)
-                - userId: User ID who initiated the delayed message
-                - messageText: Text content to send
-                - threadId: Thread ID for topic-based chats (optional)
-                - messageCategory: Category of the message for tracking
+                - messageId: Original message ID.
+                - chatId: Target chat ID.
+                - chatType: Type of chat (private, group, supergroup).
+                - userId: User ID who initiated the delayed message.
+                - messageText: Text content to send.
+                - threadId: Thread ID for topic-based chats (optional).
+                - messageCategory: Category of the message for tracking.
 
         Returns:
             None
@@ -135,16 +132,15 @@ class CommonHandler(BaseBotHandler):
         )
 
     async def _dqDeleteMessageHandler(self, delayedTask: DelayedTask) -> None:
-        """
-        Handle delayed message deletion from the queue, dood!
+        """Handle delayed message deletion from the queue.
 
         This handler is triggered when a delayed DELETE_MESSAGE task is ready for execution.
         It attempts to delete the specified message from the chat using the bot API.
 
         Args:
             delayedTask: The delayed task containing deletion details in kwargs:
-                - chatId: Chat ID where the message is located
-                - messageId: ID of the message to delete
+                - chatId: Chat ID where the message is located.
+                - messageId: ID of the message to delete.
 
         Returns:
             None
@@ -170,22 +166,21 @@ class CommonHandler(BaseBotHandler):
     ###
 
     async def _llmToolGetCurrentDateTime(self, extraData: Optional[Dict[str, Any]], **kwargs) -> str:
-        """
-        LLM tool handler to get current date and time, dood!
+        """LLM tool handler to get current date and time.
 
         This tool is registered with the LLM service and can be called by AI models
         to retrieve the current datetime during conversations. Returns datetime in
         multiple formats for flexibility.
 
         Args:
-            extraData: Optional extra data passed by the LLM service (unused)
-            **kwargs: Additional keyword arguments (unused)
+            extraData: Optional extra data passed by the LLM service (unused).
+            **kwargs: Additional keyword arguments (unused).
 
         Returns:
             str: JSON string containing:
-                - datetime: ISO 8601 formatted datetime string
-                - timestamp: Unix timestamp (float)
-                - timezone: Timezone identifier (always "UTC")
+                - datetime: ISO 8601 formatted datetime string.
+                - timestamp: Unix timestamp (float).
+                - timezone: Timezone identifier (always "UTC").
         """
         now = utils.now()
         return utils.jsonDumps({"datetime": now.isoformat(), "timestamp": now.timestamp(), "timezone": "UTC"})
@@ -200,18 +195,17 @@ class CommonHandler(BaseBotHandler):
         messageText: str,
         messageCategory: MessageCategory = MessageCategory.BOT,
     ) -> None:
-        """
-        Schedule a message to be sent after a specified delay, dood!
+        """Schedule a message to be sent after a specified delay.
 
         This helper method creates a delayed task in the queue service that will
         trigger the _dqSendMessageHandler when the delay expires. The message will
         be sent to the same chat/thread as the original message.
 
         Args:
-            ensuredMessage: The original message context (chat, user, thread info)
-            delayedUntil: Unix timestamp when the message should be sent
-            messageText: The text content to send in the delayed message
-            messageCategory: Category for message tracking (default: MessageCategory.BOT)
+            ensuredMessage: The original message context (chat, user, thread info).
+            delayedUntil: Unix timestamp when the message should be sent.
+            messageText: The text content to send in the delayed message.
+            messageCategory: Category for message tracking (default: MessageCategory.BOT).
 
         Returns:
             None
@@ -251,16 +245,18 @@ class CommonHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        Handle the /start command to welcome new users, dood!
+        """Handle the /start command to welcome new users.
 
         This command is typically triggered when a user first interacts with the bot
         in a private chat. It sends a welcome message introducing the bot and
         suggesting the /help command for more information.
 
         Args:
-            update: Telegram update object containing the message
-            context: Telegram context object with command arguments and bot data
+            ensuredMessage: The ensured message object containing message context.
+            command: The command that was triggered (e.g., "start").
+            args: Additional arguments passed with the command.
+            UpdateObj: The update object from the messaging platform.
+            typingManager: Optional typing manager for showing typing indicators.
 
         Returns:
             None
@@ -297,8 +293,7 @@ class CommonHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        Handle the /remind command to schedule reminder messages, dood!
+        """Handle the /remind command to schedule reminder messages.
 
         This command allows users to schedule a reminder message to be sent after
         a specified delay. The reminder text can be provided as:
@@ -312,10 +307,11 @@ class CommonHandler(BaseBotHandler):
         - Time format: HH:MM[:SS] (e.g., 14:30 or 14:30:00)
 
         Args:
-            update: Telegram update object containing the message
-            context: Telegram context object with command arguments:
-                - args[0]: Required delay/time specification
-                - args[1:]: Optional reminder text
+            ensuredMessage: The ensured message object containing message context.
+            command: The command that was triggered (e.g., "remind").
+            args: Command arguments containing delay specification and optional reminder text.
+            UpdateObj: The update object from the messaging platform.
+            typingManager: Optional typing manager for showing typing indicators.
 
         Returns:
             None
@@ -393,17 +389,18 @@ class CommonHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        Handle the /list_chats command to display known chats, dood!
+        """Handle the /list_chats command to display known chats.
 
         This command shows a list of chats where the bot has seen the user.
         By default, shows only chats where the requesting user is a member.
         Admin users can use the 'all' parameter to see all chats known to the bot.
 
         Args:
-            update: Telegram update object containing the message
-            context: Telegram context object with optional arguments:
-                - args[0]: Optional 'all' flag to list all chats (admin only)
+            ensuredMessage: The ensured message object containing message context.
+            command: The command that was triggered (e.g., "list_chats").
+            args: Optional arguments, can contain 'all' to list all chats (admin only).
+            UpdateObj: The update object from the messaging platform.
+            typingManager: Optional typing manager for showing typing indicators.
 
         Returns:
             None

@@ -1,10 +1,9 @@
-"""
-LLM message handlers for the Gromozeka Telegram bot, dood!
+"""LLM message handlers for the Gromozeka Telegram bot.
 
-This module contains handlers for processing messages that interact with Large Language Models (LLMs).
+This module provides handlers for processing messages that interact with Large Language Models (LLMs).
 It handles various message types including replies, mentions, private messages, and random responses
 in group chats. The handlers manage conversation context, message history, and integrate with
-image generation capabilities when needed, dood!
+image generation capabilities when needed.
 
 Key Features:
     - Reply handling with conversation thread tracking
@@ -14,6 +13,12 @@ Key Features:
     - Image generation from LLM descriptions
     - Tool usage support for LLM interactions
     - Fallback model support for reliability
+
+Example:
+    The handler is typically registered with the bot and processes incoming messages::
+
+        handler = LLMMessageHandler(configManager, database, llmManager, botProvider)
+        await handler.newMessageHandler(ensuredMessage, updateObj)
 """
 
 import json
@@ -60,28 +65,27 @@ logger = logging.getLogger(__name__)
 
 
 class LLMMessageHandler(BaseBotHandler):
-    """
-    Handler for LLM-based message processing in Telegram bot, dood!
+    """Handler for LLM-based message processing in Telegram bot.
 
     This class manages all interactions between user messages and Large Language Models,
     including conversation threading, context management, and response generation.
     It supports multiple chat types (private, group, supergroup) and various response
-    triggers (replies, mentions, random responses), dood!
+    triggers (replies, mentions, random responses).
 
     Attributes:
-        llmService (LLMService): Singleton service for LLM operations
+        llmService (LLMService): Singleton service for LLM operations.
     """
 
     def __init__(
         self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ):
-        """
-        Initialize the LLM message handler, dood!
+    ) -> None:
+        """Initialize the LLM message handler.
 
         Args:
-            configManager (ConfigManager): Configuration manager for bot settings
-            database (Database): Database object for message storage and retrieval
-            llmManager (LLMManager): Manager for LLM model instances and operations
+            configManager (ConfigManager): Configuration manager for bot settings.
+            database (Database): Database object for message storage and retrieval.
+            llmManager (LLMManager): Manager for LLM model instances and operations.
+            botProvider (BotProvider): Bot platform provider (Telegram, Max, etc.).
         """
         super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
 
@@ -104,25 +108,26 @@ class LLMMessageHandler(BaseBotHandler):
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,
     ) -> ModelRunResult:
-        """
-        Generate text response using LLM with fallback support, dood!
+        """Generate text response using LLM with fallback support.
 
         This method calls the LLM service to generate a text response based on the provided
         messages. It supports tool usage, fallback models, and can send intermediate messages
-        during generation. The method handles streaming responses and error recovery, dood!
+        during generation. The method handles streaming responses and error recovery.
 
         Args:
-            model (AbstractModel): Primary LLM model to use for generation
-            messages (List[ModelMessage]): List of messages forming the conversation context
-            fallbackModel (AbstractModel): Fallback model to use if primary fails
-            ensuredMessage (EnsuredMessage): The message being responded to
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            messages (Sequence[ModelMessage]): List of messages forming the conversation context.
+            ensuredMessage (EnsuredMessage): The message being responded to.
+            chatSettings (ChatSettingsDict): Chat-specific settings for LLM configuration.
+            typingManager (TypingManager): Manager for sending typing indicators.
             useTools (bool, optional): Whether to enable tool usage for the LLM. Defaults to False.
             sendIntermediateMessages (bool, optional): Whether to send streaming intermediate
                 responses. Defaults to True.
+            keepFirstN (int, optional): Number of first messages to keep in context. Defaults to 0.
+            keepLastN (int, optional): Number of last messages to keep in context. Defaults to 1.
+            maxTokensCoeff (float, optional): Coefficient for calculating max tokens. Defaults to 0.8.
 
         Returns:
-            ModelRunResult: Result containing generated text, status, and metadata
+            ModelRunResult: Result containing generated text, status, and metadata.
         """
 
         async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
@@ -176,13 +181,12 @@ class LLMMessageHandler(BaseBotHandler):
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,
     ) -> bool:
-        """
-        Send a chat message to the LLM and handle the response, dood!
+        """Send a chat message to the LLM and handle the response.
 
         This method orchestrates the complete flow of sending a message to the LLM,
         processing the response, handling image generation if requested, and sending
         the final response to the user. It manages chat settings, message formatting,
-        and error handling, dood!
+        and error handling.
 
         The method supports:
         - Multiple message formats (text, JSON)
@@ -192,13 +196,18 @@ class LLMMessageHandler(BaseBotHandler):
         - Error recovery and user notification
 
         Args:
-            ensuredMessage (EnsuredMessage): The message to respond to
-            messagesHistory (List[ModelMessage]): Complete conversation history including
-                system prompt and user messages
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            ensuredMessage (EnsuredMessage): The message to respond to.
+            messagesHistory (Sequence[ModelMessage]): Complete conversation history including
+                system prompt and user messages.
+            typingManager (TypingManager): Manager for sending typing indicators.
+            stopTypingOnSend (bool, optional): Whether to stop typing when sending message.
+                Defaults to True.
+            keepFirstN (int, optional): Number of first messages to keep in context. Defaults to 0.
+            keepLastN (int, optional): Number of last messages to keep in context. Defaults to 1.
+            maxTokensCoeff (float, optional): Coefficient for calculating max tokens. Defaults to 0.8.
 
         Returns:
-            bool: True if message was sent successfully, False otherwise
+            bool: True if message was sent successfully, False otherwise.
         """
         # For logging purposes
         messageHistoryStr = ""
@@ -336,20 +345,19 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
-        """
-        Handle new messages and route them to appropriate handlers, dood!
+        """Handle new messages and route them to appropriate handlers.
 
         This method processes incoming messages from private chats and groups,
         checking for replies, mentions, and randomly responding to messages.
         For Telegram, it also handles automatic forwards from linked channels.
 
         Args:
-            ensuredMessage: The validated message object containing all message data
-            updateObj: The raw update object from the bot platform
+            ensuredMessage (EnsuredMessage): The validated message object containing all message data.
+            updateObj (UpdateObjectType): The raw update object from the bot platform.
 
         Returns:
             HandlerResultStatus: FINAL if message was handled, SKIPPED for unsupported
-                                chat types, NEXT to continue processing chain
+                chat types, NEXT to continue processing chain.
         """
 
         chat = ensuredMessage.recipient
@@ -395,13 +403,12 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> bool:
-        """
-        Handle messages that are replies to bot's previous messages, dood!
+        """Handle messages that are replies to bot's previous messages.
 
         This method processes replies to the bot's messages by reconstructing the
         conversation thread from the database. It retrieves all messages in the thread
         (using root_message_id) and sends them to the LLM to generate a contextually
-        appropriate response, dood!
+        appropriate response.
 
         The method:
         1. Verifies the reply is to a bot message
@@ -411,13 +418,12 @@ class LLMMessageHandler(BaseBotHandler):
         5. Waits for media processing if needed
 
         Args:
-            update (Update): Telegram update object
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
-            ensuredMessage (EnsuredMessage): The reply message to process
+            ensuredMessage (EnsuredMessage): The reply message to process.
+            updateObj (UpdateObjectType): The raw update object from the bot platform.
 
         Returns:
             bool: True if reply was handled successfully, False if not a reply to bot
-                or if reply handling is disabled in chat settings
+                or if reply handling is disabled in chat settings.
         """
         if not ensuredMessage.isReply or ensuredMessage.replyId is None:
             return False
@@ -479,13 +485,12 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> bool:
-        """
-        Handle messages where the bot is mentioned by name or username, dood!
+        """Handle messages where the bot is mentioned by name or username.
 
         This method processes messages that mention the bot, either by display name
         or username. It includes special handling for "кто сегодня" (who today)
         queries that randomly select an active user, and general LLM responses
-        for other mentions, dood!
+        for other mentions.
 
         Special features:
         - "кто сегодня [role]" - Randomly selects an active user for a role
@@ -494,13 +499,12 @@ class LLMMessageHandler(BaseBotHandler):
         - Generates LLM response with appropriate context
 
         Args:
-            update (Update): Telegram update object
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
-            ensuredMessage (EnsuredMessage): The message containing the mention
+            ensuredMessage (EnsuredMessage): The message containing the mention.
+            updateObj (UpdateObjectType): The raw update object from the bot platform.
 
         Returns:
             bool: True if mention was handled successfully, False if bot was not mentioned
-                or if mention handling is disabled in chat settings
+                or if mention handling is disabled in chat settings.
         """
 
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
@@ -617,12 +621,11 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> bool:
-        """
-        Randomly respond to messages in group chats based on probability, dood!
+        """Randomly respond to messages in group chats based on probability.
 
         This method implements probabilistic responses in group chats, allowing the bot
         to occasionally participate in conversations without being explicitly mentioned.
-        The probability is configurable per chat, and admin messages can be excluded, dood!
+        The probability is configurable per chat, and admin messages can be excluded.
 
         The method:
         1. Checks if random responses are enabled (probability > 0)
@@ -636,14 +639,13 @@ class LLMMessageHandler(BaseBotHandler):
         - If not a reply: Gets last N messages for context
 
         Args:
-            update (Update): Telegram update object
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
-            ensuredMessage (EnsuredMessage): The message that might trigger a response
+            ensuredMessage (EnsuredMessage): The message that might trigger a response.
+            updateObj (UpdateObjectType): The raw update object from the bot platform.
 
         Returns:
             bool: True if bot responded to the message, False if probability check failed,
                 random responses are disabled, or message is from admin (when configured
-                to skip admins)
+                to skip admins).
         """
 
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
@@ -795,9 +797,18 @@ class LLMMessageHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        Command to call llm with predefined prompt
-        Used for debugging llm responses (to fix toll calls for example)
+        """Command to call LLM with predefined prompt for testing.
+
+        This is an internal command used for debugging LLM responses, particularly
+        for testing tool calls and other LLM functionality. The command allows
+        developers to test specific prompts and verify LLM behavior.
+
+        Args:
+            ensuredMessage (EnsuredMessage): The message containing the command.
+            command (str): The command name (e.g., "test_llm").
+            args (str): Command arguments (currently unused).
+            UpdateObj (UpdateObjectType): The raw update object from the bot platform.
+            typingManager (Optional[TypingManager]): Manager for sending typing indicators.
         """
         request = [
             # Put "request" list from .../logs/llm-json-logging.log.* here to test LLM response

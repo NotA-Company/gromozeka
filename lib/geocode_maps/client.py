@@ -1,8 +1,39 @@
-"""
-Geocode Maps API Async Client
+"""Geocode Maps API Async Client.
 
 This module provides the main GeocodeMapsClient class for interacting with
 the Geocode Maps API (geocode.maps.co) with caching and rate limiting support.
+
+The client supports three main operations:
+- Forward geocoding: Convert addresses/places to coordinates
+- Reverse geocoding: Convert coordinates to addresses
+- OSM lookup: Retrieve details by OpenStreetMap object IDs
+
+All operations support:
+- Automatic caching with configurable TTL
+- Rate limiting through RateLimiterManager
+- Type-safe responses using Pydantic models
+- Configurable language preferences
+- Detailed error handling and logging
+
+Example:
+    >>> from lib.geocode_maps import GeocodeMapsClient
+    >>> from lib.cache import DictCache
+    >>>
+    >>> client = GeocodeMapsClient(
+    ...     apiKey="your_api_key",
+    ...     searchCache=DictCache(),
+    ...     reverseCache=DictCache(),
+    ...     lookupCache=DictCache(),
+    ... )
+    >>>
+    >>> # Forward geocoding
+    >>> results = await client.search("Angarsk, Russia")
+    >>>
+    >>> # Reverse geocoding
+    >>> location = await client.reverse(52.5443, 103.8882)
+    >>>
+    >>> # OSM lookup
+    >>> places = await client.lookup(["R2623018"])
 """
 
 import json
@@ -24,11 +55,24 @@ logger = logging.getLogger(__name__)
 
 
 class GeocodeMapsClient:
-    """Async client for Geocode Maps API with caching and rate limiting, dood!
+    """Async client for Geocode Maps API with caching and rate limiting.
 
     Provides type-safe access to geocoding services with automatic caching
     and rate limiting. Creates new HTTP session for each request to support
     proper concurrent operations.
+
+    Attributes:
+        apiKey: Geocode Maps API key for authentication.
+        searchCache: Cache instance for search results.
+        reverseCache: Cache instance for reverse geocoding results.
+        lookupCache: Cache instance for OSM lookup results.
+        searchTTL: Cache time-to-live for search results in seconds.
+        reverseTTL: Cache time-to-live for reverse results in seconds.
+        lookupTTL: Cache time-to-live for lookup results in seconds.
+        requestTimeout: HTTP request timeout in seconds.
+        acceptLanguage: Default language for API responses.
+        rateLimiterQueue: Rate limiter queue name for this client.
+        _rateLimiter: Rate limiter manager instance.
 
     Example:
         >>> from lib.geocode_maps import GeocodeMapsClient
@@ -69,7 +113,7 @@ class GeocodeMapsClient:
         "_rateLimiter",
     )
 
-    API_BASE_URL = "https://geocode.maps.co"
+    API_BASE_URL: str = "https://geocode.maps.co"
 
     def __init__(
         self,
@@ -83,20 +127,20 @@ class GeocodeMapsClient:
         requestTimeout: int = 10,
         acceptLanguage: Optional[str] = None,
         rateLimiterQueue: str = "geocode-maps",
-    ):
-        """Initialize Geocode Maps client, dood!
+    ) -> None:
+        """Initialize Geocode Maps client.
 
         Args:
-            apiKey: Geocode Maps API key (required)
-            searchCache: Cache for search results (default: NullCache)
-            reverseCache: Cache for reverse geocoding results (default: NullCache)
-            lookupCache: Cache for lookup results (default: NullCache)
-            searchTTL: Cache TTL for search results in seconds (default: 30 days)
-            reverseTTL: Cache TTL for reverse results in seconds (default: 30 days)
-            lookupTTL: Cache TTL for lookup results in seconds (default: 30 days)
-            requestTimeout: HTTP request timeout in seconds (default: 10)
-            acceptLanguage: Optional language for results (e.g., "en", "ru", "fr") (default: None)
-            rateLimiterQueue: Rate limiter queue name (default: "geocode-maps")
+            apiKey: Geocode Maps API key for authentication.
+            searchCache: Cache instance for search results. Defaults to NullCache if not provided.
+            reverseCache: Cache instance for reverse geocoding results. Defaults to NullCache if not provided.
+            lookupCache: Cache instance for OSM lookup results. Defaults to NullCache if not provided.
+            searchTTL: Cache TTL for search results in seconds. Defaults to 30 days.
+            reverseTTL: Cache TTL for reverse results in seconds. Defaults to 30 days.
+            lookupTTL: Cache TTL for lookup results in seconds. Defaults to 30 days.
+            requestTimeout: HTTP request timeout in seconds. Defaults to 10.
+            acceptLanguage: Optional language for results (e.g., "en", "ru", "fr"). Defaults to None.
+            rateLimiterQueue: Rate limiter queue name for this client. Defaults to "geocode-maps".
         """
         self.apiKey = apiKey
         self.searchCache: CacheInterface[Dict[str, Any], SearchResponse] = (
@@ -130,27 +174,28 @@ class GeocodeMapsClient:
         dedupe: bool = True,
         acceptLanguage: Optional[str] = None,
     ) -> Optional[SearchResponse]:
-        """Forward geocoding: convert address to coordinates, dood!
+        """Forward geocoding: convert address to coordinates.
 
         Searches for locations matching the query string and returns
         geographic coordinates and structured address information.
 
         Args:
-            query: Free-form search query (e.g., "Angarsk, Russia")
-            limit: Maximum number of results (0-40, default: 10)
-            countrycodes: Comma-separated country codes to restrict search (e.g., "ru,us")
-            viewbox: Bounding box to bias search (format: "min_lon,min_lat,max_lon,max_lat")
-            bounded: Restrict results to viewbox (default: False)
-            addressdetails: Include structured address (default: True)
-            extratags: Include extra OSM tags (default: True)
-            namedetails: Include name translations (default: True)
-            dedupe: Remove duplicate results (default: True)
-            acceptLanguage: Optional language for results (e.g., "en", "ru", "fr") (default: None)
+            query: Free-form search query (e.g., "Angarsk, Russia").
+            limit: Maximum number of results (0-40). Defaults to 10.
+            countrycodes: Comma-separated country codes to restrict search (e.g., "ru,us"). Defaults to None.
+            viewbox: Bounding box to bias search (format: "min_lon,min_lat,max_lon,max_lat"). Defaults to None.
+            bounded: Restrict results to viewbox. Defaults to False.
+            addressdetails: Include structured address. Defaults to True.
+            extratags: Include extra OSM tags. Defaults to True.
+            namedetails: Include name translations. Defaults to True.
+            dedupe: Remove duplicate results. Defaults to True.
+            acceptLanguage: Optional language for results (e.g., "en", "ru", "fr"). Defaults to None.
 
         Returns:
-            List of search results or None if error occurs
+            List of search results or None if error occurs.
 
-        Cache key format: "search:{query}:{limit}:{countrycodes}:{viewbox}:{bounded}"
+        Raises:
+            Exception: Cache errors are logged but do not raise exceptions.
 
         Example:
             >>> results = await client.search("Angarsk, Russia", limit=5)
@@ -225,25 +270,25 @@ class GeocodeMapsClient:
         namedetails: bool = True,
         acceptLanguage: Optional[str] = None,
     ) -> Optional[ReverseResponse]:
-        """Reverse geocoding: convert coordinates to address, dood!
+        """Reverse geocoding: convert coordinates to address.
 
         Finds the nearest OSM object to the given coordinates and returns
         its address and metadata.
 
         Args:
-            lat: Latitude (-90 to 90)
-            lon: Longitude (-180 to 180)
-            zoom: Detail level (3-18, higher = more detailed)
-            addressdetails: Include structured address (default: True)
-            extratags: Include extra OSM tags (default: True)
-            namedetails: Include name translations (default: True)
-            acceptLanguage: Optional language for results (e.g., "en", "ru", "fr") (default: None)
+            lat: Latitude (-90 to 90).
+            lon: Longitude (-180 to 180).
+            zoom: Detail level (3-18, higher = more detailed). Defaults to None.
+            addressdetails: Include structured address. Defaults to True.
+            extratags: Include extra OSM tags. Defaults to True.
+            namedetails: Include name translations. Defaults to True.
+            acceptLanguage: Optional language for results (e.g., "en", "ru", "fr"). Defaults to None.
 
         Returns:
-            Reverse geocoding result or None if error occurs
+            Reverse geocoding result or None if error occurs.
 
-        Cache key format: "reverse:{lat_rounded}:{lon_rounded}:{zoom}"
-        Coordinates are rounded to 4 decimal places (~11m precision)
+        Raises:
+            Exception: Cache errors are logged but do not raise exceptions.
 
         Example:
             >>> location = await client.reverse(52.5443, 103.8882)
@@ -310,26 +355,27 @@ class GeocodeMapsClient:
         polygonText: bool = False,
         acceptLanguage: Optional[str] = None,
     ) -> Optional[LookupResponse]:
-        """Lookup OSM objects by ID, dood!
+        """Lookup OSM objects by ID.
 
         Retrieves details for one or more OSM objects using their IDs.
         IDs must include type prefix: N (node), W (way), or R (relation).
 
         Args:
-            osmIds: List of OSM IDs with type prefix (e.g., ["R2623018", "N107775"])
-            addressdetails: Include structured address (default: True)
-            extratags: Include extra OSM tags (default: True)
-            namedetails: Include name translations (default: True)
-            polygonGeojson: Include GeoJSON polygon (default: False)
-            polygonKml: Include KML polygon (default: False)
-            polygonSvg: Include SVG polygon (default: False)
-            polygonText: Include WKT polygon (default: False)
-            acceptLanguage: Optional language for results (e.g., "en", "ru", "fr") (default: None)
+            osmIds: List of OSM IDs with type prefix (e.g., ["R2623018", "N107775"]).
+            addressdetails: Include structured address. Defaults to True.
+            extratags: Include extra OSM tags. Defaults to True.
+            namedetails: Include name translations. Defaults to True.
+            polygonGeojson: Include GeoJSON polygon. Defaults to False.
+            polygonKml: Include KML polygon. Defaults to False.
+            polygonSvg: Include SVG polygon. Defaults to False.
+            polygonText: Include WKT polygon. Defaults to False.
+            acceptLanguage: Optional language for results (e.g., "en", "ru", "fr"). Defaults to None.
 
         Returns:
-            List of lookup results or None if error occurs
+            List of lookup results or None if error occurs.
 
-        Cache key format: "lookup:{sorted_osm_ids}:{polygon_flags}"
+        Raises:
+            Exception: Cache errors are logged but do not raise exceptions.
 
         Example:
             >>> places = await client.lookup(["R2623018"])
@@ -390,25 +436,27 @@ class GeocodeMapsClient:
         endpoint: str,
         params: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        """Make HTTP request to Geocode Maps API, dood!
+        """Make HTTP request to Geocode Maps API.
 
         Single point for all HTTP requests with error handling, rate limiting,
         and authentication. Creates new session per request for thread safety.
 
         Args:
-            endpoint: API endpoint path (e.g., "search", "reverse", "lookup")
-            params: Query parameters (api_key and format added automatically)
+            endpoint: API endpoint path (e.g., "search", "reverse", "lookup").
+            params: Query parameters (api_key and format added automatically).
 
         Returns:
-            Parsed JSON response or None on error
+            Parsed JSON response or None on error.
 
-        Error Handling:
-            - 401: Invalid API key (logs error, returns None)
-            - 404: Location not found (logs warning, returns None)
-            - 429: Rate limit exceeded (logs error, returns None)
-            - 5xx: Server error (logs error, returns None)
-            - Timeout: Request timeout (logs error, returns None)
-            - Network: Connection error (logs error, returns None)
+        Raises:
+            httpx.TimeoutException: Request timeout (logged, returns None).
+            httpx.RequestError: Network connection error (logged, returns None).
+            json.JSONDecodeError: Failed to parse JSON response (logged, returns None).
+            Exception: Unexpected errors (logged, returns None).
+
+        Note:
+            All exceptions are caught and logged, returning None instead of raising.
+            This allows the client to gracefully handle API failures.
         """
         try:
             # Build full URL

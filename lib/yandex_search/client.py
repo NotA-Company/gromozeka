@@ -1,5 +1,18 @@
 """Yandex Search API v2 async client with XML parsing, caching, and rate limiting.
 
+This module provides an asynchronous client for interacting with the Yandex Search API v2.
+It supports both IAM token and API key authentication, automatic result caching, rate limiting,
+and XML response parsing. The client is designed for thread-safe concurrent operations with
+per-request HTTP sessions.
+
+Key Features:
+    - IAM token and API key authentication
+    - Automatic result caching with configurable TTL
+    - Built-in rate limiting to prevent API quota exhaustion
+    - XML response parsing with structured data models
+    - Thread-safe concurrent operations
+    - Comprehensive error handling and logging
+
 Example:
     from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
     from lib.cache import DictCache
@@ -13,6 +26,9 @@ Example:
     )
 
     results = await client.search("python programming")
+    if results:
+        for item in results.get("items", []):
+            print(f"{item['title']}: {item['url']}")
 """
 
 import json
@@ -45,8 +61,22 @@ logger = logging.getLogger(__name__)
 class YandexSearchClient:
     """Async client for Yandex Search API v2 with XML parsing, caching, and rate limiting.
 
-    Supports IAM token and API key authentication, with per-request HTTP sessions
-    for thread-safe concurrent operations.
+    This client provides a high-level interface for performing web searches using the Yandex
+    Search API v2. It supports both IAM token and API key authentication, automatic result
+    caching with configurable TTL, and built-in rate limiting to prevent API quota exhaustion.
+    The client creates a new HTTP session for each request, ensuring thread-safe concurrent
+    operations.
+
+    Attributes:
+        iamToken: IAM token for Yandex Cloud authentication (alternative to apiKey)
+        apiKey: API key for Yandex Cloud authentication (alternative to iamToken)
+        folderId: Yandex Cloud folder ID for resource scoping
+        requestTimeout: HTTP request timeout in seconds
+        cache: Cache implementation for storing search results
+        cacheTTL: Default time-to-live for cached results in seconds
+        rateLimiterQueue: Name of the rate limiter queue to use
+        _rateLimiter: Rate limiter manager instance for API throttling
+        API_ENDPOINT: Yandex Search API v2 endpoint URL
 
     Example:
         client = YandexSearchClient(
@@ -54,6 +84,9 @@ class YandexSearchClient:
             folderId="your_folder_id"
         )
         results = await client.search("python programming")
+        if results:
+            for item in results.get("items", []):
+                print(f"{item['title']}: {item['url']}")
     """
 
     __slots__ = (
@@ -83,17 +116,48 @@ class YandexSearchClient:
     ):
         """Initialize Yandex Search client.
 
+        Creates a new YandexSearchClient instance with the specified authentication,
+        caching, and rate limiting configuration. Either an IAM token or API key must
+        be provided for authentication. A folder ID is required to scope the search
+        operations to a specific Yandex Cloud folder.
+
         Args:
-            iamToken: IAM token for authentication (alternative to apiKey)
-            apiKey: API key for authentication (alternative to iamToken)
-            folderId: Yandex Cloud folder ID (required)
-            requestTimeout: HTTP request timeout in seconds (default: 30)
-            cache: Cache implementation for result caching (default: None)
-            cacheTTL: Default cache TTL in seconds (default: 3600)
-            rateLimiterQueue: Rate limiter queue name (default: "yandex-search")
+            iamToken: IAM token for Yandex Cloud authentication. Alternative to apiKey.
+                If provided, takes precedence over apiKey. Must be a valid IAM token
+                obtained from Yandex Cloud.
+            apiKey: API key for Yandex Cloud authentication. Alternative to iamToken.
+                Used if iamToken is not provided. Must be a valid API key from Yandex Cloud.
+            folderId: Yandex Cloud folder ID for resource scoping. Required parameter
+                that identifies which folder's resources to use for the search operation.
+            requestTimeout: HTTP request timeout in seconds. Default is 30 seconds.
+                If a request takes longer than this timeout, a TimeoutException is raised.
+            cache: Cache implementation for storing search results. If None, a NullCache
+                is used which disables caching. Recommended to use DictCache with
+                SearchRequestKeyGenerator for optimal performance.
+            cacheTTL: Default time-to-live for cached results in seconds. Default is 3600
+                (1 hour). Can be overridden per-request using the cacheTTL parameter in
+                the search method. Set to None to disable caching.
+            rateLimiterQueue: Name of the rate limiter queue to use for API throttling.
+                Default is "yandex-search". The rate limiter helps prevent API quota
+                exhaustion by limiting the number of requests per time period.
 
         Raises:
-            ValueError: If neither iamToken nor apiKey is provided, or if folderId is empty
+            ValueError: If neither iamToken nor apiKey is provided, or if folderId is empty.
+
+        Example:
+            from lib.yandex_search import YandexSearchClient
+            from lib.cache import DictCache
+            from lib.yandex_search.cache_utils import SearchRequestKeyGenerator
+
+            client = YandexSearchClient(
+                iamToken="your_iam_token",
+                folderId="your_folder_id",
+                cache=DictCache(
+                    keyGenerator=SearchRequestKeyGenerator()
+                ),
+                cacheTTL=1800,  # 30 minutes
+                requestTimeout=60
+            )
         """
         if not iamToken and not apiKey:
             raise ValueError("Either iamToken or apiKey must be provided")
@@ -130,24 +194,68 @@ class YandexSearchClient:
     ) -> Optional[SearchResponse]:
         """Perform search with automatic caching and rate limiting.
 
+        Executes a web search query using the Yandex Search API v2. The method automatically
+        checks the cache for existing results before making an API request, applies rate
+        limiting to prevent quota exhaustion, and caches successful responses for future use.
+
         Args:
-            queryText: Search query text (required)
-            searchType: Search domain (default: SEARCH_TYPE_RU)
-            familyMode: Content filtering (default: FAMILY_MODE_MODERATE)
-            page: Page number for pagination (default: 0)
-            fixTypoMode: Typo correction mode (default: FIX_TYPO_MODE_ON)
-            sortMode: Sort criteria (default: SORT_MODE_BY_RELEVANCE)
-            sortOrder: Sort direction (default: SORT_ORDER_DESC)
-            groupMode: Result grouping (default: GROUP_MODE_DEEP)
-            groupsOnPage: Groups per page (default: API default)
-            docsInGroup: Documents per group (default: API default)
-            maxPassages: Max passages per document (default: 2)
-            region: Region code (default: "225" for Russia)
-            l10n: Interface language (default: LOCALIZATION_RU)
-            cacheTTL: Override default cache TTL
+            queryText: Search query text to search for. Required parameter. The query can
+                contain any search terms and operators supported by Yandex Search.
+            searchType: Search domain to use for the search. Default is SEARCH_TYPE_RU for
+                Russian web search. Other options include international search domains.
+            familyMode: Content filtering level for search results. Default is
+                FAMILY_MODE_MODERATE which filters explicit content. Options include
+                FAMILY_MODE_NONE (no filtering) and FAMILY_MODE_STRICT (strict filtering).
+            page: Page number for pagination. Default is 0 (first page). Use this parameter
+                to navigate through multiple pages of search results.
+            fixTypoMode: Typo correction mode. Default is FIX_TYPO_MODE_ON which automatically
+                corrects typos in the query. Set to FIX_TYPO_MODE_OFF to disable correction.
+            sortMode: Sort criteria for search results. Default is SORT_MODE_BY_RELEVANCE
+                which sorts by relevance score. Other options include SORT_MODE_BY_DATE.
+            sortOrder: Sort direction for results. Default is SORT_ORDER_DESC (descending).
+                Use SORT_ORDER_ASC for ascending order when applicable.
+            groupMode: Result grouping mode. Default is GROUP_MODE_DEEP which groups
+                similar results together. Other options include GROUP_MODE_FLAT (no grouping).
+            groupsOnPage: Number of result groups per page. Default is None (API default).
+                Override to control pagination granularity.
+            docsInGroup: Number of documents per result group. Default is None (API default).
+                Override to control how many similar results are grouped together.
+            maxPassages: Maximum number of text passages per document. Default is 2.
+                Passages are short text snippets showing where the query matches in the content.
+            region: Region code for localized search results. Default is "225" for Russia.
+                See https://yandex.cloud/ru/docs/search-api/reference/regions for available codes.
+            l10n: Interface language for the search. Default is LOCALIZATION_RU for Russian.
+                Controls the language of UI elements and some result metadata.
+            cacheTTL: Override the default cache TTL for this specific request. Default is
+                None which uses the client's default cacheTTL. Set to 0 to bypass cache,
+                or a positive integer to cache for that many seconds.
 
         Returns:
-            Search response dict or None if error occurs
+            Search response dict containing search results and metadata, or None if an
+            error occurs. The response structure includes:
+                - items: List of search result items with title, url, snippet, etc.
+                - totalResults: Total number of results found
+                - page: Current page number
+                - itemsPerPage: Number of items per page
+                - query: The original query that was executed
+
+        Raises:
+            Does not raise exceptions directly. All errors are logged and None is returned.
+
+        Example:
+            results = await client.search(
+                "python programming tutorial",
+                page=0,
+                maxPassages=3,
+                region="225",
+                cacheTTL=1800
+            )
+            if results:
+                for item in results.get("items", []):
+                    print(f"{item['title']}")
+                    print(f"URL: {item['url']}")
+                    print(f"Snippet: {item.get('snippet', '')}")
+                    print("---")
         """
         # Build group specification
         groupSpec: GroupSpec = {"groupMode": groupMode}
@@ -200,14 +308,32 @@ class YandexSearchClient:
     async def _makeRequest(self, request: SearchRequest) -> Optional[SearchResponse]:
         """Make HTTP request to Yandex Search API with error handling.
 
-        Creates new session per request for thread safety. Handles HTTP errors,
-        network issues, and parsing failures.
+        Creates a new HTTP session for each request to ensure thread safety. Handles
+        various error conditions including HTTP errors, network issues, timeouts,
+        and parsing failures. The method applies rate limiting before making the
+        request and parses the Base64-encoded XML response from the API.
 
         Args:
-            request: Complete search request with authentication
+            request: Complete search request dictionary containing query parameters,
+                authentication credentials, and all required fields for the API call.
 
         Returns:
-            Parsed search response or None if error occurs
+            Parsed search response dict containing the search results and metadata,
+            or None if an error occurs during the request. The response is parsed
+            from the Base64-encoded XML returned by the API.
+
+        Raises:
+            Does not raise exceptions directly. All errors are caught and logged,
+            with None returned to indicate failure. Error types handled include:
+                - httpx.TimeoutException: Request timeout
+                - httpx.RequestError: Network errors
+                - json.JSONDecodeError: JSON parsing errors
+                - Exception: Unexpected errors
+
+        Note:
+            This method is intended for internal use by the search method. It handles
+            the low-level HTTP communication with the Yandex Search API, including
+            authentication header construction and response parsing.
         """
         try:
             logger.debug(f"Making search request: {request}")

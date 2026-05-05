@@ -63,8 +63,7 @@ class DictCache(CacheInterface[K, V]):
         defaultTtl: int = 3600,
         maxSize: Optional[int] = 1000,
     ):
-        """
-        Initialize cache with configuration, dood!
+        """Initialize cache with configuration, dood!
 
         Args:
             keyGenerator: Strategy for converting keys to strings
@@ -80,10 +79,15 @@ class DictCache(CacheInterface[K, V]):
             raise ValueError(f"maxSize must be a positive integer or None, got {maxSize}, dood!")
 
         self._cache: Dict[str, Tuple[V, float]] = {}
+        """Internal storage mapping string keys to (value, timestamp) tuples."""
         self._keyGenerator = keyGenerator
+        """Strategy for converting cache keys to string representations."""
         self._defaultTtl = defaultTtl
+        """Default time-to-live for cache entries in seconds."""
         self._maxSize = maxSize
+        """Maximum number of entries allowed in cache (None for unlimited)."""
         self._lock = threading.RLock()
+        """Reentrant lock for thread-safe cache operations."""
 
     def _isExpired(self, timestamp: float, ttl: int) -> bool:
         """

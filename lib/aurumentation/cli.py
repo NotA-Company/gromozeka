@@ -1,7 +1,22 @@
 """CLI interface for the golden data collector.
 
 This module provides a command-line interface for collecting golden data
-using the generic collector functionality.
+using the generic collector functionality. It allows users to specify
+input scenarios, output directories, target functions, and secrets for
+masking sensitive data during collection.
+
+The CLI supports:
+- Importing functions from any Python module
+- Loading test scenarios from JSON files
+- Masking sensitive data (API keys, tokens, etc.)
+- Generating golden data files for testing purposes
+
+Example:
+    python -m lib.aurumentation.cli --input tests/golden_data/openweathermap/inputs/locations.json \\
+        --output tests/golden_data/openweathermap/golden \\
+        --module lib.openweathermap.client \\
+        --function getWeatherByCity \\
+        --secrets $OPENWEATHERMAP_API_KEY
 """
 
 import argparse
@@ -52,8 +67,32 @@ def parseSecrets(secretsStr: str) -> List[str]:
     return [secret.strip() for secret in secretsStr.split(",") if secret.strip()]
 
 
-def main():
-    """Main CLI entry point."""
+def main() -> None:
+    """Main CLI entry point for golden data collection.
+
+    This function parses command-line arguments, imports the target function,
+    loads test scenarios from a JSON file, and executes the golden data
+    collection process. It handles secrets for masking sensitive data and
+    provides a summary of the collection results.
+
+    The function performs the following steps:
+    1. Parse command-line arguments (input file, output directory, module, function, secrets)
+    2. Import the target function from the specified module
+    3. Parse secrets for masking sensitive data
+    4. Load test scenarios from the input JSON file
+    5. Execute the golden data collection process
+    6. Generate and display a summary of results
+
+    Returns:
+        None
+
+    Raises:
+        SystemExit: If an error occurs during execution (exit code 1)
+        ImportError: If the target module or function cannot be imported
+        FileNotFoundError: If the input JSON file does not exist
+        json.JSONDecodeError: If the input file contains invalid JSON
+        Exception: For any other errors during collection
+    """
     parser = argparse.ArgumentParser(
         description="Collect golden data for any function/method",
         formatter_class=argparse.RawDescriptionHelpFormatter,

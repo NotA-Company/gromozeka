@@ -14,8 +14,28 @@ from .user import UserWithPhoto
 
 
 class Chat(BaseMaxBotModel):
-    """
-    Chat model representing a Max Messenger chat
+    """Chat model representing a Max Messenger chat.
+
+    This model contains comprehensive information about a chat including its type,
+    status, participants, and metadata. Supports both group chats and direct dialogs.
+
+    Attributes:
+        chat_id: Unique identifier of the chat.
+        type: Type of the chat (e.g., dialog, group, channel).
+        status: Current status of the chat (e.g., active, archived).
+        title: Display name of the chat. Can be None for dialogs.
+        icon: Chat icon data containing URL information.
+        last_event_time: Unix timestamp of the last event in the chat.
+        participants_count: Number of participants. Always 2 for dialogs.
+        owner_id: User ID of the chat owner.
+        participants: Dictionary mapping user IDs to their last active timestamps.
+            Can be None when fetching chat lists.
+        is_public: Whether the chat is publicly accessible. Always False for dialogs.
+        link: Public link to the chat.
+        description: Chat description text.
+        dialog_with_user: User information for dialog-type chats only.
+        chat_message_id: ID of the message containing the button that initiated the chat.
+        pinned_message: Pinned message in the chat (only returned when fetching specific chat).
     """
 
     __slots__ = (
@@ -56,6 +76,26 @@ class Chat(BaseMaxBotModel):
         pinned_message: Optional[Message] = None,
         api_kwargs: Optional[Dict[str, Any]] = None,
     ):
+        """Initialize a Chat instance.
+
+        Args:
+            chat_id: Unique identifier of the chat.
+            type: Type of the chat.
+            status: Current status of the chat.
+            title: Display name of the chat. Can be None for dialogs.
+            icon: Chat icon data containing URL information.
+            last_event_time: Unix timestamp of the last event in the chat.
+            participants_count: Number of participants. Always 2 for dialogs.
+            owner_id: User ID of the chat owner.
+            participants: Dictionary mapping user IDs to last active timestamps.
+            is_public: Whether the chat is publicly accessible. Always False for dialogs.
+            link: Public link to the chat.
+            description: Chat description text.
+            dialog_with_user: User information for dialog-type chats only.
+            chat_message_id: ID of the message that initiated the chat.
+            pinned_message: Pinned message in the chat.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.chat_id: int = chat_id
         """ID чата"""
@@ -94,7 +134,14 @@ class Chat(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Chat":
-        """Create Chat instance from API response dictionary."""
+        """Create Chat instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing chat data from API response.
+
+        Returns:
+            Chat: A new Chat instance populated with data from the dictionary.
+        """
         dialog_with_user_data = data.get("dialog_with_user", None)
         dialog_with_user = None
         if dialog_with_user_data:
@@ -126,8 +173,20 @@ class Chat(BaseMaxBotModel):
 
 
 class ChatMember(UserWithPhoto):
-    """
-    Объект, описывающий участника чата
+    """Chat member model extending user information with chat-specific details.
+
+    This model represents a user who is a member of a chat, including their role,
+    permissions, and activity within the chat.
+
+    Attributes:
+        last_access_time: Unix timestamp of the user's last activity in the chat.
+            May be outdated for superchats (equals join time).
+        is_owner: Whether the user is the chat owner.
+        is_admin: Whether the user is a chat administrator.
+        join_time: Unix timestamp when the user joined the chat.
+        permissions: List of admin permissions granted to the user.
+        alias: Display title shown on the client. If not set for admins/owners,
+            clients will substitute with "owner" or "admin".
     """
 
     __slots__ = ("last_access_time", "is_owner", "is_admin", "join_time", "permissions", "alias")
@@ -152,6 +211,26 @@ class ChatMember(UserWithPhoto):
         last_activity_time: int = 0,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize a ChatMember instance.
+
+        Args:
+            last_access_time: Unix timestamp of the user's last activity in the chat.
+            is_owner: Whether the user is the chat owner.
+            is_admin: Whether the user is a chat administrator.
+            join_time: Unix timestamp when the user joined the chat.
+            permissions: List of admin permissions granted to the user.
+            alias: Display title shown on the client.
+            description: User description text.
+            avatar_url: URL of the user's avatar.
+            full_avatar_url: Full URL of the user's avatar.
+            user_id: Unique identifier of the user.
+            first_name: User's first name.
+            last_name: User's last name.
+            username: User's username/handle.
+            is_bot: Whether the user is a bot.
+            last_activity_time: Unix timestamp of the user's last activity.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(
             description=description,
             avatar_url=avatar_url,
@@ -186,7 +265,14 @@ class ChatMember(UserWithPhoto):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatMember":
-        """Create ChatMember instance from API response dictionary."""
+        """Create ChatMember instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing chat member data from API response.
+
+        Returns:
+            ChatMember: A new ChatMember instance populated with data from the dictionary.
+        """
         permissions_data = data.get("permissions")
         permissions = None
         if permissions_data is not None:
@@ -213,8 +299,23 @@ class ChatMember(UserWithPhoto):
 
 
 class ChatAdmin(BaseMaxBotModel):
-    """
-    Chat admin model with permissions
+    """Chat admin model with permissions.
+
+    This model represents a chat administrator with their user ID, permissions,
+    and optional display alias.
+
+    Attributes:
+        user_id: Unique identifier of the administrator.
+        permissions: List of permissions granted to the administrator.
+            Possible values include:
+            - "read_all_messages": Read all messages.
+            - "add_remove_members": Add/remove participants.
+            - "add_admins": Add administrators.
+            - "change_chat_info": Change chat information.
+            - "pin_message": Pin messages.
+            - "write": Write messages.
+        alias: Display title shown on the client. If not set for admins/owners,
+            clients will substitute with "owner" or "admin".
     """
 
     __slots__ = ("user_id", "permissions", "alias")
@@ -227,6 +328,14 @@ class ChatAdmin(BaseMaxBotModel):
         alias: Optional[str] = None,
         api_kwargs: Optional[Dict[str, Any]] = None,
     ):
+        """Initialize a ChatAdmin instance.
+
+        Args:
+            user_id: Unique identifier of the administrator.
+            permissions: List of permissions granted to the administrator.
+            alias: Display title shown on the client.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.user_id: int = user_id
         """Идентификатор администратора с правами доступа"""
@@ -246,7 +355,14 @@ class ChatAdmin(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatAdmin":
-        """Create ChatAdmin instance from API response dictionary."""
+        """Create ChatAdmin instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing chat admin data from API response.
+
+        Returns:
+            ChatAdmin: A new ChatAdmin instance populated with data from the dictionary.
+        """
         permissions_data = data.get("permissions", [])
         permissions = [ChatAdminPermission(perm) for perm in permissions_data]
 
@@ -259,8 +375,15 @@ class ChatAdmin(BaseMaxBotModel):
 
 
 class ChatList(BaseMaxBotModel):
-    """
-    Paginated list of chats
+    """Paginated list of chats.
+
+    This model represents a paginated response containing a list of chats
+    and a marker for fetching the next page.
+
+    Attributes:
+        chats: List of chat objects.
+        marker: Pagination marker for fetching the next page of chats.
+            None if there are no more pages.
     """
 
     __slots__ = ("chats", "marker")
@@ -272,6 +395,13 @@ class ChatList(BaseMaxBotModel):
         marker: Optional[int] = None,
         api_kwargs: Optional[Dict[str, Any]] = None,
     ):
+        """Initialize a ChatList instance.
+
+        Args:
+            chats: List of chat objects.
+            marker: Pagination marker for fetching the next page.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.chats: List[Chat] = chats
         """Список запрашиваемых чатов"""
@@ -280,7 +410,14 @@ class ChatList(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatList":
-        """Create ChatList instance from API response dictionary."""
+        """Create ChatList instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing chat list data from API response.
+
+        Returns:
+            ChatList: A new ChatList instance populated with data from the dictionary.
+        """
         chats_data = data.get("chats", [])
         chats = [Chat.from_dict(chat) for chat in chats_data]
 
@@ -292,8 +429,16 @@ class ChatList(BaseMaxBotModel):
 
 
 class ChatPatch(BaseMaxBotModel):
-    """
-    Chat patch model for updating chat information
+    """Chat patch model for updating chat information.
+
+    This model is used to update chat properties such as icon, title,
+    pinned message, and notification settings.
+
+    Attributes:
+        icon: Chat icon data containing URL information.
+        title: Chat title/name.
+        pin: Message ID to pin in the chat. To unpin, use the unpin method.
+        notify: If True, participants will receive a system notification about the change.
     """
 
     __slots__ = ("icon", "title", "pin", "notify")
@@ -307,6 +452,15 @@ class ChatPatch(BaseMaxBotModel):
         notify: Optional[bool] = None,
         api_kwargs: Optional[Dict[str, Any]] = None,
     ):
+        """Initialize a ChatPatch instance.
+
+        Args:
+            icon: Chat icon data containing URL information.
+            title: Chat title/name.
+            pin: Message ID to pin in the chat.
+            notify: If True, participants will receive a system notification.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.icon: Optional[Dict[str, Any]] = icon
         """Иконка чата"""
@@ -319,7 +473,14 @@ class ChatPatch(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatPatch":
-        """Create ChatPatch instance from API response dictionary."""
+        """Create ChatPatch instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing chat patch data from API response.
+
+        Returns:
+            ChatPatch: A new ChatPatch instance populated with data from the dictionary.
+        """
         return cls(
             icon=data.get("icon"),
             title=data.get("title"),
@@ -330,8 +491,15 @@ class ChatPatch(BaseMaxBotModel):
 
 
 class ChatMembersList(BaseMaxBotModel):
-    """
-    List of chat members
+    """Paginated list of chat members.
+
+    This model represents a paginated response containing a list of chat members
+    and a marker for fetching the next page.
+
+    Attributes:
+        members: List of chat member objects with last activity information.
+        marker: Pagination marker for fetching the next page of members.
+            None if there are no more pages.
     """
 
     __slots__ = ("members", "marker")
@@ -339,6 +507,13 @@ class ChatMembersList(BaseMaxBotModel):
     def __init__(
         self, *, members: List[ChatMember], marker: Optional[int] = None, api_kwargs: Dict[str, Any] | None = None
     ):
+        """Initialize a ChatMembersList instance.
+
+        Args:
+            members: List of chat member objects.
+            marker: Pagination marker for fetching the next page.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.members: List[ChatMember] = members
         """Список участников чата с информацией о времени последней активности"""
@@ -347,7 +522,14 @@ class ChatMembersList(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatMembersList":
-        """Create ChatMembersList instance from API response dictionary."""
+        """Create ChatMembersList instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing chat members list data from API response.
+
+        Returns:
+            ChatMembersList: A new ChatMembersList instance populated with data from the dictionary.
+        """
 
         return cls(
             members=[ChatMember.from_dict(member) for member in data.get("members", [])],
@@ -357,8 +539,15 @@ class ChatMembersList(BaseMaxBotModel):
 
 
 class ChatAdminsList(BaseMaxBotModel):
-    """
-    List of chat admins
+    """Paginated list of chat administrators.
+
+    This model represents a paginated response containing a list of chat administrators
+    and a marker for fetching the next page.
+
+    Attributes:
+        admins: List of chat administrator objects.
+        marker: Pagination marker for fetching the next page of admins.
+            None if there are no more pages.
     """
 
     __slots__ = ("admins", "marker")
@@ -366,6 +555,13 @@ class ChatAdminsList(BaseMaxBotModel):
     def __init__(
         self, *, admins: List[ChatAdmin], marker: Optional[int] = None, api_kwargs: Dict[str, Any] | None = None
     ):
+        """Initialize a ChatAdminsList instance.
+
+        Args:
+            admins: List of chat administrator objects.
+            marker: Pagination marker for fetching the next page.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.admins: List[ChatAdmin] = admins
         """Массив администраторов чата"""
@@ -374,7 +570,14 @@ class ChatAdminsList(BaseMaxBotModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatAdminsList":
-        """Create ChatAdminsList instance from API response dictionary."""
+        """Create ChatAdminsList instance from API response dictionary.
+
+        Args:
+            data: Dictionary containing chat admins list data from API response.
+
+        Returns:
+            ChatAdminsList: A new ChatAdminsList instance populated with data from the dictionary.
+        """
         admins_data = data.get("admins", [])
         admins = [ChatAdmin.from_dict(admin) for admin in admins_data]
 

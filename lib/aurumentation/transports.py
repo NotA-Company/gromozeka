@@ -1,7 +1,7 @@
 """Custom httpx transports for recording and replaying HTTP traffic.
 
 This module implements custom httpx transports that can intercept HTTP
-recordings for recording or replay previously recorded recordings.
+requests for recording or replay previously recorded requests.
 """
 
 import re
@@ -16,12 +16,16 @@ from .types import HttpCallDict, HttpRequestDict, HttpResponseDict
 class RecordingTransport(httpx.AsyncHTTPTransport):
     """Custom httpx transport that records all HTTP traffic.
 
-    This transport wraps a real httpx transport and intercepts all HTTP recordings,
+    This transport wraps a real httpx transport and intercepts all HTTP requests,
     recording the request and response details before passing through to the
-    real transport for actual HTTP recordings.
+    real transport for actual HTTP requests.
+
+    Attributes:
+        wrapped: The underlying httpx.AsyncHTTPTransport that handles actual HTTP requests.
+        recordings: List of recorded HTTP calls, each containing request, response, and timestamp.
     """
 
-    def __init__(self, wrapped: Optional[httpx.AsyncHTTPTransport] = None, *args, **kwargs):
+    def __init__(self, wrapped: Optional[httpx.AsyncHTTPTransport] = None, *args, **kwargs) -> None:
         """Initialize the recording transport.
 
         Args:
@@ -84,11 +88,15 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
     """Custom httpx transport that replays recorded HTTP traffic.
 
     This transport takes a list of recorded HttpCallDict objects and matches
-    incoming requests to recorded recordings, returning recorded responses
-    without making real HTTP recordings.
+    incoming requests to recorded requests, returning recorded responses
+    without making real HTTP requests.
+
+    Attributes:
+        recordings: List of recorded HttpCallDict objects to replay.
+        call_index: Index tracking the current position in the recordings list.
     """
 
-    def __init__(self, recordings: List[HttpCallDict], *args, **kwargs):
+    def __init__(self, recordings: List[HttpCallDict], *args, **kwargs) -> None:
         """Initialize the replay transport.
 
         Args:
@@ -104,11 +112,11 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
         """Check if two URLs match, handling masked API keys.
 
         Args:
-            recorded_url: The URL from the recorded data (may have masked API key)
-            request_url: The URL from the current request
+            recorded_url: The URL from the recorded data (may have masked API key).
+            request_url: The URL from the current request.
 
         Returns:
-            True if the URLs match, False otherwise
+            True if the URLs match, False otherwise.
         """
         # If the recorded URL doesn't have a masked API key, do exact match
         if "***MASKED***" not in recorded_url:
@@ -128,11 +136,11 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
         """Check if two parameter dictionaries match, handling masked API keys.
 
         Args:
-            recorded_params: Parameters from the recorded data (may have masked API key)
-            request_params: Parameters from the current request
+            recorded_params: Parameters from the recorded data (may have masked API key).
+            request_params: Parameters from the current request.
 
         Returns:
-            True if the parameters match, False otherwise
+            True if the parameters match, False otherwise.
         """
         # If the recorded params don't have a masked API key, do exact match
         if "appid" in recorded_params and "***MASKED***" not in recorded_params["appid"]:
@@ -155,11 +163,11 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
         """Check if two request bodies match, handling masked values.
 
         Args:
-            recorded_body: Body from the recorded data (may have masked values)
-            request_body: Body from the current request
+            recorded_body: Body from the recorded data (may have masked values).
+            request_body: Body from the current request.
 
         Returns:
-            True if the bodies match, False otherwise
+            True if the bodies match, False otherwise.
         """
         # If either body is None, they must both be None to match
         if recorded_body is None or request_body is None:

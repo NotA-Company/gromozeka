@@ -27,16 +27,45 @@ from ..base import BaseMigration
 
 
 class Migration013RemoveTimestampDefaults(BaseMigration):
-    """Remove DEFAULT CURRENT_TIMESTAMP from all timestamp columns."""
+    """Migration to remove DEFAULT CURRENT_TIMESTAMP from all timestamp columns.
+
+    This migration removes the DEFAULT CURRENT_TIMESTAMP constraint from all
+    timestamp columns across 19 database tables. Since SQLite does not support
+    ALTER COLUMN to remove defaults, the migration recreates all affected tables
+    using the standard pattern: create new table, copy data, drop old table,
+    rename new table, and recreate indexes.
+
+    The migration includes ALL columns from migrations 2-12 to ensure no data loss
+    when recreating tables. Affected tables: settings, chat_messages, chat_settings,
+    chat_users, chat_info, chat_stats, chat_user_stats, media_attachments,
+    delayed_tasks, user_data, spam_messages, ham_messages, chat_topics,
+    chat_summarization_cache, bayes_tokens, bayes_classes, cache_storage,
+    cache, media_groups.
+
+    Attributes:
+        version: Migration version number (13).
+        description: Human-readable description of the migration.
+    """
 
     version = 13
     description = "Remove DEFAULT CURRENT_TIMESTAMP from timestamp columns"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Remove DEFAULT CURRENT_TIMESTAMP by recreating tables.
+        """Remove DEFAULT CURRENT_TIMESTAMP by recreating all affected tables.
+
+        This method recreates 19 tables without DEFAULT CURRENT_TIMESTAMP constraints
+        on timestamp columns. For each table, the migration:
+        1. Creates a new table with the same schema but without timestamp defaults
+        2. Copies all existing data from the old table to the new table
+        3. Drops the old table
+        4. Renames the new table to the original name
+        5. Recreates any indexes that existed on the original table
+
+        The migration preserves all data and maintains referential integrity by
+        including all columns from previous migrations (2-12) in the new table schemas.
 
         Args:
-            sqlProvider: SQL provider for executing queries
+            sqlProvider: SQL provider for executing database queries.
 
         Returns:
             None
@@ -592,10 +621,22 @@ class Migration013RemoveTimestampDefaults(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Rollback by recreating tables WITH DEFAULT CURRENT_TIMESTAMP.
+        """Rollback the migration by recreating tables WITH DEFAULT CURRENT_TIMESTAMP.
+
+        This method reverses the changes made by the up() migration by recreating
+        all 19 affected tables with DEFAULT CURRENT_TIMESTAMP constraints restored
+        on timestamp columns. For each table, the rollback:
+        1. Creates a new table with the same schema including timestamp defaults
+        2. Copies all existing data from the current table to the new table
+        3. Drops the current table
+        4. Renames the new table to the original name
+        5. Recreates any indexes that existed on the original table
+
+        The rollback preserves all data and maintains referential integrity by
+        including all columns from previous migrations (2-12) in the new table schemas.
 
         Args:
-            sqlProvider: SQL provider for executing queries
+            sqlProvider: SQL provider for executing database queries.
 
         Returns:
             None

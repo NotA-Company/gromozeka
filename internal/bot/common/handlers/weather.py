@@ -56,7 +56,7 @@ class WeatherHandler(BaseBotHandler):
 
     def __init__(
         self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    ) -> None:
         """Initialize weather handler with dependencies.
 
         Sets up OpenWeatherMap client with caching and registers LLM tools.
@@ -330,7 +330,18 @@ class WeatherHandler(BaseBotHandler):
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
     async def _fixLocationDescription(self, data: SearchResult) -> SearchResult:
-        """Fix outdated country info"""
+        """Fix outdated country information in geocoding results.
+
+        Replaces outdated country names and codes with current values for
+        locations in specific geographic regions.
+
+        Args:
+            data: Geocoding search result from Geocode Maps API
+
+        Returns:
+            Modified geocoding result with updated country information.
+            Returns original data if location longitude is less than 30.5.
+        """
 
         def _fixCountry(value: Any) -> Any:
             replaceList = [
@@ -437,9 +448,10 @@ class WeatherHandler(BaseBotHandler):
 
         Args:
             ensuredMessage: Message wrapper for sending responses
-            typingManager: Typing indicator manager
-            update: Telegram update object
-            context: Telegram context with command arguments
+            command: Command name that triggered this handler
+            args: Command arguments (address string)
+            UpdateObj: Telegram update object containing message metadata
+            typingManager: Typing indicator manager for user feedback
 
         Returns:
             None. Sends weather info or error message to chat.
@@ -548,9 +560,10 @@ class WeatherHandler(BaseBotHandler):
 
         Args:
             ensuredMessage: Message wrapper for sending responses
-            typingManager: Typing indicator manager
-            update: Telegram update object
-            context: Telegram context with command arguments
+            command: Command name that triggered this handler
+            args: Command arguments (address string with optional 'short' flag)
+            UpdateObj: Telegram update object containing message metadata
+            typingManager: Typing indicator manager for user feedback
 
         Returns:
             None. Sends geocoding info or error message to chat.

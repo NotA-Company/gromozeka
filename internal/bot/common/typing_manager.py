@@ -163,7 +163,12 @@ class TypingManager:
         """
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[object],
+    ) -> None:
         """Exit the async context manager.
 
         Args:
