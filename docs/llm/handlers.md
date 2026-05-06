@@ -44,8 +44,10 @@
 | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
 
-**`DivinationHandler` — LLM-tool reply behavior note:**
-When invoked via the `do_tarot_reading` / `do_runes_reading` LLM tools (`invoked_via = 'llm_tool'`), the handler returns the full interpretation in the JSON tool result (fields: `done`, `summary`, `interpretation`, `imageGenerated`) so the host LLM can incorporate it into its own reply — no text bot message is sent. Only the generated image (if `image-generation = true` and generation succeeded) is sent directly to the user with an empty caption. Slash-command behavior (`/taro`, `/runes`) is unchanged: text reply (and photo if enabled) are sent directly to the user as before, dood!
+**`DivinationHandler` — reply behavior by invocation path:**
+
+- **Slash-command path** (`/taro`, `/runes`): the handler renders a **structured reply template** (`DIVINATION_REPLY_TEMPLATE` chat setting) containing the layout name, a numbered drawn-symbols block (with position, localized name, and reversal flag), and the LLM interpretation. This lets users verify the LLM didn't hallucinate any cards. Photo (if image generation succeeded) is sent as caption + image in one `sendMessage` call, dood!
+- **LLM-tool path** (`do_tarot_reading` / `do_runes_reading`, `invoked_via = 'llm_tool'`): the handler returns the **bare LLM interpretation** in the JSON tool result (fields: `done`, `summary`, `imageGenerated`, `layout`, `draws`, `interpretation`) so the host LLM can incorporate it naturally — no text bot message is sent. Only the generated image (if `image-generation = true` and generation succeeded) is sent directly to the user with an empty caption. The template is NOT applied on this path.
 
 ---
 

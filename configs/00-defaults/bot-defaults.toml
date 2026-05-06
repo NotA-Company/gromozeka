@@ -224,3 +224,15 @@ Spread layout and drawn symbols (in English):
 
 Style: vintage occult illustration, warm parchment background, ornate borders, mystical atmosphere. {styleHint}
 """
+
+# Reply template for slash-command responses (/taro, /runes).
+# Placeholders: {layoutName}, {drawnSymbolsBlock}, {interpretation}.
+# Used ONLY on the slash-command path; LLM-tool path returns bare interpretation in JSON.
+divination-reply-template = """
+🎴 Расклад: {layoutName}
+
+Выпавшие символы:
+{drawnSymbolsBlock}
+
+{interpretation}
+"""

@@ -298,6 +298,80 @@ class BaseDivinationSystem(abc.ABC):
         ]
 
     @classmethod
+    def renderDrawnSymbolsBlock(cls, reading: Reading, *, lang: str = "ru") -> str:
+        """Render a localized, numbered list of drawn symbols, dood!
+
+        Each line has the shape
+        ``"<n>. <localized position> — <localized name>[ (перевёрнута)]"``
+        where the reversal suffix is appended only for symbols whose
+        ``reversed`` flag is ``True`` (which only happens for systems with
+        ``supportsReversed=True``).
+
+        Note:
+            In practice, reversals only occur for tarot cards. The suffix
+            ``(перевёрнута)`` uses the feminine form, agreeing with the
+            implied Russian noun "карта". Rune systems always have
+            ``supportsReversed=False``, so this branch is dead code for runes.
+
+        Args:
+            reading: The completed reading.
+            lang: BCP-47-ish language code for localisation lookups.
+                Defaults to ``"ru"``. Falls back to the English
+                source-of-truth string when a translation is missing.
+
+        Returns:
+            A newline-joined block, ready to interpolate into the
+            user-facing reply template via ``{drawnSymbolsBlock}``.
+        """
+        lines: List[str] = []
+        for idx, draw in enumerate(reading.draws):
+            i: int = idx + 1
+            posText: str = localization.tr(localization.POSITION_NAMES, draw.position, lang)
+            nameText: str = localization.tr(localization.SYMBOL_NAMES, draw.symbol.name, lang)
+            reversedSuffix: str = " (перевёрнута)" if draw.reversed else ""
+            lines.append(f"{i}. {posText} — {nameText}{reversedSuffix}")
+        return "\n".join(lines)
+
+    @classmethod
+    def renderReplyTemplate(
+        cls,
+        template: str,
+        *,
+        layoutName: str,
+        drawnSymbolsBlock: str,
+        interpretation: str,
+    ) -> str:
+        """Render the user-facing reply template for a slash-command reading.
+
+        Calls the private :func:`_safeFormat` so unknown or omitted
+        placeholders silently become empty strings — operators can trim
+        the template without breaking rendering, dood!
+
+        Supported placeholders in ``template``:
+
+        * ``{layoutName}`` — the layout's localised display name.
+        * ``{drawnSymbolsBlock}`` — numbered list from
+          :meth:`renderDrawnSymbolsBlock`.
+        * ``{interpretation}`` — the LLM-generated interpretation text.
+
+        Args:
+            template: Operator-supplied reply template string.
+            layoutName: Localised layout name (e.g. ``"Расклад на три карты"``).
+            drawnSymbolsBlock: Pre-rendered drawn-symbols block from
+                :meth:`renderDrawnSymbolsBlock`.
+            interpretation: Raw LLM interpretation text.
+
+        Returns:
+            The fully rendered user-visible reply string.
+        """
+        return _safeFormat(
+            template,
+            layoutName=layoutName,
+            drawnSymbolsBlock=drawnSymbolsBlock,
+            interpretation=interpretation,
+        )
+
+    @classmethod
     def buildImagePrompt(
         cls,
         reading: Reading,

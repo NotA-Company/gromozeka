@@ -50,13 +50,25 @@ from lib.ai.models import ModelRunResult
 HandlerMocks = Dict[str, Any]
 
 
-def _makeChatSettings() -> Dict[ChatSettingsKey, ChatSettingsValue]:
+def _makeChatSettings(
+    *,
+    replyTemplate: Optional[str] = None,
+) -> Dict[ChatSettingsKey, ChatSettingsValue]:
     """Build a chat-settings dict pre-populated with all keys the handler reads.
+
+    Args:
+        replyTemplate: Optional override for the divination reply template.
+            Defaults to a simple template with all three standard placeholders.
 
     Returns:
         Mapping of every relevant :class:`ChatSettingsKey` to a
         :class:`ChatSettingsValue` carrying a deterministic test value.
     """
+    defaultReplyTemplate: str = (
+        replyTemplate
+        if replyTemplate is not None
+        else "Расклад: {layoutName}\nСимволы:\n{drawnSymbolsBlock}\n\n{interpretation}"
+    )
     return {
         ChatSettingsKey.TAROT_SYSTEM_PROMPT: ChatSettingsValue("TAROT-SYS"),
         ChatSettingsKey.RUNES_SYSTEM_PROMPT: ChatSettingsValue("RUNES-SYS"),
@@ -67,6 +79,7 @@ def _makeChatSettings() -> Dict[ChatSettingsKey, ChatSettingsValue]:
         ChatSettingsKey.DIVINATION_IMAGE_PROMPT_TEMPLATE: ChatSettingsValue(
             "Render {layoutName}: {spreadDescription}. {styleHint}"
         ),
+        ChatSettingsKey.DIVINATION_REPLY_TEMPLATE: ChatSettingsValue(defaultReplyTemplate),
         ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: ChatSettingsValue("[fallback] "),
         ChatSettingsKey.LLM_RATELIMITER: ChatSettingsValue(""),
         ChatSettingsKey.CHAT_MODEL: ChatSettingsValue(""),
@@ -285,8 +298,9 @@ async def test_taroCommandSuccess() -> None:
         * calls ``generateText`` exactly once with two messages (system + user);
         * generates an image (config flag is True by default);
         * inserts a ``divinations`` row with no ``mediaId`` / ``rngSeed``;
-        * sends exactly one ``sendMessage`` carrying the photo bytes and
-          the full interpretation text as caption (no truncation).
+        * sends exactly TWO ``sendMessage`` calls: first the photo alone (no
+          caption / no ``messageText``), then the template-rendered text alone
+          (no ``photoData``), dood!
     """
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()
@@ -309,14 +323,26 @@ async def test_taroCommandSuccess() -> None:
     # Image step must have run.
     assert mocks["generateImage"].call_count == 1
 
-    # Reply: photo + full caption (no truncation).
-    assert mocks["sendMessage"].call_count == 1
-    sendKwargs = mocks["sendMessage"].call_args.kwargs
-    assert sendKwargs.get("photoData") == b"PNGDATA"
-    assert sendKwargs.get("messageText") == "Mock interpretation of the spread, dood!"
-    # mediaPrompt must be passed through to sendMessage (Change 7).
-    assert sendKwargs.get("mediaPrompt") is not None
-    assert sendKwargs["mediaPrompt"] != ""
+    # Reply: two separate sendMessage calls — first photo-only, then text-only.
+    assert mocks["sendMessage"].call_count == 2
+    allCalls = mocks["sendMessage"].call_args_list
+
+    # First call: photo alone, no messageText.
+    firstKwargs = allCalls[0].kwargs
+    assert firstKwargs.get("photoData") == b"PNGDATA"
+    assert not firstKwargs.get("messageText")  # no caption on the photo call
+    # mediaPrompt must be passed through to the photo sendMessage call.
+    assert firstKwargs.get("mediaPrompt") is not None
+    assert firstKwargs["mediaPrompt"] != ""
+
+    # Second call: structured text, no photoData.
+    secondKwargs = allCalls[1].kwargs
+    assert secondKwargs.get("photoData") is None
+    messageText: str = secondKwargs.get("messageText", "")
+    # The reply template must contain all three components.
+    assert "Расклад на три карты" in messageText  # layout Russian name
+    assert "1." in messageText  # drawn-symbols block (numbered list)
+    assert "Mock interpretation of the spread, dood!" in messageText  # LLM text
 
     # DB row must be persisted without mediaId / rngSeed.
     mocks["insertReading"].assert_awaited_once()
@@ -328,7 +354,8 @@ async def test_taroCommandSuccess() -> None:
     assert insertKwargs["invokedVia"] == "command"
     assert "mediaId" not in insertKwargs
     assert "rngSeed" not in insertKwargs
-    drawsList = json.loads(insertKwargs["drawsJson"])
+    # drawsJson is passed as a list directly to the repository.
+    drawsList = insertKwargs["drawsJson"]
     assert len(drawsList) == 3
 
 
@@ -347,11 +374,14 @@ async def test_runesCommandNoImage() -> None:
     assert mocks["generateText"].call_count == 1
     assert mocks["generateImage"].call_count == 0
 
-    # Reply: text-only.
+    # Reply: text-only, structured (layout name + symbols block + interpretation).
     assert mocks["sendMessage"].call_count == 1
     sendKwargs = mocks["sendMessage"].call_args.kwargs
     assert sendKwargs.get("photoData") is None
-    assert sendKwargs["messageText"] == "Mock interpretation of the spread, dood!"
+    runesMessageText: str = sendKwargs["messageText"]
+    assert "Расклад на девять рун" in runesMessageText  # layout Russian name
+    assert "1." in runesMessageText  # drawn-symbols block
+    assert "Mock interpretation of the spread, dood!" in runesMessageText  # LLM text
 
     # DB row persisted; no mediaId or rngSeed keys.
     mocks["insertReading"].assert_awaited_once()
@@ -362,7 +392,8 @@ async def test_runesCommandNoImage() -> None:
     assert "rngSeed" not in insertKwargs
     assert insertKwargs["imagePrompt"] is None
     assert insertKwargs["question"] == ""
-    drawsList = json.loads(insertKwargs["drawsJson"])
+    # drawsJson is passed as a list directly to the repository.
+    drawsList = insertKwargs["drawsJson"]
     assert len(drawsList) == 9
     # Runes never have reversed=True.
     assert all(entry["reversed"] is False for entry in drawsList)
@@ -412,10 +443,13 @@ async def test_dbInsertFailureDoesNotBlockReply() -> None:
     # Should NOT raise.
     await _callTaro(handler, em, "one_card hello?")
 
-    assert mocks["sendMessage"].call_count == 1
-    sendKwargs = mocks["sendMessage"].call_args.kwargs
-    # User still gets the interpretation (with image).
-    assert sendKwargs.get("photoData") == b"PNGDATA"
+    # Two calls: photo first, then text (Change A — image and text are separate).
+    assert mocks["sendMessage"].call_count == 2
+    allCalls = mocks["sendMessage"].call_args_list
+    # User still gets the photo in the first call.
+    assert allCalls[0].kwargs.get("photoData") == b"PNGDATA"
+    # And the text reply in the second call.
+    assert allCalls[1].kwargs.get("messageText") is not None
     failingInsert.assert_awaited_once()
 
 
@@ -459,11 +493,14 @@ async def test_imageGenerationFailureFallsBackToText() -> None:
 
     assert failingImage.call_count == 1
 
-    # Reply: plain text, no photo.
+    # Reply: plain text, no photo. Must contain all three template components.
     assert mocks["sendMessage"].call_count == 1
     sendKwargs = mocks["sendMessage"].call_args.kwargs
     assert sendKwargs.get("photoData") is None
-    assert sendKwargs["messageText"] == "Mock interpretation of the spread, dood!"
+    imgFailMessageText: str = sendKwargs["messageText"]
+    assert "Расклад на три карты" in imgFailMessageText  # layout Russian name
+    assert "1." in imgFailMessageText  # drawn-symbols block
+    assert "Mock interpretation of the spread, dood!" in imgFailMessageText  # LLM text
 
     # DB row written without image fields.
     insertKwargs = mocks["insertReading"].call_args.kwargs
@@ -486,11 +523,12 @@ async def test_handlerDisabledRaisesAtInit() -> None:
 
 
 async def test_noTruncation_fullInterpretationPassedToSendMessage() -> None:
-    """Full interpretation text is passed directly; ``sendMessage`` handles overflow.
+    """Full interpretation text is embedded in template without truncation.
 
-    Previously the handler truncated long text to CAPTION_LIMIT and sent a
-    follow-up message. That behavior is gone: one photo+caption call with
-    the complete text is made regardless of length, dood!
+    The handler must embed the complete LLM text in the reply template
+    without slicing. ``sendMessage`` handles any platform-level overflow.
+    On the slash-command-with-image path exactly TWO ``sendMessage`` calls
+    are made: first the photo alone, then the full-text reply, dood!
     """
     handler, mocks = _makeHandler()
     longText = "y" * 2000
@@ -507,12 +545,17 @@ async def test_noTruncation_fullInterpretationPassedToSendMessage() -> None:
 
     await _callTaro(handler, em, "one_card")
 
-    # Exactly ONE sendMessage call (no follow-up).
-    assert mocks["sendMessage"].call_count == 1
-    sendKwargs = mocks["sendMessage"].call_args.kwargs
-    assert sendKwargs.get("photoData") == b"PNGDATA"
-    # Full text — no slicing.
-    assert sendKwargs["messageText"] == longText
+    # Two sendMessage calls: photo-only first, text-only second (Change A).
+    assert mocks["sendMessage"].call_count == 2
+    allCalls = mocks["sendMessage"].call_args_list
+
+    # First call: photo with no messageText.
+    assert allCalls[0].kwargs.get("photoData") == b"PNGDATA"
+    assert not allCalls[0].kwargs.get("messageText")
+
+    # Second call: text with no photoData; full LLM text must be present (no slicing).
+    assert allCalls[1].kwargs.get("photoData") is None
+    assert longText in allCalls[1].kwargs["messageText"]
 
 
 async def test_llmToolFallsBackToDefaultLayout() -> None:
@@ -541,13 +584,16 @@ async def test_llmToolFallsBackToDefaultLayout() -> None:
 
 
 async def test_llmToolWithImageSendsPhotoButNotText() -> None:
-    """LLM tool + image: photo sent (empty caption), text only in JSON result.
+    """LLM tool + image: photo sent (no caption), interpretation in JSON only.
 
     When ``returnToolJson=True`` and image generation succeeds:
     - ``sendMessage`` is called exactly once with ``photoData`` set and
-      ``messageText`` empty (the bot sends the picture; the LLM handles text).
-    - The returned JSON contains ``interpretation`` and
-      ``imageGenerated=True``.
+      no ``messageText`` (the bot sends the picture; the LLM host handles
+      any text reply using the JSON result).
+    - The returned JSON contains ``done``, ``layout``, ``draws``, and
+      ``interpretation``; it does NOT contain ``imageGenerated`` or
+      ``summary`` (removed by the user intentionally), dood!
+    - The photo-send uses ``MessageCategory.BOT`` (Change C).
     """
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()
@@ -565,18 +611,26 @@ async def test_llmToolWithImageSendsPhotoButNotText() -> None:
 
     parsed = json.loads(result)
     assert parsed["done"] is True
-    assert parsed["imageGenerated"] is True
+    # imageGenerated and summary keys were deliberately removed (Change B).
+    assert "imageGenerated" not in parsed
+    assert "summary" not in parsed
     assert parsed["interpretation"] == "Mock interpretation of the spread, dood!"
-    assert "summary" in parsed  # backwards compat
+    # Layout and draws are present in the new shape.
+    assert "layout" in parsed
+    assert "draws" in parsed
 
-    # sendMessage called once: photo only, no text.
+    # sendMessage called once: photo only, no messageText (Change A tool path).
     assert mocks["sendMessage"].call_count == 1
     sendKwargs = mocks["sendMessage"].call_args.kwargs
     assert sendKwargs.get("photoData") == b"PNGDATA"
-    assert sendKwargs.get("messageText") == ""
-    # mediaPrompt must still be forwarded (Change 7).
+    assert not sendKwargs.get("messageText")  # no caption on the tool-path photo
+    # mediaPrompt must still be forwarded.
     assert sendKwargs.get("mediaPrompt") is not None
     assert sendKwargs["mediaPrompt"] != ""
+    # Tool-path photo uses MessageCategory.BOT (Change C).
+    from internal.database.models import MessageCategory
+
+    assert sendKwargs.get("messageCategory") == MessageCategory.BOT
 
 
 async def test_llmToolWithoutImageSendsNothing() -> None:
@@ -584,8 +638,9 @@ async def test_llmToolWithoutImageSendsNothing() -> None:
 
     When ``returnToolJson=True`` and image is not generated:
     - ``sendMessage`` is never called.
-    - The returned JSON contains ``interpretation`` and
-      ``imageGenerated=False``.
+    - The returned JSON contains ``done``, ``layout``, ``draws``, and
+      ``interpretation``; it does NOT contain ``imageGenerated`` or
+      ``summary`` (removed by the user intentionally), dood!
     """
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()
@@ -603,26 +658,189 @@ async def test_llmToolWithoutImageSendsNothing() -> None:
 
     parsed = json.loads(result)
     assert parsed["done"] is True
-    assert parsed["imageGenerated"] is False
+    # imageGenerated and summary keys were deliberately removed (Change B).
+    assert "imageGenerated" not in parsed
+    assert "summary" not in parsed
     assert parsed["interpretation"] == "Mock interpretation of the spread, dood!"
-    assert "summary" in parsed  # backwards compat
+    # Layout and draws are present in the new shape.
+    assert "layout" in parsed
+    assert "draws" in parsed
 
     # No message sent to the user — interpretation lives only in JSON.
     mocks["sendMessage"].assert_not_called()
 
 
 async def test_slashCommandPathSendsTextWithPhoto() -> None:
-    """Slash-command path always sends text interpretation (with photo as caption).
+    """Slash-command path sends photo then structured template text as two separate messages.
 
-    Ensures the slash-command flow is not affected by the LLM-tool
-    suppression logic from Change 2.
+    Ensures the slash-command flow uses the reply template (not bare LLM
+    text) and is not affected by the LLM-tool suppression logic. The image
+    and the template-rendered text are sent as two distinct ``sendMessage``
+    calls: first photo-only, then text-only, dood!
     """
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()
 
     await _callTaro(handler, em, "three_card test question")
 
-    assert mocks["sendMessage"].call_count == 1
+    # Two calls: photo-only first, text-only second (Change A).
+    assert mocks["sendMessage"].call_count == 2
+    allCalls = mocks["sendMessage"].call_args_list
+
+    # First call: photo alone, no messageText.
+    firstKwargs = allCalls[0].kwargs
+    assert firstKwargs.get("photoData") == b"PNGDATA"
+    assert not firstKwargs.get("messageText")
+
+    # Second call: structured text, no photoData.
+    secondKwargs = allCalls[1].kwargs
+    assert secondKwargs.get("photoData") is None
+    slashMsgText: str = secondKwargs.get("messageText", "")
+    assert "Расклад на три карты" in slashMsgText
+    assert "1." in slashMsgText
+    assert "Mock interpretation of the spread, dood!" in slashMsgText
+
+
+async def test_slashCommandUsesReplyTemplate() -> None:
+    """Slash-command reply substitutes all three placeholders from the template.
+
+    Patches the chat setting to a custom template and verifies the rendered
+    result (not the raw LLM text) is delivered in the second ``sendMessage``
+    call (the text-only one). The first call carries the photo alone, dood!
+    """
+    customTemplate: str = "LAYOUT={layoutName}|SYMBOLS={drawnSymbolsBlock}|INTERP={interpretation}"
+    handler, mocks = _makeHandler(
+        chatSettings=_makeChatSettings(replyTemplate=customTemplate),
+    )
+    em = _makeEnsuredMessage()
+
+    await _callTaro(handler, em, "one_card")
+
+    # Two calls: photo-only first, text-only second (Change A).
+    assert mocks["sendMessage"].call_count == 2
+    allCalls = mocks["sendMessage"].call_args_list
+
+    # First call: photo alone, no messageText.
+    assert allCalls[0].kwargs.get("photoData") == b"PNGDATA"
+    assert not allCalls[0].kwargs.get("messageText")
+
+    # Second call: rendered template text, no photoData.
+    assert allCalls[1].kwargs.get("photoData") is None
+    msgText: str = allCalls[1].kwargs.get("messageText", "")
+    # All three placeholders must be filled.
+    assert "LAYOUT=Одна карта" in msgText
+    assert "SYMBOLS=" in msgText
+    assert "1." in msgText  # drawn-symbols block is non-empty
+    assert "INTERP=Mock interpretation of the spread, dood!" in msgText
+
+
+async def test_toolPathJsonContainsBareInterpretation() -> None:
+    """LLM-tool JSON result carries the raw LLM text, NOT the templated reply.
+
+    The host LLM must receive the bare interpretation so it can incorporate
+    it naturally into its own response — the template wrapper is for users
+    only, not for the LLM, dood!
+    """
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+    fakeTyping = MagicMock(spec=TypingManager)
+    fakeTyping.action = None
+    fakeTyping.maxTimeout = 60
+    fakeTyping.sendTypingAction = AsyncMock(return_value=None)
+
+    result = await cast(Any, handler)._llmToolDoTarotReading(
+        extraData={"ensuredMessage": em, "typingManager": fakeTyping},
+        question="что меня ждёт?",
+        layout="three_card",
+        generate_image=False,
+    )
+
+    parsed = json.loads(result)
+    assert parsed["done"] is True
+    # The interpretation field must be the bare LLM output — no template wrapper.
+    assert parsed["interpretation"] == "Mock interpretation of the spread, dood!"
+    # It must NOT contain any template decoration from the reply template.
+    assert "Расклад:" not in parsed["interpretation"]
+    assert "Выпавшие символы:" not in parsed["interpretation"]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: sendMessage call-count on the slash-command path
+# ---------------------------------------------------------------------------
+
+
+async def test_slashCommandSendsTwoMessages_withImage() -> None:
+    """Slash-command path sends exactly TWO messages when image generation succeeds.
+
+    The new behavior sends the image and the template-rendered text as two
+    separate ``sendMessage`` calls (Change A):
+    - First call: ``photoData`` set, no ``messageText`` (image alone).
+    - Second call: ``messageText`` set with the full template-rendered reply,
+      no ``photoData`` (text alone).
+
+    Regression guard: any collapse back to a single call (photo+caption) or
+    any reduction to zero/one call on this path is a bug, dood!
+
+    Scenario: image generation enabled and returns bytes.
+    """
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    await _callTaro(handler, em, "three_card что меня ждёт")
+
+    # Exactly TWO calls: photo first, then text.
+    assert mocks["sendMessage"].call_count == 2, (
+        f"Expected sendMessage to be called exactly twice on the slash-command "
+        f"path with image, but it was called {mocks['sendMessage'].call_count} time(s). "
+        f"Calls: {mocks['sendMessage'].call_args_list}"
+    )
+    allCalls = mocks["sendMessage"].call_args_list
+
+    # First call: photo only — no messageText, photoData present.
+    firstKwargs = allCalls[0].kwargs
+    assert (
+        firstKwargs.get("photoData") == b"PNGDATA"
+    ), "First sendMessage call must carry photoData (image-only message)."
+    assert not firstKwargs.get(
+        "messageText"
+    ), "First sendMessage call must NOT carry messageText (image alone, no caption)."
+
+    # Second call: text only — messageText present, no photoData.
+    secondKwargs = allCalls[1].kwargs
+    assert (
+        secondKwargs.get("photoData") is None
+    ), "Second sendMessage call must NOT carry photoData (text-only message)."
+    msgText: str = secondKwargs.get("messageText", "")
+    assert "Расклад на три карты" in msgText
+    assert "Mock interpretation of the spread, dood!" in msgText
+
+
+async def test_slashCommandSendsExactlyOneMessage_noImage() -> None:
+    """Slash-command path sends exactly ONE message when image generation is disabled.
+
+    Regression guard: ensures that text-only replies also produce a single
+    ``sendMessage`` call. The buggy staged version additionally fired a
+    second ``sendMessage`` unconditionally after the ``else`` branch, which
+    would have sent a duplicate plain-text reply, dood!
+
+    Scenario: image generation disabled in config.
+    """
+    cm = _makeConfigManager(imageGeneration=False)
+    handler, mocks = _makeHandler(configManager=cm)
+    em = _makeEnsuredMessage()
+
+    await _callRunes(handler, em, "nine_runes без вопроса")
+
+    # The ONLY acceptable call count is 1 — no duplicate bare-text message.
+    assert mocks["sendMessage"].call_count == 1, (
+        f"Expected sendMessage to be called exactly once on the slash-command "
+        f"path without image, but it was called {mocks['sendMessage'].call_count} time(s). "
+        f"Calls: {mocks['sendMessage'].call_args_list}"
+    )
     sendKwargs = mocks["sendMessage"].call_args.kwargs
-    assert sendKwargs.get("photoData") == b"PNGDATA"
-    assert sendKwargs.get("messageText") == "Mock interpretation of the spread, dood!"
+    # Text-only path: no photo.
+    assert sendKwargs.get("photoData") is None, "Text-only sendMessage call must not carry photoData."
+    # The single call must contain the structured reply text.
+    noImgText: str = sendKwargs.get("messageText", "")
+    assert "Расклад на девять рун" in noImgText
+    assert "Mock interpretation of the spread, dood!" in noImgText

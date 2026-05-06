@@ -272,6 +272,7 @@ class ChatSettingsKey(StrEnum):
     RUNES_SYSTEM_PROMPT = "runes-system-prompt"
     DIVINATION_USER_PROMPT_TEMPLATE = "divination-user-prompt-template"
     DIVINATION_IMAGE_PROMPT_TEMPLATE = "divination-image-prompt-template"
+    DIVINATION_REPLY_TEMPLATE = "divination-reply-template"
 
     # System settings
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
@@ -597,6 +598,15 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.STRING,
         "short": "Шаблон промпта для иллюстрации расклада",
         "long": "Шаблон с {layoutName}, {spreadDescription}, {styleHint}.",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.DIVINATION_REPLY_TEMPLATE: {
+        "type": ChatSettingsType.STRING,
+        "short": "Шаблон ответа пользователю для гадания",
+        "long": (
+            "Шаблон сообщения, отправляемого пользователю при /taro и /runes. "
+            "Плейсхолдеры: {layoutName}, {drawnSymbolsBlock}, {interpretation}."
+        ),
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
     # # Some system settings

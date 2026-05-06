@@ -628,6 +628,7 @@ class DivinationHandler(BaseBotHandler):
 
         # Step 1 — draw symbols.
         draws = systemCls.draw(layout)
+        logger.debug(f"Drew {draws} symbols for {layout}")
         reading: Reading = Reading(
             systemId=systemCls.systemId,
             deckId=systemCls.deckId,
@@ -685,6 +686,23 @@ class DivinationHandler(BaseBotHandler):
 
         interpretationText: str = llmRet.resultText or ""
 
+        # Step 2b — assemble user-visible text for the slash-command path.
+        # The tool path returns the bare interpretation in JSON; only the
+        # slash-command path wraps it in the structured reply template so
+        # users can verify the drawn symbols against the LLM output.
+        if returnToolJson:
+            userVisibleText: str = interpretationText
+        else:
+            drawnBlock: str = systemCls.renderDrawnSymbolsBlock(reading, lang="ru")
+            layoutNameRu: str = layout.nameRu
+            replyTemplate: str = chatSettings[ChatSettingsKey.DIVINATION_REPLY_TEMPLATE].toStr()
+            userVisibleText = systemCls.renderReplyTemplate(
+                replyTemplate,
+                layoutName=layoutNameRu,
+                drawnSymbolsBlock=drawnBlock,
+                interpretation=interpretationText,
+            )
+
         # Step 3 — image generation (optional).
         imagePromptForDb: Optional[str] = None
         imageBytes: Optional[bytes] = None
@@ -729,32 +747,26 @@ class DivinationHandler(BaseBotHandler):
 
         # Step 4 — send reply.
         imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr() if imageFallback else ""
-        if returnToolJson:
-            # LLM-tool path: send photo without caption when image succeeded;
-            # send nothing when there is no image (interpretation goes into
-            # the JSON return value only).
-            if imageBytes is not None:
-                await self.sendMessage(
-                    ensuredMessage,
-                    photoData=imageBytes,
-                    messageText="",
-                    mediaPrompt=imagePromptForDb,
-                    messageCategory=MessageCategory.BOT,
-                    addMessagePrefix=imgAddPrefix,
-                    typingManager=typingManager,
-                )
-        else:
-            # Slash-command path: text-only or photo+full-caption.
+        if imageBytes is not None:
+            # In case of image present, send it as separate message
             await self.sendMessage(
                 ensuredMessage,
                 photoData=imageBytes,
-                messageText=interpretationText,
                 mediaPrompt=imagePromptForDb,
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                messageCategory=MessageCategory.BOT if returnToolJson else MessageCategory.BOT_COMMAND_REPLY,
                 addMessagePrefix=imgAddPrefix,
                 typingManager=typingManager,
             )
-
+        if not returnToolJson:
+            # Slash-command path: text part.
+            # userVisibleText is the structured reply (template-rendered);
+            # interpretationText (bare LLM output) stays in the DB only.
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=userVisibleText,
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
         # Step 5 — persist (best-effort; failure must not block the reply).
         try:
             await self.db.divinations.insertReading(
