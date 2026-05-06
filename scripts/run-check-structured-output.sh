@@ -9,7 +9,6 @@ case "$1" in
         env_value=`echo "$1" | cut -d= -f2`
         ENV_FILE="$ENV_FILE.$env_value"
         shift
-        break
         ;;
 esac
 
