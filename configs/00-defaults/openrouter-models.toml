@@ -9,7 +9,7 @@ context = 200000
 support_tools = true
 support_text = true
 support_images = false
-support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
+support_structured_output = true
 tier = "bot-owner"
 
 [models.models."openrouter/deepseek-chat-v3.1"]
@@ -22,7 +22,7 @@ context = 163840
 support_tools = true
 support_text = true
 support_images = false
-support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/deepseek-v4-flash"]
@@ -35,7 +35,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
-support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3-235b-a22b"]
@@ -61,7 +61,7 @@ context = 131100
 support_tools = true
 support_text = true
 support_images = false
-support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3.5-flash"]
@@ -74,7 +74,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
-support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3-vl-235b-a22b-instruct"]
@@ -87,7 +87,7 @@ context = 262144
 support_tools = true
 support_text = true
 support_images = false
-support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3.6-plus"]
@@ -100,7 +100,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
-support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
+support_structured_output = true
 tier = "paid"
 
 # Image generation Models

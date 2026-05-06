@@ -1,39 +1,38 @@
 # https://openrouter.ai/models?fmt=table&max_price=0&order=pricing-low-to-high
 
-[models.models."openrouter/gemma-3-27b-it:free"]
-# https://openrouter.ai/google/gemma-3-27b-it:free
+[models.models."openrouter/gemma-4-26b-a4b-it:free"]
+# https://openrouter.ai/google/gemma-4-26b-a4b-it:free
 provider = "openrouter"
-model_id = "google/gemma-3-27b-it:free"
+model_id = "google/gemma-4-26b-a4b-it:free"
 model_version = "latest"
 temperature = 0.3
-context = 96000
+context = 262100
 support_tools = false
 support_text = true
 support_images = false
 support_structured_output = false  # not a structured-output candidate
 tier = "free"
 
-[models.models."openrouter/mistral-7b-instruct:free"]
-# https://openrouter.ai/mistralai/mistral-7b-instruct:free
+[models.models."openrouter/gemma-4-31b-it:free"]
+# https://openrouter.ai/google/gemma-4-31b-it:free
 provider = "openrouter"
-model_id = "mistralai/mistral-7b-instruct:free"
+model_id = "google/gemma-4-31b-it:free"
 model_version = "latest"
 temperature = 0.3
-context = 32768
+context = 262100
 support_tools = true
 support_text = true
 support_images = false
 support_structured_output = false  # not a structured-output candidate
 tier = "free"
 
-[models.models."openrouter/gpt-oss-20b:free"]
-# https://openrouter.ai/openai/gpt-oss-20b:free
-enabled = false # rate-limited all the time
+[models.models."openrouter/minimax-m2.5:free"]
+# https://openrouter.ai/minimax/minimax-m2.5:free
 provider = "openrouter"
-model_id = "openai/gpt-oss-20b:free"
+model_id = "minimax/minimax-m2.5:free"
 model_version = "latest"
 temperature = 0.3
-context = 32768
+context = 196000
 support_tools = true
 support_text = true
 support_images = false

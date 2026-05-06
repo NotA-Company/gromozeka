@@ -117,7 +117,7 @@ _PROBE_MESSAGES: List[ModelMessage] = [
     ),
 ]
 
-_PROBE_TIMEOUT_SECONDS: float = 30.0
+_PROBE_TIMEOUT_SECONDS: float = 60.0
 
 # ---------------------------------------------------------------------------
 # Classification strings
@@ -195,6 +195,7 @@ def classifyResult(result: ModelStructuredResult) -> tuple[str, str]:
         errMsg = str(err)
         # JSON / value decode failure
         if isinstance(err, (json.JSONDecodeError, ValueError)):
+            logging.warning(f"Got {result.resultText} instead of JSON")
             return CLS_PARSE_FAIL, _truncate(f"{errType}: {errMsg}", 60)
         # Provider rejected the schema / bad request
         lowerMsg = errMsg.lower()

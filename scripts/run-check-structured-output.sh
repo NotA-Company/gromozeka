@@ -1,5 +1,5 @@
 #!/bin/sh
-set -x
+#set -x
 
 cd "`dirname $0`/.."
 ENV_FILE=".env"
@@ -16,7 +16,7 @@ esac
 # Do not show env file content as it can content secrets
 set +x
 . "$ENV_FILE"
-set -x
+#set -x
 
 [ -z "$CONFIGS" ] && CONFIGS="local"
 
