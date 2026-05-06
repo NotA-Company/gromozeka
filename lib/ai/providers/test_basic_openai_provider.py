@@ -1534,3 +1534,144 @@ async def testGenerateStructuredEmptyResponse(
     assert result.status == ModelResultStatus.FINAL
     assert result.data is None
     assert result.error is None
+
+
+# ============================================================================
+# _executeChatCompletion Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def testExecuteChatCompletionHappyPath(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _executeChatCompletion returns a fully-populated outcome on success.
+
+    Mock returns a ``stop`` response with usage.  Asserts: ``status == FINAL``,
+    ``error is None``, ``resText`` matches the mocked content, token counts are
+    populated, and ``retMessage`` is the mocked message object.
+
+    Args:
+        testModel: Test model instance wired to the mock client.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages (unused — params are built manually).
+
+    Raises:
+        AssertionError: If any outcome field does not match expectations.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse('{"ok": true}', "stop")
+
+    params: Dict[str, Any] = {
+        "model": testModel._getModelId(),
+        "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
+        "temperature": testModel.temperature,
+    }
+    outcome = await testModel._executeChatCompletion(params)
+
+    assert outcome.status == ModelResultStatus.FINAL
+    assert outcome.error is None
+    assert outcome.resText == '{"ok": true}'
+    assert outcome.retMessage is not None
+    assert outcome.inputTokens == 5
+    assert outcome.outputTokens == 10
+    assert outcome.totalTokens == 15
+    assert outcome.response is not None
+
+
+@pytest.mark.asyncio
+async def testExecuteChatCompletionBadRequestErrorReturnsOutcome(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _executeChatCompletion returns an error outcome on BadRequestError.
+
+    Mock raises ``openai.BadRequestError``.  Asserts: ``response is None``,
+    ``status == ERROR``, ``error`` is the original exception, ``resText == ""``,
+    and ``retMessage is None``.  The exception must NOT propagate — it is
+    captured and returned inside the outcome.
+
+    Args:
+        testModel: Test model instance wired to the mock client.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If outcome fields do not match error-path expectations.
+    """
+    badReqError = openai.BadRequestError(
+        "Bad request",
+        response=Mock(status_code=400),
+        body=None,
+    )
+    mockAsyncOpenAI.chat.completions.create.side_effect = badReqError
+
+    params: Dict[str, Any] = {
+        "model": testModel._getModelId(),
+        "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
+        "temperature": testModel.temperature,
+    }
+    outcome = await testModel._executeChatCompletion(params)
+
+    assert outcome.response is None
+    assert outcome.status == ModelResultStatus.ERROR
+    assert outcome.error is badReqError
+    assert outcome.resText == ""
+    assert outcome.retMessage is None
+
+
+@pytest.mark.asyncio
+async def testExecuteChatCompletionOtherExceptionRaises(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _executeChatCompletion re-raises non-BadRequestError exceptions.
+
+    Mock raises a plain ``RuntimeError``.  That exception must propagate out
+    of ``_executeChatCompletion`` unchanged — it is NOT caught and wrapped.
+
+    Args:
+        testModel: Test model instance wired to the mock client.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        RuntimeError: Expected — the helper re-raises non-BadRequest errors.
+    """
+    mockAsyncOpenAI.chat.completions.create.side_effect = RuntimeError("network failure")
+
+    params: Dict[str, Any] = {
+        "model": testModel._getModelId(),
+        "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
+        "temperature": testModel.temperature,
+    }
+
+    with pytest.raises(RuntimeError, match="network failure"):
+        await testModel._executeChatCompletion(params)
+
+
+@pytest.mark.asyncio
+async def testExecuteChatCompletionUnknownFinishReason(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _executeChatCompletion maps an unknown finish_reason to UNKNOWN status.
+
+    Mock returns a response with ``finish_reason="weird_thing"``.  The helper
+    must fall through to the wildcard branch and set ``status == UNKNOWN``.
+
+    Args:
+        testModel: Test model instance wired to the mock client.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If status is not UNKNOWN for an unrecognised finish reason.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse("some text", "weird_thing")
+
+    params: Dict[str, Any] = {
+        "model": testModel._getModelId(),
+        "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
+        "temperature": testModel.temperature,
+    }
+    outcome = await testModel._executeChatCompletion(params)
+
+    assert outcome.status == ModelResultStatus.UNKNOWN
+    assert outcome.error is None

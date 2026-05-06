@@ -48,6 +48,55 @@ import lib.utils as utils
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# __str__ rendering helpers for ModelRunResult
+# ---------------------------------------------------------------------------
+
+#: Sentinel returned by per-field renderers to signal that the field should be
+#: omitted from the printed output entirely.
+_OMIT: object = object()
+
+
+def _renderError(value: Optional[Exception]) -> Any:
+    """Render an Exception field compactly: ``"<TypeName>: <message>"``.
+
+    Args:
+        value: The error value or None.
+
+    Returns:
+        Formatted string when set; ``_OMIT`` when None so it disappears
+        from the printed output.
+    """
+    if value is None:
+        return _OMIT
+    return f"{type(value).__name__}: {value}"
+
+
+def _renderMediaData(value: Optional[bytes]) -> Any:
+    """Render bytes media data as a length tag, never as raw bytes.
+
+    Args:
+        value: The media bytes or None.
+
+    Returns:
+        ``"<bytes len=N>"`` when set; ``_OMIT`` when None / empty.
+    """
+    if value is None or len(value) == 0:
+        return _OMIT
+    return f"<bytes len={len(value)}>"
+
+
+def _renderStatus(value: "ModelResultStatus") -> Any:
+    """Render a ModelResultStatus as its symbolic name.
+
+    Args:
+        value: The status enum value.
+
+    Returns:
+        The enum's ``.name``.
+    """
+    return value.name
+
 
 class LLMAbstractTool(ABC):
     """Abstract base class for LLM tools.
@@ -799,6 +848,19 @@ class ModelRunResult:
         "totalTokens",
     )
 
+    # Per-field rendering overrides for __str__. Maps field name to a callable
+    # that takes the raw value and returns either the ``_OMIT`` sentinel (drop
+    # the field from output) or any object whose repr() is what we want printed.
+    # Fields absent from this dict use the default rule: omit when value is
+    # None, False, or an empty container; otherwise include ``repr(value)``.
+    _STR_RENDERERS: Dict[str, Callable[[Any], Any]] = {
+        # Raw API response object: too large and too noisy for logs — always omit.
+        "result": lambda v: _OMIT,
+        "status": _renderStatus,
+        "error": _renderError,
+        "mediaData": _renderMediaData,
+    }
+
     def __init__(
         self,
         rawResult: Any,
@@ -904,55 +966,65 @@ class ModelRunResult:
         return utils.jsonDumps(self.result)
 
     def __str__(self) -> str:
-        """Return a detailed string representation of the result.
+        """Render this result as ``ClassName({field=value, ...})``.
+
+        Iterates ``__slots__`` (including inherited slots from parent classes
+        via the MRO walk) and consults ``_STR_RENDERERS`` for per-field
+        overrides.  Fields rendering to the ``_OMIT`` sentinel are dropped.
+        Fields with no override are dropped when their value is ``None``,
+        ``False``, or an empty container (``list``, ``dict``, ``str``,
+        ``bytes``); otherwise their ``repr()`` is included.
+
+        Integer ``0`` is intentionally NOT filtered: a zero-token call is rare
+        and worth seeing in the output even though ``0`` is falsy in Python.
 
         Returns:
-            str: Formatted string containing status, result text, tool calls,
-                token usage, and other relevant information.
-
-        Example:
-            >>> result = ModelRunResult(
-            ...     rawResult={"id": "123"},
-            ...     status=ModelResultStatus.FINAL,
-            ...     resultText="Hello",
-            ...     inputTokens=10,
-            ...     outputTokens=5
-            ... )
-            >>> print(result)
-            ModelRunResult({
-              "status": "FINAL",
-              "resultText": "Hello",
-              "isFallback": false,
-              "usage": {"input": 10, "output": 5, "total": null},
-              "raw": "\n{'id': '123'}"
-            })
+            Human-readable summary string.  NOT round-trippable via eval —
+            intended for logs / debug only.
         """
-        dataValue = getattr(self, "data", None)
-        retDict = {
-            k: v
-            for k, v in {
-                "status": self.status.name,
-                "resultText": self.resultText,
-                "isFallback": self.isFallback,
-                "data": dataValue,
-                "toolCalls": self.toolCalls if self.toolCalls else None,
-                "mediaMimeType": self.mediaMimeType,
-                "mediaData": (f"BinaryData({len(self.mediaData)})" if self.mediaData else None),
-                "error": str(self.error) if self.error else None,
-                "usage": {"input": self.inputTokens, "output": self.outputTokens, "total": self.totalTokens},
-                "raw": "\n" + str(self.result),
-            }.items()
-            if v is not None
-        }
-        return (
-            "ModelRunResult("
-            + utils.jsonDumps(
-                retDict,
-                indent=2,
-                sort_keys=False,
-            )
-            + ")"
-        )
+        parts: List[str] = []
+        seen: set[str] = set()
+
+        for cls in type(self).__mro__:
+            slots = getattr(cls, "__slots__", ())
+            # __slots__ can be a single string per Python convention; normalise.
+            if isinstance(slots, str):
+                slots = (slots,)
+            for name in slots:
+                if name in seen:
+                    continue
+                seen.add(name)
+                try:
+                    value = getattr(self, name, _OMIT)
+                except AttributeError:
+                    logger.warning(f"Slot {name} declared but never assigned")
+                    continue
+
+                renderer = self._STR_RENDERERS.get(name)
+                if renderer is not None:
+                    rendered = renderer(value)
+                    if rendered is _OMIT:
+                        continue
+                    # Strings are emitted as-is (already formatted by the
+                    # renderer); everything else goes through repr() so the
+                    # type is visible in the output.
+                    if isinstance(rendered, str):
+                        parts.append(f"{name}={rendered}")
+                    else:
+                        parts.append(f"{name}={rendered!r}")
+                else:
+                    # Default rule: omit _OMIT, None, False, and empty containers.
+                    if value is None or value is _OMIT:
+                        continue
+                    if isinstance(value, (list, dict, str, bytes)) and len(value) == 0:
+                        continue
+                    if value is False:
+                        # Skip boolean-False defaults (isFallback, isToolsUsed)
+                        # so they don't clutter output when at their default.
+                        continue
+                    parts.append(f"{name}={value!r}")
+
+        return f"{type(self).__name__}({', '.join(parts)})"
 
     def toModelMessage(self) -> ModelMessage:
         """Convert the result to a ModelMessage.
