@@ -10,11 +10,11 @@
       "providerConfig": {
         "api_key": "${OPENROUTER_API_KEY}"
       },
-      "modelName": "meta-llama/llama-3.2-1b-instruct",
-      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
       "modelVersion": "latest",
       "temperature": 0.3,
-      "contextSize": 64000,
+      "contextSize": 131000,
       "extraConfig": {
         "support_text": true,
         "support_tools": false,
@@ -41,11 +41,11 @@
       "providerConfig": {
         "api_key": "${OPENROUTER_API_KEY}"
       },
-      "modelName": "meta-llama/llama-3.2-1b-instruct",
-      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
       "modelVersion": "latest",
       "temperature": 0.3,
-      "contextSize": 64000,
+      "contextSize": 131000,
       "extraConfig": {
         "support_text": true,
         "support_tools": false,
@@ -72,11 +72,11 @@
       "providerConfig": {
         "api_key": "${OPENROUTER_API_KEY}"
       },
-      "modelName": "meta-llama/llama-3.2-1b-instruct",
-      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
       "modelVersion": "latest",
       "temperature": 0.3,
-      "contextSize": 64000,
+      "contextSize": 131000,
       "extraConfig": {
         "support_text": true,
         "support_tools": false,
@@ -103,11 +103,11 @@
       "providerConfig": {
         "api_key": "${OPENROUTER_API_KEY}"
       },
-      "modelName": "meta-llama/llama-3.2-1b-instruct",
-      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
       "modelVersion": "latest",
       "temperature": 0.3,
-      "contextSize": 64000,
+      "contextSize": 131000,
       "extraConfig": {
         "support_text": true,
         "support_tools": false,
@@ -134,11 +134,11 @@
       "providerConfig": {
         "api_key": "${OPENROUTER_API_KEY}"
       },
-      "modelName": "meta-llama/llama-3.2-1b-instruct",
-      "modelId": "meta-llama/llama-3.2-1b-instruct",
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
       "modelVersion": "latest",
       "temperature": 0.3,
-      "contextSize": 64000,
+      "contextSize": 131000,
       "extraConfig": {
         "support_text": true,
         "support_tools": false,

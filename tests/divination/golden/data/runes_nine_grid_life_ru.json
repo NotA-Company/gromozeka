@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "name": "runes_nine_grid_life_ru",
+    "description": "Runes — nine-runes spread, life-forces question (Russian).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "runes",
+      "layoutId": "nine_runes",
+      "rngSeed": 256,
+      "userName": "Ева",
+      "question": "Какие силы влияют на мою жизнь сейчас?",
+      "lang": "ru"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headers": {
+          "host": "openrouter.ai",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.33.0",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.33.0",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "http-referer": "https://sourcecraft.dev/notacompany/gromozeka",
+          "x-title": "Gromozeka AI Bot",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "2151"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Ты — опытный рунолог традиции Старшего Футарка. Тебе дают рунический расклад и вопрос пользователя.\\nДай содержательную, доброжелательную интерпретацию каждой руны в её позиции; перевёрнутые значения не используются. Свяжи руны в общий нарратив, учитывая исторический и мифологический контекст.\\nОтвечай на том же языке, на котором задан вопрос пользователя. Если язык вопроса неясен — отвечай по-русски.\\n\",\"role\":\"system\"},{\"content\":\"Имя пользователя: Ева\\nВопрос: Какие силы влияют на мою жизнь сейчас?\\n\\nРасклад: Расклад на девять рун\\nПозиции: 1. Я\\n2. Путь\\n3. Прошлое\\n4. Будущее\\n5. Помощь\\n6. Помеха\\n7. Семья\\n8. Надежды\\n9. Итог\\n\\nВыпавшие символы:\\n1. Я — Соулу: The sun, victory, vital energy, and clear guidance.\\n2. Путь — Наутиз: Need, hardship, constraint, and lessons forged in necessity.\\n3. Прошлое — Перт: Mystery, hidden lots, fate, and what is yet to be revealed.\\n4. Будущее — Йера: Harvest, cycles completed, just reward, and the turn of the year.\\n5. Помощь — Эйваз: Endurance, the world tree, defence against difficulty, and deep rootedness.\\n6. Помеха — Уруз: Raw vitality, primal strength, and untamed life force.\\n7. Семья — Альгиз: Protection, sanctuary, the higher self, and guardian instinct.\\n8. Надежды — Ингуз: Inner seed, gestation, completion, and stored potential ready to spring forth.\\n9. Итог — Вуньо: Joy, harmony, fellowship, and a wish fulfilled.\\n\\nДай интерпретацию для пользователя.\\n\",\"role\":\"user\"}],\"model\":\"qwen/qwen-turbo\",\"temperature\":0.3}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Wed, 06 May 2026 00:25:51 GMT",
+          "content-type": "application/json",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "cf-ray": "9f73d99a3e36e492-DME",
+          "cf-cache-status": "DYNAMIC",
+          "access-control-allow-origin": "*",
+          "server": "cloudflare",
+          "vary": "Accept-Encoding",
+          "access-control-expose-headers": "X-Generation-Id,cf-ray",
+          "permissions-policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\"), payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+          "referrer-policy": "no-referrer, strict-origin-when-cross-origin, no-referrer, strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff, nosniff",
+          "x-generation-id": "gen-1778027150-KMPbar2mP373MVaay4Gv"
+        },
+        "content": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1778027150-KMPbar2mP373MVaay4Gv\",\"object\":\"chat.completion\",\"created\":1778027150,\"model\":\"qwen/qwen-turbo-2024-11-01\",\"provider\":\"Alibaba\",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"Добрый день, Ева. Спасибо, что обратилась за помощью в понимании сил, которые сейчас влияют на твою жизнь. Расклад на девять рун — мощный инструмент, который помогает увидеть твою текущую ситуацию в контексте мудрости древних рун. Давай разберём каждую позицию, чтобы вместе понять, что говорит тебе Старший Футарк.\\n\\n---\\n\\n**1. Я — Соулу (Солнце):**  \\nТы сейчас находишься в состоянии **силы, ясности и победы**. Соулу — это символ солнца, которое светит в твоём сердце, даря тебе энергию, направление и уверенность. Ты ведёшь правильный путь, и твоя внутренняя сила поддерживает тебя. Это время, когда ты можешь чувствовать себя уверенно и уверенно идти вперёд.\\n\\n---\\n\\n**2. Путь — Наутиз (Нужда):**  \\nТвой путь сейчас связан с **необходимостью, трудностями и ограничениями**, но именно через них ты учишься и растёшь. Наутиз напоминает, что даже в трудные времена есть уроки, которые ты можешь извлечь. Твоя дорога не всегда лёгкая, но она ведёт к цели, и ты учишься на каждом шаге.\\n\\n---\\n\\n**3. Прошлое — Перт (Тайна):**  \\nТвоё прошлое наполнено **тайной, неизведанным и судьбой**, которая ещё не раскрылась. Возможно, ты чувствуешь, что в твоей жизни есть скрытые события или силы, которые сейчас начинают проявляться. Это время, когда прошлое начинает влиять на настоящее, и ты можешь обрести понимание того, что было скрыто.\\n\\n---\\n\\n**4. Будущее — Йера (Урожай):**  \\nТвоё будущее — это **время урожая, завершения циклов и справедливой награды**. Йера говорит о том, что твои усилия, которые ты вложил в прошлое, сейчас начинают приносить плоды. Это время, когда ты можешь ощутить результаты своего труда, и это будет справедливое вознаграждение за твою работу.\\n\\n---\\n\\n**5. Помощь — Эйваз (Дерево Мира):**  \\nТы имеешь поддержку в виде **сильной, устойчивой и глубоко корнями связанной силы**. Эйваз — это символ дерева, которое стоит непоколебимо, защищая и поддерживая. Это может быть твой внутренний стержень, твоя вера, или внешние силы, которые помогают тебе в трудную минуту. Ты не одинок.\\n\\n---\\n\\n**6. Помеха — Уруз (Сила):**  \\nТвоя помеха — это **неуправляемая, первозданная сила**, которая может вызывать хаос или неожиданные изменения. Уруз — это сила природы, которая не подчиняется, но может быть направлена. Твоя задача — не бороться с ней, а найти способ использовать её в свою пользу, чтобы она стала источником роста, а не препятствием.\\n\\n---\\n\\n**7. Семья — Альгиз (Защита):**  \\nТвоя семья или близкие люди — это **защита, убежище и опора**. Альгиз говорит о том, что ты имеешь поддержку, которая защищает тебя от внешних угроз. Это может быть твоя семья, друзья или даже твой внутренний \\\"высший Я\\\". Ты в безопасности, и это важно сейчас.\\n\\n---\\n\\n**8. Надежды — Ингуз (Семя):**  \\nТвои надежды — это **семя, которое ещё не раскрылось, но уже готово к росту**. Ингуз говорит о том, что в тебе есть потенциал, который сейчас созревает. Это время, когда ты можешь начать видеть, что твои мечты и желания могут стать реальностью. Ты находишься на пороге важного превращения.\\n\\n---\\n\\n**9. Итог — Вуньо (Радость):**  \\nИтог твоего пути — это **радость, гармония и исполнение желаний**. Вуньо говорит о том, что ты приходишь к моменту, когда всё, что ты делал, приносит тебе удовлетворение. Это время, когда ты чувствуешь, что твоя жизнь в гармонии, и ты находишься в правильном месте.\\n\\n---\\n\\n### Общий нарратив:\\n\\nТы сейчас находишься в состоянии **силы и ясности (Соулу)**, идёшь по пути, который, несмотря на трудности (Наутиз), ведёт к важным урокам и росту. Твоё прошлое скрывает тайны (Перт), которые сейчас начинают раскрываться, а будущее обещает урожай (Йера) и плоды твоих усилий. Ты имеешь поддержку в виде сильной силы (Эйваз), но также сталкиваешься с неуправляемой энергией (Уруз), которую нужно направить. Твоя семья и близкие — это защита (Альгиз), а твои надежды — это семя, которое готово к росту (Ингуз). В конце концов, ты приходишь к радости и гармонии (Вуньо), где твои желания исполняются, и ты чувствуешь, что всё в порядке.\\n\\nЕва, ты на правильном пути. Твои силы, твои уроки, твои надежды — всё это ведёт к тому, чтобы ты обрела гармонию и радость. Пусть Старший Футарк будет твоим проводником.\",\"refusal\":null,\"reasoning\":null}}],\"usage\":{\"prompt_tokens\":475,\"completion_tokens\":1464,\"total_tokens\":1939,\"cost\":0.000203699925,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.0002057575,\"upstream_inference_prompt_cost\":0.0000154375,\"upstream_inference_completions_cost\":0.00019032},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}"
+      },
+      "timestamp": "2026-05-06T00:26:11.961373+00:00"
+    }
+  ]
+}

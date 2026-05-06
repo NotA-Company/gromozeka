@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "name": "tarot_three_card_career_ru",
+    "description": "Tarot — three-card spread, career question (Russian).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 131000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "tarot",
+      "layoutId": "three_card",
+      "rngSeed": 42,
+      "userName": "Алиса",
+      "question": "Что меня ждёт в карьере в этом году?",
+      "lang": "ru"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headers": {
+          "host": "openrouter.ai",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.33.0",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.33.0",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "http-referer": "https://sourcecraft.dev/notacompany/gromozeka",
+          "x-title": "Gromozeka AI Bot",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "1533"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Ты — опытный таролог. Тебе дают расклад карт Таро Райдера-Уэйта (Rider-Waite-Smith) и вопрос пользователя.\\nДай содержательную, доброжелательную интерпретацию. Учитывай позицию каждой карты в раскладе и её ориентацию (прямая / перевёрнутая). Свяжи карты в общий нарратив, а не описывай каждую изолированно.\\nОтвечай на том же языке, на котором задан вопрос пользователя. Если язык вопроса неясен — отвечай по-русски.\\n\",\"role\":\"system\"},{\"content\":\"Имя пользователя: Алиса\\nВопрос: Что меня ждёт в карьере в этом году?\\n\\nРасклад: Расклад на три карты\\nПозиции: 1. Прошлое\\n2. Настоящее\\n3. Будущее\\n\\nВыпавшие символы:\\n1. Прошлое — Умеренность (reversed): Imbalance, excess, and impatience.\\n2. Настоящее — Императрица (reversed): Smothering, dependence, and creative blockage.\\n3. Будущее — Король Жезлов (reversed): Tyranny, abuse of authority, and rigidity.\\n\\nДай интерпретацию для пользователя.\\n\",\"role\":\"user\"}],\"model\":\"qwen/qwen-turbo\",\"temperature\":0.3}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Wed, 06 May 2026 00:24:47 GMT",
+          "content-type": "application/json",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "cf-ray": "9f73d8057e8ff145-DME",
+          "cf-cache-status": "DYNAMIC",
+          "access-control-allow-origin": "*",
+          "server": "cloudflare",
+          "vary": "Accept-Encoding",
+          "access-control-expose-headers": "X-Generation-Id,cf-ray",
+          "permissions-policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\"), payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+          "referrer-policy": "no-referrer, strict-origin-when-cross-origin, no-referrer, strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff, nosniff",
+          "x-generation-id": "gen-1778027086-Se999eOA6ZFUseu1G8rF"
+        },
+        "content": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1778027086-Se999eOA6ZFUseu1G8rF\",\"object\":\"chat.completion\",\"created\":1778027086,\"model\":\"qwen/qwen-turbo-2024-11-01\",\"provider\":\"Alibaba\",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"Здравствуй, Алиса. Спасибо, что поделилась своим раскладом. Давай разберёмся, что может ждать тебя в карьере в этом году, основываясь на трёх картах, которые ты получила.\\n\\n### 1. Прошлое — **Умеренность (перевернутая)**  \\nВ прошлом ты, возможно, испытывала **дисбаланс**, **избыток** или **нетерпение** в своём карьерном развитии. Могло быть, что ты стремилась к быстрому успеху, не давая себе времени на правильную подготовку или на то, чтобы найти баланс между работой и личной жизнью. Эта карта говорит о том, что ты, возможно, перегружала себя или не умела правильно распределять свои усилия.\\n\\n### 2. Настоящее — **Императрица (перевернутая)**  \\nСейчас ты, возможно, чувствуешь себя **подавленной**, **зависимой** или **заблокированной** в творческом и профессиональном плане. Эта позиция может указывать на то, что ты не чувствуешь себя свободной в своих действиях, или что кто-то (или что-то) мешает тебе развиваться. Это может быть связано с давлением со стороны начальства, коллег или даже с самой собой — с недоверием к своим возможностям.\\n\\n### 3. Будущее — **Король Жезлов (перевернутая)**  \\nВ будущем, если ты не обратишь внимание на текущую ситуацию, может возникнуть **авторитарная среда**, **жёсткое руководство** или **непримиримые правила**. Эта карта предупреждает о возможном **неправильном использовании власти** или о том, что ты можешь столкнуться с системой, которая не уважает твою индивидуальность. Это может привести к **жёсткости**, **непримиримости** и **отсутствию гибкости** в профессиональной среде.\\n\\n---\\n\\n### Общий нарратив:\\n\\nТвоё прошлое было наполнено стремлением к успеху, но, возможно, ты не находила баланса, перегружая себя и теряя контроль. В настоящем ты чувствуешь себя подавленной, возможно, в окружении, которое не поддерживает твоё развитие. Если ты не изменишь ситуацию, в будущем ты можешь столкнуться с жёсткой системой, где твои идеи и таланты не будут цениться.\\n\\n---\\n\\n### Что можно сделать?\\n\\n- **Попробуй найти баланс** между работой и личной жизнью. Не стремись к быстрому успеху, а сосредоточься на устойчивом развитии.\\n- **Проверь, кто или что мешает тебе творить**. Возможно, ты сама ограничиваешь себя, или есть внешние факторы, которые нужно изменить.\\n- **Ищи возможности, где твоя индивидуальность ценится**. В будущем важно работать в среде, где ты чувствуешь себя свободной и уважаемой.\\n\\nТы сильна, Алиса. Твоя карьера может стать успешной, если ты начнёшь действовать с осознанностью и уверенностью. Не бойся менять окружение, если оно не способствует твоему росту. Ты заслуживаешь того, чтобы работать в условиях, которые поддерживают твои цели и творческую энергию.\",\"refusal\":null,\"reasoning\":null}}],\"usage\":{\"prompt_tokens\":319,\"completion_tokens\":883,\"total_tokens\":1202,\"cost\":0.000123905925,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.0001251575,\"upstream_inference_prompt_cost\":0.0000103675,\"upstream_inference_completions_cost\":0.00011479},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}"
+      },
+      "timestamp": "2026-05-06T00:24:59.583078+00:00"
+    }
+  ]
+}
