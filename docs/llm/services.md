@@ -140,6 +140,61 @@ llmService.registerTool(
 )
 ```
 
+**Generate structured (JSON-Schema) output:**
+```python
+result: ModelStructuredResult = await llmService.generateStructured(
+    prompt,                      # Union[str, Sequence[ModelMessage]]
+    schema,                      # Dict[str, Any] — JSON Schema
+    chatId=chatId,
+    chatSettings=chatSettings,
+    llmManager=self.llmManager,
+    modelKey=ChatSettingsKey.CHAT_MODEL,
+    fallbackKey=ChatSettingsKey.CHAT_FALLBACK_MODEL,
+    schemaName="response",       # optional; identifies schema to provider
+    strict=True,                 # optional; request strict schema enforcement
+    doDebugLogging=True,         # optional
+)
+
+if result.status == ModelResultStatus.FINAL:
+    parsedDict = result.data     # Optional[Dict[str, Any]]
+```
+
+**`generateStructured` full signature:**
+```python
+async def generateStructured(
+    self,
+    prompt: Union[str, Sequence[ModelMessage]],
+    schema: Dict[str, Any],
+    *,
+    chatId: Optional[int],
+    chatSettings: ChatSettingsDict,
+    llmManager: LLMManager,
+    modelKey: Union[ChatSettingsKey, AbstractModel, None],
+    fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
+    schemaName: str = "response",
+    strict: bool = True,
+    doDebugLogging: bool = True,
+) -> ModelStructuredResult
+```
+
+`generateStructured` mirrors `generateText` end-to-end: it resolves
+the primary and fallback models from `chatSettings`, applies rate
+limiting for non-`None` `chatId`, then delegates to
+`AbstractModel.generateStructuredWithFallBack`. Key differences:
+
+- Raises `NotImplementedError` if **neither** the primary nor the
+  fallback model has `support_structured_output = true` in its config.
+- Auto-swaps primary↔fallback when only the fallback supports the
+  capability, avoiding a guaranteed `NotImplementedError` on the
+  primary call.
+- No auto-injected JSON hint: callers should include a system message
+  hinting at JSON output; this wrapper will not inject one.
+
+**Import** `ModelStructuredResult` from `lib.ai`:
+```python
+from lib.ai import ModelStructuredResult
+```
+
 **`ModelResultStatus` values:**
 - `FINAL` — successful response
 - `ERROR` — LLM error
@@ -278,4 +333,4 @@ class MyService:
 ---
 
 *This guide is auto-maintained and should be updated whenever service integration patterns change, dood!*  
-*Last updated: 2026-04-18, dood!*
+*Last updated: 2026-05-06, dood!*

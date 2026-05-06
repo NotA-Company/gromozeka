@@ -26,6 +26,7 @@ Fixtures:
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Any, Dict
 from unittest.mock import patch
 
@@ -33,7 +34,7 @@ import pytest
 
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.manager import LLMManager
-from lib.ai.models import ModelResultStatus, ModelRunResult
+from lib.ai.models import ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
 
 # ============================================================================
 # Mock Provider and Model Classes
@@ -86,6 +87,32 @@ class MockModel(AbstractModel):
             status=ModelResultStatus.FINAL,
             mediaMimeType="image/png",
             mediaData=b"fake_image_data",
+        )
+
+    async def _generateStructured(
+        self,
+        messages: Sequence[ModelMessage],
+        schema: Dict[str, Any],
+        *,
+        schemaName: str = "response",
+        strict: bool = True,
+    ) -> ModelStructuredResult:
+        """Mock structured-output implementation.
+
+        Args:
+            messages: Conversation history (unused by mock).
+            schema: JSON Schema dict (unused by mock).
+            schemaName: Schema identifier (unused by mock).
+            strict: Strict-mode flag (unused by mock).
+
+        Returns:
+            ModelStructuredResult with a fixed mock payload.
+        """
+        return ModelStructuredResult(
+            rawResult=None,
+            status=ModelResultStatus.FINAL,
+            data={"mock": True, "schemaName": schemaName},
+            resultText='{"mock": true, "schemaName": "response"}',
         )
 
 
@@ -1057,3 +1084,137 @@ def testModelWithExtraConfig(mockProviderClasses: Dict[str, type]) -> None:
         info = model.getInfo()
         assert info["support_tools"] is True
         assert info["support_images"] is False
+
+
+# ============================================================================
+# Structured Output Tests (Phase 3)
+# ============================================================================
+
+
+def testGetModelInfoIncludesStructuredOutputFlag(mockProviderClasses: Dict[str, type]) -> None:
+    """Test getModelInfo returns support_structured_output=True when configured.
+
+    Args:
+        mockProviderClasses: Mock provider classes for patching
+    """
+    config = {
+        "providers": {
+            "test-provider": {
+                "type": "yc-openai",
+                "api_key": "test-key",
+            }
+        },
+        "models": {
+            "structured-model": {
+                "provider": "test-provider",
+                "model_id": "gpt-4",
+                "model_version": "1.0",
+                "temperature": 0.7,
+                "context": 4096,
+                "support_structured_output": True,
+            }
+        },
+    }
+
+    with patch.multiple(
+        "lib.ai.manager",
+        YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
+        OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
+    ):
+        manager = LLMManager(config)
+        info = manager.getModelInfo("structured-model")
+
+        assert info is not None
+        assert info["support_structured_output"] is True
+
+
+def testGetModelInfoStructuredOutputDefaultsFalse(mockProviderClasses: Dict[str, type]) -> None:
+    """Test getModelInfo returns support_structured_output=False when flag is absent.
+
+    Args:
+        mockProviderClasses: Mock provider classes for patching
+    """
+    config = {
+        "providers": {
+            "test-provider": {
+                "type": "yc-openai",
+                "api_key": "test-key",
+            }
+        },
+        "models": {
+            "plain-model": {
+                "provider": "test-provider",
+                "model_id": "gpt-4",
+                "model_version": "1.0",
+                "temperature": 0.7,
+                "context": 4096,
+            }
+        },
+    }
+
+    with patch.multiple(
+        "lib.ai.manager",
+        YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
+        OpenrouterProvider=mockProviderClasses["OpenrouterProvider"],
+        YcAIProvider=mockProviderClasses["YcAIProvider"],
+    ):
+        manager = LLMManager(config)
+        info = manager.getModelInfo("plain-model")
+
+        assert info is not None
+        assert info["support_structured_output"] is False
+
+
+async def testMockModelGenerateStructuredHappyPath() -> None:
+    """Test MockModel._generateStructured returns fixed payload via public API.
+
+    Verifies that calling generateStructured on a MockModel with
+    support_structured_output=True returns the expected fixed result,
+    and that schemaName flows into the data payload.
+    """
+    provider = MockProvider(config={})
+    model = MockModel(
+        provider=provider,
+        modelId="mock-model",
+        modelVersion="latest",
+        temperature=0.5,
+        contextSize=4096,
+        extraConfig={"support_structured_output": True},
+    )
+
+    schema: Dict[str, Any] = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    messages: list = []
+
+    result = await model.generateStructured(messages, schema)
+
+    assert result.status == ModelResultStatus.FINAL
+    assert result.data == {"mock": True, "schemaName": "response"}
+    assert result.resultText == '{"mock": true, "schemaName": "response"}'
+
+    # Verify schemaName flows through to data
+    resultCustom = await model.generateStructured(messages, schema, schemaName="custom")
+    assert resultCustom.data == {"mock": True, "schemaName": "custom"}
+
+
+async def testMockModelGenerateStructuredFlagFalse() -> None:
+    """Test generateStructured raises NotImplementedError when flag is False.
+
+    Verifies that the public generateStructured gate raises NotImplementedError
+    when support_structured_output is not set (defaults to False).
+    """
+    provider = MockProvider(config={})
+    model = MockModel(
+        provider=provider,
+        modelId="mock-model",
+        modelVersion="latest",
+        temperature=0.5,
+        contextSize=4096,
+        extraConfig={},
+    )
+
+    schema: Dict[str, Any] = {"type": "object"}
+    messages: list = []
+
+    with pytest.raises(NotImplementedError):
+        await model.generateStructured(messages, schema)

@@ -10,10 +10,10 @@
         "api_key": "${OPENROUTER_API_KEY}"
       },
       "modelArgs": {
-        "model_id": "meta-llama/llama-3.2-1b-instruct",
+        "model_id": "qwen/qwen-turbo",
         "model_version": "latest",
         "temperature": 0.3,
-        "context_size": 64000,
+        "context_size": 131000,
         "support_tools": true,
         "support_text": true,
         "support_images": false
@@ -30,6 +30,60 @@
           }
         }
       ]
+    }
+  },
+  {
+    "name": "OpenRouter Structured Toy",
+    "description": "Structured-output test.",
+    "kind": "structured",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "OpenrouterModelWrapper",
+    "method": "generateStructured",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelArgs": {
+        "model_id": "qwen/qwen-turbo",
+        "model_version": "latest",
+        "temperature": 0.3,
+        "context_size": 131000,
+        "support_tools": true,
+        "support_text": true,
+        "support_images": false,
+        "support_structured_output": true
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "system",
+            "content": "Respond with a JSON object matching the provided schema, dood."
+          }
+        },
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Give me a divination layout for a love question."
+          }
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "nCards": {"type": "integer"},
+          "positions": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["nCards", "positions"],
+        "additionalProperties": false
+      },
+      "schemaName": "divinationLayout",
+      "strict": true
     }
   }
 ]

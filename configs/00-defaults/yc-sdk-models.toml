@@ -8,4 +8,5 @@ model_version = "latest"
 support_tools = false
 support_text = false
 support_images = true
+support_structured_output = false  # yc-sdk: deferred — see docs/plans/lib-ai-structured-output.md §3.6
 tier = "paid"

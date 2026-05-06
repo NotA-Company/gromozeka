@@ -62,6 +62,7 @@ from .models import (
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
+    ModelStructuredResult,
 )
 
 __all__ = [
@@ -80,4 +81,5 @@ __all__ = [
     "ModelImageMessage",
     "ModelResultStatus",
     "ModelRunResult",
+    "ModelStructuredResult",
 ]

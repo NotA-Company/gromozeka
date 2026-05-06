@@ -38,13 +38,13 @@
         "url": "https://llm.api.cloud.yandex.net/v1/chat/completions",
         "headers": {
           "host": "llm.api.cloud.yandex.net",
-          "accept-encoding": "gzip, deflate",
+          "accept-encoding": "gzip, deflate, br",
           "connection": "keep-alive",
           "accept": "application/json",
           "content-type": "application/json",
-          "user-agent": "AsyncOpenAI/Python 2.6.1",
+          "user-agent": "AsyncOpenAI/Python 2.33.0",
           "x-stainless-lang": "python",
-          "x-stainless-package-version": "2.6.1",
+          "x-stainless-package-version": "2.33.0",
           "x-stainless-os": "MacOS",
           "x-stainless-arch": "arm64",
           "x-stainless-runtime": "CPython",
@@ -63,14 +63,14 @@
         "headers": {
           "content-type": "application/json",
           "x-client-request-id": "",
-          "x-request-id": "4514e0af-829e-41ad-8d4c-0aa6d27498e1",
-          "date": "Mon, 03 Nov 2025 14:31:06 GMT",
+          "x-request-id": "d73770d9-fe1e-4004-92e7-d843a7d373a9",
+          "date": "Wed, 06 May 2026 17:57:04 GMT",
           "x-server-trace-id": "***MASKED***",
           "server": "ycalb"
         },
-        "content": "{\"id\":\"4e5db106-d835-4941-802d-193437282c77\",\"object\":\"chat.completion\",\"created\":1762180266,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How about you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15}}\n"
+        "content": "{\"id\":\"a8535fce-40bf-48f1-873a-78676328bf4c\",\"object\":\"chat.completion\",\"created\":1778090224,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How about you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n"
       },
-      "timestamp": "2025-11-03T14:31:06.088700+00:00"
+      "timestamp": "2026-05-06T17:57:04.084681+00:00"
     }
   ]
 }

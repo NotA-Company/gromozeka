@@ -8,6 +8,7 @@ context = 32768
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = false  # not a structured-output candidate
 tier = "paid"
 
 [models.models.yandexgpt-lite]
@@ -19,6 +20,7 @@ context = 32768
 support_tools = false
 support_text = true
 support_images = false
+support_structured_output = false  # not a structured-output candidate
 tier = "paid"
 
 [models.models.aliceai-llm]
@@ -30,6 +32,7 @@ context = 32768
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = false  # not a structured-output candidate
 tier = "friend"
 
 [models.models."yc/gpt-oss-120b"]
@@ -41,6 +44,7 @@ context = 131072
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
 tier = "paid"
 
 [models.models."yc/deepseek-v32"]
@@ -52,6 +56,7 @@ context = 131072
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
 tier = "paid"
 
 [models.models."yc/gpt-oss-20b"]
@@ -63,6 +68,7 @@ context = 131072
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = false  # not a structured-output candidate
 tier = "paid"
 
 [models.models."yc/qwen3-235b-a22b-fp8"]
@@ -74,6 +80,7 @@ context = 262144
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
 tier = "friend"
 
 [models.models."yc/gemma-3-27b-it"]
@@ -85,4 +92,5 @@ context = 131072
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = false  # not a structured-output candidate
 tier = "paid"

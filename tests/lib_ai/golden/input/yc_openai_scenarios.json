@@ -29,5 +29,57 @@
         }
       ]
     }
+  },
+  {
+    "name": "YCOpenAI Structured Toy",
+    "description": "Structured-output golden.",
+    "kind": "structured",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "YcOpenaiModelWrapper",
+    "method": "generateStructured",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${YC_API_KEY}",
+        "folder_id": "${YC_FOLDER_ID}"
+      },
+      "modelArgs": {
+        "model_id": "yandexgpt",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 8192,
+        "support_structured_output": true
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "system",
+            "content": "Respond with a JSON object matching the provided schema, dood."
+          }
+        },
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Give me a divination layout for a love question."
+          }
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "nCards": {"type": "integer"},
+          "positions": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["nCards", "positions"],
+        "additionalProperties": false
+      },
+      "schemaName": "divinationLayout",
+      "strict": true
+    }
   }
 ]

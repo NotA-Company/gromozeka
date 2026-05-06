@@ -11,6 +11,26 @@ and recording all HTTP traffic. It supports multiple providers:
 
 The script reads scenario definitions from JSON files and saves recorded
 HTTP traffic with secrets masked for safe storage and replay.
+
+Structured-output scenarios (``kind == "structured"``) are handled automatically
+by the generic ``collectGoldenData`` dispatcher: the scenario's ``method`` field
+is ``"generateStructured"`` and its ``kwargs`` contains ``schema``, ``schemaName``,
+and ``strict`` alongside ``messages``.  No special branching is required here;
+the dispatcher calls ``instance.generateStructured(**kwargs)`` directly.
+
+To record structured-output scenarios:
+
+.. code-block:: bash
+
+    export OPENROUTER_API_KEY=...
+    ./venv/bin/python3 tests/lib_ai/golden/collect.py --provider openrouter
+
+    export YC_API_KEY=...
+    export YC_FOLDER_ID=...
+    ./venv/bin/python3 tests/lib_ai/golden/collect.py --provider yc_openai
+
+See ``STRUCTURED_OUTPUT.md`` in this directory for full instructions, required
+environment variables, and how to activate the corresponding test functions.
 """
 
 import argparse

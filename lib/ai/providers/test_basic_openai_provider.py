@@ -20,6 +20,7 @@ import json
 from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock, patch
 
+import openai
 import pytest
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion, Choice
@@ -36,6 +37,7 @@ from lib.ai.models import (
     LLMToolFunction,
     ModelMessage,
     ModelResultStatus,
+    ModelStructuredResult,
 )
 from lib.ai.providers.basic_openai_provider import (
     BasicOpenAIModel,
@@ -153,6 +155,10 @@ def testProvider(providerConfig: Dict[str, Any]) -> MockOpenAIProvider:
 def testModel(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> BasicOpenAIModel:
     """Create a test model instance for testing.
 
+    Adding ``support_structured_output=True`` is safe for existing text-generation
+    tests because they never call ``generateStructured``; the flag is only
+    checked inside that code path.
+
     Args:
         testProvider: The test provider instance.
         mockAsyncOpenAI: The mock AsyncOpenAI client.
@@ -167,7 +173,7 @@ def testModel(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> BasicO
         temperature=0.7,
         contextSize=4096,
         openAiClient=mockAsyncOpenAI,
-        extraConfig={"support_tools": True},
+        extraConfig={"support_tools": True, "support_structured_output": True},
     )
     return model
 
@@ -1229,3 +1235,302 @@ def testProviderModelManagement(testProvider: MockOpenAIProvider, mockAsyncOpenA
     # Test delete non-existent
     deleted = testProvider.deleteModel("nonexistent")
     assert deleted is False
+
+
+# ============================================================================
+# Structured Output Tests
+# ============================================================================
+
+# Simple JSON Schema used across the structured-output tests.
+_SAMPLE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}},
+    "required": ["answer"],
+}
+
+
+def _makeStructuredResponse(content: str, finishReason: str) -> Mock:
+    """Build a minimal ChatCompletion mock for structured-output tests.
+
+    Args:
+        content: The string content the model returns (may be valid/invalid JSON).
+        finishReason: The ``finish_reason`` value for the single choice.
+
+    Returns:
+        Mock: A ``Mock(spec=ChatCompletion)`` pre-wired with one choice and usage.
+    """
+    mockResponse = Mock(spec=ChatCompletion)
+    mockChoice = Mock(spec=Choice)
+    mockMessage = Mock(spec=ChatCompletionMessage)
+    mockMessage.content = content
+    mockMessage.tool_calls = None
+    mockChoice.message = mockMessage
+    mockChoice.finish_reason = finishReason
+    mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 5
+    mockUsage.completion_tokens = 10
+    mockUsage.total_tokens = 15
+    mockResponse.usage = mockUsage
+
+    return mockResponse
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredSuccess(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test successful structured output generation returns parsed data.
+
+    Model returns valid JSON with finish_reason="stop".  Asserts status FINAL,
+    data populated, resultText preserved, error absent, tokens set.
+
+    Args:
+        testModel: Test model instance (has support_structured_output=True).
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If result fields do not match expectations.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse('{"answer": "42"}', "stop")
+
+    result = await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
+
+    assert isinstance(result, ModelStructuredResult)
+    assert result.status == ModelResultStatus.FINAL
+    assert result.data == {"answer": "42"}
+    assert result.resultText == '{"answer": "42"}'
+    assert result.error is None
+    assert result.inputTokens == 5
+    assert result.outputTokens == 10
+    assert result.totalTokens == 15
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredTruncatedValidJson(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test truncated response that still contains valid JSON.
+
+    finish_reason="length" with a complete JSON body.  Status should be
+    TRUNCATED_FINAL and data should be populated.
+
+    Args:
+        testModel: Test model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If status or data are incorrect.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse(
+        '{"answer": "truncated but valid"}', "length"
+    )
+
+    result = await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
+
+    assert result.status == ModelResultStatus.TRUNCATED_FINAL
+    assert result.data == {"answer": "truncated but valid"}
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredTruncatedInvalidJson(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test truncated response with invalid JSON returns ERROR status.
+
+    finish_reason="length" with a cut-off JSON string.  Status should be
+    ERROR, data None, error is JSONDecodeError, resultText preserved.
+
+    Args:
+        testModel: Test model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If error-path fields do not match expectations.
+    """
+    truncatedJson = '{"answer": "42'
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse(truncatedJson, "length")
+
+    result = await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
+
+    assert result.status == ModelResultStatus.ERROR
+    assert result.data is None
+    assert isinstance(result.error, json.JSONDecodeError)
+    assert result.resultText == truncatedJson
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredNonObjectJson(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that non-object JSON (e.g. a JSON array) returns ERROR status.
+
+    The implementation requires the parsed value to be a dict.  A JSON array
+    should trigger a ValueError and return ERROR.
+
+    Args:
+        testModel: Test model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If non-object JSON is not treated as an error.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse("[1, 2, 3]", "stop")
+
+    result = await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
+
+    assert result.status == ModelResultStatus.ERROR
+    assert result.data is None
+    assert isinstance(result.error, ValueError)
+    assert result.resultText == "[1, 2, 3]"
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredContentFilter(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that content_filter finish_reason maps to CONTENT_FILTER status.
+
+    No JSON parsing is attempted; data should be None.
+
+    Args:
+        testModel: Test model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If status is not CONTENT_FILTER or data is not None.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse("", "content_filter")
+
+    result = await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
+
+    assert result.status == ModelResultStatus.CONTENT_FILTER
+    assert result.data is None
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredBadRequest(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that BadRequestError (e.g. provider rejects the schema) returns ERROR status.
+
+    The error is caught by the inner ``except openai.BadRequestError`` branch and
+    returned as a ModelStructuredResult with status ERROR.
+
+    Args:
+        testModel: Test model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If result status is not ERROR or error is not set.
+    """
+    badReqError = openai.BadRequestError(
+        "Schema validation failed",
+        response=Mock(status_code=400),
+        body=None,
+    )
+    mockAsyncOpenAI.chat.completions.create.side_effect = badReqError
+
+    result = await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
+
+    assert result.status == ModelResultStatus.ERROR
+    assert result.error is badReqError
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredCapabilityFlagFalse(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that generateStructured raises NotImplementedError when flag is False.
+
+    The public ``generateStructured`` gates on the config flag before ever
+    reaching ``_generateStructured`` or the API.
+
+    Args:
+        testModel: Test model instance (flag will be overridden to False).
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        NotImplementedError: Expected — the capability flag is False.
+        AssertionError: If the API was called despite the flag being False.
+    """
+    testModel._config["support_structured_output"] = False
+
+    with pytest.raises(NotImplementedError):
+        await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
+
+    mockAsyncOpenAI.chat.completions.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredResponseFormatPayload(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that response_format is correctly serialized in the API call.
+
+    Inspects ``call_args.kwargs["response_format"]`` to confirm the exact
+    structure sent to the OpenAI-compatible endpoint.
+
+    Args:
+        testModel: Test model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If response_format payload is missing or malformed.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse('{"answer": "ok"}', "stop")
+
+    await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA, schemaName="myShape", strict=True)
+
+    callKwargs = mockAsyncOpenAI.chat.completions.create.call_args.kwargs
+    assert "response_format" in callKwargs
+    responseFormat = callKwargs["response_format"]
+    assert responseFormat == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "myShape",
+            "schema": _SAMPLE_SCHEMA,
+            "strict": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredEmptyResponse(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that an empty response body (finish_reason="stop") yields data=None.
+
+    Behaviour: when the model returns an empty string, ``json.loads`` is skipped
+    (because ``resText`` is falsy), so ``parsed = None`` and ``data = None``.
+    The status remains FINAL and no error is raised — empty content is not
+    treated as a parse failure.
+
+    This behaviour is documented in ``_generateStructured``'s docstring
+    ("An empty response … data=None without raising an error").
+
+    Args:
+        testModel: Test model instance.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If status is not FINAL, data is not None, or error is set.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse("", "stop")
+
+    result = await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
+
+    assert result.status == ModelResultStatus.FINAL
+    assert result.data is None
+    assert result.error is None

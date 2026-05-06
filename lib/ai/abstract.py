@@ -10,10 +10,11 @@ These abstractions enable consistent interaction with different LLM providers
 (OpenAI, Yandex Cloud, OpenRouter, etc.) while allowing provider-specific
 customizations.
 
-Example:
-    To create a custom provider, inherit from AbstractLLMProvider and implement
-    the addModel method. To create a custom model, inherit from AbstractModel
-    and implement the _generateText and generateImage methods.
+    Example:
+        To create a custom provider, inherit from AbstractLLMProvider and implement
+        the addModel method. To create a custom model, inherit from AbstractModel
+        and implement the _generateText, generateImage, and optionally
+        _generateStructured methods.
 """
 
 import datetime
@@ -25,7 +26,7 @@ from typing import Any, Dict, List, Optional
 
 from lib import utils
 
-from .models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
+from .models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +274,147 @@ class AbstractModel(ABC):
             ret.setFallback(True)
             return ret
 
+    async def _generateStructured(
+        self,
+        messages: Sequence[ModelMessage],
+        schema: Dict[str, Any],
+        *,
+        schemaName: str = "response",
+        strict: bool = True,
+    ) -> ModelStructuredResult:
+        """Provider-specific structured-output implementation.
+
+        Concrete subclasses that support structured output must override this
+        method. The default implementation raises NotImplementedError so that
+        providers which have not opted in fail loudly.
+
+        Args:
+            messages: Conversation history.
+            schema: A JSON Schema dict describing the desired response shape.
+                Provider implementations pass this to the underlying API in
+                whatever format the API expects (e.g. OpenAI wraps it in
+                ``response_format = {"type": "json_schema", ...}``).
+            schemaName: Identifier sent alongside the schema (OpenAI requires
+                a ``name`` field; ignored where unused).
+            strict: When True, ask the provider to enforce the schema strictly
+                (OpenAI ``strict: true``). Some providers ignore this.
+
+        Returns:
+            ModelStructuredResult — see class docstring for status semantics.
+
+        Raises:
+            NotImplementedError: If structured output is not supported by this
+                model (capability flag ``support_structured_output`` is False
+                or the provider has not implemented it).
+        """
+        raise NotImplementedError(f"Structured output isn't implemented by {self.modelId}, dood!")
+
+    async def generateStructured(
+        self,
+        messages: Sequence[ModelMessage],
+        schema: Dict[str, Any],
+        *,
+        schemaName: str = "response",
+        strict: bool = True,
+    ) -> ModelStructuredResult:
+        """Public structured-output entry point.
+
+        Mirrors generateText: checks the capability flag, estimates tokens,
+        enforces the context budget, then calls _generateStructured. Honours
+        JSON-logging just like the text path.
+
+        NOTE for callers: most LLMs perform better when the SYSTEM message
+        explicitly says something like "respond with a JSON object matching
+        the provided schema." This wrapper does NOT inject that hint — pass
+        it in the messages yourself.
+
+        Args:
+            messages: Conversation history.
+            schema: JSON Schema dict describing the desired response shape.
+            schemaName: Schema identifier (provider-dependent).
+            strict: Strict-mode flag (provider-dependent).
+
+        Returns:
+            ModelStructuredResult with status, parsed data, token usage, etc.
+
+        Raises:
+            NotImplementedError: If this model does not support structured
+                output (capability flag ``support_structured_output`` is False).
+        """
+        if not self._config.get("support_structured_output", False):
+            raise NotImplementedError(f"Structured output isn't supported by {self.modelId}, dood!")
+
+        tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
+        logger.debug(
+            f"generateStructured(messages={len(messages)}, schema_keys={list(schema.keys())}), "
+            f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
+        )
+
+        if self.contextSize and tokensCount > self.contextSize * 2:
+            return ModelStructuredResult(
+                rawResult=None,
+                status=ModelResultStatus.ERROR,
+                error=Exception(
+                    f"Context too large: estimated tokens {tokensCount} " f"vs model context {self.contextSize}"
+                ),
+            )
+
+        ret = await self._generateStructured(messages=messages, schema=schema, schemaName=schemaName, strict=strict)
+
+        if self.enableJSONLog:
+            self.printJSONLog(messages, ret)
+        return ret
+
+    async def generateStructuredWithFallBack(
+        self,
+        messages: Sequence[ModelMessage],
+        fallbackModel: "AbstractModel",
+        schema: Dict[str, Any],
+        *,
+        schemaName: str = "response",
+        strict: bool = True,
+    ) -> ModelStructuredResult:
+        """Generate structured output with automatic fallback to another model.
+
+        Mirrors generateTextWithFallBack: attempts to generate structured output
+        using the current model. If the generation fails or returns an error
+        status (UNSPECIFIED, CONTENT_FILTER, UNKNOWN, or ERROR), it automatically
+        retries using the fallback model.
+
+        Args:
+            messages: Conversation history.
+            fallbackModel: Alternative model to use if the primary model fails.
+                Must also support structured output (``support_structured_output``
+                capability flag must be True).
+            schema: JSON Schema dict describing the desired response shape.
+            schemaName: Schema identifier (provider-dependent).
+            strict: Strict-mode flag (provider-dependent).
+
+        Returns:
+            ModelStructuredResult with status, parsed data, token usage, etc.
+            The result will have ``isFallback`` set to True if the fallback model
+            was used.
+
+        Raises:
+            Exception: If both the primary and fallback models fail.
+        """
+        try:
+            ret = await self.generateStructured(messages, schema, schemaName=schemaName, strict=strict)
+            if ret.status in [
+                ModelResultStatus.UNSPECIFIED,
+                ModelResultStatus.CONTENT_FILTER,
+                ModelResultStatus.UNKNOWN,
+                ModelResultStatus.ERROR,
+            ]:
+                logger.debug(f"Model {self.modelId} returned status {ret}")
+                raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
+            return ret
+        except Exception as e:
+            logger.error(f"Error running model {self.modelId}: {e}")
+            ret = await fallbackModel.generateStructured(messages, schema, schemaName=schemaName, strict=strict)
+            ret.isFallback = True
+            return ret
+
     def getEstimateTokensCount(self, data: Any) -> int:
         """Get estimated number of tokens in given data.
 
@@ -348,6 +490,7 @@ class AbstractModel(ABC):
             "support_tools": self._config.get("support_tools", False),
             "support_text": self._config.get("support_text", True),
             "support_images": self._config.get("support_images", False),
+            "support_structured_output": self._config.get("support_structured_output", False),
             "tier": self._config.get("tier", "bot_owner"),
             "extra": self._config.copy(),
         }

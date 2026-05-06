@@ -927,12 +927,14 @@ class ModelRunResult:
               "raw": "\n{'id': '123'}"
             })
         """
+        dataValue = getattr(self, "data", None)
         retDict = {
             k: v
             for k, v in {
                 "status": self.status.name,
                 "resultText": self.resultText,
                 "isFallback": self.isFallback,
+                "data": dataValue,
                 "toolCalls": self.toolCalls if self.toolCalls else None,
                 "mediaMimeType": self.mediaMimeType,
                 "mediaData": (f"BinaryData({len(self.mediaData)})" if self.mediaData else None),
@@ -995,3 +997,77 @@ class ModelRunResult:
             True
         """
         return self.mediaMimeType is not None and self.mediaData is not None
+
+
+class ModelStructuredResult(ModelRunResult):
+    """Result of a structured-output LLM call.
+
+    Extends ModelRunResult with a parsed JSON object. Inherits all of the
+    parent's fields: status, resultText (the raw model text BEFORE parse),
+    error, inputTokens/outputTokens/totalTokens, isFallback, etc.
+
+    On success: status == FINAL (or TRUNCATED_FINAL), data is the parsed
+    JSON object validated against the requested schema by the provider
+    (when the provider supports strict mode), and resultText is the raw
+    string the model emitted.
+
+    On JSON parse failure: status == ERROR, data is None, error is the
+    underlying json.JSONDecodeError, and resultText still holds the raw
+    text so callers can debug.
+
+    On other failures (content filter, API error, schema rejection by the
+    provider): status reflects the cause, data is None, error is set if
+    relevant.
+
+    Attributes:
+        data: The parsed JSON object on success, or None on failure.
+
+    Example:
+        >>> result = ModelStructuredResult(
+        ...     rawResult={"id": "123"},
+        ...     status=ModelResultStatus.FINAL,
+        ...     data={"answer": 42},
+        ...     resultText='{"answer": 42}',
+        ... )
+        >>> result.data
+        {'answer': 42}
+    """
+
+    __slots__ = ("data",)
+
+    def __init__(
+        self,
+        rawResult: Any,
+        status: ModelResultStatus,
+        data: Optional[Dict[str, Any]] = None,
+        resultText: str = "",
+        error: Optional[Exception] = None,
+        inputTokens: Optional[int] = None,
+        outputTokens: Optional[int] = None,
+        totalTokens: Optional[int] = None,
+    ):
+        """Initialize a structured-output model result.
+
+        Args:
+            rawResult: The raw result object from the LLM provider.
+            status: The execution status from ModelResultStatus.
+            data: The parsed JSON object on success, or None on failure (default: None).
+            resultText: The raw text the model emitted before JSON parsing (default: "").
+            error: Exception if an error occurred (default: None).
+            inputTokens: Number of input tokens used (default: None).
+            outputTokens: Number of output tokens generated (default: None).
+            totalTokens: Total number of tokens used (default: None).
+
+        Returns:
+            None
+        """
+        super().__init__(
+            rawResult=rawResult,
+            status=status,
+            resultText=resultText,
+            error=error,
+            inputTokens=inputTokens,
+            outputTokens=outputTokens,
+            totalTokens=totalTokens,
+        )
+        self.data: Optional[Dict[str, Any]] = data
