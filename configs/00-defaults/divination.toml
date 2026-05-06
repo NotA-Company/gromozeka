@@ -7,9 +7,3 @@ tarot-enabled = true
 runes-enabled = true
 image-generation = true
 tools-enabled = true
-
-[divination.tarot]
-allow-reversed = true
-
-[divination.runes]
-allow-reversed = false

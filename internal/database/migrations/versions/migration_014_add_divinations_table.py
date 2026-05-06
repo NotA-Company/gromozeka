@@ -40,9 +40,9 @@ class Migration014AddDivinationsTable(BaseMigration):
                         system_id      TEXT    NOT NULL,
                         deck_id        TEXT    NOT NULL,
                         layout_id      TEXT    NOT NULL,
-                        question       TEXT    NOT NULL DEFAULT '',
+                        question       TEXT    NOT NULL,
                         draws_json     TEXT    NOT NULL,
-                        interpretation TEXT    NOT NULL DEFAULT '',
+                        interpretation TEXT    NOT NULL,
                         image_prompt   TEXT,
                         invoked_via    TEXT    NOT NULL,              -- 'command' | 'llm_tool'
                         created_at     TIMESTAMP NOT NULL,

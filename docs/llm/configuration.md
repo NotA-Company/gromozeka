@@ -241,8 +241,6 @@ Defaults live in [`configs/00-defaults/divination.toml`](../../configs/00-defaul
 | `runes-enabled` | bool | `true` | Enable `/runes` command and `do_runes_reading` LLM tool |
 | `image-generation` | bool | `true` | Whether to call `generateImage` per reading |
 | `tools-enabled` | bool | `true` | Whether to register the LLM tools (independent from slash commands) |
-| `tarot.allow-reversed` | bool | `true` | Allow reversed cards in tarot draws |
-| `runes.allow-reversed` | bool | `false` | Allow reversed runes in rune draws |
 
 **Slash commands** (category `CommandCategory.TOOLS`):
 - `/taro <layout> <question>` (aliases: `/tarot`, `/таро`) — REQUIRES layout
@@ -267,7 +265,7 @@ When invoked via LLM tool, the handler **does not send a text bot message**. The
 
 | `ChatSettingsKey` enum | Setting key | Page | Notes |
 |---|---|---|---|
-| `TAROT_SYSTEM_PROMPT` | `taro-system-prompt` | `LLM_BASE` | System prompt for tarot interpretations |
+| `TAROT_SYSTEM_PROMPT` | `tarot-system-prompt` | `LLM_BASE` | System prompt for tarot interpretations |
 | `RUNES_SYSTEM_PROMPT` | `runes-system-prompt` | `LLM_BASE` | System prompt for rune interpretations |
 | `DIVINATION_USER_PROMPT_TEMPLATE` | `divination-user-prompt-template` | `BOT_OWNER_SYSTEM` | Template for the user message sent to the LLM |
 | `DIVINATION_IMAGE_PROMPT_TEMPLATE` | `divination-image-prompt-template` | `BOT_OWNER_SYSTEM` | Template used when `image-generation = true` |

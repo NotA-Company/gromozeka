@@ -268,7 +268,7 @@ class ChatSettingsKey(StrEnum):
     DOCUMET_CONDENSING_PROMPT = "document-condensing-prompt"
 
     # Divination prompts (tarot & runes readings)
-    TAROT_SYSTEM_PROMPT = "taro-system-prompt"
+    TAROT_SYSTEM_PROMPT = "tarot-system-prompt"
     RUNES_SYSTEM_PROMPT = "runes-system-prompt"
     DIVINATION_USER_PROMPT_TEMPLATE = "divination-user-prompt-template"
     DIVINATION_IMAGE_PROMPT_TEMPLATE = "divination-image-prompt-template"

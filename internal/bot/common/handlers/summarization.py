@@ -165,7 +165,7 @@ class SummarizationHandler(BaseBotHandler):
             # summarization is long process, let's set timeout to 10 minutes
             typingManager = await self.startTyping(ensuredMessage, maxTimeout=600)
         else:
-            typingManager.maxTimeout = typingManager.maxTimeout + 600
+            typingManager.addTimeout(600)
 
         messages = await self.db.chatMessages.getChatMessagesSince(
             chatId=chatId,

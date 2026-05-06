@@ -588,7 +588,7 @@ Add to [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_s
 
 | Key (enum)                                | TOML key                          | Type   | Page              | Purpose |
 |-------------------------------------------|-----------------------------------|--------|-------------------|---------|
-| `TAROT_SYSTEM_PROMPT`                     | `taro-system-prompt`              | STRING | LLM_BASE          | System prompt for tarot interpretation. |
+| `TAROT_SYSTEM_PROMPT`                     | `tarot-system-prompt`              | STRING | LLM_BASE          | System prompt for tarot interpretation. |
 | `RUNES_SYSTEM_PROMPT`                     | `runes-system-prompt`             | STRING | LLM_BASE          | System prompt for runes interpretation. |
 | `DIVINATION_USER_PROMPT_TEMPLATE`         | `divination-user-prompt-template` | STRING | BOT_OWNER_SYSTEM  | User-message template; placeholders: `{userName}`, `{question}`, `{layoutName}`, `{cardsBlock}`, `{positionsBlock}`. Same template for tarot & runes. |
 | `DIVINATION_IMAGE_PROMPT_TEMPLATE`        | `divination-image-prompt-template`| STRING | BOT_OWNER_SYSTEM  | Image-generation prompt template; placeholders: `{layoutName}`, `{spreadDescription}`, `{styleHint}`. |
@@ -608,7 +608,7 @@ operator can edit them without re-deploying. They live under
 [bot.defaults]
 # Existing keys: chat-prompt = "...", summary-prompt = "...", …
 
-taro-system-prompt = """
+tarot-system-prompt = """
 Ты — опытный таролог. Тебе дают расклад карт Таро Райдера-Уэйта (Rider-Waite-Smith) и вопрос пользователя.
 Дай содержательную, доброжелательную интерпретацию. Учитывай позицию каждой карты в раскладе и её ориентацию (прямая / перевёрнутая).
 Отвечай на том же языке, на котором задан вопрос пользователя. Если язык вопроса неясен — отвечай по-русски.
@@ -866,7 +866,7 @@ Each step ends with `make format lint && make test` before moving on, dood.
 | 78-card RWS deck data is bulky and tedious to validate. | Generate from a single source-of-truth dict in code; add a `test_decks.py` that asserts every card has all required fields. |
 | Image generation can be slow / fail. | Already handled by `LLMService.generateImage` with fallback. We additionally fall through to text-only on failure rather than reporting an error to the user. |
 | Caption length cap (Telegram 1024). | Send photo with truncated caption, follow-up message with full text. Same approach already used in `MediaHandler`. |
-| Russian/English prompts may produce mismatched-language replies. | Explicit instruction baked into the default `taro-system-prompt` / `runes-system-prompt` shipped via `configs/00-defaults/`; an operator can fine-tune per chat without code changes. |
+| Russian/English prompts may produce mismatched-language replies. | Explicit instruction baked into the default `tarot-system-prompt` / `runes-system-prompt` shipped via `configs/00-defaults/`; an operator can fine-tune per chat without code changes. |
 | Persona drift from `CHAT_PROMPT` could confuse the divination "voice". | We use **dedicated** `TAROT_SYSTEM_PROMPT` / `RUNES_SYSTEM_PROMPT` keys, not `CHAT_PROMPT`. |
 | `lib/divination` accidentally importing `internal/services/llm` would break the layering. | A `flake8` import-check / pyright run plus a one-liner test (`importlib.import_module('lib.divination'); assert no module under sys.modules starts with 'internal.services.llm'`) keeps the boundary honest. |
 | Structured-output stub may stay unimplemented for a long time. | Only known layouts are accepted in v1; users get a clear list of supported names. |

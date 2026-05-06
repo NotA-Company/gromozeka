@@ -13,6 +13,7 @@ stays inside :mod:`lib.divination`.
 """
 
 import abc
+import logging
 import random
 import string
 from collections import defaultdict
@@ -23,6 +24,8 @@ from lib.ai import ModelMessage
 
 from . import localization
 from .layouts import Layout, resolveLayout
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,12 +114,16 @@ class _SafeFormatDict(defaultdict):
     def __missing__(self, key: str) -> str:
         """Return an empty string for any unknown placeholder.
 
+        Logs a warning so operators notice typos in their configured
+        templates instead of silently producing empty sections, dood.
+
         Args:
             key: Placeholder name that was not provided.
 
         Returns:
             Empty string.
         """
+        logger.warning("Divination template placeholder '{%s}' not provided — substituting empty string, dood!", key)
         return ""
 
 

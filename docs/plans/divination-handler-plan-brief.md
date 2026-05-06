@@ -104,7 +104,7 @@ New `ChatSettingsKey` entries (TOML-key form in `[bot.defaults]`):
 
 | Enum                                | TOML key                          | Page              | Purpose |
 |-------------------------------------|-----------------------------------|-------------------|---------|
-| `TAROT_SYSTEM_PROMPT`               | `taro-system-prompt`              | LLM_BASE          | Tarot interpretation system prompt |
+| `TAROT_SYSTEM_PROMPT`               | `tarot-system-prompt`              | LLM_BASE          | Tarot interpretation system prompt |
 | `RUNES_SYSTEM_PROMPT`               | `runes-system-prompt`             | LLM_BASE          | Runes interpretation system prompt |
 | `DIVINATION_USER_PROMPT_TEMPLATE`   | `divination-user-prompt-template` | BOT_OWNER_SYSTEM  | User-message template; placeholders `{userName}`, `{question}`, `{layoutName}`, `{positionsBlock}`, `{cardsBlock}` |
 | `DIVINATION_IMAGE_PROMPT_TEMPLATE`  | `divination-image-prompt-template`| BOT_OWNER_SYSTEM  | Image-prompt template; placeholders `{layoutName}`, `{spreadDescription}`, `{styleHint}` |

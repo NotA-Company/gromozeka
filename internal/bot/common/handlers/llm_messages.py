@@ -144,7 +144,7 @@ class LLMMessageHandler(BaseBotHandler):
                         addMessagePrefix=prefixStr,
                     )
                     # Add more timeout + ping typing manager
-                    typingManager.maxTimeout = typingManager.maxTimeout + 120
+                    typingManager.addTimeout(120)
                     await typingManager.sendTypingAction()
                 except Exception as e:
                     logger.error(f"Failed to send intermediate message: {e}")

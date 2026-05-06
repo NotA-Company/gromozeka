@@ -200,5 +200,4 @@ def testDivinationFeatureFlagsLoaded(defaultsConfigManager: ConfigManager) -> No
     assert divination.get("runes-enabled") is True
     assert divination.get("image-generation") is True
     assert divination.get("tools-enabled") is True
-    assert divination.get("tarot", {}).get("allow-reversed") is True
-    assert divination.get("runes", {}).get("allow-reversed") is False
+    # allow-reversed config keys were removed (dead config); nothing more to assert here, dood.

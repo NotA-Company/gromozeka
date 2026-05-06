@@ -279,7 +279,7 @@ from lib.divination.tarot import TarotSystem
 from lib.divination.layouts import resolveLayout
 from lib.divination.drawing import drawSymbols
 
-system = TarotSystem(allowReversed=True)
+system = TarotSystem()
 layout = resolveLayout(system, "three_card")
 reading = drawSymbols(system, layout, question="What about my career?")
 ```

@@ -65,7 +65,11 @@ class DivinationsRepository(BaseRepository):
             deckId: ``'rws'`` | ``'elder_futhark'``.
             layoutId: Layout id (e.g. ``'three_card'``).
             question: Free-form user question (may be ``''``).
-            drawsJson: Drawn symbols (``list[dict]``, can be serialized to JSON).
+            drawsJson: Drawn symbols. Either an already-serialized JSON
+                ``str`` or a ``Sequence[dict]``; in the latter case the
+                underlying SQL provider serializes it to a JSON string via
+                ``convertContainerElementsToSQLite`` before binding. The DB
+                column is ``TEXT`` and is expected to hold a JSON document.
             interpretation: LLM-generated interpretation text.
             imagePrompt: Final rendered image prompt, or ``None``.
             invokedVia: How the reading was triggered

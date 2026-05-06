@@ -16,6 +16,7 @@ dood!
 import logging
 from typing import Any, Dict, Optional, Tuple, Type
 
+import lib.divination.localization as divinationLocalization
 import lib.utils as utils
 from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
@@ -44,7 +45,6 @@ from lib.divination import (
     RunesSystem,
     TarotSystem,
 )
-import lib.divination.localization as divinationL18N
 
 from .base import BaseBotHandler
 
@@ -670,6 +670,10 @@ class DivinationHandler(BaseBotHandler):
             fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
         )
         if llmRet.status != ModelResultStatus.FINAL:
+            if returnToolJson:
+                return utils.jsonDumps(
+                    {"done": False, "errorMessage": f"LLM interpretation failed: {llmRet.status.name}"}
+                )
             errorMessage: str = (
                 "Не удалось получить интерпретацию расклада, dood!\n" f"```\n{llmRet.status}\n{llmRet.resultText}\n```"
             )
@@ -679,10 +683,6 @@ class DivinationHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_ERROR,
                 typingManager=typingManager,
             )
-            if returnToolJson:
-                return utils.jsonDumps(
-                    {"done": False, "errorMessage": f"LLM interpretation failed: {llmRet.status.name}"}
-                )
             return ""
 
         interpretationText: str = llmRet.resultText or ""
@@ -718,7 +718,7 @@ class DivinationHandler(BaseBotHandler):
                 typingManager.action = TypingAction.UPLOAD_PHOTO
                 # Image generation can take a while; bump the typing timeout
                 # the same way MediaHandler does to keep the indicator alive.
-                typingManager.maxTimeout = typingManager.maxTimeout + 300
+                typingManager.addTimeout(300)
                 await typingManager.sendTypingAction()
 
             try:
@@ -747,9 +747,9 @@ class DivinationHandler(BaseBotHandler):
                 await typingManager.sendTypingAction()
 
         # Step 4 — send reply.
-        imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr() if imageFallback else ""
         if imageBytes is not None:
             # In case of image present, send it as separate message
+            imgAddPrefix: str = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr() if imageFallback else ""
             await self.sendMessage(
                 ensuredMessage,
                 photoData=imageBytes,
@@ -808,7 +808,9 @@ class DivinationHandler(BaseBotHandler):
                     "draws": [
                         {
                             "nameEn": d.symbol.name,
-                            "nameRu": divinationL18N.tr(divinationL18N.SYMBOL_NAMES, d.symbol.name, "ru"),
+                            "nameRu": divinationLocalization.tr(
+                                divinationLocalization.SYMBOL_NAMES, d.symbol.name, "ru"
+                            ),
                             "glyph": d.symbol.glyph,
                             "reversed": d.reversed,
                             "position": d.position,
@@ -841,6 +843,8 @@ class DivinationHandler(BaseBotHandler):
         Returns:
             Always ``None`` in v1.
         """
+
+        # TODO: Do after adding structured JSON output support to lib/ai.
         logger.info(
             "Unknown layout '%s' for %s: structured output not supported yet, dood!",
             layoutName,

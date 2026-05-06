@@ -96,7 +96,7 @@ def getDefaultTemplates() -> Dict[str, str]:
     """Pull the four divination templates from ``[bot.defaults]``.
 
     Returns:
-        Mapping with keys ``taroSystemPrompt``, ``runesSystemPrompt``,
+        Mapping with keys ``tarotSystemPrompt``, ``runesSystemPrompt``,
         ``userPromptTemplate`` and ``imagePromptTemplate``.
 
     Raises:
@@ -105,7 +105,7 @@ def getDefaultTemplates() -> Dict[str, str]:
     """
     defaults: Dict[str, Any] = loadBotDefaults()
     requiredKeys: Tuple[str, ...] = (
-        "taro-system-prompt",
+        "tarot-system-prompt",
         "runes-system-prompt",
         "divination-user-prompt-template",
         "divination-image-prompt-template",
@@ -114,7 +114,7 @@ def getDefaultTemplates() -> Dict[str, str]:
         if key not in defaults:
             raise KeyError(f"bot-defaults.toml [bot.defaults] is missing '{key}', dood!")
     return {
-        "taroSystemPrompt": str(defaults["taro-system-prompt"]),
+        "tarotSystemPrompt": str(defaults["tarot-system-prompt"]),
         "runesSystemPrompt": str(defaults["runes-system-prompt"]),
         "userPromptTemplate": str(defaults["divination-user-prompt-template"]),
         "imagePromptTemplate": str(defaults["divination-image-prompt-template"]),
@@ -287,7 +287,7 @@ class DivinationScenarioRunner:
             The corresponding system-prompt string from ``[bot.defaults]``.
         """
         if systemId == "tarot":
-            return self.templates["taroSystemPrompt"]
+            return self.templates["tarotSystemPrompt"]
         if systemId == "runes":
             return self.templates["runesSystemPrompt"]
         raise ValueError(f"Unknown systemId '{systemId}', dood!")

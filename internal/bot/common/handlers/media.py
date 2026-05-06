@@ -168,7 +168,7 @@ class MediaHandler(BaseBotHandler):
         # Show that we are sending photo + increase timeout as it could take long...
         originalAction = typingManager.action
         typingManager.action = TypingAction.UPLOAD_PHOTO
-        typingManager.maxTimeout = typingManager.maxTimeout + 300
+        typingManager.addTimeout(300)
         await typingManager.sendTypingAction()
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         logger.debug(
