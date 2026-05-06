@@ -288,6 +288,10 @@ class AbstractModel(ABC):
         method. The default implementation raises NotImplementedError so that
         providers which have not opted in fail loudly.
 
+        Schemas should follow OpenAI strict-mode rules (every property
+        required, no extras); see ``generateStructured`` docstring for
+        details.
+
         Args:
             messages: Conversation history.
             schema: A JSON Schema dict describing the desired response shape.
@@ -327,6 +331,24 @@ class AbstractModel(ABC):
         explicitly says something like "respond with a JSON object matching
         the provided schema." This wrapper does NOT inject that hint — pass
         it in the messages yourself.
+
+        SCHEMA REQUIREMENTS (strict mode): Many provider implementations
+        forward your schema to the OpenAI ``json_schema`` mode with
+        ``strict: true``. To be portable across all providers, your schema
+        should:
+
+        * List EVERY property under ``properties`` in the ``required`` array
+          (no optional fields allowed in strict mode).
+        * Set ``"additionalProperties": false`` at every object level.
+        * Avoid ``oneOf`` / ``anyOf`` at the root; if you need a union, nest
+          it inside a single property.
+
+        Some providers tolerate violations of these rules silently; others
+        (notably YC OpenAI's native models — yandexgpt, aliceai-llm,
+        deepseek-v32) return HTTP 400 with ``"Invalid JSON Schema: all
+        fields must be required"``.
+
+        Reference: https://platform.openai.com/docs/guides/structured-outputs
 
         Args:
             messages: Conversation history.

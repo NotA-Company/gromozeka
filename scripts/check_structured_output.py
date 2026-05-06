@@ -96,13 +96,20 @@ def _col(text: str, code: str) -> str:
 # ---------------------------------------------------------------------------
 # Probe schema & messages — tiny and self-contained
 # ---------------------------------------------------------------------------
+# OpenAI strict-mode JSON Schema requires every property to also be listed
+# in `required`, and `additionalProperties` to be False. YC OpenAI's native
+# models (yandexgpt, aliceai-llm, deepseek-v32) enforce this strictly and
+# return HTTP 400 "Invalid JSON Schema: all fields must be required" when
+# violated. To probe every provider portably, this schema lists ALL
+# properties as required.
+# Reference: https://platform.openai.com/docs/guides/structured-outputs#all-fields-must-be-required
 _PROBE_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "answer": {"type": "string"},
         "confidence": {"type": "number"},
     },
-    "required": ["answer"],
+    "required": ["answer", "confidence"],
     "additionalProperties": False,
 }
 
@@ -117,7 +124,7 @@ _PROBE_MESSAGES: List[ModelMessage] = [
     ),
 ]
 
-_PROBE_TIMEOUT_SECONDS: float = 60.0
+_PROBE_TIMEOUT_SECONDS: float = 60.0 * 5
 
 # ---------------------------------------------------------------------------
 # Classification strings

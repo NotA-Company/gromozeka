@@ -48,7 +48,7 @@ context = 131100
 support_tools = true
 support_text = true
 support_images = false
-support_structured_output = false  # candidate: yes — flip to true after recording golden scenario
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen-turbo"]

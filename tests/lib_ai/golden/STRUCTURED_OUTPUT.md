@@ -38,6 +38,21 @@ The model used for a structured scenario **must** have
 JSON.  Without it, the public `generateStructured` raises `NotImplementedError`
 before any HTTP traffic is even attempted — both during recording and replay.
 
+## Schema requirements
+
+Schemas in scenario JSON files MUST follow OpenAI strict-mode rules,
+otherwise YC OpenAI's native models (yandexgpt, aliceai-llm,
+yc/deepseek-v32) will reject the request at recording time:
+
+- Every property under `properties` must be listed in `required`.
+- `additionalProperties: false` at every object level.
+- No root-level `oneOf` / `anyOf`.
+
+Some providers (gpt-oss, qwen, gemma on OpenRouter and YC) tolerate
+optional fields silently, but writing to the strict subset keeps the
+goldens portable. Reference:
+https://platform.openai.com/docs/guides/structured-outputs
+
 ## How to record
 
 ### OpenRouter

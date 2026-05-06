@@ -120,6 +120,23 @@ hinting at JSON output; the wrapper does not inject one.
 overrides `_generateStructured` to raise `NotImplementedError` — see
 [`docs/plans/lib-ai-structured-output.md`](../plans/lib-ai-structured-output.md) §3.6.
 
+**Schema requirements (strict mode).** Most providers forward your
+schema to OpenAI's `response_format = {"type": "json_schema",
+"json_schema": {"strict": true, ...}}` mode. To be portable
+across all backends:
+
+* Every property under `properties` MUST also appear in
+  `required`. Optional fields are not allowed in strict mode.
+* Every object level MUST set `"additionalProperties": false`.
+* Root-level `oneOf` / `anyOf` is rejected — wrap unions inside a
+  named property.
+
+YC OpenAI's native models (yandexgpt, aliceai-llm, yc/deepseek-v32)
+enforce these rules strictly; OpenRouter-hosted gpt-oss/qwen/gemma
+tolerate violations silently. Always write to the strict subset.
+
+Reference: https://platform.openai.com/docs/guides/structured-outputs
+
 **Import:**
 ```python
 from lib.ai import ModelStructuredResult

@@ -2,6 +2,7 @@
 
 [models.models."openrouter/gemma-4-26b-a4b-it:free"]
 # https://openrouter.ai/google/gemma-4-26b-a4b-it:free
+enabled = false # Rate-limited all the time
 provider = "openrouter"
 model_id = "google/gemma-4-26b-a4b-it:free"
 model_version = "latest"
@@ -15,6 +16,7 @@ tier = "free"
 
 [models.models."openrouter/gemma-4-31b-it:free"]
 # https://openrouter.ai/google/gemma-4-31b-it:free
+enabled = false # Rate-limited all the time
 provider = "openrouter"
 model_id = "google/gemma-4-31b-it:free"
 model_version = "latest"

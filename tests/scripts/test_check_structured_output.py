@@ -362,3 +362,23 @@ class TestBuildParser:
         assert args.provider == "openrouter"
         assert args.dryRun is True
         assert args.limit == 5
+
+
+# ---------------------------------------------------------------------------
+# _PROBE_SCHEMA strict-mode compliance test
+# ---------------------------------------------------------------------------
+
+
+def testProbeSchemaIsStrictModeCompliant() -> None:
+    """Ensure _PROBE_SCHEMA satisfies OpenAI strict-mode rules.
+
+    Every property in the schema's `properties` map must also appear
+    in `required`, and `additionalProperties` must be False. Otherwise
+    YC OpenAI's native models reject the probe.
+    """
+    schema = _mod._PROBE_SCHEMA
+    assert schema.get("additionalProperties") is False, "strict mode requires additionalProperties=False"
+    properties = schema.get("properties", {})
+    required = set(schema.get("required", []))
+    missing = set(properties.keys()) - required
+    assert not missing, f"strict mode requires every property in `required`; missing: {missing}"
