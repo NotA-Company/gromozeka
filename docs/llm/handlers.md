@@ -40,8 +40,14 @@
 | [`weather.py`](../../internal/bot/common/handlers/weather.py) | `WeatherHandler` | Weather commands (if enabled) |
 | [`yandex_search.py`](../../internal/bot/common/handlers/yandex_search.py) | `YandexSearchHandler` | Yandex Search (if enabled) |
 | [`resender.py`](../../internal/bot/common/handlers/resender.py) | `ResenderHandler` | Message resending (if enabled) |
+| [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) |
 | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
+
+**`DivinationHandler` — reply behavior by invocation path:**
+
+- **Slash-command path** (`/taro`, `/runes`): the handler renders a **structured reply template** (`DIVINATION_REPLY_TEMPLATE` chat setting) containing the layout name, a numbered drawn-symbols block (with position, localized name, and reversal flag), and the LLM interpretation. This lets users verify the LLM didn't hallucinate any cards. Photo (if image generation succeeded) is sent as caption + image in one `sendMessage` call, dood!
+- **LLM-tool path** (`do_tarot_reading` / `do_runes_reading`, `invoked_via = 'llm_tool'`): the handler returns the **bare LLM interpretation** in the JSON tool result (fields: `done`, `summary`, `imageGenerated`, `layout`, `draws`, `interpretation`) so the host LLM can incorporate it naturally — no text bot message is sent. Only the generated image (if `image-generation = true` and generation succeeded) is sent directly to the user with an empty caption. The template is NOT applied on this path.
 
 ---
 
@@ -345,7 +351,7 @@ Full chain:
 9. `HelpHandler` — PARALLEL — help command
 10. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
 11. (Telegram only) `TopicManagerHandler` — PARALLEL
-12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler` — PARALLEL
+12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`, `DivinationHandler` — PARALLEL
 13. (custom handlers) — PARALLEL
 14. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 

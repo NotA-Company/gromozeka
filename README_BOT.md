@@ -58,6 +58,8 @@ format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 - `/help` - Show help information
 - `/stats` - Display user statistics
 - `/echo <message>` - Echo your message back
+- `/taro <layout> <question>` - Tarot reading (optional, gated on `[divination] enabled = true`)
+- `/runes <layout> <question>` - Rune reading (optional, gated on `[divination] enabled = true`)
 
 ## Project Structure
 

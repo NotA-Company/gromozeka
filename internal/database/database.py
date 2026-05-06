@@ -45,6 +45,7 @@ from .repositories import (
     ChatUsersRepository,
     CommonFunctionsRepository,
     DelayedTasksRepository,
+    DivinationsRepository,
     MediaAttachmentsRepository,
     SpamRepository,
     UserDataRepository,
@@ -78,6 +79,7 @@ class Database:
         mediaAttachments: Repository for media attachment storage and management.
         spam: Repository for spam detection and filtering data.
         delayedTasks: Repository for delayed task scheduling and management.
+        divinations: Repository for tarot/runes divination readings.
         cache: Repository for caching operations.
         _migrationManager: Internal migration manager for schema versioning and updates.
 
@@ -104,6 +106,7 @@ class Database:
         "mediaAttachments",
         "spam",
         "delayedTasks",
+        "divinations",
         "cache",
         "_migrationManager",
     )
@@ -140,6 +143,9 @@ class Database:
 
     delayedTasks: DelayedTasksRepository
     """Repository for delayed task scheduling and management."""
+
+    divinations: DivinationsRepository
+    """Repository for tarot/runes divination readings."""
 
     cache: CacheRepository
     """Repository for caching operations."""
@@ -180,6 +186,7 @@ class Database:
         self.mediaAttachments = MediaAttachmentsRepository(self.manager)
         self.spam = SpamRepository(self.manager)
         self.delayedTasks = DelayedTasksRepository(self.manager)
+        self.divinations = DivinationsRepository(self.manager)
         self.cache = CacheRepository(self.manager)
 
         self._migrationManager = MigrationManager()

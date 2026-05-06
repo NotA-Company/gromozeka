@@ -16,6 +16,7 @@
 6. [lib/bayes_filter — Spam Filter](#6-libbayes_filter--spam-filter)
 7. [lib/openweathermap — Weather Client](#7-libopenweathermap--weather-client)
 8. [lib/geocode_maps — Geocoding](#8-libgeocode_maps--geocoding)
+9. [lib/divination — Tarot & Runes Logic](#9-libdivination--tarot--runes-logic)
 
 ---
 
@@ -244,6 +245,44 @@ result = await client.reverseGeocode(lat=55.75, lon=37.62)
 ```
 
 **Config:** Configured via `[geocode-maps]` TOML section, accessed via `configManager.getGeocodeMapsConfig()`, dood!
+
+---
+
+## 9. `lib/divination` — Tarot & Runes Logic
+
+Pure-logic library for tarot and rune divination. Depends ONLY on `lib/ai` (no bot, no DB), dood!
+
+**Layout:**
+
+| Path | Purpose |
+|---|---|
+| [`lib/divination/base.py`](../../lib/divination/base.py) | `BaseDivinationSystem` ABC plus `Symbol`, `DrawnSymbol`, `Reading` dataclasses |
+| [`lib/divination/layouts.py`](../../lib/divination/layouts.py) | `Layout` dataclass, `TAROT_LAYOUTS`, `RUNE_LAYOUTS`, `resolveLayout()` |
+| [`lib/divination/drawing.py`](../../lib/divination/drawing.py) | `drawSymbols()` — uses `random.SystemRandom()` by default; tests inject seeded `random.Random` |
+| [`lib/divination/localization.py`](../../lib/divination/localization.py) | `SYMBOL_NAMES`, `POSITION_NAMES`, `LAYOUT_NAMES` (Russian translations) + `tr()` helper |
+| [`lib/divination/tarot.py`](../../lib/divination/tarot.py) | `TarotSystem(BaseDivinationSystem)` |
+| [`lib/divination/runes.py`](../../lib/divination/runes.py) | `RunesSystem(BaseDivinationSystem)` |
+| [`lib/divination/decks/tarot_rws.py`](../../lib/divination/decks/tarot_rws.py) | Full 78-card Rider-Waite-Smith deck |
+| [`lib/divination/decks/runes_elder_futhark.py`](../../lib/divination/decks/runes_elder_futhark.py) | 24 Elder Futhark runes |
+
+**Predefined layouts:**
+- Tarot: `one_card`, `three_card`, `celtic_cross`, `relationship`, `yes_no`
+- Runes: `one_rune`, `three_runes`, `five_runes`, `nine_runes`
+
+**Layout name parsing** in `resolveLayout()` is case-, dash-, underscore-, and space-insensitive.
+
+**Boundary rule:** `lib/divination/` is consumed by `internal/bot/common/handlers/divination.py`; the library itself must never import from `internal/`. A boundary-import test enforces this, dood!
+
+**Usage from a handler:**
+```python
+from lib.divination.tarot import TarotSystem
+from lib.divination.layouts import resolveLayout
+from lib.divination.drawing import drawSymbols
+
+system = TarotSystem()
+layout = resolveLayout(system, "three_card")
+reading = drawSymbols(system, layout, question="What about my career?")
+```
 
 ---
 

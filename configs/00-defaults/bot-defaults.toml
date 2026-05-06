@@ -186,3 +186,53 @@ document-condensing-prompt = """
 Структура пересказа должна соответствовать структуре исходного текста (разделы, подразделы).
 Пересказывай исключительно на языке исходного текста.
 """
+
+# Divination defaults (tarot & runes readings).
+# Placeholders for the user-prompt template:
+#   {userName}, {question}, {layoutName}, {positionsBlock}, {cardsBlock}
+# Placeholders for the image-prompt template:
+#   {layoutName}, {spreadDescription}, {styleHint}
+tarot-system-prompt = """
+Ты — опытный таролог. Тебе дают расклад карт Таро Райдера-Уэйта (Rider-Waite-Smith) и вопрос пользователя.
+Дай содержательную, доброжелательную интерпретацию. Учитывай позицию каждой карты в раскладе и её ориентацию (прямая / перевёрнутая). Свяжи карты в общий нарратив, а не описывай каждую изолированно.
+Отвечай на том же языке, на котором задан вопрос пользователя. Если язык вопроса неясен — отвечай по-русски.
+"""
+
+runes-system-prompt = """
+Ты — опытный рунолог традиции Старшего Футарка. Тебе дают рунический расклад и вопрос пользователя.
+Дай содержательную, доброжелательную интерпретацию каждой руны в её позиции; перевёрнутые значения не используются. Свяжи руны в общий нарратив, учитывая исторический и мифологический контекст.
+Отвечай на том же языке, на котором задан вопрос пользователя. Если язык вопроса неясен — отвечай по-русски.
+"""
+
+divination-user-prompt-template = """
+Имя пользователя: {userName}
+Вопрос: {question}
+
+Расклад: {layoutName}
+Позиции: {positionsBlock}
+
+Выпавшие символы:
+{cardsBlock}
+
+Дай интерпретацию для пользователя.
+"""
+
+divination-image-prompt-template = """
+Render the {layoutName} divination spread as a single illustration.
+Spread layout and drawn symbols (in English):
+{spreadDescription}
+
+Style: vintage occult illustration, warm parchment background, ornate borders, mystical atmosphere. {styleHint}
+"""
+
+# Reply template for slash-command responses (/taro, /runes).
+# Placeholders: {layoutName}, {drawnSymbolsBlock}, {interpretation}.
+# Used ONLY on the slash-command path; LLM-tool path returns bare interpretation in JSON.
+divination-reply-template = """
+🎴 Расклад: {layoutName}
+
+Выпавшие символы:
+{drawnSymbolsBlock}
+
+{interpretation}
+"""

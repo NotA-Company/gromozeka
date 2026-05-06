@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "name": "runes_three_norns_health_ru",
+    "description": "Runes — three-runes (Norns) spread, health question (Russian).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "runes",
+      "layoutId": "three_runes",
+      "rngSeed": 99,
+      "userName": "Дмитрий",
+      "question": "Что мне сейчас важно знать о моём здоровье?",
+      "lang": "ru"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headers": {
+          "host": "openrouter.ai",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.33.0",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.33.0",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "http-referer": "https://sourcecraft.dev/notacompany/gromozeka",
+          "x-title": "Gromozeka AI Bot",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "1525"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Ты — опытный рунолог традиции Старшего Футарка. Тебе дают рунический расклад и вопрос пользователя.\\nДай содержательную, доброжелательную интерпретацию каждой руны в её позиции; перевёрнутые значения не используются. Свяжи руны в общий нарратив, учитывая исторический и мифологический контекст.\\nОтвечай на том же языке, на котором задан вопрос пользователя. Если язык вопроса неясен — отвечай по-русски.\\n\",\"role\":\"system\"},{\"content\":\"Имя пользователя: Дмитрий\\nВопрос: Что мне сейчас важно знать о моём здоровье?\\n\\nРасклад: Три норны\\nПозиции: 1. Прошлое\\n2. Настоящее\\n3. Будущее\\n\\nВыпавшие символы:\\n1. Прошлое — Эйваз: Endurance, the world tree, defence against difficulty, and deep rootedness.\\n2. Настоящее — Гебо: Gift, generous exchange, partnership, and balanced giving.\\n3. Будущее — Манназ: The self in community, humanity, and shared identity.\\n\\nДай интерпретацию для пользователя.\\n\",\"role\":\"user\"}],\"model\":\"qwen/qwen-turbo\",\"temperature\":0.3}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Wed, 06 May 2026 00:25:32 GMT",
+          "content-type": "application/json",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "cf-ray": "9f73d9258f4eec5e-DME",
+          "cf-cache-status": "DYNAMIC",
+          "access-control-allow-origin": "*",
+          "server": "cloudflare",
+          "vary": "Accept-Encoding",
+          "access-control-expose-headers": "X-Generation-Id,cf-ray",
+          "permissions-policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\"), payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+          "referrer-policy": "no-referrer, strict-origin-when-cross-origin, no-referrer, strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff, nosniff",
+          "x-generation-id": "gen-1778027131-49gwp90UOxde4IMJb9zk"
+        },
+        "content": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1778027131-49gwp90UOxde4IMJb9zk\",\"object\":\"chat.completion\",\"created\":1778027131,\"model\":\"qwen/qwen-turbo-2024-11-01\",\"provider\":\"Alibaba\",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"Дмитрий, благодарю за доверие и за вопрос, который касается важной темы — здоровья. Расклад «Три Норны» — это глубокий и значимый выбор, ведь Норны — это богини судьбы в скандинавской мифологии, и их символы часто несут в себе уроки, предостережения и обещания. Давай разберём каждую руну в контексте твоего вопроса о здоровье.\\n\\n---\\n\\n### 1. **Прошлое — Эйваз (Æ)**\\n**Значение:** Эйваз означает **выносливость**, **стабильность**, **защиту от трудностей**, **глубокие корни**.  \\n**Интерпретация:**  \\nВ прошлом ты, Дмитрий, проявлял **сильную выносливость** и **устойчивость** в своих жизненных обстоятельствах. Возможно, ты переживал трудные периоды, но не пал духом. Твоё здоровье в прошлом было подкреплено **внутренней силой**, **устойчивостью** и **способностью справляться с трудностями**. Эта руна говорит о том, что ты уже прошёл через испытания, и они помогли тебе стать сильнее.\\n\\n**Мифологический контекст:** Эйваз связана с **Иммуном** — деревом жизни, которое поддерживает мир. Это символ того, что ты имеешь **основу**, на которую можно опираться.\\n\\n---\\n\\n### 2. **Настоящее — Гебо (G)**\\n**Значение:** Гебо означает **дар**, **взаимный обмен**, **партнёрство**, **баланс в даре**.  \\n**Интерпретация:**  \\nСейчас ты находишься в **периоде взаимодействия**, **взаимопомощи** и **обмена**. Возможно, ты сейчас активно участвуешь в **социальных связях**, **работаешь в команде** или **получаешь поддержку** от других. Это может быть как **физическая поддержка** (например, от близких), так и **эмоциональная** или **духовная**. Гебо говорит о том, что **взаимность и баланс** сейчас важны для твоего здоровья. Ты не одинок, и твоя сила — в **общении и взаимодействии**.\\n\\n**Мифологический контекст:** Гебо — это руна **Один**, который даровал мудрость и знания. Это символ того, что сейчас ты можешь получать **дары**, которые помогут тебе в пути.\\n\\n---\\n\\n### 3. **Будущее — Манназ (M)**\\n**Значение:** Манназ означает **самость в сообществе**, **человечность**, **общее тождество**.  \\n**Интерпретация:**  \\nВ будущем твоя жизнь будет всё больше связана с **обществом**, **социальными связями** и **общим благом**. Ты начнёшь чувствовать себя частью чего-то большего — возможно, в профессиональной среде, в семье или в кругу друзей. Это может быть **поддержка**, **взаимопонимание** и **общее развитие**. Манназ говорит о том, что твоё здоровье будет зависеть от **твоего участия в жизни других** и **взаимодействия с миром**.\\n\\n**Мифологический контекст:** Манназ — это руна **Манна**, бога, который символизирует **человечность**, **общество** и **духовную связь**. Это символ того, что твоя сила — в **общении и принадлежности**.\\n\\n---\\n\\n### Общий нарратив:\\n\\nТы прошёл через трудности, и они укрепили тебя (Эйваз). Сейчас ты находишься в состоянии **взаимодействия и обмена**, где твоя поддержка и помощь другим помогают тебе сохранять баланс (Гебо). В будущем твоя сила будет расти в **общении и принадлежности к сообществу** (Манназ).\\n\\nТвое здоровье сейчас — это не только физическое состояние, но и **эмоциональное**, **социальное** и **духовное**. Ты сильнее, чем думаешь, и твоя **устойчивость** — это твоя основа. Но важно помнить, что **взаимодействие, поддержка и обмен** — это ключ к устойчивому здоровью и гармонии.\\n\\nДмитрий, ты на правильном пути. Продолжай быть открытым, участвовать в жизни, и ты увидишь, как твоё здоровье укрепляется не только в себе, но и в общении с другими.\",\"refusal\":null,\"reasoning\":null}}],\"usage\":{\"prompt_tokens\":298,\"completion_tokens\":1197,\"total_tokens\":1495,\"cost\":0.00016364205,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.000165295,\"upstream_inference_prompt_cost\":0.000009685,\"upstream_inference_completions_cost\":0.00015561},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}"
+      },
+      "timestamp": "2026-05-06T00:25:50.127644+00:00"
+    }
+  ]
+}

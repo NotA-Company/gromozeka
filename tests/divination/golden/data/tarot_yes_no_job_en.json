@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "name": "tarot_yes_no_job_en",
+    "description": "Tarot — yes/no spread, career question (English).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "tarot",
+      "layoutId": "yes_no",
+      "rngSeed": 7,
+      "userName": "Carol",
+      "question": "Should I take the new job offer?",
+      "lang": "en"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headers": {
+          "host": "openrouter.ai",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.33.0",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.33.0",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "http-referer": "https://sourcecraft.dev/notacompany/gromozeka",
+          "x-title": "Gromozeka AI Bot",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "1196"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Ты — опытный таролог. Тебе дают расклад карт Таро Райдера-Уэйта (Rider-Waite-Smith) и вопрос пользователя.\\nДай содержательную, доброжелательную интерпретацию. Учитывай позицию каждой карты в раскладе и её ориентацию (прямая / перевёрнутая). Свяжи карты в общий нарратив, а не описывай каждую изолированно.\\nОтвечай на том же языке, на котором задан вопрос пользователя. Если язык вопроса неясен — отвечай по-русски.\\n\",\"role\":\"system\"},{\"content\":\"Имя пользователя: Carol\\nВопрос: Should I take the new job offer?\\n\\nРасклад: Yes/No\\nПозиции: 1. Answer\\n\\nВыпавшие символы:\\n1. Answer — Six of Cups: Harmony restored, generosity, and progress after struggle.\\n\\nДай интерпретацию для пользователя.\\n\",\"role\":\"user\"}],\"model\":\"qwen/qwen-turbo\",\"temperature\":0.3}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Wed, 06 May 2026 00:25:25 GMT",
+          "content-type": "application/json",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "cf-ray": "9f73d8f60ab8e4a3-DME",
+          "cf-cache-status": "DYNAMIC",
+          "access-control-allow-origin": "*",
+          "server": "cloudflare",
+          "vary": "Accept-Encoding",
+          "access-control-expose-headers": "X-Generation-Id,cf-ray",
+          "permissions-policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\"), payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+          "referrer-policy": "no-referrer, strict-origin-when-cross-origin, no-referrer, strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff, nosniff",
+          "x-generation-id": "gen-1778027124-iwEVtg1slHniWUNCm8MU"
+        },
+        "content": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1778027124-iwEVtg1slHniWUNCm8MU\",\"object\":\"chat.completion\",\"created\":1778027124,\"model\":\"qwen/qwen-turbo-2024-11-01\",\"provider\":\"Alibaba\",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"Добрый день, Carol! Спасибо, что поделилась своим вопросом. Расклад \\\"Yes/No\\\" показывает, что ты ищешь ясность в важном решении — принять ли новое предложение работы. В позиции \\\"Answer\\\" выпала **Шестёрка Кубков**, и это очень значимая карта.\\n\\n**Шестёрка Кубков** — это символ **гармонии, восстановления, щедрости и прогресса после трудностей**. Она говорит о том, что ты находишься в состоянии, где ты можешь вернуться к чему-то приятному, что приносит тебе радость и чувство безопасности. Эта карта часто появляется, когда ты готова принять что-то новое, но с доверием и спокойствием, а не с тревогой.\\n\\nВ контексте твоего вопроса — **да**, ты должна принять новое предложение работы. Это не просто возможность заработать или продвинуться по карьерной лестнице, но и шанс вернуться к чему-то, что приносит тебе удовлетворение и чувство гармонии. Возможно, ты чувствовала, что в последнее время что-то было не так, и эта карта говорит, что сейчас — подходящее время для восстановления и движения вперёд.\\n\\nОднако, как всегда, важно учитывать свои личные обстоятельства и то, как это предложение соответствует твоим целям и ценностям. Но в целом — **да**, твой путь ведёт к этому шагу. Удачи тебе, Carol, и пусть твой выбор принесёт тебе радость и успех! 🌟\",\"refusal\":null,\"reasoning\":null}}],\"usage\":{\"prompt_tokens\":232,\"completion_tokens\":398,\"total_tokens\":630,\"cost\":0.0000586872,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.00005928,\"upstream_inference_prompt_cost\":0.00000754,\"upstream_inference_completions_cost\":0.00005174},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}"
+      },
+      "timestamp": "2026-05-06T00:25:31.322342+00:00"
+    }
+  ]
+}

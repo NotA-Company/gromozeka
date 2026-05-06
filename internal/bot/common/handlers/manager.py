@@ -69,6 +69,7 @@ from .base import BaseBotHandler, HandlerResultStatus
 from .common import CommonHandler
 from .configure import ConfigureCommandHandler
 from .dev_commands import DevCommandsHandler
+from .divination import DivinationHandler
 from .help_command import CommandHandlerGetterInterface, HelpHandler
 from .llm_messages import LLMMessageHandler
 from .media import MediaHandler
@@ -482,6 +483,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         if self.configManager.get("resender", {}).get("enabled", False):
             self.handlers.append(
                 (ResenderHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
+            )
+        if self.configManager.get("divination", {}).get("enabled", False):
+            self.handlers.append(
+                (DivinationHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
             )
 
         # Load custom handlers from config

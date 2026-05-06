@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "name": "tarot_celtic_cross_relationship_ru",
+    "description": "Tarot — Celtic Cross spread, relationship question (Russian).",
+    "module": "tests.divination.golden.scenario_runner",
+    "class": "DivinationScenarioRunner",
+    "method": "runReading",
+    "init_kwargs": {
+      "providerType": "openrouter",
+      "providerConfig": {
+        "api_key": "${OPENROUTER_API_KEY}"
+      },
+      "modelName": "qwen/qwen-turbo",
+      "modelId": "qwen/qwen-turbo",
+      "modelVersion": "latest",
+      "temperature": 0.3,
+      "contextSize": 64000,
+      "extraConfig": {
+        "support_text": true,
+        "support_tools": false,
+        "support_images": false
+      }
+    },
+    "kwargs": {
+      "systemId": "tarot",
+      "layoutId": "celtic_cross",
+      "rngSeed": 1337,
+      "userName": "Боб",
+      "question": "Стоит ли мне переехать ради партнёра?",
+      "lang": "ru"
+    },
+    "result_type": "dict"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headers": {
+          "host": "openrouter.ai",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.33.0",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.33.0",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "http-referer": "https://sourcecraft.dev/notacompany/gromozeka",
+          "x-title": "Gromozeka AI Bot",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "2485"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Ты — опытный таролог. Тебе дают расклад карт Таро Райдера-Уэйта (Rider-Waite-Smith) и вопрос пользователя.\\nДай содержательную, доброжелательную интерпретацию. Учитывай позицию каждой карты в раскладе и её ориентацию (прямая / перевёрнутая). Свяжи карты в общий нарратив, а не описывай каждую изолированно.\\nОтвечай на том же языке, на котором задан вопрос пользователя. Если язык вопроса неясен — отвечай по-русски.\\n\",\"role\":\"system\"},{\"content\":\"Имя пользователя: Боб\\nВопрос: Стоит ли мне переехать ради партнёра?\\n\\nРасклад: Кельтский крест\\nПозиции: 1. Настоящее\\n2. Препятствие\\n3. Прошлое\\n4. Будущее\\n5. Над\\n6. Под\\n7. Совет\\n8. Внешние влияния\\n9. Надежды и страхи\\n10. Итог\\n\\nВыпавшие символы:\\n1. Настоящее — Пятёрка Пентаклей: Conflict, loss, or a difficult turning point in the suit's affairs.\\n2. Препятствие — Паж Кубков (reversed): Immaturity and unfocused enthusiasm.\\n3. Прошлое — Десятка Пентаклей: Completion of a cycle and the full weight of the suit's lessons.\\n4. Будущее — Паж Пентаклей: Curiosity, fresh learning, and a youthful approach to the suit.\\n5. Над — Мир (reversed): Unfinished business, lingering loose ends, and delayed completion.\\n6. Под — Семёрка Кубков: Reflection, evaluation, and choosing among several options.\\n7. Совет — Король Кубков (reversed): Tyranny, abuse of authority, and rigidity.\\n8. Внешние влияния — Королева Пентаклей (reversed): Coldness, self-absorption, and misuse of influence.\\n9. Надежды и страхи — Четвёрка Кубков: Stability, rest, and a moment of consolidation.\\n10. Итог — Туз Мечей (reversed): Blocked potential and a stalled new start.\\n\\nДай интерпретацию для пользователя.\\n\",\"role\":\"user\"}],\"model\":\"qwen/qwen-turbo\",\"temperature\":0.3}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Wed, 06 May 2026 00:25:00 GMT",
+          "content-type": "application/json",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "cf-ray": "9f73d85f6a529d8e-DME",
+          "cf-cache-status": "DYNAMIC",
+          "access-control-allow-origin": "*",
+          "server": "cloudflare",
+          "vary": "Accept-Encoding",
+          "access-control-expose-headers": "X-Generation-Id,cf-ray",
+          "permissions-policy": "payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\"), payment=(self \"https://checkout.stripe.com\" \"https://connect-js.stripe.com\" \"https://js.stripe.com\" \"https://*.js.stripe.com\" \"https://hooks.stripe.com\")",
+          "referrer-policy": "no-referrer, strict-origin-when-cross-origin, no-referrer, strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff, nosniff",
+          "x-generation-id": "gen-1778027100-B4azxolla94MxTWzWCIA"
+        },
+        "content": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1778027100-B4azxolla94MxTWzWCIA\",\"object\":\"chat.completion\",\"created\":1778027100,\"model\":\"qwen/qwen-turbo-2024-11-01\",\"provider\":\"Alibaba\",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"Боб, спасибо, что поделился своим вопросом и раскладом. Расклад Кельтского крест — мощный инструмент, который помогает увидеть не только текущую ситуацию, но и путь, который ты можешь выбрать. Давай разберёмся вместе, что говорят карты о твоём решении переехать ради партнёра.\\n\\n---\\n\\n### **1. Настоящее — Пятёрка Пентаклей**  \\nТы сейчас находишься в состоянии конфликта или потери. Возможно, ты чувствуешь, что что-то в твоей текущей жизни уходит, или ты сталкиваешься с трудностями, связанными с финансами, работой или материальным благополучием. Это не обязательно плохо, но говорит о том, что ты находишься в моменте, где нужно принять какие-то изменения.\\n\\n---\\n\\n### **2. Препятствие — Паж Кубков (перевернутый)**  \\nТвёй главный барьер — это нечто, что связано с эмоциями, отношениями или мечтами. Перевернутый Паж Кубков указывает на несозревание, неуверенность или неправильное восприятие. Возможно, ты не готов к глубоким эмоциональным изменениям, или ты не до конца понимаешь, что тебе нужно. Это может быть и частью твоего внутреннего сопротивления.\\n\\n---\\n\\n### **3. Прошлое — Десятка Пентаклей**  \\nТы уже прошёл через цикл, который закончился. Возможно, ты устал, у тебя были трудности, но ты справился. Это говорит о том, что ты уже сталкивался с подобными ситуациями и выдержал их. Твоя история — это опыт, который может помочь тебе сейчас.\\n\\n---\\n\\n### **4. Будущее — Паж Пентаклей**  \\nВ будущем ты можешь столкнуться с чем-то новым, с чем-то, что требует твоего внимания и обучения. Это не обязательно связано с партнёром, но может быть частью твоего роста. Паж Пентаклей — символ любопытства и новой ступени в материальных или практических делах.\\n\\n---\\n\\n### **5. Над — Мир (перевернутый)**  \\nТы чувствуешь, что что-то не закончено. Мир в перевернутом положении говорит о том, что ты не до конца убедился в том, что ты сделал правильный выбор. Возможно, ты ощущаешь, что что-то в отношениях или в твоём решении ещё не до конца сформировалось.\\n\\n---\\n\\n### **6. Под — Семёрка Кубков**  \\nТы находишься в состоянии размышления, ты оцениваешь варианты. Это может быть как внутренний, так и внешний выбор. Ты рассматриваешь несколько возможностей, но не уверен, какое решение выбрать. Это нормально — важно не торопиться.\\n\\n---\\n\\n### **7. Совет — Король Кубков (перевернутый)**  \\nТебе советуют не быть слишком жёстким или авторитарным в своих решениях. Перевернутый Король Кубков может говорить о том, что ты или твой партнёр слишком упрямствуете, или что ты не готов к глубокой эмоциональной привязанности. Возможно, тебе нужно больше гибкости и открытости.\\n\\n---\\n\\n### **8. Внешние влияния — Королева Пентаклей (перевернутая)**  \\nВокруг тебя могут быть люди, которые не поддерживают твои решения или которые слишком сосредоточены на себе. Это может быть и твой партнёр, и другие люди в твоей жизни. Их влияние может быть негативным, если ты не будешь внимательно следить за тем, что происходит.\\n\\n---\\n\\n### **9. Надежды и страхи — Четвёрка Кубков**  \\nТы надеешься на стабильность, покой и устойчивость. Но при этом ты боишься, что что-то может разрушиться. Это говорит о том, что ты хочешь сохранить текущую ситуацию, но при этом чувствуешь, что что-то в тебе хочет изменений.\\n\\n---\\n\\n### **10. Итог — Туз Мечей (перевернутый)**  \\nИтог расклада — это блокировка потенциала и замедление. Туз Мечей в перевернутом положении говорит о том, что ты не готов к новому началу, или что ты не видишь ясного пути. Это может быть признаком того, что тебе нужно больше времени, чтобы разобраться в своих чувствах и мотивах.\\n\\n---\\n\\n### **Общая интерпретация:**\\n\\nТы находишься в сложной точке, где ты должен решить, стоит ли тебе переехать ради партнёра. Расклад показывает, что ты сейчас в состоянии конфликта, возможно, с самим собой. Ты не уверен, что правильно поступаешь, и у тебя есть внутренние сомнения, которые мешают тебе принять решение.\\n\\nТвоя история говорит о том, что ты уже прошёл через трудности, но сейчас ты чувствуешь, что что-то не до конца закончено. Ты оцениваешь варианты, но не до конца уверен, что выбрал правильный путь. Внешние влияния могут быть не очень поддерживающими, и ты чувствуешь, что не готов к новому началу.\\n\\n---\\n\\n### **Рекомендация:**\\n\\nНе принимай решение в спешке. Постарайся понять, что именно тебя мотивирует: любовь, желание быть ближе к партнёру, страх одиночества или что-то другое. Убедись, что ты готов к изменениям, и что ты не просто идёшь вперёд, потому что тебе кажется, что это «правильный» путь.\\n\\nЕсли ты чувствуешь, что твоя душа не готова к этому, возможно, стоит подождать. Иногда, чтобы быть рядом с тем, кого ты любишь, нужно сначала быть рядом с собой.\\n\\n---\\n\\nЕсли хочешь, мы можем вместе проработать этот вопрос глубже. Ты не один.\",\"refusal\":null,\"reasoning\":null}}],\"usage\":{\"prompt_tokens\":552,\"completion_tokens\":1507,\"total_tokens\":2059,\"cost\":0.0002117115,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.00021385,\"upstream_inference_prompt_cost\":0.00001794,\"upstream_inference_completions_cost\":0.00019591},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}"
+      },
+      "timestamp": "2026-05-06T00:25:23.693978+00:00"
+    }
+  ]
+}

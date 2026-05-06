@@ -230,6 +230,51 @@ mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
 | `api-key` | str | Geocode Maps API key |
 | `cache-ttl` | int | Cache TTL for geocoding results (seconds) |
 
+### `[divination]`
+
+Defaults live in [`configs/00-defaults/divination.toml`](../../configs/00-defaults/divination.toml). The handler is registered conditionally on `enabled = true`, dood!
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch — operator must flip to register `DivinationHandler` |
+| `tarot-enabled` | bool | `true` | Enable `/taro` command and `do_tarot_reading` LLM tool |
+| `runes-enabled` | bool | `true` | Enable `/runes` command and `do_runes_reading` LLM tool |
+| `image-generation` | bool | `true` | Whether to call `generateImage` per reading |
+| `tools-enabled` | bool | `true` | Whether to register the LLM tools (independent from slash commands) |
+
+**Slash commands** (category `CommandCategory.TOOLS`):
+- `/taro <layout> <question>` (aliases: `/tarot`, `/таро`) — REQUIRES layout
+- `/runes <layout> <question>` (aliases: `/rune`, `/руны`) — REQUIRES layout
+
+Layout name parsing is case-, dash-, underscore-, and space-insensitive.
+
+**Predefined layouts:**
+- Tarot: `one_card`, `three_card`, `celtic_cross`, `relationship`, `yes_no`
+- Runes: `one_rune`, `three_runes`, `five_runes`, `nine_runes`
+
+**LLM tools** (registered when `tools-enabled = true`):
+- `do_tarot_reading(question, layout?, generate_image?)` — defaults `layout="three_card"`, image off
+- `do_runes_reading(question, layout?, generate_image?)` — defaults `layout="three_runes"`, image off
+
+When invoked via LLM tool, the handler **does not send a text bot message**. The interpretation is returned in the JSON tool result so the host LLM can use it directly. Only the generated image (if enabled and successful) is sent to the user. Tool return shape:
+```json
+{"done": true, "summary": "Drew 3 symbol(s) with the three_card layout (system=tarot).", "interpretation": "<full LLM-generated text>", "imageGenerated": true}
+```
+
+**Chat settings keys** (defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)):
+
+| `ChatSettingsKey` enum | Setting key | Page | Notes |
+|---|---|---|---|
+| `TAROT_SYSTEM_PROMPT` | `tarot-system-prompt` | `LLM_BASE` | System prompt for tarot interpretations |
+| `RUNES_SYSTEM_PROMPT` | `runes-system-prompt` | `LLM_BASE` | System prompt for rune interpretations |
+| `DIVINATION_USER_PROMPT_TEMPLATE` | `divination-user-prompt-template` | `BOT_OWNER_SYSTEM` | Template for the user message sent to the LLM |
+| `DIVINATION_IMAGE_PROMPT_TEMPLATE` | `divination-image-prompt-template` | `BOT_OWNER_SYSTEM` | Template used when `image-generation = true` |
+| `DIVINATION_REPLY_TEMPLATE` | `divination-reply-template` | `BOT_OWNER_SYSTEM` | Template for the user-visible reply on the **slash-command path only** (`/taro`, `/runes`). Placeholders: `{layoutName}`, `{drawnSymbolsBlock}`, `{interpretation}`. The LLM-tool path still returns the bare interpretation in JSON and does not use this template. |
+
+User-template placeholders: `{userName}`, `{question}`, `{layoutName}`, `{positionsBlock}`, `{cardsBlock}`.
+Image-template placeholders: `{layoutName}`, `{spreadDescription}`, `{styleHint}`.
+Reply-template placeholders: `{layoutName}` (Russian layout name), `{drawnSymbolsBlock}` (numbered list of drawn symbols with position, name, and reversal flag), `{interpretation}` (raw LLM-generated text).
+
 ---
 
 ## 3. ConfigManager Methods

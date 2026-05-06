@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "agent": {
+    "plan": {
+      "model": "smartest"
+    },
+    "general": {
+      "model": "standart"
+    },
+    "explore": {
+      "model": "cheap"
+    },
+    "title": {
+      "model": "cheap"
+    },
+    "summary": {
+      "model": "cheap"
+    }
+  },
+
+  "plugin": [
+    "opencode-model-alias"
+  ]
+}
