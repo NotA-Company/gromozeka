@@ -458,7 +458,7 @@ class LLMService:
 
     async def generateText(
         self,
-        prompt: Union[str, Sequence[ModelMessage]],
+        prompt: Sequence[ModelMessage],
         *,
         chatId: Optional[int],
         chatSettings: ChatSettingsDict,
@@ -468,9 +468,31 @@ class LLMService:
         tools: Optional[Sequence[LLMAbstractTool]] = None,
         doDebugLogging: bool = True,
     ) -> ModelRunResult:
-        """Generate text with given prompt and chat settings."""
-        if isinstance(prompt, str):
-            prompt = [ModelMessage(content=prompt)]
+        """Generate text via the configured chat model with fallback support, dood!
+
+        Resolves the primary and fallback models from chatSettings, applies rate limiting,
+        then delegates to AbstractModel.generateTextWithFallBack with optional tool support.
+
+        Args:
+            prompt: Sequence of ModelMessage objects representing the conversation history.
+            chatId: The Telegram/Max chat identifier used for rate-limiting. Pass ``None``
+                to skip rate-limiting (e.g. internal/background calls).
+            chatSettings: Chat-level settings dict used to resolve models and the rate
+                limiter name.
+            llmManager: The LLM manager used to look up model instances by key.
+            modelKey: Primary model selector — an ``AbstractModel`` instance, a
+                ``ChatSettingsKey`` pointing to a chat setting that resolves to a model, or
+                ``None`` to fall back to ``ChatSettingsKey.CHAT_MODEL``.
+            fallbackKey: Fallback model selector — same semantics as ``modelKey``, defaults
+                to ``ChatSettingsKey.FALLBACK_MODEL`` when ``None``.
+            tools: Optional sequence of tools that the LLM can call during generation.
+            doDebugLogging: When ``True``, emit ``DEBUG`` log entries before and after the
+                model call. Set to ``False`` for tight loops to reduce log noise.
+
+        Returns:
+            ModelRunResult containing the generated text response, status, and any tool
+            calls made during generation.
+        """
         llmModel = self.resolveModel(
             modelKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.CHAT_MODEL
         )
@@ -498,7 +520,7 @@ class LLMService:
 
     async def generateStructured(
         self,
-        prompt: Union[str, Sequence[ModelMessage]],
+        prompt: Sequence[ModelMessage],
         schema: Dict[str, Any],
         *,
         chatId: Optional[int],
@@ -524,8 +546,7 @@ class LLMService:
         guaranteed ``NotImplementedError``.
 
         Args:
-            prompt: The prompt to send to the LLM. Either a plain string (which will be
-                wrapped in a single ``ModelMessage``) or an already-built message sequence.
+            prompt: Sequence of ModelMessage objects representing the conversation history.
             schema: A JSON Schema dict describing the expected response shape.
             chatId: The Telegram/Max chat identifier used for rate-limiting. Pass ``None``
                 to skip rate-limiting (e.g. internal/background calls).
@@ -553,9 +574,6 @@ class LLMService:
                 model has ``support_structured_output=True``. No model call is made in
                 this case.
         """
-        if isinstance(prompt, str):
-            prompt = [ModelMessage(content=prompt)]
-
         llmModel = self.resolveModel(
             modelKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.CHAT_MODEL
         )
@@ -568,6 +586,15 @@ class LLMService:
         if not primarySupports and not fallbackSupports:
             raise NotImplementedError(f"Neither {llmModel} nor {fallbackModel} supports structured output, dood!")
 
+        # If primary doesn't support but fallback does, swap so we don't waste a
+        # round-trip on a guaranteed NotImplementedError from the primary.
+        if not primarySupports and fallbackSupports:
+            logger.warning(
+                f"Model {llmModel} does not support structured output, "
+                f"but fallback {fallbackModel} does, swapping them"
+            )
+            llmModel, fallbackModel = fallbackModel, llmModel
+
         if chatId is not None:
             await self.rateLimit(chatId, chatSettings)
 
@@ -576,11 +603,6 @@ class LLMService:
                 f"Generating Structured for chat#{chatId}, LLMs: {llmModel}, "
                 f"{fallbackModel}, schema_keys={list(schema.keys())}"
             )
-
-        # If primary doesn't support but fallback does, swap so we don't waste a
-        # round-trip on a guaranteed NotImplementedError from the primary.
-        if not primarySupports and fallbackSupports:
-            llmModel, fallbackModel = fallbackModel, llmModel
 
         ret: ModelStructuredResult = await llmModel.generateStructuredWithFallBack(
             prompt, fallbackModel, schema=schema, schemaName=schemaName, strict=strict

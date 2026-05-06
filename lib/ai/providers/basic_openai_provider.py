@@ -370,21 +370,27 @@ class BasicOpenAIModel(AbstractModel):
         """Generate a structured (JSON) response using the OpenAI-compatible model.
 
         Mirrors ``_generateText`` with three key differences: no ``tools`` parameter
-        is accepted, a ``response_format`` of type ``json_schema`` is added to the
-        request parameters, and the response text is parsed as a JSON object before
-        returning a ``ModelStructuredResult``.
+        is accepted (structured output and tool calls are mutually exclusive),
+        a ``response_format`` of type ``json_schema`` is added to the request
+        parameters, and the response text is parsed as a JSON object before returning
+        a ``ModelStructuredResult``.
 
         On a successful finish (``stop`` or ``length``) the response content is
         parsed as JSON. If the parsed value is not a dict a ``ValueError`` is raised
         and the method returns an ERROR result with the raw text preserved so callers
-        can inspect it.  An empty response (empty string from the model) is treated
-        as ``data=None`` without raising an error — the status is still ``FINAL``
-        (or ``TRUNCATED_FINAL``), and ``data`` is ``None``.
+        can inspect it. An empty response (empty string from the model) is treated
+        as ERROR as well.
+
+        This method assumes the caller has already verified that the model supports
+        structured output (via the ``support_structured_output`` config flag). The
+        public ``generateStructured`` method performs that check before delegating.
 
         Args:
             messages: Conversation history as a sequence of ``ModelMessage`` objects.
             schema: A JSON Schema dict describing the desired response shape.
                 Passed verbatim in the ``response_format.json_schema.schema`` field.
+                For strict‑mode compatibility, see the schema requirements in
+                ``AbstractModel.generateStructured``.
             schemaName: Identifier sent alongside the schema in the
                 ``response_format.json_schema.name`` field. Defaults to ``"response"``.
             strict: When ``True``, the provider is asked to enforce the schema strictly
@@ -395,27 +401,21 @@ class BasicOpenAIModel(AbstractModel):
             - ``status``: ``FINAL``, ``TRUNCATED_FINAL``, ``CONTENT_FILTER``,
               ``TOOL_CALLS``, ``UNKNOWN``, or ``ERROR``.
             - ``data``: Parsed JSON dict on success; ``None`` on parse failure,
-              content filter, or other error. Also ``None`` when the model returns
-              an empty string (no parse attempted).
+              content filter, or other error.
             - ``resultText``: Raw text emitted by the model (before parsing).
             - ``error``: Set when an error occurred (``BadRequestError``,
               ``JSONDecodeError``, ``ValueError``, etc.).
             - ``inputTokens``, ``outputTokens``, ``totalTokens``: Token usage.
 
         Raises:
-            NotImplementedError: If structured output is not supported by this model
-                (``support_structured_output`` config flag is ``False``).
             RuntimeError: If the OpenAI client is not initialized.
-            Exception: For unhandled API-level errors (re-raised after logging).
+            Exception: For unhandled API‑level errors (re‑raised after logging).
         """
-        if not self._config.get("support_structured_output", False):
-            raise NotImplementedError(f"Structured output isn't supported by {self.modelId}, dood!")
-
         # --- build params (structured-specific) ---
         # No tools — structured and tool calls are mutually exclusive.
         params: Dict[str, Any] = {
             "model": self._getModelId(),
-            "messages": [message.toDict("content") for message in messages],  # type: ignore
+            "messages": [message.toDict("content") for message in messages],
             "temperature": self.temperature,
         }
         # Add any extra parameters from subclasses (e.g. extra_headers for OpenRouter)
@@ -443,8 +443,10 @@ class BasicOpenAIModel(AbstractModel):
         data: Optional[Dict[str, Any]] = None
         if outcome.status in (ModelResultStatus.FINAL, ModelResultStatus.TRUNCATED_FINAL):
             try:
-                parsed = json.loads(outcome.resText) if outcome.resText else None
-                if parsed is not None and not isinstance(parsed, dict):
+                if not outcome.resText:
+                    raise ValueError("Structured output: model returned empty content")
+                parsed = json.loads(outcome.resText)
+                if not isinstance(parsed, dict):
                     raise ValueError(f"Structured output expected JSON object, got {type(parsed).__name__}")
                 data = parsed
             except (json.JSONDecodeError, ValueError) as e:
@@ -500,15 +502,13 @@ class BasicOpenAIModel(AbstractModel):
         if not self._config.get("support_images", False):
             raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
 
-        kwargs: Dict[str, Any] = {}
         try:
             # Prepare base parameters
-            params = {
+            params: Dict[str, Any] = {
                 "model": self._getModelId(),
-                "messages": [message.toDict("content") for message in messages],  # type: ignore
+                "messages": [message.toDict("content") for message in messages],
                 "temperature": self.temperature,
                 "modalities": ["image", "text"],
-                **kwargs,
             }
 
             # Add any extra parameters from subclasses

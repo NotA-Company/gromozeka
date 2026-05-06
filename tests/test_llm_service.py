@@ -1924,33 +1924,3 @@ async def testGenerateStructuredNoRateLimitWhenChatIdNone(llmService, mockChatSe
     )
 
     llmService.rateLimit.assert_not_called()
-
-
-async def testGenerateStructuredStringPromptWrapped(llmService, mockChatSettings, mockLlmManager, sampleSchema):
-    """A plain string prompt is wrapped into a single-element ModelMessage list, dood!"""
-    primaryModel = _makeStructuredModel(True)
-    fallbackModel = _makeStructuredModel(True)
-
-    primaryModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
-        rawResult=None,
-        status=ModelResultStatus.FINAL,
-        data={"x": 6},
-        resultText='{"x": 6}',
-    )
-
-    await llmService.generateStructured(
-        "hello",
-        sampleSchema,
-        chatId=None,
-        chatSettings=mockChatSettings,
-        llmManager=mockLlmManager,
-        modelKey=primaryModel,
-        fallbackKey=fallbackModel,
-    )
-
-    callArgs = primaryModel.generateStructuredWithFallBack.call_args
-    passedPrompt = callArgs.args[0]
-    assert isinstance(passedPrompt, list)
-    assert len(passedPrompt) == 1
-    assert isinstance(passedPrompt[0], ModelMessage)
-    assert passedPrompt[0].content == "hello"

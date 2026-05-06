@@ -224,8 +224,13 @@ class AbstractModel(ABC):
                 ModelResultStatus.UNKNOWN,
                 ModelResultStatus.ERROR,
             ]:
-                logger.debug(f"Model {self.modelId} returned status {ret}")
-                raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
+                logger.debug(f"Model {self.modelId} returned {ret}")
+                error_msg = f"Model {self.modelId} returned status {ret.status.name}"
+                if ret.error:
+                    error_msg += f": {ret.error}"
+                    # Preserve the underlying exception as cause
+                    raise Exception(error_msg) from ret.error
+                raise Exception(error_msg)
             return ret
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")
@@ -265,8 +270,13 @@ class AbstractModel(ABC):
                 ModelResultStatus.UNKNOWN,
                 ModelResultStatus.ERROR,
             ]:
-                logger.debug(f"Model {self.modelId} returned status {ret}")
-                raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
+                logger.debug(f"Model {self.modelId} returned {ret}")
+                error_msg = f"Model {self.modelId} returned status {ret.status.name}"
+                if ret.error:
+                    error_msg += f": {ret.error}"
+                    # Preserve the underlying exception as cause
+                    raise Exception(error_msg) from ret.error
+                raise Exception(error_msg)
             return ret
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")
@@ -428,8 +438,13 @@ class AbstractModel(ABC):
                 ModelResultStatus.UNKNOWN,
                 ModelResultStatus.ERROR,
             ]:
-                logger.debug(f"Model {self.modelId} returned status {ret}")
-                raise Exception(f"Model {self.modelId} returned status {ret.status.name}")
+                logger.debug(f"Model {self.modelId} returned {ret}")
+                error_msg = f"Model {self.modelId} returned status {ret.status.name}"
+                if ret.error:
+                    error_msg += f": {ret.error}"
+                    # Preserve the underlying exception as cause
+                    raise Exception(error_msg) from ret.error
+                raise Exception(error_msg)
             return ret
         except Exception as e:
             logger.error(f"Error running model {self.modelId}: {e}")

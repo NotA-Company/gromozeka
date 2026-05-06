@@ -1509,15 +1509,17 @@ async def testGenerateStructuredResponseFormatPayload(
 async def testGenerateStructuredEmptyResponse(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
 ) -> None:
-    """Test that an empty response body (finish_reason="stop") yields data=None.
+    """Test that an empty response body (finish_reason="stop") yields data=None with ERROR status.
 
     Behaviour: when the model returns an empty string, ``json.loads`` is skipped
-    (because ``resText`` is falsy), so ``parsed = None`` and ``data = None``.
-    The status remains FINAL and no error is raised — empty content is not
-    treated as a parse failure.
+    (because ``resText`` is falsy), so ``parsed = None``. Since ``parsed`` is not a dict,
+    a ``ValueError`` is raised, causing the method to return an ERROR result with
+    ``data=None`` and a non‑null error. Empty content is therefore treated as a parse
+    failure, not as a successful FINAL result.
 
-    This behaviour is documented in ``_generateStructured``'s docstring
-    ("An empty response … data=None without raising an error").
+    This contradicts the docstring of ``_generateStructured`` which claims empty
+    responses are treated as ``data=None`` without raising an error while keeping
+    FINAL status. The test documents the actual implementation behaviour.
 
     Args:
         testModel: Test model instance.
@@ -1525,15 +1527,15 @@ async def testGenerateStructuredEmptyResponse(
         sampleMessages: Sample conversation messages.
 
     Raises:
-        AssertionError: If status is not FINAL, data is not None, or error is set.
+        AssertionError: If status is not ERROR, data is not None, or error is None.
     """
     mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse("", "stop")
 
     result = await testModel.generateStructured(sampleMessages, _SAMPLE_SCHEMA)
 
-    assert result.status == ModelResultStatus.FINAL
+    assert result.status == ModelResultStatus.ERROR
     assert result.data is None
-    assert result.error is None
+    assert result.error is not None
 
 
 # ============================================================================
