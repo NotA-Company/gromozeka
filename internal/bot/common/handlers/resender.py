@@ -146,6 +146,9 @@ class ResendJob:
         else:
             raise ValueError(f"lastMessageDate must be a datetime or a string, but got {type(lastMessageDate)}")
 
+        if self.lastMessageDate.tzinfo is None:
+            self.lastMessageDate = self.lastMessageDate.replace(tzinfo=datetime.UTC)
+
     def getLock(self) -> asyncio.Lock:
         """
         Get the async lock for this resend job as a context manager.
@@ -425,6 +428,10 @@ class ResenderHandler(BaseBotHandler):
 
                         # Update last message date regardless of whether message was sent
                         # This prevents reprocessing the same message
+                        if job.lastMessageDate is not None and job.lastMessageDate.tzinfo is None and message["date"].tzinfo is not None:
+                            # Small workaround to set the timezone of the last message date
+                            job.lastMessageDate = job.lastMessageDate.replace(tzinfo=message["date"].tzinfo)
+
                         if job.lastMessageDate is None or message["date"] > job.lastMessageDate:
                             job.lastMessageDate = message["date"]
                         await self.db.common.setSetting(
