@@ -425,13 +425,7 @@ class YandexSearchHandler(BaseBotHandler):
                 prompt = [
                     ModelMessage(
                         role="system",
-                        content="Сделай максимально подробный пересказ этого документа. "
-                        "Сохраняй язык оригинала (не переводи),"
-                        " ответ так же давай на языке документа (не этого запроса). "
-                        "Включи все идеи, аргументы и факты. "
-                        "Структура пересказа должна соответствовать структуре"
-                        " исходного текста (разделы, подразделы). "
-                        "Пересказывай исключительно на языке исходного текста.",
+                        content=chatSettings[ChatSettingsKey.DOCUMENT_CONDENSING_PROMPT].toStr(),
                     ),
                     ModelMessage(role="user", content=content),
                 ]

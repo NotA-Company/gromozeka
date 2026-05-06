@@ -265,7 +265,7 @@ class ChatSettingsKey(StrEnum):
     CHAT_PROMPT = "chat-prompt"
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
     CONDENSING_PROMPT = "condensing-prompt"
-    DOCUMET_CONDENSING_PROMPT = "document-condensing-prompt"
+    DOCUMENT_CONDENSING_PROMPT = "document-condensing-prompt"
 
     # Divination prompts (tarot & runes readings)
     TAROT_SYSTEM_PROMPT = "tarot-system-prompt"
@@ -567,9 +567,9 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "long": "Промпт, используемый для сжатия контекста.",
         "page": ChatSettingsPage.LLM_BASE,
     },
-    ChatSettingsKey.DOCUMET_CONDENSING_PROMPT: {
+    ChatSettingsKey.DOCUMENT_CONDENSING_PROMPT: {
         "type": ChatSettingsType.STRING,
-        "short": "Промпт для сжатия документов (например вемб-страниц)",
+        "short": "Промпт для сжатия документов (например веб-страниц)",
         "long": "Промпт, используемый для сжатия различных слишком больших документов (например, веб-страниц).",
         "page": ChatSettingsPage.LLM_BASE,
     },
