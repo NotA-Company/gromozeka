@@ -13,6 +13,7 @@ Also asserts the new ``[divination]`` feature-flag section is loaded.
 """
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Dict, Generator, List
 
@@ -56,7 +57,10 @@ def defaultsConfigManager() -> Generator[ConfigManager, None, None]:
 
     The default config sets ``application.root-dir = "storage"``, which causes
     ``ConfigManager.__init__`` to ``os.chdir`` into that subdirectory. We
-    restore the original cwd after the test so other tests aren't affected.
+    first ``os.chdir`` into a temporary directory that contains a ``storage``
+    subdirectory, so the chdir inside ``ConfigManager`` always succeeds even
+    on a fresh CI checkout where no ``storage`` dir exists yet. The original
+    cwd is restored after the test so other tests are not affected.
 
     Yields:
         ConfigManager: A manager loaded with the project default configs.
@@ -66,15 +70,22 @@ def defaultsConfigManager() -> Generator[ConfigManager, None, None]:
     assert configsDir.is_dir(), f"Expected default configs at {configsDir}, dood!"
 
     originalCwd: str = os.getcwd()
-    try:
-        manager = ConfigManager(
-            configPath=str(configsDir / "__no_such_main_config__.toml"),
-            configDirs=[str(configsDir)],
-            dotEnvFile=str(configsDir / "__no_such_dotenv__"),
-        )
-        yield manager
-    finally:
-        os.chdir(originalCwd)
+    with tempfile.TemporaryDirectory() as tmpDir:
+        # ConfigManager.__init__ calls os.chdir(root-dir) where root-dir="storage"
+        # (from 00-config.toml). Create that subdirectory inside a temp dir so the
+        # chdir succeeds even on a fresh CI checkout that has no "storage" dir yet.
+        storageDir: Path = Path(tmpDir) / "storage"
+        storageDir.mkdir()
+        os.chdir(tmpDir)
+        try:
+            manager = ConfigManager(
+                configPath=str(configsDir / "__no_such_main_config__.toml"),
+                configDirs=[str(configsDir)],
+                dotEnvFile=str(configsDir / "__no_such_dotenv__"),
+            )
+            yield manager
+        finally:
+            os.chdir(originalCwd)
 
 
 @pytest.mark.parametrize("key", DIVINATION_KEYS)
