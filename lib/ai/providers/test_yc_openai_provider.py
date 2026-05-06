@@ -15,6 +15,7 @@ Test Coverage:
     - Configuration and extra parameters
 """
 
+from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -23,7 +24,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 
-from lib.ai.models import ModelMessage, ModelResultStatus
+from lib.ai.models import ModelMessage, ModelResultStatus, ModelStructuredResult
 from lib.ai.providers.yc_openai_provider import YcOpenaiModel, YcOpenaiProvider
 
 # ============================================================================
@@ -106,7 +107,7 @@ def ycOpenaiModel(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mock) -> 
         contextSize=8192,
         openAiClient=mockAsyncOpenAI,
         folderId="b1g2abc3def4ghi5jklm",
-        extraConfig={"support_tools": False},
+        extraConfig={"support_tools": False, "support_structured_output": True},
     )
     return model
 
@@ -1145,3 +1146,72 @@ def testYcOpenaiModelIdWithDifferentFolderIds() -> None:
             modelId: str = model._getModelId()
             assert modelId == f"gpt://{folderId}/yandexgpt/latest"
             assert folderId in modelId
+
+
+# ============================================================================
+# Structured Output Tests
+# ============================================================================
+
+_YC_SAMPLE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}},
+    "required": ["answer"],
+}
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredHappyPath(
+    ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that YcOpenaiModel structured output works via the inherited _generateStructured.
+
+    Confirms that:
+    - The call routes through ``chat.completions.create``.
+    - The ``model`` kwarg uses the YC-specific ``gpt://folder_id/model/version`` format
+      (proving ``_getModelId()`` is still applied on the structured path).
+    - ``response_format`` is present in the call kwargs.
+    - The result is a ``ModelStructuredResult`` with status FINAL and parsed data.
+
+    Args:
+        ycOpenaiModel: YC OpenAI model instance (has support_structured_output=True).
+        mockAsyncOpenAI: Mocked AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If result fields or API call kwargs are not as expected.
+    """
+    mockResponse: Mock = Mock(spec=ChatCompletion)
+    mockChoice: Mock = Mock(spec=Choice)
+    mockMessage: Mock = Mock(spec=ChatCompletionMessage)
+    mockMessage.content = '{"answer": "Yandex"}'
+    mockMessage.tool_calls = None
+    mockChoice.message = mockMessage
+    mockChoice.finish_reason = "stop"
+    mockResponse.choices = [mockChoice]
+
+    mockUsage: Mock = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 8
+    mockUsage.completion_tokens = 12
+    mockUsage.total_tokens = 20
+    mockResponse.usage = mockUsage
+
+    mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
+
+    result: ModelStructuredResult = await ycOpenaiModel.generateStructured(
+        sampleMessages, _YC_SAMPLE_SCHEMA, schemaName="ycShape"
+    )
+
+    assert isinstance(result, ModelStructuredResult)
+    assert result.status == ModelResultStatus.FINAL
+    assert result.data == {"answer": "Yandex"}
+    assert result.error is None
+
+    callKwargs: dict = mockAsyncOpenAI.chat.completions.create.call_args.kwargs
+    # YC model must use the gpt://folder_id/model/version form
+    assert callKwargs["model"] == "gpt://b1g2abc3def4ghi5jklm/yandexgpt/latest"
+    assert callKwargs["model"].startswith("gpt://")
+    # response_format must be forwarded
+    assert "response_format" in callKwargs
+    assert callKwargs["response_format"]["type"] == "json_schema"
+    assert callKwargs["response_format"]["json_schema"]["name"] == "ycShape"
+    assert callKwargs["response_format"]["json_schema"]["schema"] == _YC_SAMPLE_SCHEMA

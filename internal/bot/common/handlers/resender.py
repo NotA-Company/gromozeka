@@ -428,7 +428,11 @@ class ResenderHandler(BaseBotHandler):
 
                         # Update last message date regardless of whether message was sent
                         # This prevents reprocessing the same message
-                        if job.lastMessageDate is not None and job.lastMessageDate.tzinfo is None and message["date"].tzinfo is not None:
+                        if (
+                            job.lastMessageDate is not None
+                            and job.lastMessageDate.tzinfo is None
+                            and message["date"].tzinfo is not None
+                        ):
                             # Small workaround to set the timezone of the last message date
                             job.lastMessageDate = job.lastMessageDate.replace(tzinfo=message["date"].tzinfo)
 

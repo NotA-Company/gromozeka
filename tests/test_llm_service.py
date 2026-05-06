@@ -23,6 +23,7 @@ from lib.ai.models import (
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
+    ModelStructuredResult,
 )
 from tests.utils import createAsyncMock
 
@@ -1713,3 +1714,213 @@ def testServiceHasProperAttributes(llmService):
     assert hasattr(llmService, "registerTool")
     assert hasattr(llmService, "generateTextViaLLM")
     assert hasattr(llmService, "getInstance")
+
+
+# ============================================================================
+# generateStructured Tests
+# ============================================================================
+
+
+def _makeStructuredModel(supportsStructured: bool, modelId: str = "test-model") -> Mock:
+    """Build a mock AbstractModel with configured support_structured_output flag, dood!
+
+    Args:
+        supportsStructured: Value to return for the ``support_structured_output`` key.
+        modelId: Model identifier string used for __str__ / error messages.
+
+    Returns:
+        A Mock(spec=AbstractModel) wired up for use in generateStructured tests.
+    """
+    model = Mock(spec=AbstractModel)
+    model.modelId = modelId
+    model.contextSize = 4096
+    model.getInfo = Mock(return_value={"support_structured_output": supportsStructured})
+    model.generateStructuredWithFallBack = createAsyncMock()
+    model.__str__ = Mock(return_value=modelId)
+    return model
+
+
+@pytest.fixture
+def sampleSchema() -> Dict[str, Any]:
+    """A minimal JSON Schema dict used across generateStructured tests, dood!"""
+    return {
+        "type": "object",
+        "properties": {
+            "x": {"type": "integer"},
+        },
+        "required": ["x"],
+    }
+
+
+async def testGenerateStructuredHappyPath(llmService, mockChatSettings, mockLlmManager, sampleSchema):
+    """Both models support structured output; result returned unchanged, dood!"""
+    primaryModel = _makeStructuredModel(True, "primary-model")
+    fallbackModel = _makeStructuredModel(True, "fallback-model")
+
+    expectedResult = ModelStructuredResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        data={"x": 1},
+        resultText='{"x": 1}',
+    )
+    primaryModel.generateStructuredWithFallBack.return_value = expectedResult
+
+    result = await llmService.generateStructured(
+        [ModelMessage(content="give me x")],
+        sampleSchema,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=primaryModel,
+        fallbackKey=fallbackModel,
+    )
+
+    assert result is expectedResult
+    assert result.status == ModelResultStatus.FINAL
+    assert result.data == {"x": 1}
+
+    primaryModel.generateStructuredWithFallBack.assert_called_once()
+    callKwargs = primaryModel.generateStructuredWithFallBack.call_args.kwargs
+    assert callKwargs["schema"] == sampleSchema
+    assert callKwargs["schemaName"] == "response"
+    assert callKwargs["strict"] is True
+
+
+async def testGenerateStructuredCustomSchemaNameAndStrict(llmService, mockChatSettings, mockLlmManager, sampleSchema):
+    """Custom schemaName and strict=False flow through to the model call, dood!"""
+    primaryModel = _makeStructuredModel(True)
+    fallbackModel = _makeStructuredModel(True)
+
+    primaryModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        data={"x": 2},
+        resultText='{"x": 2}',
+    )
+
+    await llmService.generateStructured(
+        [ModelMessage(content="give me x")],
+        sampleSchema,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=primaryModel,
+        fallbackKey=fallbackModel,
+        schemaName="myShape",
+        strict=False,
+    )
+
+    callKwargs = primaryModel.generateStructuredWithFallBack.call_args.kwargs
+    assert callKwargs["schemaName"] == "myShape"
+    assert callKwargs["strict"] is False
+
+
+async def testGenerateStructuredPrimaryUnsupportedFallbackSupported(
+    llmService, mockChatSettings, mockLlmManager, sampleSchema
+):
+    """Primary lacks support; fallback supports → models swapped → fallback gets the call, dood!"""
+    primaryModel = _makeStructuredModel(False, "primary-model")
+    fallbackModel = _makeStructuredModel(True, "fallback-model")
+
+    fallbackModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        data={"x": 3},
+        resultText='{"x": 3}',
+    )
+
+    result = await llmService.generateStructured(
+        [ModelMessage(content="give me x")],
+        sampleSchema,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=primaryModel,
+        fallbackKey=fallbackModel,
+    )
+
+    assert result.data == {"x": 3}
+
+    # Fallback (now acting as primary after swap) must have been called.
+    fallbackModel.generateStructuredWithFallBack.assert_called_once()
+    # Primary must NOT have been called.
+    primaryModel.generateStructuredWithFallBack.assert_not_called()
+
+
+async def testGenerateStructuredNeitherSupports(llmService, mockChatSettings, mockLlmManager, sampleSchema):
+    """Neither model supports structured output → NotImplementedError, no model call, dood!"""
+    primaryModel = _makeStructuredModel(False, "primary-model")
+    fallbackModel = _makeStructuredModel(False, "fallback-model")
+
+    with pytest.raises(NotImplementedError) as excInfo:
+        await llmService.generateStructured(
+            [ModelMessage(content="give me x")],
+            sampleSchema,
+            chatId=None,
+            chatSettings=mockChatSettings,
+            llmManager=mockLlmManager,
+            modelKey=primaryModel,
+            fallbackKey=fallbackModel,
+        )
+
+    errorMsg = str(excInfo.value)
+    assert "primary-model" in errorMsg
+    assert "fallback-model" in errorMsg
+
+    primaryModel.generateStructuredWithFallBack.assert_not_called()
+    fallbackModel.generateStructuredWithFallBack.assert_not_called()
+
+
+async def testGenerateStructuredAppliesRateLimit(llmService, mockChatSettings, mockLlmManager, sampleSchema):
+    """Rate limiter is applied once when chatId is not None, dood!"""
+    primaryModel = _makeStructuredModel(True)
+    fallbackModel = _makeStructuredModel(True)
+
+    primaryModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        data={"x": 4},
+        resultText='{"x": 4}',
+    )
+
+    # Mock rateLimit so it doesn't try to resolve config from mockChatSettings
+    llmService.rateLimit = createAsyncMock()
+
+    await llmService.generateStructured(
+        [ModelMessage(content="give me x")],
+        sampleSchema,
+        chatId=42,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=primaryModel,
+        fallbackKey=fallbackModel,
+    )
+
+    llmService.rateLimit.assert_called_once_with(42, mockChatSettings)
+
+
+async def testGenerateStructuredNoRateLimitWhenChatIdNone(llmService, mockChatSettings, mockLlmManager, sampleSchema):
+    """Rate limiter is NOT invoked when chatId is None, dood!"""
+    primaryModel = _makeStructuredModel(True)
+    fallbackModel = _makeStructuredModel(True)
+
+    primaryModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        data={"x": 5},
+        resultText='{"x": 5}',
+    )
+
+    llmService.rateLimit = createAsyncMock()
+
+    await llmService.generateStructured(
+        [ModelMessage(content="give me x")],
+        sampleSchema,
+        chatId=None,
+        chatSettings=mockChatSettings,
+        llmManager=mockLlmManager,
+        modelKey=primaryModel,
+        fallbackKey=fallbackModel,
+    )
+
+    llmService.rateLimit.assert_not_called()

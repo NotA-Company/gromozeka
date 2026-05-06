@@ -262,4 +262,4 @@ make test
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made, dood!*  
-*Last updated: 2026-04-18, dood!*
+*Last updated: 2026-05-06, dood!*

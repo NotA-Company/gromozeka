@@ -24,11 +24,12 @@
 
 **Import paths:**
 ```python
-from lib.ai import LLMManager, AbstractModel, ModelMessage, ModelResultStatus
+from lib.ai import LLMManager, AbstractModel, ModelMessage, ModelResultStatus, ModelStructuredResult
 from lib.ai.models import (
     ModelMessage,
     ModelImageMessage,
     ModelRunResult,
+    ModelStructuredResult,
     ModelResultStatus,
     LLMToolFunction,
     LLMFunctionParameter,
@@ -48,6 +49,7 @@ from lib.ai.models import (
 | [`ModelMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Standard text message for LLM |
 | [`ModelImageMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Message with embedded image |
 | [`ModelRunResult`](../../lib/ai/models.py) | `lib/ai/models.py` | LLM response container |
+| [`ModelStructuredResult`](../../lib/ai/models.py) | `lib/ai/models.py` | Structured-output result; adds `data: Optional[Dict]` |
 | [`ModelResultStatus`](../../lib/ai/models.py) | `lib/ai/models.py` | `FINAL`, `ERROR`, `TIMEOUT`, etc. |
 | [`LLMToolFunction`](../../lib/ai/models.py:64) | `lib/ai/models.py` | Tool/function definition for LLM |
 | [`LLMFunctionParameter`](../../lib/ai/models.py:37) | `lib/ai/models.py` | Tool parameter definition |
@@ -56,6 +58,12 @@ from lib.ai.models import (
 **Key methods on `AbstractModel`:**
 ```python
 model.generateText(messages: Sequence[ModelMessage], tools=None) -> ModelRunResult
+model.generateStructured(
+    messages: Sequence[ModelMessage],
+    schema: Dict[str, Any],
+    *, schemaName: str = "response",
+    strict: bool = True,
+) -> ModelStructuredResult
 model.getEstimateTokensCount(messages: list) -> int
 model.contextSize  # int
 model.temperature  # float
@@ -82,6 +90,56 @@ imgMsg = ModelImageMessage(
     content="Describe this image",
     image=bytearray(imageData),
 )
+```
+
+**Structured (JSON-Schema) output:**
+
+`generateStructured` sends a JSON Schema to the model and returns a
+`ModelStructuredResult` — a thin subclass of `ModelRunResult` that adds:
+
+- `data: Optional[Dict[str, Any]]` — the parsed JSON object on success;
+  `None` on parse failure or any other error.
+- On JSON parse failure: `status == ERROR`, `error` carries the
+  `json.JSONDecodeError` / `ValueError`, and `resultText` still holds
+  the raw model text for debugging.
+- `resultText` always carries the raw string the model emitted.
+
+**Capability flag:** set `support_structured_output = true` in a model's
+`extraConfig` block; surfaces via `model.getInfo()["support_structured_output"]`.
+When the flag is `False`, the public `generateStructured` raises
+`NotImplementedError` immediately (see [`lib/ai/abstract.py`](../../lib/ai/abstract.py)).
+
+**Tool mutual exclusion:** `generateStructured` has no `tools=` parameter.
+Combining structured output with tool calls is not supported in v1.
+
+**No auto-injected JSON hint:** callers should include a system message
+hinting at JSON output; the wrapper does not inject one.
+
+**Provider support:** implemented for OpenAI-compatible providers
+(`custom-openai`, `openrouter`, `yc-openai`). The `yc-sdk` provider
+overrides `_generateStructured` to raise `NotImplementedError` — see
+[`docs/plans/lib-ai-structured-output.md`](../plans/lib-ai-structured-output.md) §3.6.
+
+**Schema requirements (strict mode).** Most providers forward your
+schema to OpenAI's `response_format = {"type": "json_schema",
+"json_schema": {"strict": true, ...}}` mode. To be portable
+across all backends:
+
+* Every property under `properties` MUST also appear in
+  `required`. Optional fields are not allowed in strict mode.
+* Every object level MUST set `"additionalProperties": false`.
+* Root-level `oneOf` / `anyOf` is rejected — wrap unions inside a
+  named property.
+
+YC OpenAI's native models (yandexgpt, aliceai-llm, yc/deepseek-v32)
+enforce these rules strictly; OpenRouter-hosted gpt-oss/qwen/gemma
+tolerate violations silently. Always write to the strict subset.
+
+Reference: https://platform.openai.com/docs/guides/structured-outputs
+
+**Import:**
+```python
+from lib.ai import ModelStructuredResult
 ```
 
 **Adding a new LLM provider:**
@@ -297,4 +355,4 @@ reading = drawSymbols(system, layout, question="What about my career?")
 ---
 
 *This guide is auto-maintained and should be updated whenever library APIs change, dood!*  
-*Last updated: 2026-04-18, dood!*
+*Last updated: 2026-05-06, dood!*

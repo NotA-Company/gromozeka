@@ -25,6 +25,7 @@ from lib.ai.models import (
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
+    ModelStructuredResult,
 )
 from lib.rate_limiter.manager import RateLimiterManager
 
@@ -457,7 +458,7 @@ class LLMService:
 
     async def generateText(
         self,
-        prompt: Union[str, Sequence[ModelMessage]],
+        prompt: Sequence[ModelMessage],
         *,
         chatId: Optional[int],
         chatSettings: ChatSettingsDict,
@@ -467,9 +468,31 @@ class LLMService:
         tools: Optional[Sequence[LLMAbstractTool]] = None,
         doDebugLogging: bool = True,
     ) -> ModelRunResult:
-        """Generate text with given prompt and chat settings."""
-        if isinstance(prompt, str):
-            prompt = [ModelMessage(content=prompt)]
+        """Generate text via the configured chat model with fallback support, dood!
+
+        Resolves the primary and fallback models from chatSettings, applies rate limiting,
+        then delegates to AbstractModel.generateTextWithFallBack with optional tool support.
+
+        Args:
+            prompt: Sequence of ModelMessage objects representing the conversation history.
+            chatId: The Telegram/Max chat identifier used for rate-limiting. Pass ``None``
+                to skip rate-limiting (e.g. internal/background calls).
+            chatSettings: Chat-level settings dict used to resolve models and the rate
+                limiter name.
+            llmManager: The LLM manager used to look up model instances by key.
+            modelKey: Primary model selector — an ``AbstractModel`` instance, a
+                ``ChatSettingsKey`` pointing to a chat setting that resolves to a model, or
+                ``None`` to fall back to ``ChatSettingsKey.CHAT_MODEL``.
+            fallbackKey: Fallback model selector — same semantics as ``modelKey``, defaults
+                to ``ChatSettingsKey.FALLBACK_MODEL`` when ``None``.
+            tools: Optional sequence of tools that the LLM can call during generation.
+            doDebugLogging: When ``True``, emit ``DEBUG`` log entries before and after the
+                model call. Set to ``False`` for tight loops to reduce log noise.
+
+        Returns:
+            ModelRunResult containing the generated text response, status, and any tool
+            calls made during generation.
+        """
         llmModel = self.resolveModel(
             modelKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.CHAT_MODEL
         )
@@ -493,6 +516,100 @@ class LLMService:
 
         if doDebugLogging:
             logger.debug(f"LLM returned: {ret}")
+        return ret
+
+    async def generateStructured(
+        self,
+        prompt: Sequence[ModelMessage],
+        schema: Dict[str, Any],
+        *,
+        chatId: Optional[int],
+        chatSettings: ChatSettingsDict,
+        llmManager: LLMManager,
+        modelKey: Union[ChatSettingsKey, AbstractModel, None],
+        fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
+        schemaName: str = "response",
+        strict: bool = True,
+        doDebugLogging: bool = True,
+    ) -> ModelStructuredResult:
+        """Generate structured (JSON) output via the configured chat model, dood!
+
+        Resolves the primary and fallback models from chatSettings, applies rate limiting,
+        then delegates to AbstractModel.generateStructuredWithFallBack with fallback support.
+        Raises if neither resolved model supports structured output.
+
+        NOTE: callers should include a system message hinting at JSON output; this wrapper
+        will not inject one.
+
+        If the primary model lacks ``support_structured_output`` but the fallback does, the
+        models are swapped before the call so that we do not waste a round-trip on a
+        guaranteed ``NotImplementedError``.
+
+        Args:
+            prompt: Sequence of ModelMessage objects representing the conversation history.
+            schema: A JSON Schema dict describing the expected response shape.
+            chatId: The Telegram/Max chat identifier used for rate-limiting. Pass ``None``
+                to skip rate-limiting (e.g. internal/background calls).
+            chatSettings: Chat-level settings dict used to resolve models and the rate
+                limiter name.
+            llmManager: The LLM manager used to look up model instances by key.
+            modelKey: Primary model selector — an ``AbstractModel`` instance, a
+                ``ChatSettingsKey`` pointing to a chat setting that resolves to a model, or
+                ``None`` to fall back to ``ChatSettingsKey.CHAT_MODEL``.
+            fallbackKey: Fallback model selector — same semantics as ``modelKey``, defaults
+                to ``ChatSettingsKey.FALLBACK_MODEL`` when ``None``.
+            schemaName: An identifier for the schema sent alongside it to the provider
+                (e.g. OpenAI requires a ``name`` field). Defaults to ``"response"``.
+            strict: When ``True``, ask the provider to enforce the schema strictly (OpenAI
+                ``strict: true``). Some providers silently ignore this flag.
+            doDebugLogging: When ``True``, emit ``DEBUG`` log entries before and after the
+                model call. Set to ``False`` for tight loops to reduce log noise.
+
+        Returns:
+            ModelStructuredResult with ``data`` populated on success, or ``status=ERROR``
+            and ``error`` set on failure.
+
+        Raises:
+            NotImplementedError: If neither the resolved primary model nor the fallback
+                model has ``support_structured_output=True``. No model call is made in
+                this case.
+        """
+        llmModel = self.resolveModel(
+            modelKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.CHAT_MODEL
+        )
+        fallbackModel = self.resolveModel(
+            fallbackKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.FALLBACK_MODEL
+        )
+
+        primarySupports: bool = llmModel.getInfo().get("support_structured_output", False)
+        fallbackSupports: bool = fallbackModel.getInfo().get("support_structured_output", False)
+        if not primarySupports and not fallbackSupports:
+            raise NotImplementedError(f"Neither {llmModel} nor {fallbackModel} supports structured output, dood!")
+
+        # If primary doesn't support but fallback does, swap so we don't waste a
+        # round-trip on a guaranteed NotImplementedError from the primary.
+        if not primarySupports and fallbackSupports:
+            logger.warning(
+                f"Model {llmModel} does not support structured output, "
+                f"but fallback {fallbackModel} does, swapping them"
+            )
+            llmModel, fallbackModel = fallbackModel, llmModel
+
+        if chatId is not None:
+            await self.rateLimit(chatId, chatSettings)
+
+        if doDebugLogging:
+            logger.debug(
+                f"Generating Structured for chat#{chatId}, LLMs: {llmModel}, "
+                f"{fallbackModel}, schema_keys={list(schema.keys())}"
+            )
+
+        ret: ModelStructuredResult = await llmModel.generateStructuredWithFallBack(
+            prompt, fallbackModel, schema=schema, schemaName=schemaName, strict=strict
+        )
+
+        if doDebugLogging:
+            logger.debug(f"LLM (structured) returned: {ret}")
         return ret
 
     async def generateImage(

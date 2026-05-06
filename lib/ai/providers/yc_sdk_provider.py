@@ -47,7 +47,7 @@ from yandex_ai_studio_sdk.auth import YandexCloudCLIAuth
 from yandex_ai_studio_sdk.exceptions import AioRpcError
 
 from ..abstract import AbstractLLMProvider, AbstractModel
-from ..models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
+from ..models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +302,34 @@ class YcAIModel(AbstractModel):
             mediaMimeType="image/jpeg",
             mediaData=result.image_bytes,
         )
+
+    async def _generateStructured(
+        self,
+        messages: Sequence[ModelMessage],
+        schema: Dict[str, Any],
+        *,
+        schemaName: str = "response",
+        strict: bool = True,
+    ) -> ModelStructuredResult:
+        """Structured output stub for the YC SDK provider.
+
+        Args:
+            messages: Conversation history (unused).
+            schema: JSON Schema dict (unused).
+            schemaName: Schema identifier (unused).
+            strict: Strict-mode flag (unused).
+
+        Returns:
+            Never returns — always raises.
+
+        Raises:
+            NotImplementedError: Always. YC SDK supports response_format via
+                ``.configure()``, but that mutates the shared model object and
+                collides with concurrent callers. This will be tackled as part
+                of a future YC SDK refactor — see
+                ``docs/plans/lib-ai-structured-output.md`` §3.6.
+        """
+        raise NotImplementedError(f"Structured output isn't supported by YC SDK provider yet ({self.modelId}), dood!")
 
     # def getEstimateTokensCount(self, data: Any) -> int:
     #    if not self._yc_model:

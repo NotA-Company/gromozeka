@@ -40,6 +40,8 @@ These come from [`docs/llm/index.md`](docs/llm/index.md):
 - Run Python via `./venv/bin/python3` — not `python` / `python3`.
 - Do **not** `cd` into subdirectories; run everything from repo root.
 - Do **not** use `python -c '...'` for ad-hoc tests — write a script file.
+- **No pydantic.** The repo deliberately avoids it. Use raw dicts +
+  hand-rolled type-hinted classes of TypedDict.
 
 ## Lint/format pipeline
 

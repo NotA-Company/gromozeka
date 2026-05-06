@@ -15,6 +15,7 @@ Test Coverage:
     - Edge cases and boundary conditions
 """
 
+from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -23,7 +24,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 
-from lib.ai.models import ModelMessage, ModelResultStatus
+from lib.ai.models import ModelMessage, ModelResultStatus, ModelStructuredResult
 from lib.ai.providers.openrouter_provider import OpenrouterModel, OpenrouterProvider
 
 # ============================================================================
@@ -92,7 +93,7 @@ def openrouterModel(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Moc
         temperature=0.7,
         contextSize=200000,
         openAiClient=mockAsyncOpenAI,
-        extraConfig={"support_tools": True},
+        extraConfig={"support_tools": True, "support_structured_output": True},
     )
     return model
 
@@ -970,3 +971,69 @@ def testOpenrouterModelStringRepresentation(openrouterModel: OpenrouterModel) ->
     assert "anthropic/claude-3-opus" in strRepr
     assert "latest" in strRepr
     assert "OpenrouterProvider" in strRepr
+
+
+# ============================================================================
+# Structured Output Tests
+# ============================================================================
+
+_OPENROUTER_SAMPLE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}},
+    "required": ["answer"],
+}
+
+
+@pytest.mark.asyncio
+async def testGenerateStructuredHappyPath(
+    openrouterModel: OpenrouterModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that OpenrouterModel structured output works via the inherited _generateStructured.
+
+    Confirms that:
+    - The call routes through ``chat.completions.create`` (OpenRouter-specific
+      ``extra_headers`` still appear in kwargs alongside ``response_format``).
+    - ``response_format`` is present and correctly structured.
+    - The result is a ``ModelStructuredResult`` with status FINAL and parsed data.
+
+    Args:
+        openrouterModel: OpenRouter model instance (has support_structured_output=True).
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If result fields or API call kwargs are not as expected.
+    """
+    mockResponse = Mock(spec=ChatCompletion)
+    mockChoice = Mock(spec=Choice)
+    mockMessage = Mock(spec=ChatCompletionMessage)
+    mockMessage.content = '{"answer": "Paris"}'
+    mockMessage.tool_calls = None
+    mockChoice.message = mockMessage
+    mockChoice.finish_reason = "stop"
+    mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 8
+    mockUsage.completion_tokens = 12
+    mockUsage.total_tokens = 20
+    mockResponse.usage = mockUsage
+
+    mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
+
+    result = await openrouterModel.generateStructured(sampleMessages, _OPENROUTER_SAMPLE_SCHEMA, schemaName="testShape")
+
+    assert isinstance(result, ModelStructuredResult)
+    assert result.status == ModelResultStatus.FINAL
+    assert result.data == {"answer": "Paris"}
+    assert result.error is None
+
+    callKwargs = mockAsyncOpenAI.chat.completions.create.call_args.kwargs
+    # OpenRouter-specific header must still be present
+    assert "extra_headers" in callKwargs
+    assert "HTTP-Referer" in callKwargs["extra_headers"]
+    # response_format must be present and not clobbered by extra_headers
+    assert "response_format" in callKwargs
+    assert callKwargs["response_format"]["type"] == "json_schema"
+    assert callKwargs["response_format"]["json_schema"]["name"] == "testShape"
+    assert callKwargs["response_format"]["json_schema"]["schema"] == _OPENROUTER_SAMPLE_SCHEMA

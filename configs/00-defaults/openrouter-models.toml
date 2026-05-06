@@ -9,6 +9,7 @@ context = 200000
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "bot-owner"
 
 [models.models."openrouter/deepseek-chat-v3.1"]
@@ -21,6 +22,7 @@ context = 163840
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/deepseek-v4-flash"]
@@ -33,6 +35,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3-235b-a22b"]
@@ -45,6 +48,7 @@ context = 131100
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen-turbo"]
@@ -57,6 +61,7 @@ context = 131100
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3.5-flash"]
@@ -69,6 +74,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3-vl-235b-a22b-instruct"]
@@ -81,6 +87,7 @@ context = 262144
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3.6-plus"]
@@ -93,6 +100,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 # Image generation Models
@@ -108,6 +116,7 @@ context = 32768
 support_tools = true
 support_text = false  # Actualy it does support text, but we do not want to use it for text
 support_images = true
+support_structured_output = false  # not a structured-output candidate
 tier = "friend"
 
 [models.models."openrouter/gemini-3-pro-image-preview"]
@@ -120,4 +129,5 @@ context = 32768
 support_tools = true
 support_text = false  # Actualy it does support text, but we do not want to use it for text
 support_images = true
+support_structured_output = false  # not a structured-output candidate
 tier = "friend"
