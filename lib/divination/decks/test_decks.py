@@ -87,3 +87,34 @@ def testRuneAettAndNumbersAreContinuous() -> None:
     assert aetts["tyr"] == 8
     numbers: list[int] = sorted(int(rune.metadata.get("number", 0)) for rune in RUNES_ELDER_FUTHARK_DECK)
     assert numbers == list(range(1, 25))
+
+
+def testRuneGlyphsArePresent() -> None:
+    """All 24 runes must carry a non-None, non-empty ``glyph`` field, dood!"""
+    for rune in RUNES_ELDER_FUTHARK_DECK:
+        assert rune.glyph is not None, f"Rune {rune.name!r} has no glyph"
+        assert rune.glyph != "", f"Rune {rune.name!r} has an empty glyph"
+
+
+def testRuneGlyphsAreSingleRunicCharacter() -> None:
+    """Each rune glyph must be a single character in the Runic Unicode block (U+16A0–U+16F8), dood!"""
+    for rune in RUNES_ELDER_FUTHARK_DECK:
+        assert rune.glyph is not None
+        assert len(rune.glyph) == 1, f"Rune {rune.name!r} glyph {rune.glyph!r} is not a single character"
+        codepoint: int = ord(rune.glyph)
+        assert (
+            0x16A0 <= codepoint <= 0x16F8
+        ), f"Rune {rune.name!r} glyph {rune.glyph!r} (U+{codepoint:04X}) is outside the Runic Unicode block"
+
+
+def testRuneGlyphsAreUnique() -> None:
+    """The 24 runes must all have distinct glyphs — no duplicates, dood!"""
+    glyphs: list[str] = [rune.glyph for rune in RUNES_ELDER_FUTHARK_DECK if rune.glyph is not None]
+    assert len(glyphs) == 24
+    assert len(set(glyphs)) == 24, f"Duplicate glyphs found: {Counter(glyphs).most_common()}"
+
+
+def testTarotGlyphsAreNone() -> None:
+    """All 78 tarot cards must have ``glyph=None`` (no canonical single character), dood!"""
+    for card in TAROT_RWS_DECK:
+        assert card.glyph is None, f"Tarot card {card.name!r} unexpectedly has glyph {card.glyph!r}"

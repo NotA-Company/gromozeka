@@ -287,3 +287,56 @@ def testRenderReplyTemplateIsStringResult() -> None:
         interpretation="I",
     )
     assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# Glyph prefix tests
+# ---------------------------------------------------------------------------
+
+
+def testRunesReadingPrependsGlyph() -> None:
+    """Each line in a runes block must contain the rune's glyph before its name, dood!
+
+    For example, Fehu must produce a substring like ``"ᚠ Феху"`` in the line.
+    """
+    reading: Reading = _makeThreeRunesReading()
+    block: str = RunesSystem.renderDrawnSymbolsBlock(reading, lang="ru")
+
+    lines: list[str] = block.split("\n")
+    assert len(lines) == 3
+    for idx, draw in enumerate(reading.draws):
+        glyph: str = draw.symbol.glyph  # type: ignore[assignment]
+        assert glyph, f"Draw {idx} has no glyph — test data is wrong"
+        # The glyph must appear in the line, immediately followed by a space
+        # and then the localised name (somewhere in the line).
+        assert glyph in lines[idx], f"Glyph {glyph!r} not found in line {idx}: {lines[idx]!r}"
+        # Confirm glyph sits right before the name (not reversed or floating).
+        nameSubstring: str = f"{glyph} "
+        assert nameSubstring in lines[idx], f"Expected '{nameSubstring}' (glyph+space) in line {idx}: {lines[idx]!r}"
+
+
+def testTarotReadingHasNoGlyphPrefix() -> None:
+    """Tarot lines must NOT contain any Runic block character and must follow the plain format, dood!
+
+    Confirms that tarot cards (which have ``glyph=None``) produce lines of the
+    form ``"<n>. <position> — <name>"`` with no leading space before the name
+    and no runic character anywhere.
+    """
+    reading: Reading = _makeThreeCardReading()
+    block: str = TarotSystem.renderDrawnSymbolsBlock(reading, lang="ru")
+
+    lines: list[str] = block.split("\n")
+    assert len(lines) == 3
+    for line in lines:
+        # No character from the Runic Unicode block (U+16A0–U+16F8) must appear.
+        for ch in line:
+            codepoint: int = ord(ch)
+            assert not (
+                0x16A0 <= codepoint <= 0x16F8
+            ), f"Unexpected runic character {ch!r} (U+{codepoint:04X}) in tarot line: {line!r}"
+        # The name must follow the em-dash separator directly (no extra leading space).
+        # Pattern: "N. <pos> — <name>" where <name> does not start with a space.
+        separator: str = " — "
+        assert separator in line, f"Expected ' — ' separator in line: {line!r}"
+        afterSeparator: str = line.split(separator, 1)[1]
+        assert not afterSeparator.startswith(" "), f"Name part starts with unexpected space in tarot line: {line!r}"

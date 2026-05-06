@@ -44,6 +44,7 @@ from lib.divination import (
     RunesSystem,
     TarotSystem,
 )
+import lib.divination.localization as divinationL18N
 
 from .base import BaseBotHandler
 
@@ -807,7 +808,8 @@ class DivinationHandler(BaseBotHandler):
                     "draws": [
                         {
                             "nameEn": d.symbol.name,
-                            "nameRu": d.symbol.name,
+                            "nameRu": divinationL18N.tr(divinationL18N.SYMBOL_NAMES, d.symbol.name, "ru"),
+                            "glyph": d.symbol.glyph,
                             "reversed": d.reversed,
                             "position": d.position,
                             "meaning": d.symbol.meaningUpright if not d.reversed else d.symbol.meaningReversed,

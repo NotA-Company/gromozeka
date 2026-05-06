@@ -844,3 +844,72 @@ async def test_slashCommandSendsExactlyOneMessage_noImage() -> None:
     noImgText: str = sendKwargs.get("messageText", "")
     assert "Расклад на девять рун" in noImgText
     assert "Mock interpretation of the spread, dood!" in noImgText
+
+
+# ---------------------------------------------------------------------------
+# Glyph field in tool-path JSON
+# ---------------------------------------------------------------------------
+
+
+async def test_toolPathJsonIncludesRuneGlyphs() -> None:
+    """LLM-tool JSON for a runes reading must include non-empty ``glyph`` on every draw entry, dood!
+
+    Each ``draws[i]["glyph"]`` must be a non-empty string containing a single
+    character from the Runic Unicode block (U+16A0–U+16F8).
+    """
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+    fakeTyping = MagicMock(spec=TypingManager)
+    fakeTyping.action = None
+    fakeTyping.maxTimeout = 60
+    fakeTyping.sendTypingAction = AsyncMock(return_value=None)
+
+    result = await cast(Any, handler)._llmToolDoRunesReading(
+        extraData={"ensuredMessage": em, "typingManager": fakeTyping},
+        question="что ждёт?",
+        layout="three_runes",
+        generate_image=False,
+    )
+
+    parsed = json.loads(result)
+    assert parsed["done"] is True
+    draws: list[Dict[str, Any]] = parsed["draws"]
+    assert len(draws) == 3, f"Expected 3 draws, got {len(draws)}"
+    for idx, entry in enumerate(draws):
+        glyph = entry.get("glyph")
+        assert glyph is not None, f"draws[{idx}]['glyph'] is None for a runes reading"
+        assert isinstance(glyph, str) and glyph != "", f"draws[{idx}]['glyph'] is empty"
+        assert len(glyph) == 1, f"draws[{idx}]['glyph'] {glyph!r} is not a single character"
+        codepoint: int = ord(glyph)
+        assert (
+            0x16A0 <= codepoint <= 0x16F8
+        ), f"draws[{idx}]['glyph'] {glyph!r} (U+{codepoint:04X}) is outside the Runic Unicode block"
+
+
+async def test_toolPathJsonTarotGlyphIsNull() -> None:
+    """LLM-tool JSON for a tarot reading must have ``glyph=null`` on every draw entry, dood!
+
+    Tarot cards have no single canonical glyph, so the field must be absent
+    (serialised as JSON ``null``) — never a runic character.
+    """
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+    fakeTyping = MagicMock(spec=TypingManager)
+    fakeTyping.action = None
+    fakeTyping.maxTimeout = 60
+    fakeTyping.sendTypingAction = AsyncMock(return_value=None)
+
+    result = await cast(Any, handler)._llmToolDoTarotReading(
+        extraData={"ensuredMessage": em, "typingManager": fakeTyping},
+        question="что ждёт?",
+        layout="three_card",
+        generate_image=False,
+    )
+
+    parsed = json.loads(result)
+    assert parsed["done"] is True
+    draws: list[Dict[str, Any]] = parsed["draws"]
+    assert len(draws) == 3, f"Expected 3 draws, got {len(draws)}"
+    for idx, entry in enumerate(draws):
+        assert "glyph" in entry, f"draws[{idx}] is missing the 'glyph' key"
+        assert entry["glyph"] is None, f"draws[{idx}]['glyph'] must be null for a tarot card, got {entry['glyph']!r}"

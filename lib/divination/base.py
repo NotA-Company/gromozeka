@@ -41,6 +41,10 @@ class Symbol:
             system does not use reversals (e.g. runes).
         imagePromptFragment: Short English visual description that will be
             embedded into the spread's image-generation prompt.
+        glyph: The Unicode visual character for this symbol (e.g. ``"ᚠ"`` for
+            Fehu). Optional — ``None`` for systems without a single canonical
+            glyph (e.g. tarot cards). When present, used as a visual lead-in
+            in user-facing reply lines.
         metadata: Free-form extra fields (suit, number, aett, element, …).
     """
 
@@ -49,6 +53,7 @@ class Symbol:
     meaningUpright: str
     meaningReversed: Optional[str]
     imagePromptFragment: str
+    glyph: Optional[str] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -302,9 +307,11 @@ class BaseDivinationSystem(abc.ABC):
         """Render a localized, numbered list of drawn symbols, dood!
 
         Each line has the shape
-        ``"<n>. <localized position> — <localized name>[ (перевёрнута)]"``
-        where the reversal suffix is appended only for symbols whose
-        ``reversed`` flag is ``True`` (which only happens for systems with
+        ``"<n>. <localized position> — [<glyph> ]<localized name>[ (перевёрнута)]"``
+        where the optional glyph prefix (a Unicode character followed by a
+        space) is included when :attr:`Symbol.glyph` is non-empty, and the
+        reversal suffix is appended only for symbols whose ``reversed`` flag
+        is ``True`` (which only happens for systems with
         ``supportsReversed=True``).
 
         Note:
@@ -329,7 +336,8 @@ class BaseDivinationSystem(abc.ABC):
             posText: str = localization.tr(localization.POSITION_NAMES, draw.position, lang)
             nameText: str = localization.tr(localization.SYMBOL_NAMES, draw.symbol.name, lang)
             reversedSuffix: str = " (перевёрнута)" if draw.reversed else ""
-            lines.append(f"{i}. {posText} — {nameText}{reversedSuffix}")
+            glyphPrefix: str = f"{draw.symbol.glyph} " if draw.symbol.glyph else ""
+            lines.append(f"{i}. {posText} — {glyphPrefix}{nameText}{reversedSuffix}")
         return "\n".join(lines)
 
     @classmethod
