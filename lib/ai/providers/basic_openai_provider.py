@@ -554,7 +554,7 @@ class BasicOpenAIModel(AbstractModel):
                 if len(images) > 1:
                     logger.warning(
                         f"Multiple ({len(images)}) images returned by model {self.modelId}: "
-                        + repr([f"{repr(image)[:200]}... ({len(repr(image))} bytes)" for image in images])
+                        + repr([f"{repr(image)[:64]}... ({len(repr(image))} bytes)" for image in images])
                     )
 
                 for i, image in enumerate(images):

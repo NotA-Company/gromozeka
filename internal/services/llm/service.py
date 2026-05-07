@@ -511,7 +511,7 @@ class LLMService:
             )
             messageHistoryStr = ""
             for msg in prompt:
-                messageHistoryStr += f"\t{repr(msg)}\n"
+                messageHistoryStr += f"\t{msg.toLogMessage()}\n"
             logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
 
         ret = await llmModel.generateTextWithFallBack(prompt, fallbackModel, tools=tools)

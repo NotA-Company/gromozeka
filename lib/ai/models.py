@@ -659,7 +659,15 @@ class ModelMessage:
         Returns:
             str: String representation including the class name and JSON content.
         """
-        return f"ModelMessage({str(self)})"
+        return f"{type(self).__name__}({str(self)})"
+
+    def toLogMessage(self) -> str:
+        """Return a string representation of the message for logging.
+
+        Returns:
+            str: String representation of the message.
+        """
+        return repr(self)
 
 
 class ModelImageMessage(ModelMessage):
@@ -755,6 +763,29 @@ class ModelImageMessage(ModelMessage):
             # logger.debug(f"Image Content: {content}")
 
         return super().toDict(contentKey, content=content, skipRole=skipRole)
+
+    def toLogMessage(self) -> str:
+        """Return a string representation of the message for logging.
+
+        Returns:
+            str: String representation of the message.
+        """
+        selfDict = self.toDict()
+        if "content" in selfDict and isinstance(selfDict["content"], list):
+            newContent = []
+            for item in selfDict["content"]:
+                if isinstance(item, dict) and "image_url" in item:
+                    newItem = item.copy()
+                    if isinstance(item["image_url"], dict) and "url" in item["image_url"]:
+                        urlLen = len(item["image_url"]["url"])
+                        newItem["image_url"]["url"] = f"{newItem['image_url']['url'][:32]}...({urlLen} bytes)"
+
+                    newContent.append(item)
+                    continue
+                newContent.append(item)
+            selfDict["content"] = newContent
+
+        return f"{type(self).__name__}({utils.jsonDumps(selfDict)})"
 
 
 class ModelResultStatus(Enum):
