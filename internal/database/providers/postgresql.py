@@ -3,7 +3,7 @@
 Provides :class:`PostgreSQLProvider`, a concrete :class:`BaseSQLProvider` that
 wraps the ``asyncpg`` library with a fully async interface. This provider supports
 all standard SQL operations with PostgreSQL-specific syntax for upserts,
-pagination, and case-insensitive comparisons, dood!.
+pagination, and case-insensitive comparisons.
 
 Classes:
     PostgreSQLProvider: SQL provider backed by a PostgreSQL database server.
@@ -27,16 +27,16 @@ class PostgreSQLProvider(BaseSQLProvider):
 
     Uses :mod:`asyncpg` for a fully non-blocking async interface. This provider
     implements all abstract methods from :class:`BaseSQLProvider` with PostgreSQL-
-    specific syntax for maximum performance and compatibility, dood!.
+    specific syntax for maximum performance and compatibility.
 
     Attributes:
-        host: PostgreSQL server hostname or IP address (str).
-        port: PostgreSQL server port number (int).
-        user: Username for authentication (str).
-        password: Password for authentication (str).
-        database: Name of the database to connect to (str).
-        readOnly: When ``True``, the connection is opened in query-only mode (bool).
-        timeout: Seconds to wait for a query response before raising an error (int).
+        host: PostgreSQL server hostname or IP address.
+        port: PostgreSQL server port number.
+        user: Username for authentication.
+        password: Password for authentication.
+        database: Name of the database to connect to.
+        readOnly: When ``True``, the connection is opened in query-only mode.
+        timeout: Seconds to wait for a query response before raising an error.
     """
 
     __slots__ = (
@@ -68,19 +68,19 @@ class PostgreSQLProvider(BaseSQLProvider):
 
         Creates a new PostgreSQL provider instance without establishing a
         connection. The connection pool is created on-demand when the first
-        query is executed or when :meth:`connect` is called explicitly, dood!.
+        query is executed or when :meth:`connect` is called explicitly.
 
         Args:
-            host: PostgreSQL server hostname or IP address (str).
-            port: PostgreSQL server port number; defaults to ``5432`` (int).
-            user: Username for authentication (str).
-            password: Password for authentication (str).
-            database: Database name to connect to (str).
-            readOnly: Open connection in query-only mode when ``True`` (bool).
-            timeout: Seconds to wait for a response; defaults to ``30`` (int).
+            host: PostgreSQL server hostname or IP address.
+            port: PostgreSQL server port number; defaults to ``5432``.
+            user: Username for authentication.
+            password: Password for authentication.
+            database: Database name to connect to.
+            readOnly: Open connection in query-only mode when ``True``.
+            timeout: Seconds to wait for a response; defaults to ``30``.
             keepConnection: If ``True``, connect immediately and keep connection open.
-                If ``False``, do not connect on creation (bool).
-                If ``None`` (default), treat as ``False`` (optional bool).
+                If ``False``, do not connect on creation.
+                If ``None`` (default), treat as ``False``.
         """
         super().__init__()
         self.host: str = host
@@ -110,10 +110,10 @@ class PostgreSQLProvider(BaseSQLProvider):
         Creates an asyncpg connection pool using the configured connection
         parameters. This method is idempotent - multiple calls are safe and will
         not create additional pools. Uses a lock to prevent race conditions
-        during concurrent connection attempts, dood!.
+        during concurrent connection attempts.
 
         Returns:
-            ``None`` (always).
+            ``None``.
         """
         if self._pool is not None:
             return
@@ -139,10 +139,10 @@ class PostgreSQLProvider(BaseSQLProvider):
         Gracefully closes all connections in the pool and releases resources.
         This method is idempotent - safe to call multiple times or when no
         connection exists. After calling this method, any subsequent query will
-        automatically reconnect, dood!.
+        automatically reconnect.
 
         Returns:
-            ``None`` (always).
+            ``None``.
         """
         if self._pool is not None:
             await self._pool.close()
@@ -152,12 +152,10 @@ class PostgreSQLProvider(BaseSQLProvider):
     async def isReadOnly(self) -> bool:
         """Return if this provider is in read only mode or not.
 
-        Check the ``readOnly`` flag that was set during provider initialization,
-        dood!.
+        Check the ``readOnly`` flag that was set during provider initialization.
 
         Returns:
-            ``True`` (bool) if the provider is in read-only mode, ``False``
-            otherwise.
+            ``True`` if the provider is in read-only mode, ``False`` otherwise.
         """
         return self.readOnly
 
@@ -167,7 +165,7 @@ class PostgreSQLProvider(BaseSQLProvider):
 
         Acquires a connection from the pool and begins a transaction. The transaction
         is automatically committed when the context exits successfully, or rolled
-        back if any exception occurs, dood!. Use this for multi-step operations
+        back if any exception occurs. Use this for multi-step operations
         that require atomicity.
 
         Yields:
@@ -193,15 +191,15 @@ class PostgreSQLProvider(BaseSQLProvider):
         """Convert a record into the appropriate result type.
 
         This helper method transforms raw asyncpg records into the expected
-        result format based on the fetch type specified in the query, dood!.
+        result format based on the fetch type specified in the query.
 
         Args:
-            record: An :class:`asyncpg.Record` or None (optional asyncpg.Record).
-            fetchType: Controls how many rows are retrieved (FetchType).
+            record: An :class:`asyncpg.Record` or ``None``.
+            fetchType: Controls how many rows are retrieved.
 
         Returns:
             All rows (List[Dict[str, Any]]), one row (Optional[Dict[str, Any]]),
-            or ``None`` depending on *fetchType* (QueryResult).
+            or ``None`` depending on *fetchType*.
 
         Raises:
             ValueError: If *fetchType* is not a recognised :class:`FetchType` member.
@@ -225,7 +223,7 @@ class PostgreSQLProvider(BaseSQLProvider):
         """Execute a single parametrized query against the PostgreSQL database.
 
         Converts named parameters (:name) to PostgreSQL's positional parameter
-        syntax ($1, $2, etc.) and executes the query within a transaction, dood!.
+        syntax ($1, $2, etc.) and executes the query within a transaction.
 
         Args:
             query: The :class:`ParametrizedQuery` to run.
@@ -234,7 +232,7 @@ class PostgreSQLProvider(BaseSQLProvider):
             Query result according to the query's fetch type:
             - For FETCH_ALL: List[Dict[str, Any]]
             - For FETCH_ONE: Optional[Dict[str, Any]]
-            - For NO_FETCH: None
+            - For NO_FETCH: ``None``
         """
         async with self.cursor() as conn:
             # Convert named parameters from :name to $1, $2, etc. for PostgreSQL
@@ -267,15 +265,13 @@ class PostgreSQLProvider(BaseSQLProvider):
 
         All queries share one transaction, so either all succeed or all are
         rolled back together. Named parameters are converted to PostgreSQL
-        positional syntax for each query, dood!.
+        positional syntax for each query.
 
         Args:
-            queries: Sequence of :class:`ParametrizedQuery` objects to execute
-                (Sequence[ParametrizedQuery]).
+            queries: Sequence of :class:`ParametrizedQuery` objects to execute.
 
         Returns:
-            A list of query results, one per input query, in the same order
-            (Sequence[QueryResult]).
+            A list of query results, one per input query, in the same order.
         """
         ret: list[QueryResult] = []
         async with self.cursor() as conn:
@@ -309,18 +305,18 @@ class PostgreSQLProvider(BaseSQLProvider):
     def applyPagination(self, query: str, limit: Optional[int], offset: int = 0) -> str:
         """Apply PostgreSQL-specific pagination to query.
 
-        PostgreSQL uses ``LIMIT`` and ``OFFSET`` for pagination, dood!. Unlike
+        PostgreSQL uses ``LIMIT`` and ``OFFSET`` for pagination. Unlike
         some databases, PostgreSQL applies these clauses after the entire result
         set is materialized, so they don't affect internal query execution.
 
         Args:
-            query: The base SQL query (str).
-            limit: The maximum number of rows to return (optional int).
-                If None, no pagination is applied.
-            offset: The number of rows to skip (int). Defaults to 0.
+            query: The base SQL query.
+            limit: The maximum number of rows to return.
+                If ``None``, no pagination is applied.
+            offset: The number of rows to skip; defaults to 0.
 
         Returns:
-            The query with pagination clause appended (str).
+            The query with pagination clause appended.
         """
         if limit is None:
             return query
@@ -334,10 +330,10 @@ class PostgreSQLProvider(BaseSQLProvider):
 
         PostgreSQL's TEXT type is unbounded and very efficient, so maxLength
         is ignored. This consistency allows schemas to be portable across
-        databases without losing functionality on PostgreSQL, dood!.
+        databases without losing functionality on PostgreSQL.
 
         Args:
-            maxLength: Optional maximum length for the text field (optional int).
+            maxLength: Optional maximum length for the text field.
                 Ignored in PostgreSQL as TEXT is unbounded.
 
         Returns:
@@ -350,14 +346,14 @@ class PostgreSQLProvider(BaseSQLProvider):
 
         Uses PostgreSQL's ``LOWER()`` function for case-insensitive equality
         checks, which works for international text and is functionally
-        complete, dood!. This syntax is portable across databases.
+        complete. This syntax is portable across databases.
 
         Args:
-            column: The column name to compare (str).
-            param: The parameter name to use in the comparison (str).
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
 
         Returns:
-            A SQL expression string for case-insensitive comparison (str).
+            A SQL expression string for case-insensitive comparison.
         """
         return f"LOWER({column}) = LOWER(:{param})"
 
@@ -365,16 +361,16 @@ class PostgreSQLProvider(BaseSQLProvider):
         """Get PostgreSQL-specific case-insensitive LIKE comparison.
 
         Uses PostgreSQL's ``LOWER()`` function on both sides of the LIKE
-        operator to achieve case-insensitive pattern matching, dood!. This
+        operator to achieve case-insensitive pattern matching. This
         approach is portable and supports wildcards (% and _) in the parameter
         value.
 
         Args:
-            column: The column name to compare (str).
-            param: The parameter name to use in the comparison (str).
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
 
         Returns:
-            A SQL expression string for case-insensitive LIKE comparison (str).
+            A SQL expression string for case-insensitive LIKE comparison.
         """
         return f"LOWER({column}) LIKE LOWER(:{param})"
 
@@ -388,25 +384,22 @@ class PostgreSQLProvider(BaseSQLProvider):
         """Execute PostgreSQL-specific upsert operation.
 
         Uses PostgreSQL's ``ON CONFLICT`` clause to either insert a new row
-        or update an existing row on conflict, dood!. Supports both simple
+        or update an existing row on conflict. Supports both simple
         updates with ``EXCLUDED.column`` references and complex expressions,
         atomic counters, or conditional updates.
 
         Args:
-            table: Table name (str).
-            values: Dictionary of column names and values to insert
-                (Dict[str, Any]).
-            conflictColumns: List of columns that define the conflict target
-                (List[str]).
-            updateExpressions: Optional dict of column -> expression for UPDATE clause
-                (optional Dict[str, Any]).
-                If None, all non-conflict columns are updated with their values.
+            table: Table name.
+            values: Dictionary of column names and values to insert.
+            conflictColumns: List of columns that define the conflict target.
+            updateExpressions: Optional dict of column -> expression for UPDATE clause.
+                If ``None``, all non-conflict columns are updated with their values.
                 If empty dict {}, do nothing on conflict (ON CONFLICT DO NOTHING).
                 Supports complex expressions like "messages_count = messages_count + 1"
                 or ExcludedValue() to set to excluded value.
 
         Returns:
-            ``True`` (bool) if successful.
+            ``True`` if successful.
         """
         if updateExpressions is None:
             updateExpressions = {col: ExcludedValue() for col in values.keys() if col not in conflictColumns}

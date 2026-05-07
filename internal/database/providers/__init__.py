@@ -120,8 +120,8 @@ def getSqlProvider(config: SQLProviderConfig) -> BaseSQLProvider:
         >>> provider = getSqlProvider(config)
         >>> result = provider.execute("SELECT 1")
     """
-    provider = config.get("provider")
-    parameters = config.get("parameters", {})
+    provider: str = config.get("provider")
+    parameters: dict = config.get("parameters", {})
 
     if not provider:
         raise ValueError("SQLProviderConfig is missing the required 'provider' key")

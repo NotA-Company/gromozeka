@@ -1,4 +1,4 @@
-"""Repository for divination readings and cached layout definitions, dood!
+"""Repository for divination readings and cached layout definitions.
 
 This module provides the DivinationsRepository class which handles all database
 operations related to divination readings (tarot and runes), including persisting
@@ -39,13 +39,13 @@ class DivinationsRepository(BaseRepository):
                 and executing database operations across multiple sources.
     """
 
-    __slots__ = ()  # No additional slots needed beyond base class, dood!
+    __slots__ = ()
 
     def __init__(self, manager: DatabaseManager) -> None:
-        """Initialize the divinations repository, dood!
+        """Initialize the divinations repository.
 
         Args:
-            manager (DatabaseManager): DatabaseManager instance for provider access
+            manager: DatabaseManager instance for provider access
 
         Returns:
             None
@@ -67,31 +67,31 @@ class DivinationsRepository(BaseRepository):
         imagePrompt: Optional[str],
         invokedVia: str,
     ) -> bool:
-        """Insert a single divination reading row, dood!
+        """Insert a single divination reading row.
 
         Persists a tarot or runes reading to the database, including all draw
         data, LLM interpretation, and image generation prompt. The reading is
         linked to the originating command message via composite primary key.
 
         Args:
-            chatId (int): Originating chat identifier
-            messageId (MessageIdType): Originating message identifier (str-coerced for
-                    cross-platform compatibility)
-            userId (int): User ID of whoever requested the reading
-            systemId (str): Divination system identifier ('tarot' or 'runes')
-            deckId (str): Deck identifier ('rws', 'elder_futhark', etc.)
-            layoutId (str): Layout identifier (e.g., 'three_card', 'celtic_cross')
-            question (str): Free-form user question (may be empty string)
-            drawsJson (str | Sequence[dict]): Drawn symbols as either an already-serialized
-                    JSON string or a Sequence[dict]. If a Sequence is provided, the SQL
-                    provider serializes it via convertContainerElementsToSQLite before binding.
-                    Stored in TEXT column as JSON document.
-            interpretation (str): LLM-generated interpretation text
-            imagePrompt (Optional[str]): Final rendered image prompt, or None if not generated
-            invokedVia (str): How the reading was triggered ('command' or 'llm_tool')
+            chatId: Originating chat identifier
+            messageId: Originating message identifier (str-coerced for cross-platform
+                compatibility)
+            userId: User ID of whoever requested the reading
+            systemId: Divination system identifier ('tarot' or 'runes')
+            deckId: Deck identifier ('rws', 'elder_futhark', etc.)
+            layoutId: Layout identifier (e.g., 'three_card', 'celtic_cross')
+            question: Free-form user question (may be empty string)
+            drawsJson: Drawn symbols as either an already-serialized JSON string or a
+                Sequence[dict]. If a Sequence is provided, the SQL provider serializes
+                it via convertContainerElementsToSQLite before binding. Stored in TEXT
+                column as JSON document.
+            interpretation: LLM-generated interpretation text
+            imagePrompt: Final rendered image prompt, or None if not generated
+            invokedVia: How the reading was triggered ('command' or 'llm_tool')
 
         Returns:
-            bool: True if insertion succeeded, False otherwise
+            True if insertion succeeded, False otherwise
 
         Raises:
             Exception: If database operation fails (caught and logged)
@@ -134,19 +134,18 @@ class DivinationsRepository(BaseRepository):
             return False
 
     async def getLayout(self, systemId: str, layoutName: str) -> Optional[DivinationLayoutDict]:
-        """Retrieve a cached layout definition, dood!
+        """Retrieve a cached layout definition.
 
         Searches for a layout by trying multiple matching strategies: exact case-insensitive
         match on layout_id/name_en/name_ru, partial match using LIKE operator, and
         fallback to stripping content in parentheses from the layout name.
 
         Args:
-            systemId (str): The divination system ID (e.g., 'tarot', 'runes')
-            layoutName (str): The layout name or identifier to search for
+            systemId: The divination system ID (e.g., 'tarot', 'runes')
+            layoutName: The layout name or identifier to search for
 
         Returns:
-            Optional[DivinationLayoutDict]: Dictionary with layout definition if found,
-                    None if not found or on error
+            Dictionary with layout definition if found, None if not found or on error
 
         Raises:
             Exception: If database operation fails (caught and logged)
@@ -215,18 +214,17 @@ class DivinationsRepository(BaseRepository):
             return None
 
     def isNegativeCacheEntry(self, layoutDict: Optional[DivinationLayoutDict]) -> bool:
-        """Check if a layout dictionary represents a negative cache entry, dood!
+        """Check if a layout dictionary represents a negative cache entry.
 
         Negative cache entries are used to prevent repeated API calls for layouts
         that do not exist. They are identified by empty names, n_symbols=0, and
         empty positions list.
 
         Args:
-            layoutDict (Optional[DivinationLayoutDict]): Layout dictionary from cache,
-                    or None
+            layoutDict: Layout dictionary from cache, or None
 
         Returns:
-            bool: True if this is a negative cache entry, False otherwise
+            True if this is a negative cache entry, False otherwise
         """
         if layoutDict is None:
             return False
@@ -247,23 +245,23 @@ class DivinationsRepository(BaseRepository):
         positions: Sequence[str],
         description: str,
     ) -> bool:
-        """Save or update a layout definition in cache, dood!
+        """Save or update a layout definition in cache.
 
         Uses provider.upsert() to insert new layouts or update existing ones,
         ensuring idempotent cache updates. Updated_at timestamp is refreshed
         on every insert or update.
 
         Args:
-            systemId (str): The divination system ID (e.g., 'tarot', 'runes')
-            layoutId (str): Machine-readable layout identifier
-            nameEn (str): English layout name (source of truth)
-            nameRu (str): Russian layout name
-            nSymbols (int): Number of symbols/positions in the layout
-            positions (Sequence[str]): List of position definitions (JSON-serializable)
-            description (str): Optional layout description
+            systemId: The divination system ID (e.g., 'tarot', 'runes')
+            layoutId: Machine-readable layout identifier
+            nameEn: English layout name (source of truth)
+            nameRu: Russian layout name
+            nSymbols: Number of symbols/positions in the layout
+            positions: List of position definitions (JSON-serializable)
+            description: Optional layout description
 
         Returns:
-            bool: True if save/update succeeded, False otherwise
+            True if save/update succeeded, False otherwise
 
         Raises:
             Exception: If database operation fails (caught and logged)
@@ -301,17 +299,17 @@ class DivinationsRepository(BaseRepository):
             return False
 
     async def saveNegativeCache(self, systemId: str, layoutId: str) -> bool:
-        """Save a negative cache entry for a non-existent layout, dood!
+        """Save a negative cache entry for a non-existent layout.
 
         Prevents repeated external API calls for layouts that do not exist.
         Negative cache entries are identified by empty names and n_symbols=0.
 
         Args:
-            systemId (str): The divination system ID
-            layoutId (str): The layout ID that doesn't exist
+            systemId: The divination system ID
+            layoutId: The layout ID that doesn't exist
 
         Returns:
-            bool: True if save succeeded, False otherwise
+            True if save succeeded, False otherwise
 
         Raises:
             Exception: If database operation fails (caught and logged)

@@ -93,11 +93,9 @@ def resolveLayout(name: str, *, layouts: Sequence[Layout]) -> Optional[Layout]:
     return None
 
 
-# ---------------------------------------------------------------------------
 # Predefined tarot layouts.
 # Position names are English (source of truth); Russian translations live in
 # :mod:`lib.divination.localization`.
-# ---------------------------------------------------------------------------
 
 TAROT_LAYOUTS: Tuple[Layout, ...] = (
     Layout(
@@ -161,9 +159,7 @@ TAROT_LAYOUTS: Tuple[Layout, ...] = (
 )
 
 
-# ---------------------------------------------------------------------------
 # Predefined rune layouts.
-# ---------------------------------------------------------------------------
 
 RUNE_LAYOUTS: Tuple[Layout, ...] = (
     Layout(

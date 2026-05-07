@@ -29,101 +29,101 @@ class ExcludedValue:
     """
 
     def __init__(self, column: Optional[str] = None):
-        """Initialize excluded value marker, dood!
+        """Initialize excluded value marker.
 
         Args:
-            column: Optional column name. If None, uses the key from update_expressions dict, dood.
+            column: Optional column name. If None, uses the key from update_expressions dict.
 
         Returns:
             None.
         """
         self.column = column
-        """Optional column name for this excluded value, dood."""
+        """Optional column name for this excluded value."""
 
     def __repr__(self) -> str:
-        """Return string representation of ExcludedValue, dood!
+        """Return string representation of ExcludedValue.
 
         Returns:
-            String representation in format ExcludedValue(column), dood.
+            String representation in format ExcludedValue(column).
         """
         return f"ExcludedValue({self.column})"
 
 
 class FetchType(Enum):
-    """Enumeration controlling how query results are fetched after execution, dood!
+    """Enumeration controlling how query results are fetched after execution.
 
-    Members, dood!
-        NO_FETCH: Do not fetch any rows; returns ``None``, dood.
-        FETCH_ONE: Fetch a single row; returns a single dict or ``None``, dood.
-        FETCH_ALL: Fetch all rows; returns a list of dicts, dood.
+    Members:
+        NO_FETCH: Do not fetch any rows; returns ``None``.
+        FETCH_ONE: Fetch a single row; returns a single dict or ``None``.
+        FETCH_ALL: Fetch all rows; returns a list of dicts.
     """
 
     NO_FETCH = 1
-    """Do not fetch any rows; the query result is ``None``, dood."""
+    """Do not fetch any rows; the query result is ``None``."""
     FETCH_ONE = 2
-    """Fetch a single row as a dict, or ``None`` if no rows were returned, dood."""
+    """Fetch a single row as a dict, or ``None`` if no rows were returned."""
     FETCH_ALL = 3
-    """Fetch all rows as a list of dicts, dood."""
+    """Fetch all rows as a list of dicts."""
 
 
 type QueryParams = Dict[str, Any] | Sequence[Any] | Mapping[str, Any]
-"""Type alias for query parameters: dict, sequence, or mapping, dood!"""
+"""Type alias for query parameters: dict, sequence, or mapping."""
 type QueryResultFetchOne = Dict[str, Any] | None
-"""Type alias for query result when fetching a single row, dood!"""
+"""Type alias for query result when fetching a single row."""
 type QueryResultFetchAll = Sequence[Dict[str, Any]]
-"""Type alias for query result when fetching all rows, dood!"""
+"""Type alias for query result when fetching all rows."""
 type QueryResult = QueryResultFetchOne | QueryResultFetchAll | None
-"""Type alias for query result, which can be None, a single row, or all rows, dood!"""
+"""Type alias for query result, which can be None, a single row, or all rows."""
 
 
 class ParametrizedQuery:
-    """A SQL query bundled with its parameters and fetch strategy, dood!
+    """A SQL query bundled with its parameters and fetch strategy.
 
-    Attributes, dood!
-        query: Raw SQL query string, dood.
-        params: Positional or named parameters to bind to the query, dood.
-        fetchType: Controls how many rows are returned after execution, dood.
+    Attributes:
+        query: Raw SQL query string.
+        params: Positional or named parameters to bind to the query.
+        fetchType: Controls how many rows are returned after execution.
     """
 
     __slots__ = ("query", "params", "fetchType")
-    """Slots for query, params, and fetchType attributes, dood."""
+    """Slots for query, params, and fetchType attributes."""
 
     def __init__(self, query: str, params: Optional[QueryParams] = None, fetchType: FetchType = FetchType.NO_FETCH):
-        """Initialise a parametrized query, dood!
+        """Initialize a parametrized query.
 
         Args:
-            query: Raw SQL query string, dood.
-            params: Parameters to bind; defaults to an empty list when ``None``, dood.
-            fetchType: Row-fetch strategy; defaults to :attr:`FetchType.FETCH_ALL`, dood.
+            query: Raw SQL query string.
+            params: Parameters to bind; defaults to an empty list when ``None``.
+            fetchType: Row-fetch strategy; defaults to :attr:`FetchType.FETCH_ALL`.
 
         Returns:
             None.
         """
         self.query: str = query
-        """Raw SQL query string, dood."""
+        """Raw SQL query string."""
 
         if params is None:
             params = []
         self.params: QueryParams = params
-        """Positional or named parameters bound to the query, dood."""
+        """Positional or named parameters bound to the query."""
         self.fetchType: FetchType = fetchType
-        """Controls how many rows are returned after execution, dood."""
+        """Controls how many rows are returned after execution."""
 
 
 class BaseSQLProvider(ABC):
-    """Abstract base class for SQL database providers, dood!
+    """Abstract base class for SQL database providers.
 
     Concrete subclasses must implement :meth:`connect`, :meth:`disconnect`,
-    :meth:`_execute`, and :meth:`batchExecute`, dood.  The class also supports
+    :meth:`_execute`, and :meth:`batchExecute`. The class also supports
     the async context-manager protocol via :meth:`__aenter__` /
-    :meth:`__aexit__`, dood!
+    :meth:`__aexit__`.
     """
 
     __slots__ = ()
-    """Empty tuple for base class, dood."""
+    """Empty tuple for base class."""
 
     def __init__(self) -> None:
-        """Initialise the provider base (no-op), dood!
+        """Initialize the provider base (no-op).
 
         Returns:
             None.
@@ -131,11 +131,11 @@ class BaseSQLProvider(ABC):
         pass
 
     def __repr__(self) -> str:
-        """Return a human-readable representation of the provider instance, dood!
+        """Return a human-readable representation of the provider instance.
 
         Returns:
             A string in the form ``ClassName(attr1=val1, attr2=val2, …)``
-            including all public (non-underscore-prefixed) slot attributes, dood.
+            including all public (non-underscore-prefixed) slot attributes.
         """
         params = []
         for attr in self.__slots__:
@@ -147,10 +147,10 @@ class BaseSQLProvider(ABC):
 
     @abstractmethod
     async def connect(self) -> None:
-        """Open the database connection, dood!
+        """Open the database connection.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
 
         Returns:
             None.
@@ -159,10 +159,10 @@ class BaseSQLProvider(ABC):
 
     @abstractmethod
     async def disconnect(self) -> None:
-        """Close the database connection, dood!
+        """Close the database connection.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
 
         Returns:
             None.
@@ -170,24 +170,24 @@ class BaseSQLProvider(ABC):
         raise NotImplementedError
 
     async def __aenter__(self) -> "BaseSQLProvider":
-        """Enter the async context manager by calling :meth:`connect`, dood!
+        """Enter the async context manager by calling :meth:`connect`.
 
         Returns:
-            The provider instance itself, dood.
+            The provider instance itself.
         """
         await self.connect()
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        """Exit the async context manager by calling :meth:`disconnect`, dood!
+        """Exit the async context manager by calling :meth:`disconnect`.
 
         Logs and re-raises any exception that occurred inside the ``async with``
-        block, dood.
+        block.
 
         Args:
-            exc_type: Exception type, or ``None`` if no exception occurred, dood.
-            exc: Exception instance, or ``None``, dood.
-            tb: Traceback object, or ``None``, dood.
+            exc_type: Exception type, or ``None`` if no exception occurred.
+            exc: Exception instance, or ``None``.
+            tb: Traceback object, or ``None``.
 
         Returns:
             None.
@@ -199,16 +199,16 @@ class BaseSQLProvider(ABC):
 
     @abstractmethod
     async def _execute(self, query: ParametrizedQuery) -> QueryResult:
-        """Execute a single parametrized query (internal implementation), dood!
+        """Execute a single parametrized query (internal implementation).
 
         Args:
-            query: The :class:`ParametrizedQuery` to execute, dood.
+            query: The :class:`ParametrizedQuery` to execute.
 
         Returns:
-            Query result according to the query's :attr:`~ParametrizedQuery.fetchType`, dood.
+            Query result according to the query's :attr:`~ParametrizedQuery.fetchType`.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
@@ -218,17 +218,17 @@ class BaseSQLProvider(ABC):
         params: Optional[QueryParams] = None,
         fetchType: FetchType = FetchType.NO_FETCH,
     ) -> QueryResult:
-        """Execute a SQL query, wrapping a plain string in :class:`ParametrizedQuery` if needed, dood!
+        """Execute a SQL query, wrapping a plain string in :class:`ParametrizedQuery` if needed.
 
         Args:
-            query: Either a raw SQL string or a pre-built :class:`ParametrizedQuery`, dood.
+            query: Either a raw SQL string or a pre-built :class:`ParametrizedQuery`.
             params: Bind parameters; ignored when *query* is already a
-                :class:`ParametrizedQuery`, dood.
+                :class:`ParametrizedQuery`.
             fetchType: Row-fetch strategy; ignored when *query* is already a
-                :class:`ParametrizedQuery`, dood.
+                :class:`ParametrizedQuery`.
 
         Returns:
-            Query result according to the effective fetch type, dood.
+            Query result according to the effective fetch type.
         """
         if not isinstance(query, ParametrizedQuery):
             query = ParametrizedQuery(query, params, fetchType)
@@ -239,14 +239,14 @@ class BaseSQLProvider(ABC):
         query: str,
         params: Optional[QueryParams] = None,
     ) -> QueryResultFetchOne:
-        """Execute a SQL query and return the first row, dood!
+        """Execute a SQL query and return the first row.
 
         Args:
-            query: Raw SQL query string, dood.
-            params: Parameters to bind to the query; defaults to None, dood.
+            query: Raw SQL query string.
+            params: Parameters to bind to the query; defaults to None.
 
         Returns:
-            The first row as a dict, or None if no rows were returned, dood.
+            The first row as a dict, or None if no rows were returned.
         """
         ret = await self._execute(ParametrizedQuery(query, params, FetchType.FETCH_ONE))
         if not ret:
@@ -266,14 +266,14 @@ class BaseSQLProvider(ABC):
         query: str,
         params: Optional[QueryParams] = None,
     ) -> QueryResultFetchAll:
-        """Execute a SQL query and return all rows, dood!
+        """Execute a SQL query and return all rows.
 
         Args:
-            query: Raw SQL query string, dood.
-            params: Parameters to bind to the query; defaults to None, dood.
+            query: Raw SQL query string.
+            params: Parameters to bind to the query; defaults to None.
 
         Returns:
-            All rows as a list of dicts, or an empty list if no rows were returned, dood.
+            All rows as a list of dicts, or an empty list if no rows were returned.
         """
         ret = await self._execute(ParametrizedQuery(query, params, FetchType.FETCH_ALL))
         if not ret:
@@ -287,16 +287,16 @@ class BaseSQLProvider(ABC):
 
     @abstractmethod
     async def batchExecute(self, queries: Sequence[ParametrizedQuery]) -> Sequence[QueryResult]:
-        """Execute multiple parametrized queries as a single batch, dood!
+        """Execute multiple parametrized queries as a single batch.
 
         Args:
-            queries: Sequence of :class:`ParametrizedQuery` objects to run, dood.
+            queries: Sequence of :class:`ParametrizedQuery` objects to run.
 
         Returns:
-            A sequence of query results, one per input query, dood.
+            A sequence of query results, one per input query.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
@@ -308,98 +308,98 @@ class BaseSQLProvider(ABC):
         conflictColumns: List[str],
         updateExpressions: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Execute provider-specific upsert operation, dood!
+        """Execute provider-specific upsert operation.
 
         Args:
-            table: Table name, dood.
-            values: Dictionary of column names and values to insert, dood.
-            conflictColumns: List of columns that define the conflict target, dood.
-            updateExpressions: Optional dict of column -> expression for UPDATE clause, dood.
-                If None, all non-conflict columns are updated with their values, dood.
+            table: Table name.
+            values: Dictionary of column names and values to insert.
+            conflictColumns: List of columns that define the conflict target.
+            updateExpressions: Optional dict of column -> expression for UPDATE clause.
+                If None, all non-conflict columns are updated with their values.
                 Supports complex expressions like "messages_count = messages_count + 1"
-                or ExcludedValue() to set to excluded value, dood.
+                or ExcludedValue() to set to excluded value.
 
         Returns:
-            True if successful, dood.
+            True if successful.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
     @abstractmethod
     async def isReadOnly(self) -> bool:
-        """Check if this provider is in read-only mode, dood!
+        """Check if this provider is in read-only mode.
 
         Returns:
-            True if the provider is in read-only mode, False otherwise, dood.
+            True if the provider is in read-only mode, False otherwise.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
     @abstractmethod
     def applyPagination(self, query: str, limit: Optional[int], offset: int = 0) -> str:
-        """Apply RDBMS-specific pagination to query, dood!
+        """Apply RDBMS-specific pagination to query.
 
         Args:
-            query: The base SQL query, dood.
-            limit: The maximum number of rows to return. If None, no pagination is applied, dood.
-            offset: The number of rows to skip. Defaults to 0, dood.
+            query: The base SQL query.
+            limit: The maximum number of rows to return. If None, no pagination is applied.
+            offset: The number of rows to skip. Defaults to 0.
 
         Returns:
-            The query with pagination clause appended, dood.
+            The query with pagination clause appended.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
     @abstractmethod
     def getTextType(self, maxLength: Optional[int] = None) -> str:
-        """Get RDBMS-specific TEXT type, dood!
+        """Get RDBMS-specific TEXT type.
 
         Args:
             maxLength: Optional maximum length for the text field. Used for MySQL to determine
-                TEXT, MEDIUMTEXT, or LONGTEXT, dood.
+                TEXT, MEDIUMTEXT, or LONGTEXT.
 
         Returns:
-            The appropriate TEXT type for the provider, dood.
+            The appropriate TEXT type for the provider.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
     @abstractmethod
     def getCaseInsensitiveComparison(self, column: str, param: str) -> str:
-        """Get RDBMS-specific case-insensitive comparison, dood!
+        """Get RDBMS-specific case-insensitive comparison.
 
         Args:
-            column: The column name to compare, dood.
-            param: The parameter name to use in the comparison, dood.
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
 
         Returns:
-            A SQL expression string for case-insensitive comparison, dood.
+            A SQL expression string for case-insensitive comparison.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
     @abstractmethod
     def getLikeComparison(self, column: str, param: str) -> str:
-        """Get RDBMS-specific case-insensitive LIKE comparison, dood!
+        """Get RDBMS-specific case-insensitive LIKE comparison.
 
         Args:
-            column: The column name to compare, dood.
-            param: The parameter name to use in the comparison, dood.
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
 
         Returns:
-            A SQL expression string for case-insensitive LIKE comparison, dood.
+            A SQL expression string for case-insensitive LIKE comparison.
 
         Raises:
-            NotImplementedError: Must be overridden by subclasses, dood.
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError

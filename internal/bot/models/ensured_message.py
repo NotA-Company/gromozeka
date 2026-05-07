@@ -47,12 +47,36 @@ WORD_BREAKERS = ' \t\n\r\f\v.,;:?!…()[]{}<>«»„“”‘’"-–—+=×*÷=
 
 
 class CondensingDict(TypedDict):
+    """TypedDict for condensed thread information.
+
+    Stores thread condensing data including the condensed text and the
+    boundary message ID and timestamp where condensing occurred.
+
+    Attributes:
+        text: The condensed thread text
+        tillMessageId: The message ID up to which thread was condensed
+        tillTS: The timestamp up to which thread was condensed
+    """
+
     text: str
     tillMessageId: MessageIdType
     tillTS: float
 
 
 class MetadataDict(TypedDict, total=False):
+    """TypedDict for message metadata.
+
+    Stores optional metadata associated with a message, including condensed
+    thread information, random context, forwarding details, and tool usage history.
+
+    Attributes:
+        condensedThread: List of condensed thread entries
+        randomContext: Random context string for the message
+        forwardedFrom: Dictionary containing forwarding information
+        messagePrefix: Prefix text prepended to the message
+        usedTools: List of tool usage records from AI interactions
+    """
+
     condensedThread: List[CondensingDict]
     randomContext: str
     forwardedFrom: Dict[str, Any]
@@ -61,6 +85,16 @@ class MetadataDict(TypedDict, total=False):
 
 
 class ChatType(StrEnum):
+    """Enum representing the type of chat.
+
+    Provides constants for the different chat types supported across
+    Telegram and Max Messenger platforms.
+
+    Attributes:
+        PRIVATE: One-to-one private conversation
+        GROUP: Group chat or supergroup
+        CHANNEL: Broadcast channel
+    """
 
     PRIVATE = "private"
     GROUP = "group"
@@ -156,8 +190,7 @@ class MessageRecipient:
 
 
 class MessageSender:
-    """
-    Encapsulates sender information for a message.
+    """Encapsulates sender information for a message.
 
     Stores essential sender details (ID, name, username) and provides factory methods
     to create instances from Telegram User or Chat objects. Uses __slots__ for memory efficiency.
@@ -170,7 +203,7 @@ class MessageSender:
 
     __slots__ = ("id", "name", "username")
 
-    def __init__(self, id: int, name: str, username: str):
+    def __init__(self, id: int, name: str, username: str) -> None:
         """
         Initialize a MessageSender instance.
 
@@ -246,8 +279,7 @@ class MessageSender:
 
 @dataclass
 class MentionCheckResult:
-    """
-    Stores the results of bot mention detection in a message.
+    """Stores the results of bot mention detection in a message.
 
     Holds information about where and how a bot was mentioned in a message,
     including positions of mentions by nickname or username, and the remaining
@@ -264,13 +296,11 @@ class MentionCheckResult:
 
     byNick: Optional[Tuple[int, int]] = None
     byName: Optional[Tuple[int, int]] = None
-
     restText: Optional[str] = None
 
 
 class MediaContent:
-    """
-    Represents media content associated with a message.
+    """Represents media content associated with a message.
 
     Encapsulates media information including its unique identifier, LLM-parsed content
     description, and processing status information. Uses __slots__ for memory efficiency.
@@ -283,9 +313,8 @@ class MediaContent:
 
     __slots__ = ("id", "content", "processingInfo")
 
-    def __init__(self, id: str, content: Optional[str], processingInfo: Optional[MediaProcessingInfo]):
-        """
-        Initialize a MediaContent instance.
+    def __init__(self, id: str, content: Optional[str], processingInfo: Optional[MediaProcessingInfo]) -> None:
+        """Initialize a MediaContent instance.
 
         Args:
             id: Unique identifier for the media attachment
@@ -446,8 +475,11 @@ class EnsuredMessage:
 
         # TODO: should we deprecate it in favor of mediaList?
         self.mediaContent: Optional[str] = None
+        """Media content description (deprecated, use mediaList)"""
         self.mediaPrompt: Optional[str] = None
+        """Media prompt (deprecated, use mediaList)"""
         self.mediaId: Optional[str] = None
+        """Unique identifier for media attachments (deprecated, use mediaList)"""
 
         self.mediaGroupId: Optional[str] = mediaGroupId
         """Id of Media group if any"""
@@ -457,6 +489,7 @@ class EnsuredMessage:
         self.userData: Optional[Dict[str, Any]] = None
         """User data if any"""
         self._mentionCheckResult: Optional[MentionCheckResult] = None
+        """Cached mention check result"""
 
         self.formatEntities: Sequence[FormatEntity] = formatEntities if formatEntities is not None else []
         """Format entities if any"""
@@ -864,7 +897,7 @@ class EnsuredMessage:
         # logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
         return ensuredMessage
 
-    def setUserData(self, userData: Dict[str, Any]):
+    def setUserData(self, userData: Dict[str, Any]) -> None:
         """
         Set additional user data for this message.
 
@@ -916,7 +949,7 @@ class EnsuredMessage:
             return ret[len(self.messagePrefix) :]
         return ret
 
-    def addMedia(self, mediaId: str, mediaContent: Optional[str] = None, setMediaId: bool = True):
+    def addMedia(self, mediaId: str, mediaContent: Optional[str] = None, setMediaId: bool = True) -> None:
         """
         Add media content to this message.
 
@@ -931,7 +964,7 @@ class EnsuredMessage:
             self.mediaId = mediaId
             self.mediaContent = mediaContent
 
-    def addMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo, setMediaId: bool = True):
+    def addMediaProcessingInfo(self, mediaProcessingInfo: MediaProcessingInfo, setMediaId: bool = True) -> None:
         """
         Add media processing information to this message.
 

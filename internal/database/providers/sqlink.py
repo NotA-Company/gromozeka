@@ -1,8 +1,8 @@
-"""SQLink database provider implementation, dood!
+"""SQLink database provider implementation.
 
 Provides :class:`SQLinkProvider`, a concrete :class:`BaseSQLProvider` that
 wraps the ``sqlink`` async client library to execute SQL queries against a
-remote database server, dood!
+remote database server.
 """
 
 import asyncio
@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 class SQLinkProvider(BaseSQLProvider):
-    """SQL provider backed by the ``sqlink`` async client library, dood!
+    """SQL provider backed by the ``sqlink`` async client library.
 
     Wraps the SQLink async client to provide a concrete implementation of
-    :class:`BaseSQLProvider` for remote database operations, dood!
+    :class:`BaseSQLProvider` for remote database operations.
 
     Attributes:
         url: Base URL of the SQLink database server.
@@ -45,17 +45,17 @@ class SQLinkProvider(BaseSQLProvider):
         timeout: int = 30,
         keepConnection: Optional[bool] = None,
     ) -> None:
-        """Initialise the SQLink provider, dood!
+        """Initialise the SQLink provider.
 
         Args:
-            url: Base URL of the SQLink database server, dood.
-            user: Username for authentication, dood.
-            password: Password for authentication, dood.
-            database: Database name to connect to, dood.
-            timeout: Seconds to wait for a response; defaults to ``30``, dood.
-            keepConnection: If ``True``, connect on creation and keep connection open, dood.
-                If ``False``, do not connect on creation, dood.
-                If ``None`` (default), treat as ``False``, dood.
+            url: Base URL of the SQLink database server.
+            user: Username for authentication.
+            password: Password for authentication.
+            database: Database name to connect to.
+            timeout: Seconds to wait for a response; defaults to ``30``.
+            keepConnection: If ``True``, connect on creation and keep connection open.
+                If ``False``, do not connect on creation.
+                If ``None`` (default), treat as ``False``.
 
         Returns:
             None.
@@ -80,13 +80,13 @@ class SQLinkProvider(BaseSQLProvider):
         """Lock to prevent race conditions during connection creation."""
 
     async def connect(self) -> None:
-        """Open the SQLink connection if not already open, dood!
+        """Open the SQLink connection if not already open.
 
         Uses ``autoRefresh=True`` so the connection token is refreshed
-        automatically when it expires, dood!
+        automatically when it expires.
 
         Uses a lock to prevent race conditions when multiple coroutines
-        try to connect simultaneously, dood!
+        try to connect simultaneously.
 
         Returns:
             None.
@@ -113,7 +113,7 @@ class SQLinkProvider(BaseSQLProvider):
             logger.debug(f"Connected to SQLink database {self.url}/{self.database}")
 
     async def disconnect(self) -> None:
-        """Close the SQLink connection if it is open, dood!
+        """Close the SQLink connection if it is open.
 
         Returns:
             None.
@@ -124,10 +124,10 @@ class SQLinkProvider(BaseSQLProvider):
             logger.debug(f"Disconnected from SQLink database {self.url}/{self.database}")
 
     async def isReadOnly(self) -> bool:
-        """Check if the database is in read-only mode, dood!
+        """Check if the database is in read-only mode.
 
         Returns:
-            ``True`` if the database access mode is read-only, ``False`` otherwise, dood.
+            ``True`` if the database access mode is read-only, ``False`` otherwise.
         """
         async with self._autoConnection() as connection:
             databases = await connection.databases()
@@ -139,19 +139,19 @@ class SQLinkProvider(BaseSQLProvider):
             return True
 
     def _makeQueryResult(self, queryResult: sqlink.QueryResult, fetchType: FetchType) -> QueryResult:
-        """Convert a ``sqlink.QueryResult`` into the provider's :obj:`QueryResult` type, dood!
+        """Convert a ``sqlink.QueryResult`` into the provider's :obj:`QueryResult` type.
 
         Iterates over ``queryResult.rows`` and maps each row's values to a
-        dict keyed by ``queryResult.columns``, dood!
+        dict keyed by ``queryResult.columns``.
 
         Args:
-            queryResult: Raw result returned by the sqlink client, dood.
-            fetchType: Controls how many rows to include in the return value, dood.
+            queryResult: Raw result returned by the sqlink client.
+            fetchType: Controls how many rows to include in the return value.
 
         Returns:
             ``None`` when *fetchType* is :attr:`FetchType.NO_FETCH`, a single
             row dict when :attr:`FetchType.FETCH_ONE`, or a list of row dicts
-            when :attr:`FetchType.FETCH_ALL`, dood.
+            when :attr:`FetchType.FETCH_ALL`.
         """
         if fetchType == FetchType.NO_FETCH:
             return None
@@ -176,14 +176,14 @@ class SQLinkProvider(BaseSQLProvider):
 
     @asynccontextmanager
     async def _autoConnection(self) -> AsyncGenerator[sqlink.AsyncConnection, None]:
-        """Context manager that provides a SQLink connection, dood!
+        """Context manager that provides a SQLink connection.
 
         Opens a connection if one is not already active, yields it for use,
         and closes the connection after the context exits if it was opened
-        by this context manager and ``keepConnection`` is ``False``, dood!
+        by this context manager and ``keepConnection`` is ``False``.
 
         Yields:
-            An active ``sqlink.AsyncConnection`` instance, dood.
+            An active ``sqlink.AsyncConnection`` instance.
         """
         # Track whether we opened the connection ourselves
         # This prevents race conditions in concurrent operations
@@ -198,32 +198,32 @@ class SQLinkProvider(BaseSQLProvider):
                 await self.disconnect()
 
     async def _execute(self, query: ParametrizedQuery) -> QueryResult:
-        """Execute a single parametrized query against the SQLink database, dood!
+        """Execute a single parametrized query against the SQLink database.
 
         Opens the connection if necessary, executes the query, and closes
-        the connection afterwards if it was not already open before the call, dood!
+        the connection afterwards if it was not already open before the call.
 
         Args:
-            query: The :class:`ParametrizedQuery` to run, dood.
+            query: The :class:`ParametrizedQuery` to run.
 
         Returns:
-            Query result according to the query's fetch type, dood.
+            Query result according to the query's fetch type.
         """
         async with self._autoConnection() as connection:
             ret = await connection.execute(query.query, utils.convertContainerElementsToSQLite(query.params))
             return self._makeQueryResult(ret, query.fetchType)
 
     async def batchExecute(self, queries: Sequence[ParametrizedQuery]) -> Sequence[QueryResult]:
-        """Execute multiple queries in a single batch request via ``executeBatch``, dood!
+        """Execute multiple queries in a single batch request via ``executeBatch``.
 
         Opens the connection if necessary and closes it again afterwards when
-        it was not open before the call, dood!
+        it was not open before the call.
 
         Args:
-            queries: Sequence of :class:`ParametrizedQuery` objects to execute, dood.
+            queries: Sequence of :class:`ParametrizedQuery` objects to execute.
 
         Returns:
-            A list of query results, one per input query, in the same order, dood.
+            A list of query results, one per input query, in the same order.
         """
         async with self._autoConnection() as connection:
             ret = await connection.executeBatch(
@@ -232,15 +232,15 @@ class SQLinkProvider(BaseSQLProvider):
             return [self._makeQueryResult(queryResult, query.fetchType) for queryResult, query in zip(ret, queries)]
 
     def applyPagination(self, query: str, limit: Optional[int], offset: int = 0) -> str:
-        """Apply SQLite-specific pagination to query, dood!
+        """Apply SQLite-specific pagination to query.
 
         Args:
-            query: The base SQL query, dood.
-            limit: The maximum number of rows to return. If None, no pagination is applied, dood.
-            offset: The number of rows to skip. Defaults to 0, dood.
+            query: The base SQL query.
+            limit: The maximum number of rows to return. If None, no pagination is applied.
+            offset: The number of rows to skip. Defaults to 0.
 
         Returns:
-            The query with pagination clause appended, dood.
+            The query with pagination clause appended.
         """
         if limit is None:
             return query
@@ -250,37 +250,37 @@ class SQLinkProvider(BaseSQLProvider):
         return f"{query} LIMIT {limit}{offsetStr}"
 
     def getTextType(self, maxLength: Optional[int] = None) -> str:
-        """Get SQLite-specific TEXT type, dood!
+        """Get SQLite-specific TEXT type.
 
         Args:
-            maxLength: Optional maximum length for the text field (ignored in SQLite), dood.
+            maxLength: Optional maximum length for the text field (ignored in SQLite).
 
         Returns:
-            The TEXT type for SQLite (maxLength is ignored), dood.
+            The TEXT type for SQLite (maxLength is ignored).
         """
         return "TEXT"
 
     def getCaseInsensitiveComparison(self, column: str, param: str) -> str:
-        """Get SQLite-specific case-insensitive comparison, dood!
+        """Get SQLite-specific case-insensitive comparison.
 
         Args:
-            column: The column name to compare, dood.
-            param: The parameter name to use in the comparison, dood.
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
 
         Returns:
-            A SQL expression string for case-insensitive comparison using LOWER(), dood.
+            A SQL expression string for case-insensitive comparison using LOWER().
         """
         return f"LOWER({column}) = LOWER(:{param})"
 
     def getLikeComparison(self, column: str, param: str) -> str:
-        """Get SQLite-specific case-insensitive LIKE comparison, dood!
+        """Get SQLite-specific case-insensitive LIKE comparison.
 
         Args:
-            column: The column name to compare, dood.
-            param: The parameter name to use in the comparison, dood.
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
 
         Returns:
-            A SQL expression string for case-insensitive LIKE comparison using LOWER(), dood.
+            A SQL expression string for case-insensitive LIKE comparison using LOWER().
         """
         return f"LOWER({column}) LIKE LOWER(:{param})"
 
@@ -291,20 +291,20 @@ class SQLinkProvider(BaseSQLProvider):
         conflictColumns: List[str],
         updateExpressions: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Execute SQLite-specific upsert operation via SQLink, dood!
+        """Execute SQLite-specific upsert operation via SQLink.
 
         Args:
-            table: Table name, dood.
-            values: Dictionary of column names and values to insert, dood.
-            conflictColumns: List of columns that define the conflict target, dood.
-            updateExpressions: Optional dict of column -> expression for UPDATE clause, dood.
-                If None, all non-conflict columns are updated with their values, dood.
-                If empty dict {}, do nothing on conflict (ON CONFLICT DO NOTHING), dood.
+            table: Table name.
+            values: Dictionary of column names and values to insert.
+            conflictColumns: List of columns that define the conflict target.
+            updateExpressions: Optional dict of column -> expression for UPDATE clause.
+                If None, all non-conflict columns are updated with their values.
+                If empty dict {}, do nothing on conflict (ON CONFLICT DO NOTHING).
                 Supports complex expressions like "messages_count = messages_count + 1"
-                or ExcludedValue() to set to excluded value, dood.
+                or ExcludedValue() to set to excluded value.
 
         Returns:
-            True if successful, dood.
+            True if successful.
         """
         if updateExpressions is None:
             updateExpressions = {col: ExcludedValue() for col in values.keys() if col not in conflictColumns}

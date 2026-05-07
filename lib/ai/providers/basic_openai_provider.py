@@ -68,14 +68,23 @@ class _OpenAICallOutcome:
         error: The captured exception when an early-exit happened.
     """
 
+    # Decoded envelope of an OpenAI-compatible chat.completions.create call.
     response: Optional[ChatCompletion]
+    """The raw ChatCompletion or None on early-exit error."""
     status: ModelResultStatus
+    """Mapped status from finish_reason or ERROR on exception."""
     resText: str
+    """Response content or empty string on error."""
     retMessage: Optional[ChatCompletionMessage]
+    """Response message or None on error."""
     inputTokens: Optional[int]
+    """Number of input tokens or None on error."""
     outputTokens: Optional[int]
+    """Number of output tokens or None on error."""
     totalTokens: Optional[int]
+    """Total number of tokens or None on error."""
     error: Optional[Exception]
+    """The captured exception when an early-exit happened."""
 
 
 class OpenAIModelRunResult(ModelRunResult):

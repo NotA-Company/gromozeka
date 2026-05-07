@@ -7,7 +7,7 @@ through two primary queues:
 2. Delayed tasks queue - for scheduled task execution at specific timestamps
 
 The service supports task persistence through database integration and provides handlers
-for different types of delayed tasks, dood!
+for different types of delayed tasks.
 
 Classes:
     QueueService: Singleton service managing async and delayed task queues
@@ -42,13 +42,19 @@ logger = logging.getLogger(__name__)
 
 
 def makeEmptyAsyncTask() -> asyncio.Task:
-    """Create an empty async task."""
+    """Create an empty async task.
+
+    Creates and returns an asyncio.Task that immediately completes by sleeping for 0 seconds.
+    Useful as a placeholder or default task value.
+
+    Returns:
+        asyncio.Task: An asyncio task that completes immediately
+    """
     return asyncio.create_task(asyncio.sleep(0))
 
 
 class QueueService:
-    """
-    Singleton service for managing asynchronous and delayed task execution, dood!
+    """Singleton service for managing asynchronous and delayed task execution.
 
     This class implements a thread-safe singleton pattern and manages two types of queues:
     - Background tasks queue: Processes asyncio.Task objects with age-based triggering
@@ -59,13 +65,12 @@ class QueueService:
 
     Attributes:
         db (Optional[Database]): Database connection for task persistence
-        asyncTasksQueue (asyncio.Queue): Queue for background async tasks
+        backgroundTasks (MutableSet[asyncio.Task]): Set of background async tasks
         queueLastUpdated (float): Timestamp of last queue update
         delayedActionsQueue (asyncio.PriorityQueue): Priority queue for delayed tasks
         tasksHandlers (Dict[DelayedTaskFunction, List[DelayedTaskHandler]]):
             Registered handlers for each task function type
         initialized (bool): Flag indicating if instance is initialized
-        _isExiting (bool): Flag indicating shutdown state
 
     Thread Safety:
         Uses RLock for thread-safe singleton instantiation
@@ -83,11 +88,10 @@ class QueueService:
     _lock = RLock()
 
     def __new__(cls) -> "QueueService":
-        """
-        Create or return singleton instance with thread safety.
+        """Create or return singleton instance with thread safety.
 
         Returns:
-            The singleton QueueService instance
+            QueueService: The singleton QueueService instance
         """
         with cls._lock:
             if cls._instance is None:
@@ -95,8 +99,7 @@ class QueueService:
             return cls._instance
 
     def __init__(self):
-        """
-        Initialize the QueueService instance with default values, dood!
+        """Initialize the QueueService instance with default values.
 
         This method is called only once per singleton instance. It sets up:
         - Background tasks queue (asyncio.Queue)
@@ -119,16 +122,19 @@ class QueueService:
             self.tasksHandlers: Dict[DelayedTaskFunction, List[DelayedTaskHandler]] = {}
 
             self.initialized = True
-            logger.info("QueueService initialized, dood!")
+            logger.info("QueueService initialized")
 
     @classmethod
     def getInstance(cls) -> "QueueService":
-        """Get singleton instance"""
+        """Get singleton instance.
+
+        Returns:
+            QueueService: The singleton QueueService instance
+        """
         return cls()
 
     async def beginShutdown(self) -> None:
-        """
-        Initiate graceful shutdown of the queue service, dood!
+        """Initiate graceful shutdown of the queue service.
 
         Sets the exit flag and schedules a DO_EXIT delayed task to process
         remaining background tasks before shutdown. The task is added with
@@ -144,8 +150,7 @@ class QueueService:
         await self.addDelayedTask(time.time(), DelayedTaskFunction.DO_EXIT, kwargs={}, skipDB=True)
 
     async def addBackgroundTask(self, task: asyncio.Task) -> None:
-        """
-        Add an asyncio task to the background tasks set for execution, dood!
+        """Add an asyncio task to the background tasks set for execution.
 
         This method manages the background task queue with automatic size limiting.
         If the queue exceeds MAX_QUEUE_LENGTH (32), it waits for tasks to complete
@@ -174,19 +179,20 @@ class QueueService:
         task.add_done_callback(self.backgroundTasks.discard)
 
     async def _cronJobHandler(self, task: DelayedTask) -> None:
-        """
-        Handler for CRON_JOB delayed task type, dood!
+        """Handler for CRON_JOB delayed task type.
 
-        Reschedule new cronjob task for +1 minute.
+        Reschedules new cronjob task for +1 minute.
 
         Args:
             task (DelayedTask): The delayed task triggering this handler
+
+        Returns:
+            None
         """
         await self.addDelayedTask(time.time() + 60, DelayedTaskFunction.CRON_JOB, kwargs={}, skipDB=True, skipLogs=True)
 
     async def _doExitHandler(self, task: DelayedTask) -> None:
-        """
-        Handler for DO_EXIT delayed task type during shutdown, dood!
+        """Handler for DO_EXIT delayed task type during shutdown.
 
         Processes all remaining background tasks with forceProcessAll=True
         to ensure clean shutdown without losing pending work.
@@ -198,6 +204,9 @@ class QueueService:
             - Called during graceful shutdown initiated by beginShutdown()
             - Forces processing of all background tasks before exit
             - Part of the shutdown sequence
+
+        Returns:
+            None
         """
 
         logger.info("Exit, Awaiting backgroundTask if any...")
@@ -213,8 +222,7 @@ class QueueService:
             await asyncio.sleep(1)
 
     def registerDelayedTaskHandler(self, function: DelayedTaskFunction, handler: DelayedTaskHandler) -> None:
-        """
-        Register a handler function for a specific delayed task type, dood!
+        """Register a handler function for a specific delayed task type.
 
         Handlers are async functions that process delayed tasks when they
         become due. Multiple handlers can be registered for the same function
@@ -237,6 +245,9 @@ class QueueService:
             ...     DelayedTaskFunction.SEND_MESSAGE,
             ...     myHandler
             ... )
+
+        Returns:
+            None
         """
         if function in self.tasksHandlers:
             self.tasksHandlers[function].append(handler)
@@ -246,8 +257,7 @@ class QueueService:
         logger.info(f"Registered handler for {function}: {handler}")
 
     async def startDelayedScheduler(self, db: Database) -> None:
-        """
-        Initialize and start the delayed task scheduler, dood!
+        """Initialize and start the delayed task scheduler.
 
         This method:
         1. Sets up database connection for task persistence
@@ -301,8 +311,7 @@ class QueueService:
         await self._startDelayedQueuProcessLoop()
 
     async def _startDelayedQueuProcessLoop(self) -> None:
-        """
-        Main processing loop for the delayed tasks priority queue, dood!
+        """Main processing loop for the delayed tasks priority queue.
 
         This infinite loop:
         1. Retrieves tasks from priority queue (ordered by delayedUntil)
@@ -323,9 +332,8 @@ class QueueService:
             - Database updates are skipped if db is None (shouldn't happen)
             - This is a blocking operation that runs until shutdown
 
-        Raises:
-            Logs RuntimeError and Exception but continues processing
-            Breaks loop on "Event loop is closed" error
+        Returns:
+            None
         """
         while True:
             try:
@@ -402,8 +410,7 @@ class QueueService:
         skipDB: bool = False,
         skipLogs: bool = False,
     ) -> None:
-        """
-        Add a delayed task to be executed at a specific time, dood!
+        """Add a delayed task to be executed at a specific time.
 
         Creates a DelayedTask and adds it to the priority queue. Optionally
         persists the task to database for recovery after restarts.
@@ -416,6 +423,8 @@ class QueueService:
                 Auto-generated UUID if None. Defaults to None.
             skipDB (bool, optional): If True, don't persist to database.
                 Used for internal tasks and during restoration. Defaults to False.
+            skipLogs (bool, optional): If True, don't log task addition.
+                Used for frequent internal tasks. Defaults to False.
 
         Raises:
             Exception: If skipDB is False but database connection is None
@@ -432,6 +441,9 @@ class QueueService:
             ...     function=DelayedTaskFunction.SEND_MESSAGE,
             ...     kwargs={"chat_id": 123, "text": "Reminder!"}
             ... )
+
+        Returns:
+            None
         """
         if taskId is None:
             taskId = utils.now().strftime("%y%m%d-%H%M%S-") + str(uuid.uuid4())

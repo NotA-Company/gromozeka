@@ -66,10 +66,12 @@ class MessageCategory(StrEnum):
 
         Args:
             value: String value to convert.
-            default: Default value to return if conversion fails. Defaults to UNSPECIFIED.
+            default: Optional default value to return if conversion fails. If not provided,
+                defaults to MessageCategory.UNSPECIFIED.
 
         Returns:
-            MessageCategory enum value or default if conversion fails.
+            MessageCategory enum value, or default if conversion fails and default was
+            provided, otherwise MessageCategory.UNSPECIFIED.
         """
         try:
             return cls(value)
@@ -383,7 +385,7 @@ class DivinationLayoutDict(TypedDict):
     """Number of symbols/positions in the layout."""
 
     positions: list[str]
-    """list of position definitions."""
+    """List of position definitions."""
 
     description: Optional[str]
     """Optional layout description."""

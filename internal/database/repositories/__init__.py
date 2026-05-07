@@ -1,4 +1,4 @@
-"""Database repository module, dood!
+"""Database repository module.
 
 This module provides repository classes for database operations across different
 data domains. Each repository encapsulates database access logic for a specific

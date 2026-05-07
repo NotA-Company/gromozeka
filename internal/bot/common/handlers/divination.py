@@ -10,8 +10,6 @@ symbols via the divination library, calling :class:`LLMService` for
 interpretation and (optionally) image generation, sending the reply, and
 persisting the reading via :class:`DivinationsRepository`. It is the only
 seam between :mod:`lib.divination` (pure logic) and the bot internals.
-
-This module provides divination capabilities, dood!
 """
 
 import logging
@@ -126,8 +124,6 @@ class DivinationHandler(BaseBotHandler):
             invoked via slash command (``divination.image-generation``).
         discoveryEnabled: Whether layout discovery via web search is enabled
             (``divination.discovery-enabled``).
-
-    This handler provides tarot and rune readings, dood!
     """
 
     def __init__(
@@ -150,8 +146,6 @@ class DivinationHandler(BaseBotHandler):
             RuntimeError: If ``divination.enabled`` is False — the handler
                 must not be constructed in that case (the registration site
                 in :class:`HandlersManager` is the gate).
-
-        Initializing the divination handler, dood!
         """
         super().__init__(
             configManager=configManager,
@@ -191,8 +185,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             None
-
-        Registering LLM tools for divination, dood!
         """
         if TarotSystem.systemId in self.systems:
             tarotLayoutsList: str = ", ".join(
@@ -320,8 +312,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             None
-
-        Handling tarot commands, dood!
         """
         await self._handleReadingFromArgs(
             systemId=TarotSystem.systemId,
@@ -360,8 +350,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             None
-
-        Handling runes commands, dood!
         """
         await self._handleReadingFromArgs(
             systemId=RunesSystem.systemId,
@@ -398,8 +386,6 @@ class DivinationHandler(BaseBotHandler):
         Returns:
             JSON-encoded string with ``{"done": bool, ...}`` so the host
             LLM can incorporate the result naturally.
-
-        Doing tarot reading via LLM tool, dood!
         """
         return await self._runReadingForTool(
             systemId=TarotSystem.systemId,
@@ -432,8 +418,6 @@ class DivinationHandler(BaseBotHandler):
         Returns:
             JSON-encoded string with ``{"done": bool, ...}`` so the host
             LLM can incorporate the result naturally.
-
-        Doing runes reading via LLM tool, dood!
         """
         return await self._runReadingForTool(
             systemId=RunesSystem.systemId,
@@ -471,8 +455,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             JSON-encoded result for the LLM to consume.
-
-        Running reading for LLM tool, dood!
         """
         logger.debug(
             f"Entering _runReadingForTool with systemId={systemId}, question={question}, "
@@ -525,8 +507,6 @@ class DivinationHandler(BaseBotHandler):
         Returns:
             ``(layoutName, question)``. Both elements are stripped; either
             may be empty.
-
-        Parsing command arguments, dood!
         """
         text: str = (args or "").strip()
         if not text:
@@ -560,8 +540,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             Always ``""`` (slash commands ignore the return value).
-
-        Handling reading from command arguments, dood!
         """
         systemCls: Optional[Type[BaseDivinationSystem]] = self.systems.get(systemId)
         if systemCls is None:
@@ -629,23 +607,19 @@ class DivinationHandler(BaseBotHandler):
         Args:
             systemId: Divination system id (``"tarot"`` / ``"runes"``).
             ensuredMessage: The originating user message.
-            layout: Resolved :class:`Layout` object to use for drawing.
+            layoutName: Layout name to use for drawing.
             question: User question (may be ``""``).
             typingManager: Typing indicator manager (may be ``None``).
             invokedVia: Provenance for the DB row (``"command"`` or
                 ``"llm_tool"``).
             generateImage: Explicit override for the image step. ``None``
                 means "use the config default".
-            returnToolJson: When ``True``, return a JSON-encoded summary
-                string suitable for an LLM tool result and suppress the
-                text-interpretation message to the user; otherwise return
-                ``""``.
+            isLLMCall: Whether this request originated from an LLM tool call.
+                When ``True``, modifies reply sending behavior.
 
         Returns:
-            JSON-encoded summary when ``returnToolJson`` is ``True``, else
-            an empty string.
-
-        Handling the reading pipeline, dood!
+            ``None`` for slash-command path; JSON-encoded summary when
+            ``isLLMCall`` is ``True``.
         """
         systemCls = self.systems.get(systemId)
         assert systemCls is not None, f"systemCls for '{systemId}' missing — caller must validate!"
@@ -883,8 +857,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             Normalized layout ID suitable for database storage.
-
-        Generating layout ID, dood!
         """
         # Lowercase, normalize separators, remove special chars
         normalized = layoutName.lower().strip()
@@ -917,8 +889,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             Resolved Layout object if found, None otherwise (caller handles error).
-
-        Getting layout from cache or discovering it, dood!
         """
         # Step 1: Try to resolve from predefined layouts
         resolvedLayout: Optional[Layout] = systemCls.resolveLayout(layoutName)
@@ -1010,8 +980,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             Discovered Layout if successful, None otherwise.
-
-        Discovering layout with LLM and web search, dood!
         """
         # Get prompts from chat settings
         chatSettings = await self.getChatSettings(chatId=chatId)
@@ -1086,8 +1054,6 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             Discovered Layout if successful, None otherwise.
-
-        Extracting layout from text description, dood!
         """
         # Get prompts from chat settings
         chatSettings = await self.getChatSettings(chatId=chatId)

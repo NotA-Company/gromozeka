@@ -131,6 +131,19 @@ class LLMMessageHandler(BaseBotHandler):
         """
 
         async def processIntermediateMessages(mRet: ModelRunResult, extraData: ExtraDataDict) -> None:
+            """Process intermediate LLM results and send them to the chat.
+
+            This callback function is called during streaming LLM responses to send
+            intermediate results back to the user. It applies prefixes for fallback
+            and tool usage, and sends typing indicators.
+
+            Args:
+                mRet (ModelRunResult): The intermediate LLM result containing generated text.
+                extraData (ExtraDataDict): Additional data including ensuredMessage and typingManager.
+
+            Returns:
+                None
+            """
             if mRet.resultText.strip() and sendIntermediateMessages:
                 try:
                     logger.debug(f"Sending intermediate message. LLM Result status is: {mRet.status}")
@@ -818,6 +831,18 @@ class LLMMessageHandler(BaseBotHandler):
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
         async def processIntermediateMessages(mRet: ModelRunResult, extraData: ExtraDataDict) -> None:
+            """Process intermediate LLM results and send them for debugging.
+
+            This callback function is called during streaming LLM responses to send
+            intermediate results back to the user for debugging purposes.
+
+            Args:
+                mRet (ModelRunResult): The intermediate LLM result containing generated text.
+                extraData (ExtraDataDict): Additional data including ensuredMessage and typingManager.
+
+            Returns:
+                None
+            """
             try:
                 logger.debug(f"IM: {mRet}")
                 await self.sendMessage(
