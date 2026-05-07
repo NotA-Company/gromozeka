@@ -269,6 +269,82 @@ mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
 
 ---
 
+### ADR-011: Divination Layout Discovery Pattern
+
+**Decision:** Unknown tarot/runes layouts trigger automatic LLM + web search discovery, cached in `divination_layouts` table with negative cache for failures
+
+**Why:** Allows users to request any layout (not just predefined ones), avoids repeated failed discoveries, and scales to thousands of possible layouts
+
+**Discovery Flow (Multi-Tier Resolution):**
+
+**Tier 1**: Predefined layouts in `lib/divination/layouts.py`
+- Fast lookup in `TAROT_LAYOUTS` and `RUNES_LAYOUTS` dicts
+- Zero database queries for known layouts
+
+**Tier 2**: Database cache (`divination_layouts` table)
+- Composite PK: `(system_id, layout_id)`
+- Successful discoveries: Full layout definition cached
+- Failed discoveries (negative cache): `name_en=''`, `n_symbols=0` entries prevent retries
+- Case-insensitive fuzzy search via `getLikeComparison()` for partial matches
+
+**Tier 3**: LLM + Web Search discovery (if `divination discovery-enabled = true`)
+- Call 1: `LLMService.generateText(tools=True)` with web search
+  - Prompt: `divination-discovery-info-prompt`
+  - System: `divination-discovery-system-prompt`
+  - Tool: `web_search` automatically used by LLM
+- Call 2: `LLMService.generateStructured(schema)` to parse description
+  - Prompt: `divination-discovery-structure-prompt`
+  - Schema: Strict JSON Schema with required fields
+  - Returns validated dictionary
+- Save: Persist to `divination_layouts` cache on success
+- Negative cache: On failure, store empty entry with 24-hour implied TTL
+
+**Performance Optimizations:**
+- Negative cache prevents spamming LLM for non-existent layouts
+- Fuzzy search: `divinationLayouts.getLayout()` tries exact match first, then LIKE pattern
+- Case-insensitive search: Uses `getCaseInsensitiveComparison()` for exact, `getLikeComparison()` for fuzzy
+- No blocking: Discovery only triggered for unknown layouts, not every request
+
+**Configuration:**
+```toml
+[divination]
+discovery-enabled = true  # Master switch
+```
+
+**Chat Settings for Discovery:**
+- `divination-discovery-system-prompt` — System instruction (both calls)
+- `divination-discovery-info-prompt` — Web search prompt (first call)
+- `divination-discovery-structure-prompt` — Structured parsing prompt (second call)
+
+**Repository Pattern:**
+```python
+from internal.database.repositories import DivinationLayoutsRepository
+
+repo = DivinationLayoutsRepository(db.manager)
+layout = await repo.getLayout(systemId='tarot', layoutName='three_card')
+
+# Negative cache check
+if repo.isNegativeCacheEntry(layout):
+    # Layout doesn't exist, don't retry
+    return None
+
+# Save successful discovery
+await repo.saveLayout(
+    systemId='tarot',
+    layoutId='custom_layout',
+    nameEn='Custom Layout',
+    nameRu='Кастомный расклад',
+    nSymbols=3,
+    positions=json.dumps([...]),
+    description='Custom description'
+)
+
+# Save negative cache
+await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
+```
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph

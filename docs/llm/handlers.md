@@ -40,7 +40,7 @@
 | [`weather.py`](../../internal/bot/common/handlers/weather.py) | `WeatherHandler` | Weather commands (if enabled) |
 | [`yandex_search.py`](../../internal/bot/common/handlers/yandex_search.py) | `YandexSearchHandler` | Yandex Search (if enabled) |
 | [`resender.py`](../../internal/bot/common/handlers/resender.py) | `ResenderHandler` | Message resending (if enabled) |
-| [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) |
+| [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) — includes layout discovery via LLM + web search |
 | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
 
@@ -48,6 +48,27 @@
 
 - **Slash-command path** (`/taro`, `/runes`): the handler renders a **structured reply template** (`DIVINATION_REPLY_TEMPLATE` chat setting) containing the layout name, a numbered drawn-symbols block (with position, localized name, and reversal flag), and the LLM interpretation. This lets users verify the LLM didn't hallucinate any cards. Photo (if image generation succeeded) is sent as caption + image in one `sendMessage` call
 - **LLM-tool path** (`do_tarot_reading` / `do_runes_reading`, `invoked_via = 'llm_tool'`): the handler returns the **bare LLM interpretation** in the JSON tool result (fields: `done`, `summary`, `imageGenerated`, `layout`, `draws`, `interpretation`) so the host LLM can incorporate it naturally — no text bot message is sent. Only the generated image (if `image-generation = true` and generation succeeded) is sent directly to the user with an empty caption. The template is NOT applied on this path.
+
+### Layout Discovery (Multi-Tier Resolution)
+
+When `divination discovery-enabled = true`, unknown layouts trigger automatic discovery:
+
+**Resolution tiers (from highest to lowest priority):**
+
+1. **Predefined layouts** in `lib/divination/layouts.py` (`TAROT_LAYOUTS`, `RUNES_LAYOUTS`)
+2. **Cached layouts** from `divination_layouts` table (Database cache, includes negative cache for failed discoveries)
+3. **LLM + Web Search discovery** (if enabled):
+   - Call 1: `LLMService.generateText(tools=True)` with web search to find layout info
+   - Call 2: `LLMService.generateStructured()` to parse into structured JSON schema
+   - Save: Persist successful layouts to `divination_layouts` cache
+   - Negative cache: Failed discoveries stored with `name_en=''`, `n_symbols=0` (24-hour TTL)
+
+**Discovery prompts** (configured via chat settings):
+- `divination-discovery-system-prompt` — System instruction for both LLM calls
+- `divination-discovery-info-prompt` — Prompt for web search (first call)
+- `divination-discovery-structure-prompt` — Prompt for structured JSON parsing (second call)
+
+**Negative cache pattern:** Prevents repeated failed discovery attempts for the same non-existent layout. Stored as a special entry in `divination_layouts` with empty name and zero symbols.
 
 ---
 

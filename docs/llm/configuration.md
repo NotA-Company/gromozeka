@@ -237,6 +237,7 @@ Defaults live in [`configs/00-defaults/divination.toml`](../../configs/00-defaul
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch — operator must flip to register `DivinationHandler` |
+| `discovery-enabled` | bool | `true` | Enable automatic layout discovery via LLM + web search for unknown layouts |
 | `tarot-enabled` | bool | `true` | Enable `/taro` command and `do_tarot_reading` LLM tool |
 | `runes-enabled` | bool | `true` | Enable `/runes` command and `do_runes_reading` LLM tool |
 | `image-generation` | bool | `true` | Whether to call `generateImage` per reading |
@@ -270,10 +271,15 @@ When invoked via LLM tool, the handler **does not send a text bot message**. The
 | `DIVINATION_USER_PROMPT_TEMPLATE` | `divination-user-prompt-template` | `BOT_OWNER_SYSTEM` | Template for the user message sent to the LLM |
 | `DIVINATION_IMAGE_PROMPT_TEMPLATE` | `divination-image-prompt-template` | `BOT_OWNER_SYSTEM` | Template used when `image-generation = true` |
 | `DIVINATION_REPLY_TEMPLATE` | `divination-reply-template` | `BOT_OWNER_SYSTEM` | Template for the user-visible reply on the **slash-command path only** (`/taro`, `/runes`). Placeholders: `{layoutName}`, `{drawnSymbolsBlock}`, `{interpretation}`. The LLM-tool path still returns the bare interpretation in JSON and does not use this template. |
+| `DIVINATION_DISCOVERY_SYSTEM_PROMPT` | `divination-discovery-system-prompt` | `BOT_OWNER_SYSTEM` | System instruction for layout discovery (both web search and parsing LLM calls) |
+| `DIVINATION_DISCOVERY_INFO_PROMPT` | `divination-discovery-info-prompt` | `BOT_OWNER_SYSTEM` | Prompt for web search LLM call (finds layout info via web_search tool) |
+| `DIVINATION_DISCOVERY_STRUCTURE_PROMPT` | `divination-discovery-structure-prompt` | `BOT_OWNER_SYSTEM` | Prompt for structured JSON parsing LLM call (converts description to schema) |
 
 User-template placeholders: `{userName}`, `{question}`, `{layoutName}`, `{positionsBlock}`, `{cardsBlock}`.
 Image-template placeholders: `{layoutName}`, `{spreadDescription}`, `{styleHint}`.
 Reply-template placeholders: `{layoutName}` (Russian layout name), `{drawnSymbolsBlock}` (numbered list of drawn symbols with position, name, and reversal flag), `{interpretation}` (raw LLM-generated text).
+Discovery-info-template placeholders: `{systemId}`, `{layoutName}`.
+Discovery-structure-template placeholders: `{description}` (from web search results).
 
 ---
 

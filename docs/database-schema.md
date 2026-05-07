@@ -878,7 +878,7 @@ These TypedDict models provide:
 The database uses a repository pattern with 12 specialized repositories, each handling a specific domain:
 
 | Repository | File | Purpose |
-|------------|------|---------|
+|---|---|---|
 | `chatMessages` | [`chat_messages.py`](../internal/database/repositories/chat_messages.py) | Chat message operations |
 | `chatUsers` | [`chat_users.py`](../internal/database/repositories/chat_users.py) | User information and statistics |
 | `chatInfo` | [`chat_info.py`](../internal/database/repositories/chat_info.py) | Chat metadata |
@@ -891,6 +891,7 @@ The database uses a repository pattern with 12 specialized repositories, each ha
 | `bayesTokens` | [`bayes_tokens.py`](../internal/database/repositories/bayes_tokens.py) | Bayesian spam filtering tokens |
 | `cache` | [`cache.py`](../internal/database/repositories/cache.py) | Unified cache operations |
 | `delayedTasks` | [`delayed_tasks.py`](../internal/database/repositories/delayed_tasks.py) | Task scheduling |
+| `divinations` | [`divinations.py`](../internal/database/repositories/divinations.py) | Tarot/runes readings and layout discovery |
 
 ### Accessing Repositories
 

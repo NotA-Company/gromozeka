@@ -400,6 +400,10 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | `MediaStatus` / `MessageType` are enums | They are NOT plain strings — use the enum members | `MediaStatus.DONE`, `MessageType.IMAGE` (don't pass `"done"` / `"image"`) |
 | `LLMService.registerTool` is flat-args | No nested config object — pass tool name, schema, callback, etc. as kwargs | See `DivinationHandler` registration site for an example |
 | `random.SystemRandom()` for non-deterministic draws | New convention introduced by [`lib/divination/drawing.py`](../../lib/divination/drawing.py) — prefer `random.SystemRandom()` for security/unpredictability | Tests inject a seeded `random.Random` for reproducibility instead of monkeypatching `random` |
+| Layout discovery negative cache | Failed discoveries stored as `name_en=''`, `n_symbols=0` in `divination_layouts` table | Prevents repeated failed attempts, check with `isNegativeCacheEntry()` |
+| `getLikeComparison()` for fuzzy search | Provider method for case-insensitive LIKE pattern matching | Use in `divinationLayouts.getLayout()` for fuzzy layout name search |
+| `getCaseInsensitiveComparison()` for exact matches | Provider method for case-insensitive exact match | Use for username/email lookups, chat settings keys |
+| Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.5 for complete rules and example
 
 ---
 

@@ -137,6 +137,37 @@ tolerate violations silently. Always write to the strict subset.
 
 Reference: https://platform.openai.com/docs/guides/structured-outputs
 
+**Example - Divination layout discovery schema:**
+
+```python
+# From DivinationHandler - layout discovery uses structured output
+layoutSchema = {
+    "type": "object",
+    "properties": {
+        "systemId": {"type": "string"},
+        "layoutId": {"type": "string"},
+        "nameEn": {"type": "string"},
+        "nameRu": {"type": "string"},
+        "description": {"type": "string"},
+        "nSymbols": {"type": "integer"},
+        "positions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["name", "description"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["systemId", "layoutId", "nameEn", "nameRu", "nSymbols", "positions"],
+    "additionalProperties": False,
+}
+```
+
 **Import:**
 ```python
 from lib.ai import ModelStructuredResult
@@ -315,7 +346,7 @@ Pure-logic library for tarot and rune divination. Depends ONLY on `lib/ai` (no b
 | Path | Purpose |
 |---|---|
 | [`lib/divination/base.py`](../../lib/divination/base.py) | `BaseDivinationSystem` ABC plus `Symbol`, `DrawnSymbol`, `Reading` dataclasses |
-| [`lib/divination/layouts.py`](../../lib/divination/layouts.py) | `Layout` dataclass, `TAROT_LAYOUTS`, `RUNE_LAYOUTS`, `resolveLayout()` |
+| [`lib/divination/layouts.py`](../../lib/divination/layouts.py) | `Layout` dataclass (with `systemId`, `description` fields), `TAROT_LAYOUTS`, `RUNES_LAYOUTS`, `resolveLayout()` |
 | [`lib/divination/drawing.py`](../../lib/divination/drawing.py) | `drawSymbols()` — uses `random.SystemRandom()` by default; tests inject seeded `random.Random` |
 | [`lib/divination/localization.py`](../../lib/divination/localization.py) | `SYMBOL_NAMES`, `POSITION_NAMES`, `LAYOUT_NAMES` (Russian translations) + `tr()` helper |
 | [`lib/divination/tarot.py`](../../lib/divination/tarot.py) | `TarotSystem(BaseDivinationSystem)` |
