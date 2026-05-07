@@ -37,7 +37,15 @@ Usage Example:
 
 from typing import TypedDict
 
-from .base import BaseSQLProvider, FetchType, ParametrizedQuery, QueryResult
+from .base import (
+    BaseSQLProvider,
+    ExcludedValue,
+    FetchType,
+    ParametrizedQuery,
+    QueryResult,
+    QueryResultFetchAll,
+    QueryResultFetchOne,
+)
 from .sqlink import SQLinkProvider
 from .sqlite3 import SQLite3Provider
 
@@ -135,4 +143,7 @@ __all__ = [
     "SQLinkProvider",
     "getSqlProvider",
     "SQLProviderConfig",
+    "ExcludedValue",
+    "QueryResultFetchAll",
+    "QueryResultFetchOne",
 ]

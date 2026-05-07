@@ -191,7 +191,8 @@ class DivinationHandler(BaseBotHandler):
             )
             layoutParameterDescription = (
                 (
-                    f"Any custom layout name or one of predefined: {tarotLayoutsList}. "
+                    "Layout name in English or Russian."
+                    # f"Any custom layout name or one of predefined: {tarotLayoutsList}. "
                     # f"Default: {_DEFAULT_TAROT_LAYOUT_ID}"
                 )
                 if self.discoveryEnabled

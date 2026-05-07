@@ -6,13 +6,14 @@ composite (system_id, layout_name) primary key.
 """
 
 import logging
+import re
 from collections.abc import Sequence
 from typing import Optional
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import DivinationLayoutDict
-from ..providers.base import ExcludedValue
+from ..providers import ExcludedValue, QueryResultFetchOne
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -56,34 +57,57 @@ class DivinationLayoutsRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(readonly=True)
-            row = await sqlProvider.executeFetchOne(
-                """
-                SELECT
-                    system_id,
-                    layout_id,
-                    name_en,
-                    name_ru,
-                    n_symbols,
-                    positions,
-                    description,
-                    created_at,
-                    updated_at
-                FROM divination_layouts
-                WHERE system_id = :systemId AND (
-                """
-                + sqlProvider.getCaseInsensitiveComparison("layout_id", "layoutName")
-                + " OR \n"
-                + sqlProvider.getCaseInsensitiveComparison("name_en", "layoutName")
-                + " OR \n"
-                + sqlProvider.getCaseInsensitiveComparison("name_ru", "layoutName")
-                + ")",
-                {
-                    "systemId": systemId,
-                    "layoutName": layoutName,
-                },
-            )
+
+            searchFor = [layoutName.strip()]
+            # Try to drop everything between parentheses
+            noParentheses = re.sub(r"\(.*\)", "", layoutName)
+            if noParentheses != layoutName:
+                searchFor.append(noParentheses.strip())
+
+            selectPrefix = """
+                    SELECT
+                        *
+                    FROM divination_layouts
+                    WHERE system_id = :systemId AND (
+                    """
+            row: QueryResultFetchOne = None
+            for s in searchFor:
+                logger.debug(f"Searching for {s}")
+
+                row = await sqlProvider.executeFetchOne(
+                    selectPrefix
+                    + sqlProvider.getCaseInsensitiveComparison("layout_id", "layoutName")
+                    + " OR \n"
+                    + sqlProvider.getCaseInsensitiveComparison("name_en", "layoutName")
+                    + " OR \n"
+                    + sqlProvider.getCaseInsensitiveComparison("name_ru", "layoutName")
+                    + ")",
+                    {
+                        "systemId": systemId,
+                        "layoutName": layoutName,
+                    },
+                )
+                if row:
+                    break
+
+                row = await sqlProvider.executeFetchOne(
+                    selectPrefix
+                    + sqlProvider.getLikeComparison("layout_id", "layoutName")
+                    + " OR \n"
+                    + sqlProvider.getLikeComparison("name_en", "layoutName")
+                    + " OR \n"
+                    + sqlProvider.getLikeComparison("name_ru", "layoutName")
+                    + ")",
+                    {
+                        "systemId": systemId,
+                        "layoutName": f"%{layoutName}%",
+                    },
+                )
+                if row:
+                    break
+
             if row:
-                return dbUtils.sqlToTypedDict(dict(row), DivinationLayoutDict)
+                return dbUtils.sqlToTypedDict(row, DivinationLayoutDict)
             return None
         except Exception as e:
             logger.error(f"Failed to get layout {systemId}/{layoutName}: {e}")
