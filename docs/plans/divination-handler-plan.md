@@ -1,6 +1,6 @@
 # Divination Handler — Tarot & Runes Spreads (Plan)
 
-> **Status:** proposal, not yet implemented, dood!
+> **Status:** proposal, not yet implemented
 > **Owner:** TBD
 > **Scope:** new feature — single bot handler covering tarot and runes readings, plus
 > a reusable `lib/divination` library so we can grow into other systems later
@@ -109,7 +109,7 @@ lib/divination/
 └── test_runes.py
 ```
 
-> **No `prompts.py`**, dood — interpretation and image-generation prompt
+> No `prompts.py` — interpretation and image-generation prompt
 > templates live in **chat settings**, with hardcoded fallback defaults
 > shipped via `configs/00-defaults/` (see §6). `lib/divination` only knows
 > how to **fill in** a template (replace `{userName}`, `{question}`,
@@ -125,7 +125,7 @@ string when present, falling back to the English original.
 ```python
 @dataclass(frozen=True)
 class Symbol:
-    """A single symbol in a deck (tarot card or rune), dood!
+    """A single symbol in a deck (tarot card or rune).
 
     Attributes:
         id: Stable machine ID (e.g. "major_00_fool", "rune_fehu").
@@ -183,7 +183,7 @@ class Reading:
 
 
 class BaseDivinationSystem(abc.ABC):
-    """Abstract base for divination systems (tarot, runes, ...), dood!
+    """Abstract base for divination systems (tarot, runes, ...).
 
     Note: this class lives in lib/divination and depends only on lib/ai
     (for ModelMessage). It MUST NOT import from internal/.
@@ -372,7 +372,7 @@ Single handler, ~400 lines target:
 
 ```python
 class DivinationHandler(BaseBotHandler):
-    """Tarot & runes readings handler, dood!
+    """Tarot & runes readings handler
 
     Registers /taro and /runes commands and two LLM tools.
     Lookups divination systems by name and delegates to lib/divination
@@ -406,8 +406,8 @@ class DivinationHandler(BaseBotHandler):
 3. layout = systemCls.resolveLayout(layoutName)
    if layout is None:
         # Stub: structured-output not supported yet.
-        sendMessage("Layout '<name>' is not yet supported. "
-                    "Predefined layouts: <list>. dood!")
+         sendMessage("Layout '<name>' is not yet supported. "
+                     "Predefined layouts: <list>.")
         return
    # NOTE: future hook is `_llmGetUnknownLayoutShape(systemCls, layoutName)`,
    # which will be implemented when lib/ai gets structured output.
@@ -541,7 +541,7 @@ async def _llmGetUnknownLayoutShape(
         None always (stub).
     """
     logger.info(f"Unknown layout '{layoutName}' for {systemCls.systemId}: "
-                "structured output not implemented yet, dood!")
+                "structured output not implemented yet.")
     return None
 ```
 
@@ -855,7 +855,7 @@ Suggested sequencing — small, mergeable steps:
     keys), `docs/database-schema.md` + `docs/database-schema-llm.md`
     (new table). Use the `update-project-docs` skill.
 
-Each step ends with `make format lint && make test` before moving on, dood.
+Each step ends with `make format lint && make test` before moving on.
 
 ---
 
@@ -882,11 +882,11 @@ Each step ends with `make format lint && make test` before moving on, dood.
 - Multi-turn dialogues ("draw another card to clarify").
 - Sharing readings between users.
 - Tarot reversal probability configuration.
-- Per-user statistics ("you've drawn The Tower 7 times this month, dood!").
+- Per-user statistics ("you've drawn The Tower 7 times this month").
 - `/lastreadings` / read-back commands.
 - Structured LLM output for unknown layouts (stubbed).
 
 ---
 
 *Plan author note: assumes single-handler / single-`lib` design as per discussion.
-Ready for review, dood!*
+Ready for review.*

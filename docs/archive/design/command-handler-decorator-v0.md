@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the design and implementation of a decorator-based system for automatically registering Telegram bot command handlers, dood!
+This document describes the design and implementation of a decorator-based system for automatically registering Telegram bot command handlers
 
 ## Current Implementation Analysis
 
@@ -60,7 +60,7 @@ A singleton registry to store all registered command handlers:
 
 ```python
 class CommandRegistry:
-    """Registry for command handlers, dood!"""
+    """Registry for command handlers"""
     
     _instance = None
     _handlers: List[CommandHandlerInfo] = []
@@ -94,7 +94,7 @@ def commandHandler(
     categories: Optional[Set[CommandCategory]] = None,
 ) -> Callable:
     """
-    Decorator to register a command handler, dood!
+    Decorator to register a command handler
     
     Args:
         commands: Tuple of command names (without /)
@@ -149,7 +149,7 @@ class BotHandlers:
         self._bindHandlers()
     
     def _bindHandlers(self) -> None:
-        """Bind registered handlers to this instance, dood!"""
+        """Bind registered handlers to this instance"""
         registry = CommandRegistry()
         for handlerInfo in registry.getHandlers():
             # Replace the unbound handler with a bound method
@@ -435,7 +435,7 @@ def test_bot_handlers_integration():
 
 ## Conclusion
 
-The decorator-based approach provides a cleaner, more maintainable way to register command handlers. It reduces boilerplate, improves code organization, and makes the codebase easier to understand and extend, dood!
+The decorator-based approach provides a cleaner, more maintainable way to register command handlers. It reduces boilerplate, improves code organization, and makes the codebase easier to understand and extend
 
 ## References
 

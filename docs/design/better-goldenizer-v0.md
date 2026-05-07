@@ -1,4 +1,4 @@
-Yo dood. We've done with golden collector for openweathermap and Yandex Search, but for it we had to patch whole _makeRequest method there and I want to make some more general solution.
+We've done with golden collector for openweathermap and Yandex Search, but for it we had to patch whole _makeRequest method there and I want to make some more general solution.
 
 Can we instead somehow patch\wrap httpx get/post methods.
 

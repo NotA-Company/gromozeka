@@ -1,6 +1,6 @@
 # `lib/ai` — Structured (JSON-Schema) Output
 
-> **Status:** plan, not yet implemented, dood!
+> **Status:** plan, not yet implemented
 > **Scope:** `lib/ai/` (abstract + models + all providers), `internal/services/llm/service.py`, model configs, tests.
 > **Out of scope:** wiring into specific handlers (e.g. divination's
 > `_llmGetUnknownLayoutShape`), per-chat ChatSettings, schema-builder DSL,
@@ -202,7 +202,7 @@ async def generateStructured(
     """
     if not self._config.get("support_structured_output", False):
         raise NotImplementedError(
-            f"Structured output isn't supported by {self.modelId}, dood!"
+            f"Structured output isn't supported by {self.modelId}"
         )
 
     tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
@@ -336,7 +336,7 @@ async def _generateStructured(
     # callers. Will be done as part of a YC SDK refactor — see
     # docs/plans/lib-ai-structured-output.md §3.6.
     raise NotImplementedError(
-        f"Structured output not supported by YC SDK provider yet, dood!"
+        f"Structured output not supported by YC SDK provider yet"
     )
 ```
 
@@ -390,7 +390,7 @@ async def generateStructured(
     fallbackSupports = fallbackModel.getInfo().get("support_structured_output", False)
     if not primarySupports and not fallbackSupports:
         raise NotImplementedError(
-            f"Neither {llmModel} nor {fallbackModel} supports structured output, dood!"
+            f"Neither {llmModel} nor {fallbackModel} supports structured output"
         )
 
     if chatId is not None:
@@ -738,4 +738,4 @@ A reviewer should be able to confirm all of the following:
 
 ---
 
-*Plan author: software-architect agent. Last updated: 2026-05-06, dood!*
+*Plan author: software-architect agent. Last updated: 2026-05-06*

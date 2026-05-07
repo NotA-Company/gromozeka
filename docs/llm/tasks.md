@@ -1,8 +1,8 @@
 # Gromozeka — Common Tasks & Anti-Patterns
 
-> **Audience:** LLM agents, dood!  
-> **Purpose:** Step-by-step decision trees for common tasks and anti-pattern reference, dood!  
-> **Self-contained:** Everything needed for task guidance is here, dood!
+> **Audience:** LLM agents  
+> **Purpose:** Step-by-step decision trees for common tasks and anti-pattern reference  
+> **Self-contained:** Everything needed for task guidance is here
 
 ---
 
@@ -107,7 +107,7 @@ START
 ├── Step 6: Update cache if needed
 │         If frequently accessed data: add cache layer in CacheService
 │
-├── Step 7: Update documentation (CRITICAL, dood!)
+├── Step 7: Update documentation (CRITICAL)
 │         Update docs/database-schema.md AND docs/database-schema-llm.md
 │         Add migration entry with description
 │         Update affected table schemas
@@ -227,31 +227,31 @@ START
 
 ### ❌ Direct singleton construction
 ```python
-# WRONG — creates second instance with empty state, dood!
+# WRONG — creates second instance with empty state
 cache = CacheService()
 
-# CORRECT, dood!
+# CORRECT
 cache = CacheService.getInstance()
 ```
 
 ### ❌ Calling platform APIs directly from handlers
 ```python
-# WRONG — tightly couples handler to Telegram, dood!
+# WRONG — tightly couples handler to Telegram
 await self.tgBot.send_message(...)
 
-# CORRECT — use BaseBotHandler's sendMessage, dood!
+# CORRECT — use BaseBotHandler's sendMessage
 await self.sendMessage(ensuredMessage, messageText="...", messageCategory=MessageCategory.BOT)
 ```
 
 ### ❌ Adding `LLMMessageHandler` before the last position
 ```python
-# WRONG — LLMMessageHandler MUST be last, dood!
+# WRONG — LLMMessageHandler MUST be last
 self.handlers = [
     (LLMMessageHandler(...), HandlerParallelism.SEQUENTIAL),  # DON'T!
     (MyHandler(...), HandlerParallelism.PARALLEL),
 ]
 
-# CORRECT, dood!
+# CORRECT
 self.handlers = [
     (MyHandler(...), HandlerParallelism.PARALLEL),
     (LLMMessageHandler(...), HandlerParallelism.SEQUENTIAL),  # Always last!
@@ -260,22 +260,22 @@ self.handlers = [
 
 ### ❌ Using `cd` to change into subdirectory
 ```bash
-# WRONG, dood!
+# WRONG
 cd internal && python test.py
 
-# CORRECT, dood!
+# CORRECT
 ./venv/bin/python3 internal/test.py
 ```
 
 ### ❌ Missing docstrings
 ```python
-# WRONG — no docstring, dood!
+# WRONG — no docstring
 def getChatSettings(self, chatId: int) -> ChatSettingsDict:
     return self.cache.get(chatId)
 
-# CORRECT, dood!
+# CORRECT
 def getChatSettings(self, chatId: int) -> ChatSettingsDict:
-    """Get chat settings from cache, dood!
+    """Get chat settings from cache
 
     Args:
         chatId: Chat identifier
@@ -288,12 +288,12 @@ def getChatSettings(self, chatId: int) -> ChatSettingsDict:
 
 ### ❌ Using snake_case for variables/functions
 ```python
-# WRONG — snake_case is not allowed for variables/functions, dood!
+# WRONG — snake_case is not allowed for variables/functions
 chat_settings = getChatSettings()
 def get_chat_settings():
     ...
 
-# CORRECT — camelCase, dood!
+# CORRECT — camelCase
 chatSettings = getChatSettings()
 def getChatSettings():
     ...
@@ -301,33 +301,33 @@ def getChatSettings():
 
 ### ❌ Using camelCase for constants
 ```python
-# WRONG, dood!
+# WRONG
 defaultThreadId = 0
 
-# CORRECT, dood!
+# CORRECT
 DEFAULT_THREAD_ID: int = 0
 ```
 
 ### ❌ Skipping `make format lint` before committing
 ```bash
-# WRONG workflow, dood!
+# WRONG workflow
 # Edit file → git commit
 
-# CORRECT workflow, dood!
+# CORRECT workflow
 # Edit file → make format lint → make test → git commit
 ```
 
 ### ❌ Not resetting singletons in tests
 ```python
-# WRONG — may carry state from previous test, dood!
+# WRONG — may carry state from previous test
 def testSomething():
     service = LLMService.getInstance()
     ...
 
-# CORRECT — use the autouse fixture or reset manually, dood!
+# CORRECT — use the autouse fixture or reset manually
 @pytest.fixture(autouse=True)
 def resetSingleton():
-    """Reset singleton for clean test state, dood!"""
+    """Reset singleton for clean test state"""
     LLMService._instance = None
     yield
     LLMService._instance = None
@@ -335,21 +335,21 @@ def resetSingleton():
 
 ### ❌ Returning wrong `HandlerResultStatus`
 ```python
-# WRONG — FINAL stops the chain; if other handlers should run, dood!
+# WRONG — FINAL stops the chain; if other handlers should run
 return HandlerResultStatus.FINAL  # Stops all subsequent handlers
 
-# CORRECT — if other handlers should still process, dood!
+# CORRECT — if other handlers should still process
 return HandlerResultStatus.SKIPPED  # Let others handle it
 return HandlerResultStatus.NEXT     # I processed it, but continue
 ```
 
 ### ❌ Forgetting to check if feature is enabled in config
 ```python
-# WRONG — handler always active even when disabled, dood!
+# WRONG — handler always active even when disabled
 class WeatherHandler(BaseBotHandler):
     ...  # No enabled check
 
-# CORRECT — conditional registration in HandlersManager, dood!
+# CORRECT — conditional registration in HandlersManager
 if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
     self.handlers.append(
         (WeatherHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
@@ -358,21 +358,21 @@ if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
 
 ### ❌ Not using `Optional` type for nullable values
 ```python
-# WRONG, dood!
+# WRONG
 def getChatInfo(self, chatId: int) -> ChatInfoDict:
     ...  # may return None!
 
-# CORRECT, dood!
+# CORRECT
 def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
     ...
 ```
 
 ### ❌ Creating migration with wrong version number
 ```bash
-# WRONG — assuming version without checking, dood!
+# WRONG — assuming version without checking
 # Just created migration_005.py without checking existing migrations
 
-# CORRECT — always check first, dood!
+# CORRECT — always check first
 ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tail -1
 # Then use: latest_version + 1
 ```
@@ -680,7 +680,7 @@ When using `LLMService.generateStructured()`, the `schema` parameter must be a *
 **Common mistake to avoid:**
 
 ```python
-# WRONG — passing Python types/classes, schema is not valid JSON Schema, dood!
+# WRONG — passing Python types/classes, schema is not valid JSON Schema
 from typing import TypedDict
 
 class MyResponse(TypedDict):
@@ -693,7 +693,7 @@ result = await llmService.generateStructured(
     ...
 )
 
-# ALSO WRONG — using Python type names in schema, dood!
+# ALSO WRONG — using Python type names in schema
 schema = {
     "type": "object",
     "properties": {
@@ -707,7 +707,7 @@ schema = {
 **Correct approach:**
 
 ```python
-# CORRECT — proper JSON Schema with no optional fields, dood!
+# CORRECT — proper JSON Schema with no optional fields
 schema = {
     "type": "object",
     "properties": {
@@ -807,5 +807,5 @@ Before deploying a new schema, you can test it locally:
 
 ---
 
-*This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered, dood!*
-*Last updated: 2026-05-07, dood!*
+*This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered*
+*Last updated: 2026-05-07*

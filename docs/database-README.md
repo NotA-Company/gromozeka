@@ -1,6 +1,6 @@
 # Database Documentation
 
-Welcome to the Gromozeka bot's database documentation, dood! This directory contains comprehensive documentation for the database schema and operations.
+Welcome to the Gromozeka bot's database documentation. This directory contains comprehensive documentation for the database schema and operations.
 
 > **Note**: SQL portability implementation is now complete! All 5 phases have been implemented, enabling cross-RDBMS compatibility with SQLite, MySQL, PostgreSQL, and SQLink providers. See [SQL Portability Implementation Status](reports/sql-portability-implementation-status.md) for details.
 

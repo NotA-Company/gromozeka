@@ -1,8 +1,8 @@
 # Gromozeka — Database Operations
 
-> **Audience:** LLM agents, dood!
-> **Purpose:** Complete reference for database operations, migrations, schema, and multi-source routing, dood!
-> **Self-contained:** Everything needed for database work is here, dood!
+> **Audience:** LLM agents
+> **Purpose:** Complete reference for database operations, migrations, schema, and multi-source routing
+> **Self-contained:** Everything needed for database work is here
 
 ---
 
@@ -23,7 +23,7 @@
 
 **File:** [`internal/database/database.py`](../../internal/database/database.py)
 
-**Repository Pattern:** Database operations are now accessed through specialized repositories, dood!
+**Repository Pattern:** Database operations are now accessed through specialized repositories
 
 | Repository | Method | Returns | Purpose |
 |---|---|---|---|
@@ -62,7 +62,7 @@ Chat settings are stored in the cache layer (not directly in DB for hot path):
 # Get settings (from cache, falls back to DB)
 chatSettings: ChatSettingsDict = self.db.chatSettings.getChatSettings(chatId)
 
-# Set a setting (updatedBy is REQUIRED keyword-only arg, dood!)
+# Set a setting (updatedBy is REQUIRED keyword-only arg)
 self.db.chatSettings.setChatSetting(
     chatId=chatId,
     key=ChatSettingsKey.CHAT_MODEL,
@@ -74,7 +74,7 @@ self.db.chatSettings.setChatSetting(
 self.db.chatSettings.unsetChatSetting(chatId=chatId, key=ChatSettingsKey.CHAT_MODEL)
 ```
 
-**IMPORTANT:** `getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]` where each value is a `(value, updated_by)` tuple. The `updated_by` field is the user ID who last changed the setting (0 for system changes), dood!
+**IMPORTANT:** `getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]` where each value is a `(value, updated_by)` tuple. The `updated_by` field is the user ID who last changed the setting (0 for system changes)
 
 **Via CacheService (preferred for hot path):**
 ```python
@@ -174,7 +174,7 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
 
 ## 4. Adding a Database Migration
 
-### Step 1: Check existing migrations first (CRITICAL, dood!)
+### Step 1: Check existing migrations first (CRITICAL)
 
 ```bash
 ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tail -1
@@ -188,13 +188,13 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 **Path:** `internal/database/migrations/versions/NNN_description.py`
 
 ```python
-"""Migration: add_my_table - vNNN, dood!"""
+"""Migration: add_my_table - vNNN"""
 
 from internal.database.migrations.base import BaseMigration
 
 
 class MigrationAddMyTable(BaseMigration):
-    """Migration to add my_table, dood!
+    """Migration to add my_table
 
     Attributes:
         version: Migration version number
@@ -205,7 +205,7 @@ class MigrationAddMyTable(BaseMigration):
     description: str = "Add my_table"
 
     def up(self, cursor) -> None:
-        """Apply migration, dood!
+        """Apply migration
 
         Args:
             cursor: SQLite cursor for executing SQL
@@ -224,7 +224,7 @@ class MigrationAddMyTable(BaseMigration):
         """)
 
     def down(self, cursor) -> None:
-        """Revert migration, dood!
+        """Revert migration
 
         Args:
             cursor: SQLite cursor for executing SQL
@@ -234,19 +234,19 @@ class MigrationAddMyTable(BaseMigration):
 
 ### Step 3: Register migration
 
-Check `internal/database/migrations/__init__.py` or the DB manager for registration pattern, dood!
+Check `internal/database/migrations/__init__.py` or the DB manager for registration pattern
 
 ### Step 4: Add methods to `Database`
 
-In [`internal/database/database.py`](../../internal/database/database.py), add methods to use the new table (see [Section 6](#6-adding-methods-to-database)), dood!
+In [`internal/database/database.py`](../../internal/database/database.py), add methods to use the new table (see [Section 6](#6-adding-methods-to-database))
 
 ### Step 5: Update models if needed
 
-In [`internal/database/models.py`](../../internal/database/models.py), add new `TypedDict` or enum values, dood!
+In [`internal/database/models.py`](../../internal/database/models.py), add new `TypedDict` or enum values
 
 ### Step 6: Update documentation
 
-**CRITICAL: Always update docs in the same commit as migration, dood!**
+**CRITICAL: Always update docs in the same commit as migration**
 
 1. Update `docs/database-schema.md` — add migration entry with description
 2. Update `docs/database-schema-llm.md` — update affected table schemas
@@ -254,7 +254,7 @@ In [`internal/database/models.py`](../../internal/database/models.py), add new `
 
 ### Step 7: Write tests
 
-In `tests/test_db_wrapper.py` and `internal/database/migrations/test_migrations.py`, dood!
+In `tests/test_db_wrapper.py` and `internal/database/migrations/test_migrations.py`
 
 ### Step 8: Run quality checks
 
@@ -316,13 +316,13 @@ make test
 
 #### `SpamReason`
 
-Various spam classification reasons — used by `SpamHandler`, dood!
+Various spam classification reasons — used by `SpamHandler`
 
 ---
 
 ## 6. Adding Methods to `Database`
 
-**Repository Pattern:** Database operations are organized into specialized repositories in `internal/database/repositories/`, dood!
+**Repository Pattern:** Database operations are organized into specialized repositories in `internal/database/repositories/`
 
 **Available Repositories:**
 - `chatMessages` — Message operations
@@ -340,7 +340,7 @@ Various spam classification reasons — used by `SpamHandler`, dood!
 2. Add your method following the repository pattern:
 ```python
 def myNewDbMethod(self, chatId: int, value: str) -> Optional[SomeDict]:
-    """Short description, dood!
+    """Short description
 
     Args:
         chatId: Chat ID to query
@@ -364,7 +364,7 @@ def myNewDbMethod(self, chatId: int, value: str) -> Optional[SomeDict]:
 **For read-only methods, pass `readonly=True`:**
 ```python
 def getMyData(self, chatId: int, dataSource: Optional[str] = None) -> Optional[SomeDict]:
-    """Get data for chat, dood!
+    """Get data for chat
 
     Args:
         chatId: Chat ID to query
@@ -388,13 +388,13 @@ def getMyData(self, chatId: int, dataSource: Optional[str] = None) -> Optional[S
 from internal.database.repositories.base import BaseRepository
 
 class MyRepository(BaseRepository):
-    """Repository for my_table operations, dood!"""
+    """Repository for my_table operations"""
     
     def __init__(self, db: 'Database'):
         super().__init__(db)
     
     def myMethod(self, chatId: int) -> Optional[SomeDict]:
-        """Method description, dood!"""
+        """Method description"""
         with self.db._getConnection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM my_table WHERE chat_id = ?", (chatId,))
@@ -426,7 +426,7 @@ class Database:
 
 **File:** [`internal/database/providers/base.py`](../../internal/database/providers/base.py)
 
-The `BaseSQLProvider` abstract class provides cross-database compatibility methods for common SQL operations. Use these methods instead of writing RDBMS-specific SQL directly, dood!
+The `BaseSQLProvider` abstract class provides cross-database compatibility methods for common SQL operations. Use these methods instead of writing RDBMS-specific SQL directly
 
 ### `getCaseInsensitiveComparison(column, param)`
 
@@ -498,7 +498,7 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
 
 ## 8. Migration Documentation Protocol
 
-**Critical lesson from migration_009 documentation error, dood!**
+**Critical lesson from migration_009 documentation error**
 
 ### Mandatory Steps for Migration Documentation Updates
 
@@ -551,5 +551,5 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
 
 ---
 
-*This guide is auto-maintained and should be updated whenever significant database changes are made, dood!*
-*Last updated: 2026-05-02, dood!*
+*This guide is auto-maintained and should be updated whenever significant database changes are made*
+*Last updated: 2026-05-02*

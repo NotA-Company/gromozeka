@@ -196,7 +196,7 @@ internal/services/cache/test_cache_service.py ..................................
 2.50s call     lib/openweathermap/test_dict_cache.py::TestDictCacheAdvanced::test_cache_ttl_boundary_conditions
 ================================================================ 1330 passed in 67.48s (0:01:07) =================================================================
 
-✅ All tests completed, dood!
+✅ All tests completed
 ```
 
 **How to fill this section:**

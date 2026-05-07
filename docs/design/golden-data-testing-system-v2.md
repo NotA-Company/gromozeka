@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This document describes version 2.0 of the Golden Data testing system, dood! The key improvement is moving from patching individual `_makeRequest()` methods to patching httpx directly at the transport layer. This makes the system generic, reusable, and eliminates the need for service-specific collection scripts.
+This document describes version 2.0 of the Golden Data testing system The key improvement is moving from patching individual `_makeRequest()` methods to patching httpx directly at the transport layer. This makes the system generic, reusable, and eliminates the need for service-specific collection scripts.
 
 **Key Improvements over v1:**
 - ✅ Generic httpx patching works for ANY client using httpx
@@ -50,7 +50,7 @@ This document describes version 2.0 of the Golden Data testing system, dood! The
 The v1 approach patches `_makeRequest()` methods in each client:
 
 ```python
-# v1 approach - NOT scalable, dood!
+# v1 approach - NOT scalable
 async def patched_make_request(url: str, params: Dict[str, Any]):
     """Patched version of _makeRequest that captures raw responses."""
     import httpx
@@ -89,7 +89,7 @@ A generic solution that:
 Instead of patching individual methods, we patch httpx itself at the transport layer:
 
 ```python
-# v2 approach - Generic and scalable, dood!
+# v2 approach - Generic and scalable
 from tests.golden_data.core import HttpxRecorder
 
 # Works with ANY httpx-based client!
@@ -1814,4 +1814,4 @@ class TestScenario(TypedDict):
 
 **End of Design Document**
 
-Dood, this v2 design provides a complete, generic, and scalable solution for golden data testing! 🎉
+This v2 design provides a complete, generic, and scalable solution for golden data testing! 🎉

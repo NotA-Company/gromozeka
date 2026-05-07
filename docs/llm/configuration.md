@@ -1,8 +1,8 @@
 # Gromozeka — Configuration Reference
 
-> **Audience:** LLM agents, dood!  
-> **Purpose:** Complete reference for TOML configuration sections, ConfigManager methods, and per-chat settings, dood!  
-> **Self-contained:** Everything needed for configuration work is here, dood!
+> **Audience:** LLM agents  
+> **Purpose:** Complete reference for TOML configuration sections, ConfigManager methods, and per-chat settings  
+> **Self-contained:** Everything needed for configuration work is here
 
 ---
 
@@ -20,7 +20,7 @@
 1. File at `--config` path (default: `config.toml`)
 2. All `*.toml` files in `--config-dir` directories, sorted alphabetically, merged recursively
 
-**Key:** Later files override earlier ones. Nested dicts are merged recursively, dood!
+**Key:** Later files override earlier ones. Nested dicts are merged recursively
 
 **Default config locations:**
 - [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml) — base app defaults
@@ -52,7 +52,7 @@
 | `group-defaults` | dict | Default settings for group chats |
 | `tier-defaults` | dict | Tier-specific default settings |
 
-**IMPORTANT:** `bot_owners` can be username OR int ID — both are valid. Handle both types in owner checks, dood!
+**IMPORTANT:** `bot_owners` can be username OR int ID — both are valid. Handle both types in owner checks
 
 ### `[database]`
 
@@ -232,7 +232,7 @@ mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
 
 ### `[divination]`
 
-Defaults live in [`configs/00-defaults/divination.toml`](../../configs/00-defaults/divination.toml). The handler is registered conditionally on `enabled = true`, dood!
+Defaults live in [`configs/00-defaults/divination.toml`](../../configs/00-defaults/divination.toml). The handler is registered conditionally on `enabled = true`
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
@@ -305,7 +305,7 @@ Reply-template placeholders: `{layoutName}` (Russian layout name), `{drawnSymbol
 
 ```python
 def getMyFeatureConfig(self) -> Dict[str, Any]:
-    """Get my feature configuration, dood!
+    """Get my feature configuration
 
     Returns:
         Dict with feature configuration settings
@@ -353,5 +353,5 @@ apiKey: str = myConfig.get("api-key", "")
 
 ---
 
-*This guide is auto-maintained and should be updated whenever configuration sections change, dood!*
-*Last updated: 2026-05-02, dood!*
+*This guide is auto-maintained and should be updated whenever configuration sections change*
+*Last updated: 2026-05-02*

@@ -1,8 +1,8 @@
 # Gromozeka — Service Integration Patterns
 
-> **Audience:** LLM agents, dood!  
-> **Purpose:** Complete reference for using CacheService, QueueService, LLMService, StorageService, and RateLimiterManager, dood!  
-> **Self-contained:** Everything needed for service integration is here, dood!
+> **Audience:** LLM agents  
+> **Purpose:** Complete reference for using CacheService, QueueService, LLMService, StorageService, and RateLimiterManager  
+> **Self-contained:** Everything needed for service integration is here
 
 ---
 
@@ -57,7 +57,7 @@ cache.setDefaultChatSettings("tier-paid", tierDefaults)  # Tier-specific
 - `HCChatUserCacheDict` — per-user-in-chat cache
 - `UserDataType` / `UserDataValueType` — user data structures
 
-**IMPORTANT:** `CacheService.injectDatabase(db)` MUST be called before any cache operations. This is done automatically by `HandlersManager`, so only call it manually in tests, dood!
+**IMPORTANT:** `CacheService.injectDatabase(db)` MUST be called before any cache operations. This is done automatically by `HandlersManager`, so only call it manually in tests
 
 ---
 
@@ -77,7 +77,7 @@ await queue.addBackgroundTask(parseTask)
 await queue.addDelayedTask(
     delayedUntil=time.time() + 3600,
     function=DelayedTaskFunction.SEND_MESSAGE,
-    kwargs={"chat_id": 123, "text": "Hello, dood!"}
+    kwargs={"chat_id": 123, "text": "Hello"}
 )
 
 # Register a handler for delayed tasks
@@ -201,7 +201,7 @@ from lib.ai import ModelStructuredResult
 - `TIMEOUT` — request timed out
 - `EMPTY` — empty response
 
-**IMPORTANT:** `LLMService` has an `initialized` guard (singleton init runs once). Never check `initialized` directly in new code, dood!
+**IMPORTANT:** `LLMService` has an `initialized` guard (singleton init runs once). Never check `initialized` directly in new code
 
 ---
 
@@ -234,7 +234,7 @@ keys: List[str] = storage.list(prefix="attachments/", limit=100)
 
 **Backends:** `null` (no-op), `fs` (filesystem), `s3` (AWS S3/compatible)
 
-**IMPORTANT:** `StorageService.injectConfig(configManager)` MUST be called before any storage operations. This is done automatically by `HandlersManager`, dood!
+**IMPORTANT:** `StorageService.injectConfig(configManager)` MUST be called before any storage operations. This is done automatically by `HandlersManager`
 
 ---
 
@@ -271,7 +271,7 @@ openweathermap = "<limiter-name>"
 
 ## 6. Service Singleton Pattern
 
-All services use this pattern. When MODIFYING a service, preserve the singleton structure, dood!
+All services use this pattern. When MODIFYING a service, preserve the singleton structure
 
 ```python
 import threading
@@ -279,13 +279,13 @@ from typing import Optional
 
 
 class MyService:
-    """Singleton service, dood!"""
+    """Singleton service"""
 
     _instance: Optional["MyService"] = None
     _lock: threading.RLock = threading.RLock()
 
     def __new__(cls) -> "MyService":
-        """Create or return singleton instance, dood!
+        """Create or return singleton instance
 
         Returns:
             The singleton MyService instance
@@ -296,7 +296,7 @@ class MyService:
         return cls._instance
 
     def __init__(self) -> None:
-        """Initialize service once, dood!"""
+        """Initialize service once"""
         if hasattr(self, "initialized"):
             return
         self.initialized: bool = True
@@ -304,7 +304,7 @@ class MyService:
 
     @classmethod
     def getInstance(cls) -> "MyService":
-        """Get the singleton instance, dood!
+        """Get the singleton instance
 
         Returns:
             The singleton MyService instance
@@ -332,5 +332,5 @@ class MyService:
 
 ---
 
-*This guide is auto-maintained and should be updated whenever service integration patterns change, dood!*  
-*Last updated: 2026-05-06, dood!*
+*This guide is auto-maintained and should be updated whenever service integration patterns change*  
+*Last updated: 2026-05-06*

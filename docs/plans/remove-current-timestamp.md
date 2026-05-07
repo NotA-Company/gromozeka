@@ -71,7 +71,7 @@ These files already use [`dbUtils.getCurrentTimestamp()`](internal/database/util
 
 ## INSERT Dependency Trace
 
-When `DEFAULT CURRENT_TIMESTAMP` is removed from schemas, every INSERT that omits `created_at` / `updated_at` will break. Here is the full trace of which INSERTs rely on the default, dood:
+When `DEFAULT CURRENT_TIMESTAMP` is removed from schemas, every INSERT that omits `created_at` / `updated_at` will break. Here is the full trace of which INSERTs rely on the default:
 
 | Table | Insert Location | Provides `created_at` | Provides `updated_at` | Action needed |
 |-------|-----------------|----------------------|----------------------|---------------|

@@ -1,8 +1,8 @@
 # Gromozeka — Testing Guide
 
-> **Audience:** LLM agents, dood!  
-> **Purpose:** Complete guide for writing and running tests, using fixtures, and the golden data framework, dood!  
-> **Self-contained:** Everything needed for testing work is here, dood!
+> **Audience:** LLM agents  
+> **Purpose:** Complete guide for writing and running tests, using fixtures, and the golden data framework  
+> **Self-contained:** Everything needed for testing work is here
 
 ---
 
@@ -115,7 +115,7 @@ make test
 ## 4. Writing Handler Tests
 
 ```python
-"""Tests for SomeHandler, dood!"""
+"""Tests for SomeHandler"""
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
@@ -126,11 +126,11 @@ from internal.bot.models import BotProvider, EnsuredMessage, MessageRecipient, M
 
 
 class TestSomeHandler:
-    """Tests for SomeHandler, dood!"""
+    """Tests for SomeHandler"""
 
     @pytest.fixture
     def handler(self, mockConfigManager, mockDatabaseWrapper, mockLlmManager):
-        """Create handler instance, dood!
+        """Create handler instance
 
         Args:
             mockConfigManager: Mocked configuration manager
@@ -153,7 +153,7 @@ class TestSomeHandler:
         return handler
 
     async def testSkipsNonApplicableMessages(self, handler):
-        """Should skip messages it cannot handle, dood!
+        """Should skip messages it cannot handle
 
         Args:
             handler: The handler fixture
@@ -163,7 +163,7 @@ class TestSomeHandler:
         assert result == HandlerResultStatus.SKIPPED
 
     async def testHandlesApplicableMessages(self, handler):
-        """Should process applicable messages correctly, dood!
+        """Should process applicable messages correctly
 
         Args:
             handler: The handler fixture
@@ -188,16 +188,16 @@ class TestSomeHandler:
 ## 5. Writing Database Tests
 
 ```python
-"""Tests for DatabaseWrapper operations, dood!"""
+"""Tests for DatabaseWrapper operations"""
 
 import pytest
 
 
 class TestMyDbOperation:
-    """Tests for my DB operation, dood!"""
+    """Tests for my DB operation"""
 
     async def testSaveAndRetrieve(self, testDatabase):
-        """Should save and retrieve data correctly, dood!
+        """Should save and retrieve data correctly
 
         Args:
             testDatabase: Real in-memory DatabaseWrapper fixture
@@ -211,7 +211,7 @@ class TestMyDbOperation:
         assert result["value"] == "test"
 
     async def testReturnsNoneForMissing(self, testDatabase):
-        """Should return None when record not found, dood!
+        """Should return None when record not found
 
         Args:
             testDatabase: Real in-memory DatabaseWrapper fixture
@@ -230,7 +230,7 @@ class TestMyDbOperation:
 
 ## 6. Golden Data Tests
 
-Golden data files live in `tests/fixtures/`. Used for API testing without hitting real endpoints, dood!
+Golden data files live in `tests/fixtures/`. Used for API testing without hitting real endpoints
 
 **How golden data works:**
 1. First run: records real API responses to `tests/fixtures/my_test_expected.json`
@@ -239,7 +239,7 @@ Golden data files live in `tests/fixtures/`. Used for API testing without hittin
 
 **Example golden data test pattern:**
 ```python
-"""Weather client tests with golden data, dood!"""
+"""Weather client tests with golden data"""
 
 import json
 import pytest
@@ -247,11 +247,11 @@ from pathlib import Path
 
 
 class TestOpenWeatherMapClient:
-    """Tests for OpenWeatherMapClient with golden data, dood!"""
+    """Tests for OpenWeatherMapClient with golden data"""
 
     @pytest.fixture
     def goldenData(self) -> dict:
-        """Load golden test data, dood!
+        """Load golden test data
 
         Returns:
             Dictionary with golden test responses
@@ -260,7 +260,7 @@ class TestOpenWeatherMapClient:
         return json.loads(fixtureFile.read_text())
 
     async def testGetCurrentWeather(self, goldenData):
-        """Should parse weather response correctly, dood!
+        """Should parse weather response correctly
 
         Args:
             goldenData: Golden test fixture data
@@ -281,7 +281,7 @@ class TestOpenWeatherMapClient:
 
 ```python
 """
-Tests for MyFeature, dood!
+Tests for MyFeature
 """
 
 import pytest
@@ -289,10 +289,10 @@ from unittest.mock import Mock, AsyncMock
 
 
 class TestMyFeature:
-    """Tests for MyFeature class, dood!"""
+    """Tests for MyFeature class"""
 
     def testBasicBehavior(self, mockDatabaseWrapper, mockConfigManager):
-        """Test basic behavior, dood!
+        """Test basic behavior
 
         Args:
             mockDatabaseWrapper: Mocked database wrapper fixture
@@ -308,7 +308,7 @@ class TestMyFeature:
         assert result == expectedResult
 
     async def testAsyncBehavior(self, mockBot):
-        """Test async behavior, dood!
+        """Test async behavior
 
         Args:
             mockBot: Mocked bot instance fixture
@@ -317,7 +317,7 @@ class TestMyFeature:
         assert result is not None
 
     def testSingletonReset(self):
-        """Test singleton reset, dood!"""
+        """Test singleton reset"""
         # Use the autouse fixture from conftest.py — resetLlmServiceSingleton
         # OR manually reset for non-LLM services:
         from internal.services.cache import CacheService
@@ -350,5 +350,5 @@ class TestMyFeature:
 
 ---
 
-*This guide is auto-maintained and should be updated whenever testing patterns change, dood!*  
-*Last updated: 2026-04-18, dood!*
+*This guide is auto-maintained and should be updated whenever testing patterns change*  
+*Last updated: 2026-04-18*

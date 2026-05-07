@@ -1,4 +1,4 @@
-Yo, dood. We need to add Max Messenger bot client as lib.max_bot using `httpx` as client
+Yo We need to add Max Messenger bot client as lib.max_bot using `httpx` as client
 There is OpenAPI 3.0 specification:
 `docs/other/Max-Messenger/swagger.json`
 

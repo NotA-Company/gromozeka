@@ -612,7 +612,7 @@ from typing import Any, Dict, Optional, Tuple, Type
         """
         systemCls: Optional[Type[BaseDivinationSystem]] = self.systems.get(systemId)
         if systemCls is None:
-            errorMessage: str = f"Система '{systemId}' не доступна, dood!"
+            errorMessage: str = f"Система '{systemId}' не доступна"
             await self.sendMessage(
                 ensuredMessage,
                 messageText=errorMessage,
@@ -625,7 +625,7 @@ from typing import Any, Dict, Optional, Tuple, Type
         layoutName, question = self._parseArgs(args)
 
         if not layoutName:
-            errorMessage = "Необходимо указать расклад, dood!\n" f"Доступные расклады: {availableLayoutsStr}."
+            errorMessage = "Необходимо указать расклад\n" f"Доступные расклады: {availableLayoutsStr}."
             await self.sendMessage(
                 ensuredMessage,
                 messageText=errorMessage,
@@ -651,7 +651,7 @@ from typing import Any, Dict, Optional, Tuple, Type
                 # Check if this is a negative cache entry
                 if self.db.divinationLayouts.isNegativeCacheEntry(cachedLayout):
                     errorMessage = (
-                        f"Расклад '{layoutName}' не найден в справочнике, dood!\n"
+                        f"Расклад '{layoutName}' не найден в справочнике\n"
                         f"Доступные расклады: {availableLayoutsStr}."
                     )
                     await self.sendMessage(
@@ -698,12 +698,12 @@ from typing import Any, Dict, Optional, Tuple, Type
         # Step 4: If still no layout, return error
         if layout is None:
             discoveryMessage = (
-                "\nВы можете указать другой расклад или попробовать ввести название еще раз, dood!"
+                "\nВы можете указать другой расклад или попробовать ввести название еще раз"
                 if self.discoveryEnabled
                 else ""
             )
             errorMessage = (
-                f"Расклад '{layoutName}' не поддерживается, dood!\n"
+                f"Расклад '{layoutName}' не поддерживается\n"
                 f"Доступные расклады: {availableLayoutsStr}.{discoveryMessage}"
             )
             await self.sendMessage(
@@ -882,7 +882,7 @@ Similarly for `do_runes_reading`.
 Create comprehensive tests for the discovery flow:
 
 ```python
-"""Tests for divination layout discovery, dood!"""
+"""Tests for divination layout discovery"""
 
 import pytest
 from unittest.mock import AsyncMock, Mock, patch

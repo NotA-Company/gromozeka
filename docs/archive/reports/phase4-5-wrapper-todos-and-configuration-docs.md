@@ -206,12 +206,12 @@ def close(self):
 **After:**
 ```python
 def close(self):
-    """Close all database connections across all sources, dood!"""
+    """Close all database connections across all sources"""
     for sourceName, threadLocal in self._connections.items():
         if hasattr(threadLocal, "connection"):
             try:
                 threadLocal.connection.close()
-                logger.debug(f"Closed connection for source '{sourceName}', dood!")
+                logger.debug(f"Closed connection for source '{sourceName}'")
             except Exception as e:
                 logger.error(f"Error closing connection for source '{sourceName}': {e}")
 ```
@@ -221,7 +221,7 @@ def close(self):
 **Before:**
 ```python
 def _initDatabase(self):
-    """Initialize the database with required tables, dood!"""
+    """Initialize the database with required tables"""
     # TODO: initDatabase in each non-readonly datasource (as well as migrations)
     with self.getCursor(readonly=True) as cursor:  # BUG: Should be writable!
         # Create settings table...
@@ -230,13 +230,13 @@ def _initDatabase(self):
 **After:**
 ```python
 def _initDatabase(self):
-    """Initialize database schema and run migrations for all non-readonly sources, dood!"""
+    """Initialize database schema and run migrations for all non-readonly sources"""
     for sourceName, sourceConfig in self._sources.items():
         if sourceConfig.readonly:
-            logger.info(f"Skipping initialization for readonly source '{sourceName}', dood!")
+            logger.info(f"Skipping initialization for readonly source '{sourceName}'")
             continue
         
-        logger.info(f"Initializing database for source '{sourceName}', dood!")
+        logger.info(f"Initializing database for source '{sourceName}'")
         # Create settings table and run migrations for this source...
 ```
 
@@ -437,4 +437,4 @@ def _initDatabase(self):
 **Tests**: ✅ 961/961 PASSING  
 **Documentation**: ✅ COMPREHENSIVE  
 
-This task successfully completed both code quality improvements and comprehensive documentation for the multi-source database architecture, dood!
+This task successfully completed both code quality improvements and comprehensive documentation for the multi-source database architecture

@@ -1,8 +1,8 @@
 # Gromozeka — Library API Quick Reference
 
-> **Audience:** LLM agents, dood!  
-> **Purpose:** Complete API reference for all lib/ subsystems, dood!  
-> **Self-contained:** Everything needed for library usage is here, dood!
+> **Audience:** LLM agents  
+> **Purpose:** Complete API reference for all lib/ subsystems  
+> **Self-contained:** Everything needed for library usage is here
 
 ---
 
@@ -80,7 +80,7 @@ manager.listModels() -> List[str]
 **Creating a message:**
 ```python
 # Text message
-msg = ModelMessage(role="user", content="Hello, dood!")
+msg = ModelMessage(role="user", content="Hello")
 msg = ModelMessage(role="system", content="You are helpful")
 msg = ModelMessage(role="assistant", content="Response text")
 
@@ -176,7 +176,7 @@ await cache.clear() -> None
 cache.getStats() -> Dict[str, Any]
 ```
 
-**NOTE:** For bot cache operations (chat settings, user data, admin cache), use [`CacheService`](services.md) instead of `lib/cache` directly, dood!
+**NOTE:** For bot cache operations (chat settings, user data, admin cache), use [`CacheService`](services.md) instead of `lib/cache` directly
 
 ---
 
@@ -196,7 +196,7 @@ limiter.getStats(queue: str = "default") -> Dict[str, Any]
 limiter.listQueues() -> List[str]
 ```
 
-**For bot usage, use** [`RateLimiterManager`](services.md#5-ratelimitermanager) **from services, dood!**
+**For bot usage, use** [`RateLimiterManager`](services.md#5-ratelimitermanager) **from services**
 
 ---
 
@@ -213,7 +213,7 @@ from lib.markdown.parser import markdownToMarkdownV2
 result: str = markdownToMarkdownV2(text: str) -> str
 ```
 
-**Tests:** `lib/markdown/test/` — run with `make test`, dood!
+**Tests:** `lib/markdown/test/` — run with `make test`
 
 ---
 
@@ -240,7 +240,7 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 - [`lib/max_bot/models/update.py`](../../lib/max_bot/models/update.py) — Update/event models
 
 **IMPORTANT gotcha — Max platform sticker stubs:**
-Animated stickers have stub URLs, not real images. Always check `url.startswith(...)` before processing, dood!
+Animated stickers have stub URLs, not real images. Always check `url.startswith(...)` before processing
 
 ---
 
@@ -266,7 +266,7 @@ BayesConfig(
 )
 ```
 
-**Multi-source database support:** `BayesFilter` supports `dataSource` parameter for multi-source routing, dood!
+**Multi-source database support:** `BayesFilter` supports `dataSource` parameter for multi-source routing
 
 ---
 
@@ -284,7 +284,7 @@ weather = await client.getCurrentWeather(lat=55.75, lon=37.62)
 geocoding = await client.geocode(cityName="Moscow")
 ```
 
-**Tests:** Uses golden data framework in `lib/openweathermap/test_weather_client.py`, dood!
+**Tests:** Uses golden data framework in `lib/openweathermap/test_weather_client.py`
 
 ---
 
@@ -302,13 +302,13 @@ result = await client.geocode(address="Moscow, Russia")
 result = await client.reverseGeocode(lat=55.75, lon=37.62)
 ```
 
-**Config:** Configured via `[geocode-maps]` TOML section, accessed via `configManager.getGeocodeMapsConfig()`, dood!
+**Config:** Configured via `[geocode-maps]` TOML section, accessed via `configManager.getGeocodeMapsConfig()`
 
 ---
 
 ## 9. `lib/divination` — Tarot & Runes Logic
 
-Pure-logic library for tarot and rune divination. Depends ONLY on `lib/ai` (no bot, no DB), dood!
+Pure-logic library for tarot and rune divination. Depends ONLY on `lib/ai` (no bot, no DB)
 
 **Layout:**
 
@@ -329,7 +329,7 @@ Pure-logic library for tarot and rune divination. Depends ONLY on `lib/ai` (no b
 
 **Layout name parsing** in `resolveLayout()` is case-, dash-, underscore-, and space-insensitive.
 
-**Boundary rule:** `lib/divination/` is consumed by `internal/bot/common/handlers/divination.py`; the library itself must never import from `internal/`. A boundary-import test enforces this, dood!
+**Boundary rule:** `lib/divination/` is consumed by `internal/bot/common/handlers/divination.py`; the library itself must never import from `internal/`. A boundary-import test enforces this
 
 **Usage from a handler:**
 ```python
@@ -354,5 +354,5 @@ reading = drawSymbols(system, layout, question="What about my career?")
 
 ---
 
-*This guide is auto-maintained and should be updated whenever library APIs change, dood!*  
-*Last updated: 2026-05-06, dood!*
+*This guide is auto-maintained and should be updated whenever library APIs change*  
+*Last updated: 2026-05-06*

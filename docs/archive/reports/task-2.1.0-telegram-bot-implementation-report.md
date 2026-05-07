@@ -34,7 +34,7 @@ Comprehensive implementation of a minimal Telegram bot following modern Python d
 - Created database abstraction layer using SQLite with thread-safe operations
 - Applied separation of concerns with distinct modules for bot logic, database, and configuration
 - Implemented comprehensive error handling and logging throughout the application
-- Added Prinny personality with "dood!" responses for character engagement
+- Added Prinny personality with "" responses for character engagement
 
 ### Technical Decisions
 - **Database Wrapper Pattern:** Created DatabaseWrapper class to abstract database operations, enabling easy migration to PostgreSQL, MySQL, or other backends in the future

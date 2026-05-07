@@ -1,4 +1,4 @@
-# Migration Auto-Discovery Implementation Plan, Dood!
+# Migration Auto-Discovery Implementation Plan
 
 ## Overview
 Add automatic migration discovery functionality to the database migration system, eliminating the need for manual registration of migrations in [`internal/database/migrations/__init__.py`](internal/database/migrations/__init__.py:1).
@@ -21,7 +21,7 @@ Add automatic migration discovery functionality to the database migration system
 ## Proposed Solution
 
 ### 1. Migration Module Interface
-Add a standardized `getMigration()` function to each migration module that returns the migration class, dood!
+Add a standardized `getMigration()` function to each migration module that returns the migration class
 
 **Benefits:**
 - Consistent interface for retrieving migration classes
@@ -31,12 +31,12 @@ Add a standardized `getMigration()` function to each migration module that retur
 **Implementation:**
 ```python
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module"""
     return Migration001InitialSchema
 ```
 
 ### 2. Auto-Discovery in versions/__init__.py
-Implement migration discovery logic in [`internal/database/migrations/versions/__init__.py`](internal/database/migrations/versions/__init__.py:1), dood!
+Implement migration discovery logic in [`internal/database/migrations/versions/__init__.py`](internal/database/migrations/versions/__init__.py:1)
 
 **Functionality:**
 - Scan `versions/` directory for `migration_*.py` files
@@ -52,7 +52,7 @@ Implement migration discovery logic in [`internal/database/migrations/versions/_
 - Validation of migration structure
 
 ### 3. Update Migration Creation Script
-Modify [`create_migration.py`](internal/database/migrations/create_migration.py:52) to include `getMigration()` function in generated files, dood!
+Modify [`create_migration.py`](internal/database/migrations/create_migration.py:52) to include `getMigration()` function in generated files
 
 **Changes:**
 - Add `getMigration()` function to migration template
@@ -60,13 +60,13 @@ Modify [`create_migration.py`](internal/database/migrations/create_migration.py:
 - Simplify workflow for developers
 
 ### 4. MigrationManager Enhancement
-Add method to [`MigrationManager`](internal/database/migrations/manager.py:25) to use auto-discovered migrations, dood!
+Add method to [`MigrationManager`](internal/database/migrations/manager.py:25) to use auto-discovered migrations
 
 **New Method:**
 ```python
 def loadMigrationsFromVersions(self) -> None:
     """
-    Load migrations automatically from versions package, dood!
+    Load migrations automatically from versions package
     
     This replaces the need for manual registration.
     """
@@ -87,7 +87,7 @@ def loadMigrationsFromVersions(self) -> None:
 **Function Template:**
 ```python
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module"""
     return MigrationXXXClassName
 ```
 
@@ -104,10 +104,10 @@ def getMigration() -> Type[BaseMigration]:
 **Key Functions:**
 ```python
 def discoverMigrations() -> List[Type[BaseMigration]]:
-    """Discover all migrations in versions directory, dood!"""
+    """Discover all migrations in versions directory"""
     
 def _importMigrationModule(filename: str) -> Optional[Type[BaseMigration]]:
-    """Import a single migration module and return its class, dood!"""
+    """Import a single migration module and return its class"""
 ```
 
 ### Phase 3: Update Creation Script
@@ -119,7 +119,7 @@ def _importMigrationModule(filename: str) -> Optional[Type[BaseMigration]]:
 **Template Addition:**
 ```python
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood!"""
+    """Return the migration class for this module"""
     return {class_name}
 ```
 
@@ -132,10 +132,10 @@ def getMigration() -> Type[BaseMigration]:
 **Implementation:**
 ```python
 def loadMigrationsFromVersions(self) -> None:
-    """Load migrations from versions package automatically, dood!"""
+    """Load migrations from versions package automatically"""
     from .versions import DISCOVERED_MIGRATIONS
     self.registerMigrations(DISCOVERED_MIGRATIONS)
-    logger.info(f"Auto-loaded {len(DISCOVERED_MIGRATIONS)} migrations, dood!")
+    logger.info(f"Auto-loaded {len(DISCOVERED_MIGRATIONS)} migrations")
 ```
 
 ### Phase 5: Update Main Module (Optional)
@@ -144,7 +144,7 @@ def loadMigrationsFromVersions(self) -> None:
   - Option B: Replace with `DISCOVERED_MIGRATIONS` import
   - Option C: Provide both with deprecation notice
 
-**Recommendation:** Keep both initially for smooth transition, dood!
+**Recommendation:** Keep both initially for smooth transition
 
 ## Technical Considerations
 
@@ -209,19 +209,19 @@ def loadMigrationsFromVersions(self) -> None:
 ## Migration Path for Existing Code
 
 ### Step 1: Add getMigration() Functions
-Update all existing migration files with the new function, dood!
+Update all existing migration files with the new function
 
 ### Step 2: Implement Discovery
-Add auto-discovery logic to versions package, dood!
+Add auto-discovery logic to versions package
 
 ### Step 3: Update Creation Script
-Ensure new migrations include `getMigration()` automatically, dood!
+Ensure new migrations include `getMigration()` automatically
 
 ### Step 4: Add Manager Method
-Provide convenient method for loading discovered migrations, dood!
+Provide convenient method for loading discovered migrations
 
 ### Step 5: Update Documentation
-Update README and inline documentation to reflect new approach, dood!
+Update README and inline documentation to reflect new approach
 
 ### Step 6: Gradual Adoption
 - Keep manual `MIGRATIONS` list initially
@@ -240,7 +240,7 @@ Update README and inline documentation to reflect new approach, dood!
 
 ## Conclusion
 
-This implementation provides a robust, maintainable solution for automatic migration discovery while maintaining backward compatibility and following Python best practices, dood! The phased approach allows for incremental adoption and testing at each stage.
+This implementation provides a robust, maintainable solution for automatic migration discovery while maintaining backward compatibility and following Python best practices The phased approach allows for incremental adoption and testing at each stage.
 
 ---
 

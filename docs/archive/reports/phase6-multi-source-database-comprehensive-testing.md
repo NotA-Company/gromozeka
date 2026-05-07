@@ -150,7 +150,7 @@ Test attempting write operation on readonly source during initialization:
 ```python
 @pytest.fixture
 def multiSourceConfig():
-    """Create a multi-source configuration for testing, dood!"""
+    """Create a multi-source configuration for testing"""
     # Creates 3 sources: primary (writable), archive (readonly), secondary (writable)
     # Includes chat mappings and default source configuration
 ```
@@ -158,7 +158,7 @@ def multiSourceConfig():
 ### 2. Performance Validation
 ```python
 def test_routingPerformance(multiSourceDb):
-    """Test that routing overhead is <0.5ms, dood!"""
+    """Test that routing overhead is <0.5ms"""
     # Validates 1000 routing operations average <0.5ms each
     # Tests all 3 routing tiers for performance
 ```
@@ -166,7 +166,7 @@ def test_routingPerformance(multiSourceDb):
 ### 3. Thread Safety Testing
 ```python
 def test_threadSafety(multiSourceDb):
-    """Test concurrent access to connections, dood!"""
+    """Test concurrent access to connections"""
     # 5 threads × 10 operations each = 50 concurrent operations
     # Validates no race conditions or errors
 ```
@@ -174,7 +174,7 @@ def test_threadSafety(multiSourceDb):
 ### 4. Readonly Protection
 ```python
 def test_readonlyPragmaEnforcement(multiSourceDb):
-    """Test PRAGMA query_only is set on readonly sources, dood!"""
+    """Test PRAGMA query_only is set on readonly sources"""
     # Validates SQLite-level write protection
     # Tests both application and database-level enforcement
 ```

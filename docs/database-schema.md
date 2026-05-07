@@ -1,7 +1,7 @@
 
 # Database Schema Documentation
 
-This document provides comprehensive documentation for the Gromozeka bot's database schema, dood!
+This document provides comprehensive documentation for the Gromozeka bot's database schema
 
 ## Table of Contents
 
@@ -666,7 +666,7 @@ Stores tasks scheduled for delayed execution.
 
 ### divinations
 
-Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/bot/common/handlers/divination.py`](../internal/bot/common/handlers/divination.py:1)). One row per reading, keyed off the originating `/taro` / `/runes` user-command message — same composite-PK pattern as [`chat_messages`](#chat_messages), dood!
+Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/bot/common/handlers/divination.py`](../internal/bot/common/handlers/divination.py:1)). One row per reading, keyed off the originating `/taro` / `/runes` user-command message — same composite-PK pattern as [`chat_messages`](#chat_messages)
 
 **Primary Key**: `(chat_id, message_id)`
 

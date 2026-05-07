@@ -1,10 +1,10 @@
 # Simplification Suggestions for Gromozeka
 
 > **Purpose:** Identify areas of unnecessary complexity, over-engineering, or indirection that make
-> the codebase harder to understand and maintain, dood! This is NOT about restructuring — it's about
-> *removing* complexity that doesn't earn its keep, dood!
+> the codebase harder to understand and maintain This is NOT about restructuring — it's about
+> *removing* complexity that doesn't earn its keep
 >
-> **Scope:** Based on analysis of the actual code in the repository as of 2026-04-18, dood.
+> **Scope:** Based on analysis of the actual code in the repository as of 2026-04-18
 > **Status review:** 2026-05-02
 
 ---
@@ -41,13 +41,13 @@
 
 ### Current Complexity
 
-There are **two completely separate caching systems** in the repo, dood:
+There are **two completely separate caching systems** in the repo
 
 - [`lib/cache/interface.py`](../lib/cache/interface.py:15) — Generic `CacheInterface[K, V]` with async `get`/`set`/`clear` and a pluggable `KeyGenerator[K]` strategy  
 - [`lib/cache/dict_cache.py`](../lib/cache/dict_cache.py:41) — `DictCache[K, V]` implementing that interface  
 - [`internal/services/cache/service.py`](../internal/services/cache/service.py:88) — `CacheService` with its own `LRUCache[K, V]` and all bot-specific cache methods
 
-The `lib/cache/` system is used in exactly **one place** — inside `lib/yandex_search/cache_utils.py` — for Yandex Search result caching. The rest of the bot uses `CacheService` exclusively. So we have two implementations of the same concept, dood!
+The `lib/cache/` system is used in exactly **one place** — inside `lib/yandex_search/cache_utils.py` — for Yandex Search result caching. The rest of the bot uses `CacheService` exclusively. So we have two implementations of the same concept
 
 ```python
 # lib/cache/interface.py:15 — requires async and a KeyGenerator strategy just for str conversion
@@ -68,7 +68,7 @@ class LRUCache[K, V](OrderedDict[K, V]):
 
 ### Proposed Simplification
 
-Replace `lib/cache/DictCache` usage in `lib/yandex_search/cache_utils.py` with a simple `dict` + TTL check (5 lines of code), and delete `lib/cache/` entirely. Or, if a reusable cache is needed elsewhere, make `CacheService.LRUCache` importable as `lib.cache.LRUCache` — single implementation, dood!
+Replace `lib/cache/DictCache` usage in `lib/yandex_search/cache_utils.py` with a simple `dict` + TTL check (5 lines of code), and delete `lib/cache/` entirely. Or, if a reusable cache is needed elsewhere, make `CacheService.LRUCache` importable as `lib.cache.LRUCache` — single implementation
 
 ```python
 # Replacement for lib/yandex_search/cache_utils.py — no extra library needed
@@ -92,7 +92,7 @@ def cacheGet(key: str, ttl: int) -> Optional[Any]:
 
 ### Trade-offs
 
-None significant. `lib/cache/DictCache` adds async methods on a synchronous dict — `await cache.set(k, v)` is strictly worse than `cache[k] = v`, dood.
+None significant. `lib/cache/DictCache` adds async methods on a synchronous dict — `await cache.set(k, v)` is strictly worse than `cache[k] = v`
 
 ### Affected Files
 
@@ -107,7 +107,7 @@ None significant. `lib/cache/DictCache` adds async methods on a synchronous dict
 
 ### Current Complexity
 
-Three services repeat **identical singleton code** (58+ lines total), dood:
+Three services repeat **identical singleton code** (58+ lines total)
 
 ```python
 # internal/services/cache/service.py:105-127 (CacheService)
@@ -144,7 +144,7 @@ from typing import TypeVar, Type
 T = TypeVar("T", bound="Singleton")
 
 class Singleton:
-    """Thread-safe singleton mixin, dood!"""
+    """Thread-safe singleton mixin"""
     _instance = None
     _lock = RLock()
 
@@ -192,7 +192,7 @@ Minor: need to ensure `__new__` overrides still work correctly with inheritance.
 
 ### Current Complexity
 
-[`internal/bot/common/bot.py`](../internal/bot/common/bot.py) is a 1000-line class where **every single method** contains a platform `if/elif` branch, dood:
+[`internal/bot/common/bot.py`](../internal/bot/common/bot.py) is a 1000-line class where **every single method** contains a platform `if/elif` branch
 
 ```python
 # internal/bot/common/bot.py:116-121
@@ -218,7 +218,7 @@ This pattern repeats for every operation: `getBotId`, `getBotUserName`, `getChat
 
 ### Proposed Simplification
 
-Extract the platform-specific code into two adapter classes and make `TheBot` delegate to the adapter, dood:
+Extract the platform-specific code into two adapter classes and make `TheBot` delegate to the adapter
 
 ```python
 # lib/bot_adapter/telegram_adapter.py
@@ -254,7 +254,7 @@ class TheBot:
 
 ### Trade-offs
 
-Medium refactoring effort — need to define the adapter interface and create two concrete implementations. But this is a natural decomposition that already exists conceptually, dood.
+Medium refactoring effort — need to define the adapter interface and create two concrete implementations. But this is a natural decomposition that already exists conceptually
 
 ### Affected Files
 
@@ -270,7 +270,7 @@ Medium refactoring effort — need to define the adapter interface and create tw
 
 ### Current Complexity
 
-Every single handler class has the **exact same constructor signature** with the same 4 arguments passed down unchanged to `super().__init__()`, dood:
+Every single handler class has the **exact same constructor signature** with the same 4 arguments passed down unchanged to `super().__init__()`
 
 ```python
 # internal/bot/common/handlers/llm_messages.py:75-86
@@ -282,7 +282,7 @@ def __init__(
                      llmManager=llmManager, botProvider=botProvider)
 
 # Same in configure.py:71, media.py, spam.py, user_data.py, weather.py ...
-# 15+ handlers all with identical signatures, dood!
+# 15+ handlers all with identical signatures
 ```
 
 And in [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:249-318), each handler is constructed with the same 4 arguments:
@@ -314,7 +314,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
 # All subclass constructors just call super (or disappear entirely)
 class SpamHandler(BaseBotHandler):
-    pass  # No custom __init__ needed, dood!
+    pass  # No custom __init__ needed
 
 # HandlersManager constructs handlers cleanly
 ctx = HandlerContext(configManager, database, llmManager, botProvider)
@@ -349,7 +349,7 @@ Minor: all call sites need updating. If a handler needs additional deps (like `H
 
 ### Current Complexity
 
-[`internal/config/manager.py`](../internal/config/manager.py:184-280) has many **identical one-liner wrapper methods** that only differ in the config key they access, dood:
+[`internal/config/manager.py`](../internal/config/manager.py:184-280) has many **identical one-liner wrapper methods** that only differ in the config key they access
 
 ```python
 # internal/config/manager.py:184-233
@@ -381,7 +381,7 @@ def getStorageConfig(self) -> Dict[str, Any]:
     return self.get("storage", {})
 ```
 
-The docstring for `getStorageConfig` is also hugely verbose (50 lines!) for what is `return self.get("storage", {})`, dood.
+The docstring for `getStorageConfig` is also hugely verbose (50 lines!) for what is `return self.get("storage", {})`
 
 ### Proposed Simplification
 
@@ -407,7 +407,7 @@ _CONFIG_SECTIONS: dict[str, str] = {
 
 ### Trade-offs
 
-Callers lose IDE type hint completions for the specific method names. Minor. `self.get("bot", {})` is just as clear, dood.
+Callers lose IDE type hint completions for the specific method names. Minor. `self.get("bot", {})` is just as clear
 
 ### Affected Files
 
@@ -422,7 +422,7 @@ Callers lose IDE type hint completions for the specific method names. Minor. `se
 
 ### Current Complexity
 
-Models are stored in **two separate dictionaries**, dood:
+Models are stored in **two separate dictionaries**
 
 ```python
 # lib/ai/abstract.py:267 — AbstractLLMProvider stores models internally
@@ -461,10 +461,10 @@ class LLMManager:
         self._models: Dict[str, AbstractModel] = {}  # flat model_name -> model
 
     def getModel(self, name: str) -> Optional[AbstractModel]:
-        return self._models.get(name)  # one lookup, dood!
+        return self._models.get(name)  # one lookup
 ```
 
-Or equivalently, remove `provider.models` and keep only `LLMManager.modelRegistry` — either way, one dict suffices, dood.
+Or equivalently, remove `provider.models` and keep only `LLMManager.modelRegistry` — either way, one dict suffices
 
 ### What Gets Simpler
 
@@ -490,7 +490,7 @@ Or equivalently, remove `provider.models` and keep only `LLMManager.modelRegistr
 
 ### Current Complexity
 
-[`internal/services/cache/service.py`](../internal/services/cache/service.py:203-368) has **two overlapping chat settings concepts** with very similar names, dood:
+[`internal/services/cache/service.py`](../internal/services/cache/service.py:203-368) has **two overlapping chat settings concepts** with very similar names
 
 ```python
 # "settings" = raw settings loaded from DB (written by setChatSetting/setChatSettings)
@@ -512,7 +512,7 @@ Rename clearly:
 - `"settings"` → `"rawSettings"` (settings stored in DB, per-chat)
 - `"cachedSettings"` → `"mergedSettings"` (computed defaults + per-chat settings)
 
-And add a single invalidation method `invalidateMergedSettings(chatId)` instead of the current `clearCachedChatSettings`, dood.
+And add a single invalidation method `invalidateMergedSettings(chatId)` instead of the current `clearCachedChatSettings`
 
 ### What Gets Simpler
 
@@ -522,7 +522,7 @@ And add a single invalidation method `invalidateMergedSettings(chatId)` instead 
 
 ### Trade-offs
 
-Requires updating string literals in CacheService and the TypedDict in `types.py`. Low risk, dood.
+Requires updating string literals in CacheService and the TypedDict in `types.py`. Low risk
 
 ### Affected Files
 
@@ -538,7 +538,7 @@ Requires updating string literals in CacheService and the TypedDict in `types.py
 
 ### Current Complexity
 
-[`internal/bot/models/ensured_message.py`](../internal/bot/models/ensured_message.py:449-456) has deprecated fields that are explicitly marked with a TODO but never cleaned up, dood:
+[`internal/bot/models/ensured_message.py`](../internal/bot/models/ensured_message.py:449-456) has deprecated fields that are explicitly marked with a TODO but never cleaned up
 
 ```python
 # internal/bot/models/ensured_message.py:449-456
@@ -559,7 +559,7 @@ self.mediaPrompt = mediaAttachment["prompt"]
 
 ### Proposed Simplification
 
-Remove `mediaId`, `mediaContent`, `mediaPrompt` and all code that reads/writes them. Access media through `self.mediaList[0]` (with a guard), dood:
+Remove `mediaId`, `mediaContent`, `mediaPrompt` and all code that reads/writes them. Access media through `self.mediaList[0]` (with a guard)
 
 ```python
 @property
@@ -578,7 +578,7 @@ This is a clean replacement for all `self.mediaContent` usages.
 
 ### Trade-offs
 
-Requires scanning all usages of `mediaId`, `mediaContent`, `mediaPrompt` and replacing them. Mostly mechanical, dood.
+Requires scanning all usages of `mediaId`, `mediaContent`, `mediaPrompt` and replacing them. Mostly mechanical
 
 ### Affected Files
 
@@ -595,7 +595,7 @@ Requires scanning all usages of `mediaId`, `mediaContent`, `mediaPrompt` and rep
 
 ### Current Complexity
 
-[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:774-891) has **4 near-identical for-loops** that iterate through handlers and check `isFinalState()`, dood:
+[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:774-891) has **4 near-identical for-loops** that iterate through handlers and check `isFinalState()`
 
 ```python
 # manager.py:774 — _handleCallback
@@ -628,7 +628,7 @@ async def _runHandlerChain(
     handlerMethod: str,
     **kwargs: Any,
 ) -> Set[HandlerResultStatus]:
-    """Run all handlers for the given event method name, stopping on final state, dood!"""
+    """Run all handlers for the given event method name, stopping on final state"""
     retSet: Set[HandlerResultStatus] = set()
     for handler, _ in self.handlers:
         ret: HandlerResultStatus = await getattr(handler, handlerMethod)(**kwargs)
@@ -656,7 +656,7 @@ async def _handleCallback(self, ensuredMessage, data, user, updateObj):
 
 ### Trade-offs
 
-Using `getattr(handler, handlerMethod)` loses static type checking. Alternatively, pass a `Callable` — still much cleaner than 4 copy-pasted loops, dood.
+Using `getattr(handler, handlerMethod)` loses static type checking. Alternatively, pass a `Callable` — still much cleaner than 4 copy-pasted loops
 
 ### Affected Files
 
@@ -670,13 +670,13 @@ Using `getattr(handler, handlerMethod)` loses static type checking. Alternativel
 
 ### Current Complexity
 
-[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:110-113) uses **busy polling** with `asyncio.sleep(0.1)` to wait for steps, dood:
+[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:110-113) uses **busy polling** with `asyncio.sleep(0.1)` to wait for steps
 
 ```python
 # manager.py:110-113
 async def awaitStepDone(self, step: int) -> None:
     while not self.handled.is_set() and self.step < step:
-        await asyncio.sleep(0.1)  # polling every 100ms, dood!
+        await asyncio.sleep(0.1)  # polling every 100ms
 ```
 
 Similarly in `messageProcessed`:
@@ -705,7 +705,7 @@ class MessageQueueRecord:
         if self.handled.is_set() or self.step >= step:
             return
         event = self._stepEvents.setdefault(step, asyncio.Event())
-        await event.wait()  # no polling, truly event-driven, dood!
+        await event.wait()  # no polling, truly event-driven
 ```
 
 ### What Gets Simpler
@@ -716,7 +716,7 @@ class MessageQueueRecord:
 
 ### Trade-offs
 
-Slightly more memory per message record (one `Event` per step). Negligible in practice, dood.
+Slightly more memory per message record (one `Event` per step). Negligible in practice
 
 ### Affected Files
 
@@ -730,7 +730,7 @@ Slightly more memory per message record (one `Event` per step). Negligible in pr
 
 ### Current Complexity
 
-[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:566-629) runs **two separate permission checks** for each command, with the same error/delete-message logic duplicated, dood:
+[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:566-629) runs **two separate permission checks** for each command, with the same error/delete-message logic duplicated
 
 ```python
 # Check 1: CommandPermission enum check (lines 571-594)
@@ -762,7 +762,7 @@ Merge into a single permission evaluation function and one response block:
 
 ```python
 async def _checkCommandPermissions(self, handlerInfo, ensuredMessage, chatSettings) -> bool:
-    """Return True if the command is allowed, dood!"""
+    """Return True if the command is allowed"""
     chatType = ensuredMessage.recipient.chatType
     isBotOwner = await handlerObj.isAdmin(ensuredMessage.sender, None, allowBotOwners=True)
     isAdmin = await handlerObj.isAdmin(ensuredMessage.sender, ensuredMessage.recipient)
@@ -783,7 +783,7 @@ async def _checkCommandPermissions(self, handlerInfo, ensuredMessage, chatSettin
 
 ### Trade-offs
 
-None. Pure simplification, dood.
+None. Pure simplification
 
 ### Affected Files
 
@@ -797,7 +797,7 @@ None. Pure simplification, dood.
 
 ### Current Complexity
 
-[`lib/cache/dict_cache.py`](../lib/cache/dict_cache.py:60-65) requires a separate `KeyGenerator[K]` strategy object just to convert keys to strings for internal dict storage, dood:
+[`lib/cache/dict_cache.py`](../lib/cache/dict_cache.py:60-65) requires a separate `KeyGenerator[K]` strategy object just to convert keys to strings for internal dict storage
 
 ```python
 class DictCache(CacheInterface[K, V]):
@@ -809,7 +809,7 @@ class DictCache(CacheInterface[K, V]):
     ):
 ```
 
-The `KeyGenerator` interface exists to abstract "how to turn a K into a string", but Python's built-in `dict` can use any hashable key directly without conversion to string. The only `KeyGenerator` implementation is `StringKeyGenerator` which just calls `str(key)`, dood.
+The `KeyGenerator` interface exists to abstract "how to turn a K into a string", but Python's built-in `dict` can use any hashable key directly without conversion to string. The only `KeyGenerator` implementation is `StringKeyGenerator` which just calls `str(key)`
 
 ### Proposed Simplification
 
@@ -835,7 +835,7 @@ class DictCache(CacheInterface[K, V]):
 
 ### Trade-offs
 
-If custom key serialization is ever needed (e.g., tuple key → composite string), this can be done inline. The `KeyGenerator` abstraction provides no real value here, dood.
+If custom key serialization is ever needed (e.g., tuple key → composite string), this can be done inline. The `KeyGenerator` abstraction provides no real value here
 
 ### Affected Files
 
@@ -885,7 +885,7 @@ class RateLimiterManager(Singleton):
         await limiter.applyLimit(queue)
 ```
 
-Or, even simpler — just expose `applyLimit(queue, config)` and let callers own the config, removing the need for a manager singleton at all for most cases, dood.
+Or, even simpler — just expose `applyLimit(queue, config)` and let callers own the config, removing the need for a manager singleton at all for most cases
 
 ### What Gets Simpler
 
@@ -895,7 +895,7 @@ Or, even simpler — just expose `applyLimit(queue, config)` and let callers own
 
 ### Trade-offs
 
-Less flexible for future cases with many different limiters, but YAGNI applies here, dood.
+Less flexible for future cases with many different limiters, but YAGNI applies here
 
 ### Affected Files
 
@@ -910,7 +910,7 @@ Less flexible for future cases with many different limiters, but YAGNI applies h
 
 ### Current Complexity
 
-Multiple singletons can't receive their dependencies in the constructor because they're singletons. So dependencies are injected after construction via special methods, dood:
+Multiple singletons can't receive their dependencies in the constructor because they're singletons. So dependencies are injected after construction via special methods
 
 ```python
 # internal/bot/common/handlers/manager.py:205-209
@@ -939,18 +939,18 @@ Pass dependencies at construction time. Since singletons must be created before 
 class CacheService(Singleton):
     def setup(self, dbWrapper: DatabaseWrapper) -> None:
         if hasattr(self, "_setup_done"):
-            raise RuntimeError("CacheService.setup() called twice, dood!")
+            raise RuntimeError("CacheService.setup() called twice")
         self.dbWrapper = dbWrapper
         self.loadFromDatabase()
         self._setup_done = True
 
     def _requireDb(self) -> DatabaseWrapper:
         if self.dbWrapper is None:
-            raise RuntimeError("CacheService not set up yet, call setup() first, dood!")
+            raise RuntimeError("CacheService not set up yet, call setup() first")
         return self.dbWrapper
 ```
 
-Then replace `if self.dbWrapper: ... else: logger.error(...)` guards with `self._requireDb()` — fail fast, not silently, dood.
+Then replace `if self.dbWrapper: ... else: logger.error(...)` guards with `self._requireDb()` — fail fast, not silently
 
 ### What Gets Simpler
 
@@ -961,7 +961,7 @@ Then replace `if self.dbWrapper: ... else: logger.error(...)` guards with `self.
 
 ### Trade-offs
 
-Significant change — all `injectDatabase`, `injectConfig`, `injectBot` patterns need updating across the codebase. But the resulting code is more correct and easier to reason about, dood.
+Significant change — all `injectDatabase`, `injectConfig`, `injectBot` patterns need updating across the codebase. But the resulting code is more correct and easier to reason about
 
 ### Affected Files
 
@@ -979,7 +979,7 @@ Significant change — all `injectDatabase`, `injectConfig`, `injectBot` pattern
 
 ### Current Complexity
 
-[`internal/services/cache/types.py`](../internal/services/cache/types.py:41-48) defines `HCChatCacheDict` as a `TypedDict` with the keys `"settings"`, `"cachedSettings"`, `"info"`, `"topicInfo"`, `"admins"`. But throughout [`CacheService`](../internal/services/cache/service.py) these are accessed via **magic string literals** scattered everywhere, dood:
+[`internal/services/cache/types.py`](../internal/services/cache/types.py:41-48) defines `HCChatCacheDict` as a `TypedDict` with the keys `"settings"`, `"cachedSettings"`, `"info"`, `"topicInfo"`, `"admins"`. But throughout [`CacheService`](../internal/services/cache/service.py) these are accessed via **magic string literals** scattered everywhere
 
 ```python
 # internal/services/cache/service.py:253
@@ -1023,7 +1023,7 @@ class ChatCacheField(StrEnum):
 
 ### Trade-offs
 
-Medium refactor effort. Splitting into multiple namespaces requires more LRUCache instances but gains full type safety, dood.
+Medium refactor effort. Splitting into multiple namespaces requires more LRUCache instances but gains full type safety
 
 ### Affected Files
 
@@ -1038,7 +1038,7 @@ Medium refactor effort. Splitting into multiple namespaces requires more LRUCach
 
 ### Current Complexity
 
-[`main.py`](../main.py:50) calls `asyncio.run()` **inside a class constructor**, which is an async/sync mixing anti-pattern, dood:
+[`main.py`](../main.py:50) calls `asyncio.run()` **inside a class constructor**, which is an async/sync mixing anti-pattern
 
 ```python
 # main.py:46-51
@@ -1068,7 +1068,7 @@ class GromozekBot:
         self.database_manager = DatabaseManager(configManager.getDatabaseConfig())
         self.llmManager = LLMManager(configManager.getModelsConfig())
         self.rateLimiterManager = RateLimiterManager.getInstance()
-        # No asyncio.run() here, dood!
+        # No asyncio.run() here
 
     async def setup(self) -> None:
         await self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig())
@@ -1090,7 +1090,7 @@ class GromozekBot:
 
 ### Trade-offs
 
-Minor: `main()` needs to call `bot.run()` which internally calls `asyncio.run()` — same end result but clean architecture, dood.
+Minor: `main()` needs to call `bot.run()` which internally calls `asyncio.run()` — same end result but clean architecture
 
 ### Affected Files
 
@@ -1105,7 +1105,7 @@ Minor: `main()` needs to call `bot.run()` which internally calls `asyncio.run()`
 
 ### Current Complexity
 
-[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:92-103) has parameters that are **never used**, dood:
+[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:92-103) has parameters that are **never used**
 
 ```python
 # manager.py:92-96
@@ -1125,7 +1125,7 @@ def getQueueKey(self, forceRecalc: bool = False) -> str:
         ...
 ```
 
-`forceRecalc` is never passed as `True` anywhere in the codebase — it's defensive programming that adds complexity without benefit, dood.
+`forceRecalc` is never passed as `True` anywhere in the codebase — it's defensive programming that adds complexity without benefit
 
 ### Proposed Simplification
 
@@ -1151,7 +1151,7 @@ def __init__(self, message, updateObj, stateId=None):
 
 ### Trade-offs
 
-None. The IDs are strings computed from already-available fields, dood.
+None. The IDs are strings computed from already-available fields
 
 ### Affected Files
 
@@ -1159,7 +1159,7 @@ None. The IDs are strings computed from already-available fields, dood.
 
 ---
 
-## Appendix: Quick Wins (can be done immediately, dood!)
+## Appendix: Quick Wins (can be done immediately)
 
 These don't need a full section but are worth noting:
 
@@ -1173,5 +1173,5 @@ These don't need a full section but are worth noting:
 
 ---
 
-*Document created 2026-04-18, dood! Analysis based on codebase snapshot at that date.*
+*Document created 2026-04-18 Analysis based on codebase snapshot at that date.*
 *Status review updated: 2026-05-02*

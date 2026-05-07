@@ -10,7 +10,7 @@
 
 ## 1. Overview
  
-This document describes the design for a reusable rate limiter library that will be placed in `lib/rate_limiter/`. The library will provide a base interface and a simple sliding window implementation, supporting multiple queues with different rate limiter backends through a powerful singleton manager, dood!
+This document describes the design for a reusable rate limiter library that will be placed in `lib/rate_limiter/`. The library will provide a base interface and a simple sliding window implementation, supporting multiple queues with different rate limiter backends through a powerful singleton manager
 
 ### 1.1 Goals
 
@@ -102,7 +102,7 @@ classDiagram
 
 ### 3.1 Base Interface (`interface.py`)
 
-The base interface defines the contract that all rate limiter implementations must follow, dood!
+The base interface defines the contract that all rate limiter implementations must follow
 
 ```python
 from abc import ABC, abstractmethod
@@ -199,7 +199,7 @@ class RateLimiterInterface(ABC):
 
 ### 3.2 Sliding Window Implementation (`sliding_window.py`)
 
-This implementation is based on the existing rate limiter in [`lib/yandex_search/client.py`](lib/yandex_search/client.py:463-518), but simplified to use a single config for all queues, dood!
+This implementation is based on the existing rate limiter in [`lib/yandex_search/client.py`](lib/yandex_search/client.py:463-518), but simplified to use a single config for all queues
 
 ```python
 import asyncio
@@ -306,7 +306,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         logger.info(
             f"SlidingWindowRateLimiter initialized with "
             f"{self._config.maxRequests} requests per "
-            f"{self._config.windowSeconds} seconds, dood!"
+            f"{self._config.windowSeconds} seconds"
         )
     
     async def destroy(self) -> None:
@@ -318,7 +318,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         self._requestTimes.clear()
         self._locks.clear()
         self._initialized = False
-        logger.info("SlidingWindowRateLimiter destroyed, dood!")
+        logger.info("SlidingWindowRateLimiter destroyed")
     
     def _ensureQueue(self, queue: str) -> None:
         """
@@ -330,7 +330,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         if queue not in self._requestTimes:
             self._requestTimes[queue] = []
             self._locks[queue] = asyncio.Lock()
-            logger.debug(f"Auto-registered queue '{queue}', dood!")
+            logger.debug(f"Auto-registered queue '{queue}'")
     
     async def applyLimit(self, queue: str = "default") -> None:
         """
@@ -373,7 +373,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
                 if waitTime > 0:
                     logger.debug(
                         f"Rate limit reached for queue '{queue}', "
-                        f"waiting {waitTime:.2f} seconds, dood!"
+                        f"waiting {waitTime:.2f} seconds"
                     )
                     await asyncio.sleep(waitTime)
                     
@@ -457,7 +457,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
 
 ### 3.3 Singleton Manager (`manager.py`)
 
-The manager provides a powerful singleton interface with queue-to-limiter mapping, allowing different queues to use different rate limiter backends, dood!
+The manager provides a powerful singleton interface with queue-to-limiter mapping, allowing different queues to use different rate limiter backends
 
 ```python
 import logging
@@ -551,7 +551,7 @@ class RateLimiterManager:
             self._queueMappings: Dict[str, str] = {}
             self._defaultLimiter: Optional[str] = None
             self.initialized = True
-            logger.info("RateLimiterManager initialized, dood!")
+            logger.info("RateLimiterManager initialized")
     
     @classmethod
     def getInstance(cls) -> "RateLimiterManager":
@@ -593,9 +593,9 @@ class RateLimiterManager:
         # Set as default if it's the first one
         if self._defaultLimiter is None:
             self._defaultLimiter = name
-            logger.info(f"Set '{name}' as default rate limiter, dood!")
+            logger.info(f"Set '{name}' as default rate limiter")
         
-        logger.info(f"Registered rate limiter '{name}', dood!")
+        logger.info(f"Registered rate limiter '{name}'")
     
     def setDefaultLimiter(self, name: str) -> None:
         """
@@ -614,7 +614,7 @@ class RateLimiterManager:
             raise ValueError(f"Rate limiter '{name}' is not registered")
         
         self._defaultLimiter = name
-        logger.info(f"Set '{name}' as default rate limiter, dood!")
+        logger.info(f"Set '{name}' as default rate limiter")
     
     def bindQueue(self, queue: str, limiterName: str) -> None:
         """
@@ -635,7 +635,7 @@ class RateLimiterManager:
             raise ValueError(f"Rate limiter '{limiterName}' is not registered")
         
         self._queueMappings[queue] = limiterName
-        logger.info(f"Bound queue '{queue}' to rate limiter '{limiterName}', dood!")
+        logger.info(f"Bound queue '{queue}' to rate limiter '{limiterName}'")
     
     def _getLimiterForQueue(self, queue: str) -> RateLimiterInterface:
         """
@@ -651,7 +651,7 @@ class RateLimiterManager:
             RuntimeError: If no rate limiters are registered
         """
         if not self._rateLimiters:
-            raise RuntimeError("No rate limiters registered, dood!")
+            raise RuntimeError("No rate limiters registered")
         
         # Check if queue has explicit mapping
         if queue in self._queueMappings:
@@ -660,7 +660,7 @@ class RateLimiterManager:
         
         # Use default limiter
         if self._defaultLimiter is None:
-            raise RuntimeError("No default rate limiter set, dood!")
+            raise RuntimeError("No default rate limiter set")
         
         return self._rateLimiters[self._defaultLimiter]
     
@@ -763,13 +763,13 @@ class RateLimiterManager:
         Example:
             >>> await manager.destroy()
         """
-        logger.info("Destroying all rate limiters, dood!")
+        logger.info("Destroying all rate limiters")
         
         # Destroy each rate limiter
         for name, limiter in self._rateLimiters.items():
             try:
                 await limiter.destroy()
-                logger.info(f"Destroyed rate limiter '{name}', dood!")
+                logger.info(f"Destroyed rate limiter '{name}'")
             except Exception as e:
                 logger.error(f"Error destroying rate limiter '{name}': {e}")
         
@@ -778,7 +778,7 @@ class RateLimiterManager:
         self._queueMappings.clear()
         self._defaultLimiter = None
         
-        logger.info("RateLimiterManager cleanup complete, dood!")
+        logger.info("RateLimiterManager cleanup complete")
 ```
 
 **Key Design Decisions:**
@@ -989,7 +989,7 @@ async def shutdownApplication():
     """Clean shutdown of rate limiters"""
     manager = RateLimiterManager.getInstance()
     await manager.destroy()
-    print("All rate limiters destroyed, dood!")
+    print("All rate limiters destroyed")
 ```
 
 ---
@@ -1579,4 +1579,4 @@ The implementation should take approximately 7-10 hours total:
 - Testing: 3-4 hours
 - Integration: 1-2 hours
 
-The design is ready for implementation, dood!
+The design is ready for implementation
