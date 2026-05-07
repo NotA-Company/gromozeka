@@ -269,6 +269,18 @@ class MySQLProvider(BaseSQLProvider):
         """
         return f"{column} COLLATE utf8mb4_general_ci = :{param}"
 
+    def getLikeComparison(self, column: str, param: str) -> str:
+        """Get MySQL-specific case-insensitive LIKE comparison.
+
+        Args:
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
+
+        Returns:
+            A SQL expression string for case-insensitive LIKE comparison.
+        """
+        return f"{column} LIKE :{param} COLLATE utf8mb4_general_ci"
+
     async def upsert(
         self,
         table: str,

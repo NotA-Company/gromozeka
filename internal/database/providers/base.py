@@ -349,3 +349,16 @@ class BaseSQLProvider(ABC):
             A SQL expression string for case-insensitive comparison.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    def getLikeComparison(self, column: str, param: str) -> str:
+        """Get RDBMS-specific case-insensitive LIKE comparison.
+
+        Args:
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
+
+        Returns:
+            A SQL expression string for case-insensitive LIKE comparison.
+        """
+        raise NotImplementedError

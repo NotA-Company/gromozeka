@@ -297,6 +297,18 @@ class PostgreSQLProvider(BaseSQLProvider):
         """
         return f"LOWER({column}) = LOWER(:{param})"
 
+    def getLikeComparison(self, column: str, param: str) -> str:
+        """Get PostgreSQL-specific case-insensitive LIKE comparison.
+
+        Args:
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
+
+        Returns:
+            A SQL expression string for case-insensitive LIKE comparison.
+        """
+        return f"LOWER({column}) LIKE LOWER(:{param})"
+
     async def upsert(
         self,
         table: str,

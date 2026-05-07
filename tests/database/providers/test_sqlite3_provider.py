@@ -333,6 +333,12 @@ class TestHelperMethods:
         assert comparison == "LOWER(username) = LOWER(:username)"
 
     @pytest.mark.asyncio
+    async def test_get_like_comparison(self, sqliteProvider):
+        """Test getLikeComparison returns SQLite expression."""
+        comparison = sqliteProvider.getLikeComparison("username", "username")
+        assert comparison == "LOWER(username) LIKE LOWER(:username)"
+
+    @pytest.mark.asyncio
     async def test_apply_pagination(self, sqliteProvider):
         """Test applyPagination adds LIMIT and OFFSET."""
         query = "SELECT * FROM test"
@@ -388,3 +394,79 @@ class TestParameterBinding:
         result = await sqliteProvider.executeFetchOne("SELECT * FROM test WHERE id = 1")
         assert result is not None
         assert result["name"] is None
+
+
+class TestLikeComparison:
+    """Tests for case-insensitive LIKE comparison."""
+
+    @pytest.mark.asyncio
+    async def test_like_comparison_case_insensitive(self, sqliteProvider):
+        """Test LIKE comparison is case-insensitive."""
+        await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+        await sqliteProvider.execute("INSERT INTO test (id, name) VALUES (1, 'Hello World')")
+
+        # Test case-insensitive LIKE with lowercase pattern
+        comparison = sqliteProvider.getLikeComparison("name", "pattern")
+        query = f"SELECT * FROM test WHERE {comparison}"
+
+        result = await sqliteProvider.executeFetchOne(query, {"pattern": "hello%"})
+        assert result is not None
+        assert result["name"] == "Hello World"
+
+        # Test case-insensitive LIKE with uppercase pattern
+        result = await sqliteProvider.executeFetchOne(query, {"pattern": "HELLO%"})
+        assert result is not None
+        assert result["name"] == "Hello World"
+
+    @pytest.mark.asyncio
+    async def test_like_comparison_with_middle_wildcard(self, sqliteProvider):
+        """Test LIKE comparison with wildcard in the middle."""
+        await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+        await sqliteProvider.execute("INSERT INTO test (id, name) VALUES (1, 'HelloWorld')")
+
+        comparison = sqliteProvider.getLikeComparison("name", "pattern")
+        query = f"SELECT * FROM test WHERE {comparison}"
+
+        result = await sqliteProvider.executeFetchOne(query, {"pattern": "Hello%World"})
+        assert result is not None
+        assert result["name"] == "HelloWorld"
+
+    @pytest.mark.asyncio
+    async def test_like_comparison_multiple_matches(self, sqliteProvider):
+        """Test LIKE comparison with multiple potential matches."""
+        await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+        await sqliteProvider.execute("INSERT INTO test (id, name) VALUES (1, 'HELLO WORLD')")
+        await sqliteProvider.execute("INSERT INTO test (id, name) VALUES (2, 'hello world')")
+        await sqliteProvider.execute("INSERT INTO test (id, name) VALUES (3, 'HeLLo WoRLd')")
+        await sqliteProvider.execute("INSERT INTO test (id, name) VALUES (4, 'Goodbye')")
+
+        comparison = sqliteProvider.getLikeComparison("name", "pattern")
+        query = f"SELECT * FROM test WHERE {comparison}"
+
+        results = await sqliteProvider.executeFetchAll(query, {"pattern": "hello%"})
+        assert len(results) == 3  # All three "hello" variants should match
+
+    @pytest.mark.asyncio
+    async def test_like_comparison_no_match(self, sqliteProvider):
+        """Test LIKE comparison with no matching results."""
+        await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+        await sqliteProvider.execute("INSERT INTO test (id, name) VALUES (1, 'Hello World')")
+
+        comparison = sqliteProvider.getLikeComparison("name", "pattern")
+        query = f"SELECT * FROM test WHERE {comparison}"
+
+        result = await sqliteProvider.executeFetchOne(query, {"pattern": "goodbye%"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_like_comparison_with_special_characters(self, sqliteProvider):
+        """Test LIKE comparison with special characters in data."""
+        await sqliteProvider.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+        await sqliteProvider.execute("INSERT INTO test (id, name) VALUES (1, 'Hello_World')")
+
+        comparison = sqliteProvider.getLikeComparison("name", "pattern")
+        query = f"SELECT * FROM test WHERE {comparison}"
+
+        result = await sqliteProvider.executeFetchOne(query, {"pattern": "hello%world"})
+        assert result is not None
+        assert result["name"] == "Hello_World"
