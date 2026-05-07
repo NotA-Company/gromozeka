@@ -7,3 +7,4 @@ tarot-enabled = true
 runes-enabled = true
 image-generation = true
 tools-enabled = true
+discovery-enabled = true

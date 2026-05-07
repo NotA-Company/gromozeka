@@ -34,6 +34,7 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
   - [delayed_tasks](#delayed_tasks)
 - [Divination Tables](#divination-tables)
   - [divinations](#divinations)
+  - [divination_layouts](#divination_layouts)
 - [System Tables](#system-tables)
   - [settings](#settings)
 - [Enums](#enums)
@@ -151,6 +152,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 12 | [`migration_012_unify_cache_tables.py`](../internal/database/migrations/versions/migration_012_unify_cache_tables.py:1) | Unifies all cache tables into single [`cache`](#cache) table |
 | 13 | [`migration_013_remove_timestamp_defaults.py`](../internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:1) | Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns |
 | 14 | [`migration_014_add_divinations_table.py`](../internal/database/migrations/versions/migration_014_add_divinations_table.py:1) | Creates [`divinations`](#divinations) table and `idx_divinations_user_created` index |
+| 15 | [`migration_015_add_divination_layouts_table.py`](../internal/database/migrations/versions/migration_015_add_divination_layouts_table.py:1) | Creates [`divination_layouts`](#divination_layouts) table and `idx_divination_layouts_system` index |
 
 ### Creating New Migrations
 
@@ -687,6 +689,71 @@ Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/b
 - `idx_divinations_user_created` on `(chat_id, user_id, created_at)` — for "recent readings by user" queries
 
 **Note**: Uses the same composite-PK convention as [`chat_messages`](#chat_messages). This table has no foreign-key relationships to other tables; image media is resolved via the normal message-history pipeline. Created by `migration_014`; only populated when `[divination] enabled = true`. See [`docs/llm/configuration.md`](llm/configuration.md) for feature config.
+
+---
+
+### divination_layouts
+
+Caches layout definitions discovered via LLM for reuse in divination readings.
+
+**Primary Key**: `(system_id, layout_id)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `system_id` | TEXT | No | - | Divination system (`tarot`, `runes`) |
+| `layout_id` | TEXT | No | - | Machine-readable layout identifier |
+| `name_en` | TEXT | No | - | English name (source of truth) |
+| `name_ru` | TEXT | No | - | Russian display name |
+| `n_symbols` | INTEGER | No | - | Number of positions in the layout |
+| `positions` | TEXT | No | - | JSON-serialized array of position definitions |
+| `description` | TEXT | Yes | NULL | Layout description |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
+
+**Indexes**:
+- `idx_divination_layouts_system` on `system_id`
+
+**Negative Cache Pattern**: Failed layout discoveries are stored as negative cache entries:
+- `name_en` set to empty string (`''`)
+- `n_symbols` set to `0`
+- This prevents repeated failed discovery attempts for the same layout
+
+**Usage Examples**:
+```python
+from internal.database.repositories import DivinationLayoutsRepository
+
+# Get a layout from cache
+repo = DivinationLayoutsRepository(db.manager)
+layout = await repo.getLayout(systemId='tarot', layoutId='three_card')
+
+# Save a discovered layout
+await repo.saveLayout(
+    systemId='tarot',
+    layoutId='three_card',
+    nameEn='Three Card Spread',
+    nameRu='Расклад на три карты',
+    nSymbols=3,
+    positions=json.dumps([
+        {'name': 'Past', 'description': 'Past events'},
+        {'name': 'Present', 'description': 'Current situation'},
+        {'name': 'Future', 'description': 'Future outcome'}
+    ]),
+    description='Simple three-card spread for time-based readings'
+)
+
+# Negative cache pattern for failed discovery
+await repo.saveLayout(
+    systemId='tarot',
+    layoutId='unknown_layout',
+    nameEn='',  # Empty indicates negative cache
+    nameRu='',
+    nSymbols=0,  # Zero indicates negative cache
+    positions='[]',
+    description=None
+)
+```
+
+**Note**: Created by `migration_015`. This table caches layout definitions discovered through LLM and web search to avoid repeated API calls. Only populated when `[divination] enabled = true` and layout discovery is used.
 
 ---
 

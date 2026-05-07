@@ -40,6 +40,10 @@ These come from [`docs/llm/index.md`](docs/llm/index.md):
 - Run Python via `./venv/bin/python3` — not `python` / `python3`.
 - Do **not** `cd` into subdirectories; run everything from repo root.
 - Do **not** use `python -c '...'` for ad-hoc tests — write a script file.
+- Do **not** add imports inside of methods or functions. All imports should be
+  at the top of the file. Import inside methods is only acceptable when there's
+  a cyclic dependency that makes it unavoidable. When adding imports to the top,
+  run `make format` to properly organize them.
 - **No pydantic.** The repo deliberately avoids it. Use raw dicts +
   hand-rolled type-hinted classes of TypedDict.
 

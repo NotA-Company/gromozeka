@@ -14,6 +14,7 @@ dood!
 """
 
 import logging
+import re
 from typing import Any, Dict, Optional, Tuple, Type
 
 import lib.divination.localization as divinationLocalization
@@ -31,11 +32,12 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import MessageCategory
+from internal.database.models import DivinationLayoutDict, MessageCategory
 from lib.ai import (
     LLMFunctionParameter,
     LLMManager,
     LLMParameterType,
+    ModelMessage,
     ModelResultStatus,
 )
 from lib.divination import (
@@ -163,6 +165,7 @@ class DivinationHandler(BaseBotHandler):
             self.systems[RunesSystem.systemId] = RunesSystem
 
         self.imageGenerationDefault: bool = bool(self.config.get("image-generation", True))
+        self.discoveryEnabled: bool = bool(self.config.get("discovery-enabled", False))
 
         if self.config.get("tools-enabled", False):
             self._registerLlmTools()
@@ -184,11 +187,19 @@ class DivinationHandler(BaseBotHandler):
         """
         if TarotSystem.systemId in self.systems:
             tarotLayoutsList: str = ", ".join(layout.id for layout in TarotSystem.availableLayouts())
+            layoutParameterDescription = (
+                (
+                    f"Any custom layout name or one of predefined: {tarotLayoutsList}. "
+                    f"Default: {_DEFAULT_TAROT_LAYOUT_ID}"
+                )
+                if self.discoveryEnabled
+                else (f"Layout ID, One of: {tarotLayoutsList}. " f"Default: {_DEFAULT_TAROT_LAYOUT_ID}")
+            )
             self.llmService.registerTool(
                 name="do_tarot_reading",
                 description=(
                     "Perform a tarot reading using the Rider-Waite-Smith deck for the user. "
-                    "Use this when the user asks for a tarot reading, fortune, or to draw cards."
+                    "Use this when the user asks for a tarot reading or to draw cards."
                 ),
                 parameters=[
                     LLMFunctionParameter(
@@ -199,17 +210,15 @@ class DivinationHandler(BaseBotHandler):
                     ),
                     LLMFunctionParameter(
                         name="layout",
-                        description=(
-                            "Layout id. One of: "
-                            f"{tarotLayoutsList}. "
-                            f"Defaults to {_DEFAULT_TAROT_LAYOUT_ID} if omitted."
-                        ),
+                        description=layoutParameterDescription,
                         type=LLMParameterType.STRING,
                         required=False,
                     ),
                     LLMFunctionParameter(
                         name="generate_image",
-                        description="Whether to also generate a spread illustration. Defaults to false.",
+                        description=(
+                            "Whether to also generate and send to user a layout illustration. " "Default: false."
+                        ),
                         type=LLMParameterType.BOOLEAN,
                         required=False,
                     ),
@@ -219,11 +228,19 @@ class DivinationHandler(BaseBotHandler):
 
         if RunesSystem.systemId in self.systems:
             runesLayoutsList: str = ", ".join(layout.id for layout in RunesSystem.availableLayouts())
+            layoutParameterDescription = (
+                (
+                    f"Any custom layout name or one of predefined: {runesLayoutsList}. "
+                    f"Default: {_DEFAULT_RUNES_LAYOUT_ID}"
+                )
+                if self.discoveryEnabled
+                else (f"Layout ID, One of: {runesLayoutsList}. " f"Default: {_DEFAULT_RUNES_LAYOUT_ID}")
+            )
             self.llmService.registerTool(
                 name="do_runes_reading",
                 description=(
                     "Perform an Elder Futhark runic reading for the user. "
-                    "Use this when the user asks for a runic reading, fortune, or to cast runes."
+                    "Use this when the user asks for a runic reading, fortune, divination, or to cast runes."
                 ),
                 parameters=[
                     LLMFunctionParameter(
@@ -234,17 +251,15 @@ class DivinationHandler(BaseBotHandler):
                     ),
                     LLMFunctionParameter(
                         name="layout",
-                        description=(
-                            "Layout id. One of: "
-                            f"{runesLayoutsList}. "
-                            f"Defaults to {_DEFAULT_RUNES_LAYOUT_ID} if omitted."
-                        ),
+                        description=layoutParameterDescription,
                         type=LLMParameterType.STRING,
                         required=False,
                     ),
                     LLMFunctionParameter(
                         name="generate_image",
-                        description="Whether to also generate a spread illustration. Defaults to false.",
+                        description=(
+                            "Whether to also generate and send to user a layout illustration. " "Default: false."
+                        ),
                         type=LLMParameterType.BOOLEAN,
                         required=False,
                     ),
@@ -448,7 +463,11 @@ class DivinationHandler(BaseBotHandler):
 
         layoutName: str = (layout or "").strip() or defaultLayoutId
 
-        resolvedLayout: Optional[Layout] = systemCls.resolveLayout(layoutName)
+        resolvedLayout: Optional[Layout] = await self._getLayout(
+            systemCls=systemCls,
+            layoutName=layoutName,
+            chatId=ensuredMessage.recipient.id,
+        )
         if resolvedLayout is None:
             return utils.jsonDumps({"done": False, "errorMessage": f"Unknown layout '{layoutName}'."})
 
@@ -485,6 +504,77 @@ class DivinationHandler(BaseBotHandler):
         layoutName: str = parts[0].strip()
         question: str = parts[1].strip() if len(parts) > 1 else ""
         return layoutName, question
+
+    async def _getLayout(
+        self,
+        systemCls: Type[BaseDivinationSystem],
+        layoutName: str,
+        chatId: int,
+    ) -> Optional[Layout]:
+        """Resolve a layout from predefined layouts, cache, or discover via web search.
+
+        This method consolidates the layout resolution and discovery logic into a
+        single helper. It first tries to resolve from predefined layouts, then checks
+        the database cache (if discovery is enabled), and finally attempts to
+        discover the layout via web search if no cache entry exists.
+
+        Args:
+            systemCls: Concrete divination system class (e.g. TarotSystem, RunesSystem).
+            layoutName: User-provided layout name to resolve.
+            chatId: Chat ID for rate limiting and settings.
+
+        Returns:
+            Resolved Layout object if found, None otherwise (caller handles error).
+        """
+        # Step 1: Try to resolve from predefined layouts
+        resolvedLayout: Optional[Layout] = systemCls.resolveLayout(layoutName)
+        if resolvedLayout is not None:
+            return resolvedLayout
+
+        # Step 2: If discovery is disabled, layout not found
+        if not self.discoveryEnabled:
+            logger.debug(f"Layout '{layoutName}' not found and discovery disabled for {systemCls.systemId}")
+            return None
+
+        # Step 3: Check database cache
+        cacheKey: str = self._generateLayoutId(layoutName)
+        cachedLayout: Optional[DivinationLayoutDict] = await self.db.divinationLayouts.getLayout(
+            systemId=systemCls.systemId, layoutName=cacheKey
+        )
+
+        # Step 4: If negative cache entry found, return None
+        if cachedLayout is not None and self.db.divinationLayouts.isNegativeCacheEntry(cachedLayout):
+            logger.debug(f"Negative cache entry found for layout '{layoutName}' in {systemCls.systemId}")
+            return None
+
+        # Step 5: If valid cache entry found, reconstruct Layout object
+        if cachedLayout is not None:
+            positions = tuple(p["name"] for p in cachedLayout["positions"])
+            discoveredLayout = Layout(
+                id=cachedLayout["layout_id"],
+                nameEn=cachedLayout["name_en"],
+                nameRu=cachedLayout["name_ru"],
+                positions=positions,
+                aliases=(),  # No aliases for discovered layouts
+                systemId=cachedLayout["system_id"],
+            )
+            logger.debug(f"Found cached layout '{layoutName}' in {systemCls.systemId}")
+            return discoveredLayout
+
+        # Step 6: No cache entry - try to discover layout via web search
+        logger.info(f"Attempting to discover layout '{layoutName}' for {systemCls.systemId}")
+        discoveredLayout: Optional[Layout] = await self._discoverLayoutWithLLM(
+            systemCls=systemCls,
+            layoutName=layoutName,
+            chatId=chatId,
+        )
+
+        if discoveredLayout is not None:
+            logger.info(f"Successfully discovered layout '{layoutName}' for {systemCls.systemId}")
+        else:
+            logger.debug(f"Failed to discover layout '{layoutName}' for {systemCls.systemId}")
+
+        return discoveredLayout
 
     async def _handleReadingFromArgs(
         self,
@@ -535,11 +625,12 @@ class DivinationHandler(BaseBotHandler):
             )
             return ""
 
-        layout: Optional[Layout] = systemCls.resolveLayout(layoutName)
+        layout: Optional[Layout] = await self._getLayout(
+            systemCls=systemCls,
+            layoutName=layoutName,
+            chatId=ensuredMessage.recipient.id,
+        )
         if layout is None:
-            # NOTE: structured-output stub `_llmGetUnknownLayoutShape` is not
-            # used in v1; keep the call site here for documentation but do
-            # not invoke the stub (it always returns None anyway).
             errorMessage = (
                 f"Расклад '{layoutName}' не поддерживается, dood!\n" f"Доступные расклады: {availableLayoutsStr}."
             )
@@ -823,31 +914,243 @@ class DivinationHandler(BaseBotHandler):
             )
         return ""
 
-    async def _llmGetUnknownLayoutShape(
+    def _generateLayoutId(self, layoutName: str) -> str:
+        """Generate a machine-readable layout ID from user input.
+
+        Normalizes the layout name: lowercase, replaces spaces/dashes
+        with underscores, removes special characters.
+
+        Args:
+            layoutName: User-provided layout name.
+
+        Returns:
+            Normalized layout ID suitable for database storage.
+        """
+        # Lowercase, normalize separators, remove special chars
+        normalized = layoutName.lower().strip()
+        normalized = re.sub(r"[\s\-_]+", "_", normalized)  # Various separators → "_"
+        normalized = re.sub(r"[^a-z0-9_]", "", normalized)  # Remove other chars
+        return normalized or "unknown"
+
+    async def _discoverLayout(
         self,
         systemCls: Type[BaseDivinationSystem],
         layoutName: str,
+        chatId: int,
+        layoutDescription: str,
     ) -> Optional[Layout]:
-        """Stub for the future structured-output unknown-layout flow, dood!
+        """Discover an unknown layout using LLM with web search.
 
-        ``lib/ai`` does not yet support structured/JSON output, so this
-        method is intentionally a no-op. It exists so the integration point
-        is visible in the codebase: once structured output lands, this
-        method will ask the LLM for ``{nCards, positions}`` and synthesise
-        an ad-hoc :class:`Layout`.
+        Discovery process:
+        1. Call LLM with web_search tool enabled to find layout information (already have layoutDescription)
+        2. Call LLM.generateStructured() to parse description into Layout object
+        3. Validate and save to database (full layout or negative cache)
 
         Args:
-            systemCls: Divination system requesting the layout.
-            layoutName: Raw user-supplied layout name.
+            systemCls: The divination system class (TarotSystem or RunesSystem).
+            layoutName: Raw user-provided layout name.
+            chatId: Chat ID for rate limiting and settings.
+            layoutDescription: Description from first LLM call with web search.
 
         Returns:
-            Always ``None`` in v1.
+            Discovered Layout if successful, None otherwise.
         """
+        # Get prompts from chat settings
+        chatSettings = await self.getChatSettings(chatId=chatId)
+        discoveryStructurePrompt = chatSettings[ChatSettingsKey.DIVINATION_DISCOVERY_STRUCTURE_PROMPT].toStr()
+        discoverySystemPrompt = chatSettings[ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT].toStr()
 
-        # TODO: Do after adding structured JSON output support to lib/ai.
-        logger.info(
-            "Unknown layout '%s' for %s: structured output not supported yet, dood!",
-            layoutName,
-            systemCls.systemId,
+        # Build messages for structured output call
+        structurePrompt = discoveryStructurePrompt.format(
+            layoutName=layoutName,
+            systemId=systemCls.systemId,
+            description=layoutDescription,
         )
-        return None
+
+        structureMessages = [
+            ModelMessage(role="system", content=discoverySystemPrompt),
+            ModelMessage(role="user", content=structurePrompt),
+        ]
+
+        # Define the JSON Schema for structured output (strict JSON Schema format)
+        layoutStructure: Dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "layout_id": {"type": "string"},
+                "name_en": {"type": "string"},
+                "name_ru": {"type": "string"},
+                "positions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                        },
+                        "required": ["name"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["layout_id", "name_en", "name_ru", "positions"],
+            "additionalProperties": False,
+        }
+
+        try:
+            # Call LLM with structured output
+            structureRet = await self.llmService.generateStructured(
+                prompt=structureMessages,
+                schema=layoutStructure,
+                chatId=chatId,
+                chatSettings=chatSettings,
+                llmManager=self.llmManager,
+                modelKey=ChatSettingsKey.CHAT_MODEL,
+                fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
+            )
+        except Exception as e:
+            logger.error(f"LLM discovery structured call failed for '{layoutName}': {e}")
+            await self.db.divinationLayouts.saveNegativeCache(
+                systemId=systemCls.systemId,
+                layoutId=self._generateLayoutId(layoutName),
+            )
+            return None
+
+        # Check if we got a valid structured result
+        if structureRet.status != ModelResultStatus.FINAL or structureRet.data is None:
+            logger.warning(f"LLM generateStructured returned non-final or missing data: status={structureRet.status}")
+            await self.db.divinationLayouts.saveNegativeCache(
+                systemId=systemCls.systemId,
+                layoutId=self._generateLayoutId(layoutName),
+            )
+            return None
+
+        if not isinstance(structureRet.data, dict):
+            logger.warning(f"LLM generateStructured.data returned unexpected type: {type(structureRet.data)}")
+            await self.db.divinationLayouts.saveNegativeCache(
+                systemId=systemCls.systemId,
+                layoutId=self._generateLayoutId(layoutName),
+            )
+            return None
+
+        # Validate required fields
+        requiredFields = ["layout_id", "name_en", "name_ru", "positions"]
+        for field in requiredFields:
+            if field not in structureRet.data:
+                logger.error(f"Discovered layout missing field: {field}")
+                await self.db.divinationLayouts.saveNegativeCache(
+                    systemId=systemCls.systemId,
+                    layoutId=self._generateLayoutId(layoutName),
+                )
+                return None
+
+        if not isinstance(structureRet.data["positions"], list) or len(structureRet.data["positions"]) == 0:
+            logger.error("Discovered layout has invalid positions list")
+            await self.db.divinationLayouts.saveNegativeCache(
+                systemId=systemCls.systemId,
+                layoutId=self._generateLayoutId(layoutName),
+            )
+            return None
+
+        # Construct Layout object
+        layoutId = structureRet.data["layout_id"]
+        nameEn = structureRet.data["name_en"]
+        nameRu = structureRet.data["name_ru"]
+        positions = tuple(p.get("name", "") for p in structureRet.data["positions"])
+        aliases = ()  # No aliases for discovered layouts
+
+        discoveredLayout = Layout(
+            id=layoutId,
+            nameEn=nameEn,
+            nameRu=nameRu,
+            positions=positions,
+            aliases=aliases,
+            systemId=systemCls.systemId,
+        )
+
+        # Save to database
+        success = await self.db.divinationLayouts.saveLayout(
+            systemId=systemCls.systemId,
+            layoutId=layoutId,
+            nameEn=nameEn,
+            nameRu=nameRu,
+            nSymbols=len(positions),
+            positions=[{"name": p} for p in positions],
+            description=layoutDescription[:1000],  # Truncate if too long
+        )
+
+        if success:
+            logger.info(f"Successfully discovered and saved layout: {systemCls.systemId}/{layoutId}")
+        else:
+            logger.warning(f"Layout discovery succeeded but DB save failed: {systemCls.systemId}/{layoutId}")
+
+        return discoveredLayout
+
+    async def _discoverLayoutWithLLM(
+        self,
+        systemCls: Type[BaseDivinationSystem],
+        layoutName: str,
+        chatId: int,
+    ) -> Optional[Layout]:
+        """Discover layout using web search, then call _discoverLayout.
+
+        This is a convenience wrapper that:
+        1. Calls LLM with tools enabled to get layout description
+        2. Delegates to _discoverLayout with the description
+
+        Args:
+            systemCls: The divination system class.
+            layoutName: Raw user-provided layout name.
+            chatId: Chat ID for rate limiting and settings.
+
+        Returns:
+            Discovered Layout if successful, None otherwise.
+        """
+        # Get prompts from chat settings
+        chatSettings = await self.getChatSettings(chatId=chatId)
+        discoveryInfoPrompt = chatSettings[ChatSettingsKey.DIVINATION_DISCOVERY_INFO_PROMPT].toStr()
+        discoverySystemPrompt = chatSettings[ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT].toStr()
+
+        # Build messages for info discovery with tools
+        infoPrompt = discoveryInfoPrompt.format(
+            layoutName=layoutName,
+            systemId=systemCls.systemId,
+        )
+
+        infoMessages = [
+            ModelMessage(role="system", content=discoverySystemPrompt),
+            ModelMessage(role="user", content=infoPrompt),
+        ]
+
+        try:
+            # Call LLM with tools enabled (web_search)
+            infoRet = await self.llmService.generateTextViaLLM(
+                messages=infoMessages,
+                chatId=chatId,
+                chatSettings=chatSettings,
+                llmManager=self.llmManager,
+                modelKey=ChatSettingsKey.CHAT_MODEL,
+                fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
+                useTools=True,  # Enable tools for web search
+            )
+        except Exception as e:
+            logger.error(f"LLM discovery info call failed for '{layoutName}': {e}")
+            await self.db.divinationLayouts.saveNegativeCache(
+                systemId=systemCls.systemId,
+                layoutId=self._generateLayoutId(layoutName),
+            )
+            return None
+
+        if infoRet.status != ModelResultStatus.FINAL or not infoRet.resultText:
+            logger.warning(f"LLM discovery info returned non-final: {infoRet.status}")
+            await self.db.divinationLayouts.saveNegativeCache(
+                systemId=systemCls.systemId,
+                layoutId=self._generateLayoutId(layoutName),
+            )
+            return None
+
+        # Now call _discoverLayout with the description
+        return await self._discoverLayout(
+            systemCls=systemCls,
+            layoutName=layoutName,
+            chatId=chatId,
+            layoutDescription=infoRet.resultText,
+        )

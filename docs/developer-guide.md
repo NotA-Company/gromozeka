@@ -12,6 +12,7 @@
 4. [Configuration System](#4-configuration-system)
 5. [Database Layer](#5-database-layer)
 6. [Handler System](#6-handler-system)
+   - Divination Layout Discovery
 7. [Service Layer](#7-service-layer)
 8. [Libraries Reference](#8-libraries-reference)
 9. [Testing Guide](#9-testing-guide)
@@ -939,6 +940,85 @@ from .my_handler import MyNewHandler
 module = "path.to.my_handler"
 class = "MyNewHandler"
 enabled = true
+```
+
+### 6.1 Divination Layout Discovery
+
+The divination handler includes a layout discovery feature that can automatically find and learn new tarot/runes layouts using LLM with web search capability, dood! This allows users to request layouts that aren't predefined in the system, dood!
+
+#### Enabling Discovery
+
+Enable discovery in your config with the `discovery-enabled` setting, dood!
+
+```toml
+[divination]
+discovery-enabled = true
+```
+
+When enabled, unknown layouts in `/taro` or `/runes` commands trigger an automatic discovery process instead of returning an error, dood!
+
+#### Discovery Process
+
+The layout discovery follows a 4-step process, dood!
+
+**Step 1 - Cache Check**: The handler first checks if the requested layout is already cached in the database (from a previous discovery attempt), dood!
+
+**Step 2 - LLM Discovery (Web Search)**: If not cached, the handler calls `LLMService.generateText(tools=True)` with web search enabled, dood!
+
+- The LLM automatically uses the web_search tool to find information about the layout
+- Returns a detailed description of the layout including card positions, meanings, and interpretation guidelines
+- Uses the `divination-discovery-info-prompt` and `divination-discovery-system-prompt` settings
+
+**Step 3 - LLM Structuring**: The handler then calls `LLMService.generateStructured()` to parse the description into a structured format, dood!
+
+- Passes the description and an expected JSON schema
+- Returns a validated dictionary with the layout structure
+- Uses the `divination-discovery-structure-prompt` setting
+
+**Step 4 - Validation & Save**: The handler validates the structured dictionary and saves it to the database, dood!
+
+- On success: Saves the complete layout definition for future reuse
+- On failure: Saves a negative cache entry to prevent repeated failed attempts for 24 hours
+
+#### Customizing Discovery Prompts
+
+You can customize the discovery process by editing the discovery prompts in chat settings, dood! These can be configured globally in `configs/00-defaults/bot-defaults.toml` or per-chat via the `/configure` command, dood!
+
+```toml
+[bot.defaults]
+# System instruction for both discovery LLM calls
+divination-discovery-system-prompt = "You are an expert tarot researcher..."
+
+# Prompt for the first LLM call (with web search enabled)
+divination-discovery-info-prompt = "Find complete information about the 'Celtic Cross' tarot reading layout..."
+
+# Prompt for the second LLM call (structured output)
+divination-discovery-structure-prompt = "Parse this description into a structured layout JSON..."
+```
+
+The system prompt applies to both LLM calls, while the info and structure prompts are specific to each step, dood!
+
+#### Testing Discovery
+
+The discovery feature has comprehensive test coverage in:
+- [`tests/bot/test_divination_discovery.py`](tests/bot/test_divination_discovery.py) — Full discovery workflow tests
+
+Tests cover:
+- Successful layout discovery with valid web search results
+- Failed discovery with invalid/unrecognized layouts
+- Cache hit scenarios (reusing previously discovered layouts)
+- Negative cache (preventing repeated failures)
+- Prompt customization and validation
+
+#### Layout Database Table
+
+Discovered layouts are stored in the `divination_layouts` table (added by migration 015), dood!
+
+```toml
+[divination.layouts.celtic-cross]
+name = "Celtic Cross"
+description = "A classic 10-card spread for detailed readings..."
+positions = ["Significator", "Situation", "Challenge", ...]
 ```
 
 ---

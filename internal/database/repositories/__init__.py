@@ -53,6 +53,7 @@ from .chat_summarization import ChatSummarizationRepository
 from .chat_users import ChatUsersRepository
 from .common import CommonFunctionsRepository
 from .delayed_tasks import DelayedTasksRepository
+from .divination_layouts import DivinationLayoutsRepository
 from .divinations import DivinationsRepository
 from .media_attachments import MediaAttachmentsRepository
 from .spam import SpamRepository
@@ -68,6 +69,7 @@ __all__ = [
     "ChatUsersRepository",
     "CommonFunctionsRepository",
     "DelayedTasksRepository",
+    "DivinationLayoutsRepository",
     "DivinationsRepository",
     "MediaAttachmentsRepository",
     "SpamRepository",

@@ -403,6 +403,327 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 
 ---
 
+## 4. Lessons Learned & Common Pitfalls
+
+This section captures real issues encountered during implementation to help you avoid them in the future.
+
+### 4.1 Chat Settings Registration (CRITICAL)
+
+When adding new `ChatSettingsKey` enum values, you **must** also add corresponding entries to the `_chatSettingsInfo` dictionary. Without these entries, users cannot configure the settings in the bot.
+
+**What you need to do:**
+
+```python
+# 1. Add enum value to ChatSettingsKey
+class ChatSettingsKey(str, Enum):
+    YOUR_NEW_SETTING = "your_new_setting"
+
+# 2. Add entry to _chatSettingsInfo dictionary in same file
+_chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingInfo] = {
+    # ... existing entries
+    ChatSettingsKey.YOUR_NEW_SETTING: ChatSettingInfo(
+        type=ChatSettingsType.STRING,  # or INTEGER, BOOLEAN, etc.
+        short="Короткое описание на русском",  # Russian short description
+        long="Длинное описание на русском",  # Russian long description
+        page=ChatSettingsPage.BOT_OWNER_SYSTEM,  # Which settings page
+    ),
+}
+```
+
+**Why this matters:**
+- The `_chatSettingsInfo` dictionary provides metadata for the `/settings` command
+- Without entries, your settings won't appear in `/settings` output
+- Users won't be able to configure your new settings at all
+- The bot throws errors when trying to display unrecognized settings
+
+**Where to find this:**
+- Look at `internal/bot/models/chat_settings.py` for the full pattern
+- Examine existing entries to understand the metadata structure
+
+---
+
+### 4.2 Import Placement (CRITICAL)
+
+**NEVER** place imports inside methods or functions unless absolutely unavoidable (even for cyclic dependencies). All imports must be at the top of the file.
+
+**Common mistake to avoid:**
+
+```python
+# WRONG — imports inside method (anti-pattern!)
+class MyClass:
+    def someMethod(self):
+        import json  # This should be at the top!
+        from datetime import datetime  # So should this!
+        ...
+```
+
+**Correct pattern:**
+
+```python
+# CORRECT — all imports at the top
+import json
+from datetime import datetime
+from typing import Optional
+
+class MyClass:
+    def someMethod(self):
+        # Use the already-imported modules
+        data = json.loads(...)
+        now = datetime.now()
+        ...
+```
+
+**After adding imports, always run:**
+
+```bash
+make format
+```
+
+This runs `isort` to properly organize imports according to the project's style guide. Imports should be sorted into these sections:
+1. Standard library imports
+2. Third-party imports
+3. Local application imports
+
+**Why this matters:**
+- Import placement affects code readability and maintainability
+- `isort` enforces consistent import ordering across the codebase
+- Imports inside methods are harder to discover and maintain
+- The `make format` pipeline expects imports to be organized correctly
+
+**Exception note:**
+The only valid exception for placing an import inside a method is to resolve a cyclic dependency that cannot be broken by refactoring. This is rare and should be documented with a comment explaining why it was necessary.
+
+---
+
+### 4.3 Code Duplication (Best Practice)
+
+When you find yourself implementing the same logic in multiple places, extract it into a helper method. This makes the code more maintainable and reduces bugs.
+
+**Example of the problem:**
+
+```python
+# WRONG — same logic duplicated in two places
+class MyHandler(BaseBotHandler):
+    async def _handleReadingFromArgs(self, ensuredMessage, args):
+        # Layout discovery logic duplicated here
+        layout = self._findLayoutByNameOrCode(args[0])
+
+    async def _runReadingForTool(self, ensuredMessage, args):
+        # Same layout discovery logic duplicated here
+        layout = self._findLayoutByNameOrCode(args[0])
+```
+
+**Correct approach:**
+
+```python
+# CORRECT — extracted into a helper method
+class MyHandler(BaseBotHandler):
+    async def _discoverLayout(
+        self,
+        layoutIdentifier: str
+    ) -> Optional[Layout]:
+        """Discover layout by name or code.
+
+        Args:
+            layoutIdentifier: Layout name or code to search for
+
+        Returns:
+            Layout object if found, None otherwise
+        """
+        # Single implementation
+        return self._findLayoutByNameOrCode(layoutIdentifier)
+
+    async def _handleReadingFromArgs(self, ensuredMessage, args):
+        layout = await self._discoverLayout(args[0])
+
+    async def _runReadingForTool(self, ensuredMessage, args):
+        layout = await self._discoverLayout(args[0])
+```
+
+**Why this matters:**
+- Single source of truth for the logic
+- Easier to maintain — fix once, applies everywhere
+- Reduces chance of subtle differences between copies
+- Makes testing easier — test one method, not multiple locations
+- When debugging, you only need to trace through one implementation
+
+**When to extract:**
+- Logic appears 2+ times
+- The logic is more than 1-2 lines
+- The logic has any complexity (if statements, error handling, etc.)
+
+---
+
+### 4.4 Type Safety in Tests (Testing)
+
+When mocking objects like `EnsuredMessage`, use the actual class types rather than plain dictionaries. This prevents type-related bugs and ensures tests catch real issues.
+
+**Common mistake to avoid:**
+
+```python
+# WRONG — using dict instead of actual class type
+def test_ReadingHandler():
+    # Type: dict, not EnsuredMessage
+    mockMessage = {
+        "messageId": 123,
+        "messageText": "/taro",
+        "chatId": 456,
+    }
+    # May pass type check but fail at runtime with missing fields
+```
+
+**Correct approach:**
+
+```python
+# CORRECT — using actual class types
+from internal.bot.models import EnsuredMessage
+
+def test_ReadingHandler():
+    mockMessage = EnsuredMessage(
+        messageId=123,  # Type: MessageIdType (int for Telegram)
+        messageText="/taro",
+        chatId=456,  # Type: int
+        messageSender=MessageSender(id=789, isBot=False,
+        timestamp=datetime.now(),
+    )
+```
+
+**Why this matters:**
+- Type checkers (pyright) can verify all required fields are present
+- Tests catch type errors that would occur in production
+- Mock objects match the actual API shape
+- Prevents runtime errors from missing or incorrectly-typed fields
+- Makes refactoring safer — if `EnsuredMessage` changes, test errors will show you what to update
+
+**Implementation tips:**
+- Use pytest fixtures for commonly-used mock objects
+- Check `tests/conftest.py` for existing fixtures like `mockMessage`
+- Use `mocker.Mock` for methods, but keep the object type correct
+- Always import types from their actual modules, don't redefine them in tests
+
+---
+
+### 4.5 Strict JSON Schema Format for Structured Output
+
+When using `LLMService.generateStructured()`, the `schema` parameter must be a **strict JSON Schema** — not Python type hints, classes, or TypedDict. OpenAI's structured outputs and some other providers enforce strict validation and will reject schemas that don't follow this format.
+
+**Common mistake to avoid:**
+
+```python
+# WRONG — passing Python types/classes, schema is not valid JSON Schema, dood!
+from typing import TypedDict
+
+class MyResponse(TypedDict):
+    answer: str
+    confidence: float
+
+result = await llmService.generateStructured(
+    prompt="What is 2+2?",
+    schema=MyResponse,  # WRONG! This is not a JSON Schema!
+    ...
+)
+
+# ALSO WRONG — using Python type names in schema, dood!
+schema = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": str},       # WRONG! str is a Python type, not a JSON Schema type
+        "confidence": {"type": float}, # WRONG! float is Python, not JSON Schema
+    },
+    # Missing required and additionalProperties fields
+}
+```
+
+**Correct approach:**
+
+```python
+# CORRECT — proper JSON Schema with no optional fields, dood!
+schema = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string"},        # JSON Schema type, not str
+        "confidence": {"type": "number"},   # JSON Schema type, not float/int
+    },
+    "required": ["answer", "confidence"],    # ALL fields are required
+    "additionalProperties": False,            # No extra fields allowed
+}
+
+result = await llmService.generateStructured(
+    prompt="What is 2+2?",
+    schema=schema,
+    chatId=chatId,
+    chatSettings=chatSettings,
+    llmManager=self.llmManager,
+    modelKey=ChatSettingsKey.CHAT_MODEL,
+    fallbackKey=ChatSettingsKey.CHAT_FALLBACK_MODEL,
+)
+
+if result.status == ModelResultStatus.FINAL:
+    answer = result.data.get("answer")
+    confidence = result.data.get("confidence")
+```
+
+**Required JSON Schema elements:**
+
+1. **`"type": "object"`** at the top level
+2. **`"properties"`** dict containing all field definitions
+3. Each property must have a valid JSON Schema type:
+   - `"string"` (not `str`)
+   - `"number"` (not `float` or `int`)
+   - `"integer"` (whole numbers only)
+   - `"boolean"` (not `bool`)
+   - `"array"` (not `list`)
+   - `"object"` (for nested objects)
+4. **`"required"`** array listing **ALL fields** — no optional fields allowed
+5. **`"additionalProperties": False`** to ensure strict validation
+
+**Why this matters:**
+
+- **OpenAI structured outputs** requires strict JSON Schema format and will reject any schema that doesn't meet these requirements
+- **YC OpenAI's native models** (yandexgpt, aliceai-llm, deepseek-v32) enforce this strictly and return HTTP 400 "Invalid JSON Schema: all fields must be required" when violated
+- Other providers may have similar validation — using the strict format ensures compatibility across all providers
+- Mistakes here result in hard-to-debug API errors rather than clear Python type errors
+
+**Reference implementation:**
+
+See [`scripts/check_structured_output.py`](../../scripts/check_structured_output.py) for the reference implementation. This script probes each configured model with a strictly-formatted schema to verify structured output support. The probe schema (lines 106-114) demonstrates the correct format:
+
+```python
+# From scripts/check_structured_output.py — correct strict schema format
+_PROBE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string"},
+        "confidence": {"type": "number"},
+    },
+    "required": ["answer", "confidence"],
+    "additionalProperties": False,
+}
+```
+
+**Testing your schemas:**
+
+Before deploying a new schema, you can test it locally:
+
+```bash
+# Test structured output with the current configuration
+./venv/bin/python3 scripts/check_structured_output.py
+
+# Test only specific providers/models
+./venv/bin/python3 scripts/check_structured_output.py --provider yc-openai
+./venv/bin/python3 scripts/check_structured_output.py --model "yc-openai/yandexgpt"
+```
+
+**Additional notes:**
+
+- Nested objects are supported, but each nested object must also follow the strict format with `required` and `additionalProperties: False`
+- Arrays can specify an `items` schema, but the items themselves must follow the same strict rules if they are objects
+- If you need optional fields, you must either make them required with a default semantic value (e.g., `null`, empty string) or restructure your schema to handle the logic in code after parsing
+- The `strict=True` parameter in `generateStructured()` requests strict enforcement from providers that support it
+- Always import `ModelStructuredResult` from `lib.ai` to get proper type hints for the result
+
+---
+
 ## See Also
 
 - [`index.md`](index.md) — Project overview, mandatory rules, critical commands
@@ -416,5 +737,5 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 
 ---
 
-*This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered, dood!*  
-*Last updated: 2026-04-18, dood!*
+*This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered, dood!*
+*Last updated: 2026-05-07, dood!*

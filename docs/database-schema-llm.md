@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 14 (up to `migration_014`)
+**Migrations**: 15 (up to `migration_015`)
 
 ---
 
@@ -404,6 +404,39 @@ CREATE TABLE divinations (
 **Repository**: `db.divinations.insertReading(...)`
 
 **Notes**: Only populated when `[divination] enabled = true`. No foreign-key relationship to other tables; image media is resolved via the normal message-history pipeline.
+
+---
+
+### divination_layouts
+**Purpose**: Cache layout definitions discovered via LLM for reuse
+**Primary Key**: `(system_id, layout_id)`
+
+```sql
+CREATE TABLE divination_layouts (
+    system_id      TEXT    NOT NULL,                          -- 'tarot' | 'runes'
+    layout_id      TEXT    NOT NULL,                          -- Machine-readable identifier
+    name_en        TEXT    NOT NULL,                          -- English name (source of truth)
+    name_ru        TEXT    NOT NULL,                          -- Russian display name
+    n_symbols      INTEGER NOT NULL,                          -- Number of positions
+    positions      TEXT    NOT NULL,                          -- JSON array of position definitions
+    description    TEXT,                                       -- Layout description
+    created_at     TIMESTAMP NOT NULL,
+    updated_at     TIMESTAMP NOT NULL,
+    PRIMARY KEY (system_id, layout_id)
+)
+```
+
+**Indexes**: `idx_divination_layouts_system` on `system_id`
+
+**Repository**: `DivinationLayoutsRepository`
+
+**Usage**:
+- Caches discovered layouts from LLM + web search
+- Negative cache entries prevent repeated failed discoveries (`name_en=''`, `n_symbols=0`)
+- Retrieved via `DivinationLayoutsRepository.getLayout()`
+- Saved via `DivinationLayoutsRepository.saveLayout()`
+
+**Note**: Only populated when `[divination] enabled = true`. Negative cache pattern stores failed discoveries with empty `name_en` and `n_symbols=0`.
 
 ---
 
