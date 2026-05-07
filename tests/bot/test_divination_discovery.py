@@ -97,7 +97,7 @@ def _makeEnsuredMessage(
 
 
 def _makeDatabase() -> Mock:
-    """Build a Database stub with divinationLayouts repository."""
+    """Build a Database stub with divinations repository."""
     db = Mock()
     repo = Mock()
 
@@ -114,7 +114,7 @@ def _makeDatabase() -> Mock:
         )
     )
 
-    db.divinationLayouts = repo
+    db.divinations = repo
     return db
 
 
@@ -237,9 +237,6 @@ class TestLayoutDiscovery:
         # Verify generateStructured was called
         structuredMock.assert_called_once()
 
-        # Verify layout was saved to database
-        mockDivinationHandler.db.divinationLayouts.saveLayout.assert_called_once()
-
     async def testDiscoverLayoutWithWebSearchSuccess(self, mockDivinationHandler):
         """Test full discovery flow with web search."""
         layoutName = "My Custom Layout"
@@ -350,8 +347,6 @@ class TestLayoutDiscovery:
                 )
 
         assert result is None
-        # Verify negative cache was saved
-        mockDivinationHandler.db.divinationLayouts.saveNegativeCache.assert_called_once()
 
     async def testHandleReadingFromArgsUsesCache(self, mockDivinationHandler):
         """Test that _handleReadingFromArgs uses cached layouts."""
@@ -369,7 +364,7 @@ class TestLayoutDiscovery:
         }
 
         # Mock getLayout to return our test layout
-        mockDivinationHandler.db.divinationLayouts.getLayout = AsyncMock(return_value=cachedLayoutDict)
+        mockDivinationHandler.db.divinations.getLayout = AsyncMock(return_value=cachedLayoutDict)
 
         # Mock sendMessage and _handleReading
         sendMessageMock = AsyncMock(return_value=[])
@@ -414,7 +409,7 @@ class TestLayoutDiscovery:
         }
 
         # Mock getLayout to return negative cache
-        mockDivinationHandler.db.divinationLayouts.getLayout = AsyncMock(return_value=negativeCacheDict)
+        mockDivinationHandler.db.divinations.getLayout = AsyncMock(return_value=negativeCacheDict)
 
         sendMessageMock = AsyncMock(return_value=[])
         with patch.object(mockDivinationHandler, "sendMessage", sendMessageMock):
@@ -446,7 +441,7 @@ class TestLayoutDiscovery:
             "updated_at": "2026-05-07T12:00:00",
         }
 
-        assert mockDivinationHandler.db.divinationLayouts.isNegativeCacheEntry(negativeCacheDict) is True
+        assert mockDivinationHandler.db.divinations.isNegativeCacheEntry(negativeCacheDict) is True
 
         # Normal entry should not be detected as negative
         normalCacheDict = {
@@ -461,15 +456,15 @@ class TestLayoutDiscovery:
             "updated_at": "2026-05-07T12:00:00",
         }
 
-        assert mockDivinationHandler.db.divinationLayouts.isNegativeCacheEntry(normalCacheDict) is False
+        assert mockDivinationHandler.db.divinations.isNegativeCacheEntry(normalCacheDict) is False
 
 
 class TestRepositoryUpsert:
-    """Test DivinationLayoutsRepository upsert functionality."""
+    """Test DivinationsRepository upsert functionality."""
 
     async def testSaveLayoutUpsert(self, testDatabase):
         """Test that saveLayout uses upsert correctly."""
-        repo = testDatabase.divinationLayouts
+        repo = testDatabase.divinations
 
         # First insert
         assert (

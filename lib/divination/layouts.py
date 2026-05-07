@@ -30,6 +30,7 @@ class Layout:
             input).
         systemId: Identifier of the divination system this layout belongs to
             (e.g. ``"tarot"`` or ``"runes"``).
+        description: Optional layout description.
     """
 
     id: str
@@ -38,6 +39,7 @@ class Layout:
     positions: Tuple[str, ...]
     aliases: Tuple[str, ...]
     systemId: str
+    description: Optional[str] = None
 
     @property
     def numSymbols(self) -> int:
