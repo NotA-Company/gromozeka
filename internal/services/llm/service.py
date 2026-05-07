@@ -29,6 +29,8 @@ from lib.ai.models import (
 )
 from lib.rate_limiter.manager import RateLimiterManager
 
+from .models import ExtraDataDict
+
 logger = logging.getLogger(__name__)
 
 
@@ -121,8 +123,8 @@ class LLMService:
         fallbackModelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
         useTools: bool = False,
         callId: Optional[str] = None,
-        callback: Optional[Callable[[ModelRunResult, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
-        extraData: Optional[Dict[str, Any]] = None,
+        callback: Optional[Callable[[ModelRunResult, ExtraDataDict], Awaitable[None]]] = None,
+        extraData: ExtraDataDict,
         keepFirstN: int = 0,
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,

@@ -552,7 +552,10 @@ class BasicOpenAIModel(AbstractModel):
             if hasattr(retMessage, "images"):
                 images = getattr(retMessage, "images")
                 if len(images) > 1:
-                    logger.warning(f"Multiple ({len(images)}) images returned by model {self.modelId}: {images}")
+                    logger.warning(
+                        f"Multiple ({len(images)}) images returned by model {self.modelId}: "
+                        + repr([f"{repr(image)[:200]}... ({len(repr(image))} bytes)" for image in images])
+                    )
 
                 for i, image in enumerate(images):
                     imageDataURL = image["image_url"]["url"]  # Base64 data URL 'data:image/png;base64,...'

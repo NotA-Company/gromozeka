@@ -188,9 +188,9 @@ class TestLayoutDiscovery:
             "name_en": "My Custom Layout",
             "name_ru": "Мой специальный расклад",
             "positions": [
-                {"name": "Past"},
-                {"name": "Present"},
-                {"name": "Future"},
+                "Past",
+                "Present",
+                "Future",
             ],
         }
 
@@ -205,7 +205,10 @@ class TestLayoutDiscovery:
 
         # Mock getChatSettings to return discovery prompts
         chatSettings = {
-            ChatSettingsKey.DIVINATION_DISCOVERY_STRUCTURE_PROMPT: ChatSettingsValue(
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT: ChatSettingsValue(
+                "You are a layout structiuing expert, return only JSON structure."
+            ),
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_PROMPT: ChatSettingsValue(
                 "Extract layout from: {layoutName}, {systemId}, {description}"
             ),
             ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT: ChatSettingsValue("You are a layout expert."),
@@ -215,7 +218,7 @@ class TestLayoutDiscovery:
 
         with patch.object(mockDivinationHandler, "getChatSettings", AsyncMock(return_value=chatSettings)):
             with patch.object(mockDivinationHandler.llmService, "generateStructured", structuredMock):
-                result = await mockDivinationHandler._discoverLayout(
+                result = await mockDivinationHandler._extractLayoutFromText(
                     systemCls=TarotSystem,
                     layoutName=layoutName,
                     chatId=456,
@@ -257,9 +260,9 @@ class TestLayoutDiscovery:
             "name_en": "My Custom Layout",
             "name_ru": "Мой специальный расклад",
             "positions": [
-                {"name": "Past"},
-                {"name": "Present"},
-                {"name": "Future"},
+                "Past",
+                "Present",
+                "Future",
             ],
         }
 
@@ -278,10 +281,13 @@ class TestLayoutDiscovery:
             ChatSettingsKey.DIVINATION_DISCOVERY_INFO_PROMPT: ChatSettingsValue(
                 "Find info about {layoutName}, {systemId}"
             ),
-            ChatSettingsKey.DIVINATION_DISCOVERY_STRUCTURE_PROMPT: ChatSettingsValue(
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_PROMPT: ChatSettingsValue(
                 "Extract layout from: {layoutName}, {systemId}, {description}"
             ),
             ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT: ChatSettingsValue("You are a layout expert."),
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT: ChatSettingsValue(
+                "You are a layout structuring expert."
+            ),
             ChatSettingsKey.CHAT_MODEL: ChatSettingsValue("gpt-4"),
             ChatSettingsKey.FALLBACK_MODEL: ChatSettingsValue("gpt-3.5"),
         }
@@ -289,10 +295,12 @@ class TestLayoutDiscovery:
         with patch.object(mockDivinationHandler, "getChatSettings", AsyncMock(return_value=chatSettings)):
             with patch.object(mockDivinationHandler.llmService, "generateTextViaLLM", generateTextMock):
                 with patch.object(mockDivinationHandler.llmService, "generateStructured", generateStructuredMock):
+                    ensuredMessage = _makeEnsuredMessage(chatId=456)
                     result = await mockDivinationHandler._discoverLayoutWithLLM(
                         systemCls=TarotSystem,
                         layoutName=layoutName,
                         chatId=456,
+                        ensuredMessage=ensuredMessage,
                     )
 
         assert result is not None
@@ -323,17 +331,18 @@ class TestLayoutDiscovery:
 
         # Mock getChatSettings
         chatSettings = {
-            ChatSettingsKey.DIVINATION_DISCOVERY_STRUCTURE_PROMPT: ChatSettingsValue(
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_PROMPT: ChatSettingsValue(
                 "Extract layout from: {layoutName}, {systemId}, {description}"
             ),
             ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT: ChatSettingsValue("You are a layout expert."),
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT: ChatSettingsValue("You are a layout expert."),
             ChatSettingsKey.CHAT_MODEL: ChatSettingsValue("gpt-4"),
             ChatSettingsKey.FALLBACK_MODEL: ChatSettingsValue("gpt-3.5"),
         }
 
         with patch.object(mockDivinationHandler, "getChatSettings", AsyncMock(return_value=chatSettings)):
             with patch.object(mockDivinationHandler.llmService, "generateStructured", structuredMock):
-                result = await mockDivinationHandler._discoverLayout(
+                result = await mockDivinationHandler._extractLayoutFromText(
                     systemCls=TarotSystem,
                     layoutName=layoutName,
                     chatId=456,

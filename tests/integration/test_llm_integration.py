@@ -143,6 +143,7 @@ class TestLlmServiceIntegration:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -204,6 +205,7 @@ class TestLlmServiceIntegration:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -274,6 +276,7 @@ class TestLlmServiceIntegration:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -379,6 +382,7 @@ class TestLlmServiceIntegration:
                 modelKey=mockModel,
                 fallbackModelKey=mockFallbackModel,
                 useTools=True,
+                extraData={},
             )
 
 
@@ -551,6 +555,7 @@ class TestLlmHandlerIntegration:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -607,6 +612,7 @@ class TestLlmHandlerIntegration:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -656,6 +662,7 @@ class TestCompleteLlmWorkflows:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -703,6 +710,7 @@ class TestCompleteLlmWorkflows:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -786,6 +794,7 @@ class TestCompleteLlmWorkflows:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -821,6 +830,7 @@ class TestCompleteLlmWorkflows:
                 modelKey=mockModel,
                 fallbackModelKey=mockFallbackModel,
                 useTools=False,
+                extraData={},
             )
 
     async def testConcurrentToolCalls(self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
@@ -882,6 +892,7 @@ class TestCompleteLlmWorkflows:
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL

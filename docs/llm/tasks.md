@@ -430,15 +430,85 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingInfo] = {
 }
 ```
 
+**Requirement for Default Values:**
+
+After adding entries to `_chatSettingsInfo`, you **MUST** also add default values to the appropriate config file (typically `configs/00-defaults/bot-defaults.toml` for bot settings).
+
+**Without default values:**
+- The settings will exist but have no actual content/prompts
+- Users cannot use the feature until defaults are provided
+- The `/settings` command will show the setting but it will be empty
+
+**Example of forgetting defaults (BAD):**
+
+```bash
+# You add the ChatSettingsKey and _chatSettingsInfo entries...
+$ /settings divination-discovery-info-prompt
+# Setting name: divination-discovery-info-prompt
+# Short: Discover divination layouts via web search
+# Long: Allows dynamic discovery of custom layouts using AI
+# Current value: [EMPTY - no default configured!]
+# User tries to use the feature... ERROR: No prompt available
+```
+
+**Example of including defaults (GOOD):**
+
+```bash
+# User runs /settings and sees:
+# Setting name: divination-discovery-info-prompt
+# Short: Discover divination layouts via web search
+# Long: Allows dynamic discovery of custom layouts using AI
+# Current value: "I need information about a {systemId}..."
+# User tries the feature... SUCCESS! It works immediately
+```
+
+**How to add default values:**
+
+The default values should:
+- Match the key names from `ChatSettingsKey` (using kebab-case: `DIVINATION_DISCOVERY_INFO_PROMPT` → `divination-discovery-info-prompt`)
+- Be placed in the appropriate config file based on the `page` field
+- Use proper TOML syntax with triple quotes for multi-line strings
+- Include placeholders in format `{placeholderName}` if the prompt uses them
+
+```toml
+# In configs/00-defaults/bot-defaults.toml
+[bot.defaults]
+# ... existing settings ...
+
+your-new-setting = """
+This is the default value for your new setting.
+Use triple quotes for multi-line content.
+Include placeholders like {userName} if needed.
+"""
+
+divination-discovery-info-prompt = """
+I need information about a {systemId} divination layout called "{layoutName}".
+The user wants to use this layout for a reading, but it's not in my predefined list.
+
+Use the web_search tool to find information about this layout. Look for:
+1. What is the name of this layout?
+2. How many cards/runes are drawn in it?
+3. What are the positions? For each position, describe:
+   - The name of the position (usually in English)
+   - What this position represents or asks about
+
+Search for authoritative sources on {systemId} layouts, books, or websites that describe this specific spread.
+Return a detailed description of the layout including all position meanings.
+"""
+```
+
 **Why this matters:**
 - The `_chatSettingsInfo` dictionary provides metadata for the `/settings` command
+- Default values provide the actual content/prompts that make settings functional
 - Without entries, your settings won't appear in `/settings` output
-- Users won't be able to configure your new settings at all
+- Without defaults, settings appear but are empty/non-functional
+- Users won't be able to use your new feature at all without defaults
 - The bot throws errors when trying to display unrecognized settings
 
 **Where to find this:**
 - Look at `internal/bot/models/chat_settings.py` for the full pattern
 - Examine existing entries to understand the metadata structure
+- Check `configs/00-defaults/bot-defaults.toml` for default value examples
 
 ---
 

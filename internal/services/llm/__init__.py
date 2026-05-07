@@ -5,6 +5,7 @@ managing tool registration and execution, and handling multi-turn conversations 
 The service supports fallback models and provides a unified interface for LLM operations.
 """
 
+from .models import ExtraDataDict
 from .service import LLMService, LLMToolHandler
 
-__all__ = ["LLMService", "LLMToolHandler"]
+__all__ = ["LLMService", "LLMToolHandler", "ExtraDataDict"]

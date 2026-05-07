@@ -1012,7 +1012,7 @@ class EnsuredMessage:
 
             logger.debug(
                 f"Media#{mediaId} awaiting for proper status (current: "
-                f"{mediaAttachment['status']}) ({time.time() - startTime} secs passed)"
+                f"{mediaAttachment['status']}) ({int(time.time() - startTime)} secs passed)"
             )
 
             match MediaStatus(str(mediaAttachment["status"])):

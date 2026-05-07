@@ -70,7 +70,7 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
         return None
     elif isinstance(data, (str, int, float)):
         return data
-    elif isinstance(data, (dict, list, Mapping, Sequence)):
+    elif isinstance(data, (dict, list, tuple, Mapping, Sequence)):
         return libUtils.jsonDumps(data)
     elif isinstance(data, bool):
         return int(data)

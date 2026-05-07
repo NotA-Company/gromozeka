@@ -27,7 +27,7 @@ import random
 import re
 from collections import deque
 from collections.abc import Sequence
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import telegram
 
@@ -51,7 +51,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.services.llm import LLMService
+from internal.services.llm import ExtraDataDict, LLMService
 from lib.ai import (
     LLMManager,
     ModelMessage,
@@ -130,7 +130,7 @@ class LLMMessageHandler(BaseBotHandler):
             ModelRunResult: Result containing generated text, status, and metadata.
         """
 
-        async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
+        async def processIntermediateMessages(mRet: ModelRunResult, extraData: ExtraDataDict) -> None:
             if mRet.resultText.strip() and sendIntermediateMessages:
                 try:
                     logger.debug(f"Sending intermediate message. LLM Result status is: {mRet.status}")
@@ -817,7 +817,7 @@ class LLMMessageHandler(BaseBotHandler):
 
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
-        async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
+        async def processIntermediateMessages(mRet: ModelRunResult, extraData: ExtraDataDict) -> None:
             try:
                 logger.debug(f"IM: {mRet}")
                 await self.sendMessage(
@@ -829,7 +829,6 @@ class LLMMessageHandler(BaseBotHandler):
             except Exception as e:
                 logger.error(f"Failed to send intermediate message: {e}")
 
-        # TODO: Make extraData typedDict (or dataclass?)
         mlRet = await self.llmService.generateTextViaLLM(
             mReq,
             chatId=ensuredMessage.recipient.id,

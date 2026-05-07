@@ -382,7 +382,7 @@ class DivinationLayoutDict(TypedDict):
     n_symbols: int
     """Number of symbols/positions in the layout."""
 
-    positions: list[dict[str, str]]
+    positions: list[str]
     """list of position definitions."""
 
     description: Optional[str]

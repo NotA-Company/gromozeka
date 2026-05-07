@@ -25,6 +25,7 @@ Example:
 import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from collections.abc import MutableSet
@@ -200,8 +201,15 @@ class QueueService:
         """
 
         logger.info("Exit, Awaiting backgroundTask if any...")
+        startTime = time.time()
         while len(self.backgroundTasks) > 0:
-            logger.info(f"There are {len(self.backgroundTasks)} left, awaiting...")
+            now = time.time()
+            elapsedSeconds = math.floor(now - startTime)
+            logger.info(f"There are {len(self.backgroundTasks)} left, awaiting... ({elapsedSeconds})")
+
+            if elapsedSeconds > 30 and elapsedSeconds % 10 == 0:
+                for backgroundTask in self.backgroundTasks:
+                    logger.debug(f" Task: {backgroundTask}")
             await asyncio.sleep(1)
 
     def registerDelayedTaskHandler(self, function: DelayedTaskFunction, handler: DelayedTaskHandler) -> None:

@@ -236,3 +236,72 @@ divination-reply-template = """
 
 {interpretation}
 """
+
+# Divination layout discovery prompts.
+divination-discovery-system-prompt = """
+You are an expert on divination systems (tarot, runes, etc.). 
+Your task is to help discover and structure information about divination layouts/speads.
+
+- Use the web_search tool to find information about this layout in the Internet.
+- Be specific and include both the layout name and divination system in your query
+- Look for authoritative sources (books, practitioner websites, reference guides)
+- Verify information from multiple sources if possible
+
+Be accurate and helpful. If the layout doesn't seem to exist or information is unreliable, say so clearly.
+"""
+
+# Placeholders for info-prompt template: {systemId}, {layoutName}
+divination-discovery-info-prompt = """
+I need information about a {systemId} divination layout called "{layoutName}".
+The user wants to use this layout for a reading, but it's not in my predefined list.
+
+Use the web_search tool to find information about this layout. Look for:
+1. What is the name of this layout?
+2. How many cards/runes are drawn in it?
+3. What are the positions? For each position, describe:
+   - The name of the position (usually in English)
+   - What this position represents or asks about
+
+Search for authoritative sources on {systemId} layouts, books, or websites that describe this specific spread.
+Return a detailed description of the layout including all position meanings.
+"""
+
+divination-parse-structure-system-prompt = """
+You are an expert on divination systems (tarot, runes, etc.). 
+Your task is to structure information about divination layouts/speads.
+
+- Follow the exact JSON format requested
+- Ensure position names are descriptive and meaningful
+- The number of positions must match the number of cards/runes drawn
+
+Be accurate and helpful. If the layout doesn't seem to exist or information is unreliable, say so clearly.
+"""
+
+# Placeholders for structure-prompt template: {systemId}, {layoutName}, {description}
+divination-parse-structure-prompt = """
+Based on this description of a {systemId} layout called "{layoutName}":
+
+{description}
+
+Please structure this layout as JSON with this exact format:
+{{
+  "layout_id": "lowercase_underscore_layout_id",
+  "name_en": "English Name",
+  "name_ru": "Russian Name (if available, otherwise translate or transliterate from English Name)",
+  "positions": [
+    "Position 1 Name",
+    "Position 2 Name",
+    ...
+  ],
+  "description": "Free-form Layout description"
+}}
+
+Rules:
+- layout_id: lowercase with underscores (e.g., "three_card", "celtic_cross")
+- name_en: Use the English name from research
+- name_ru: If Russian name is found, use it; otherwise transliterate the English name
+- positions: List of position names in English, in the order they are drawn
+- description: Free-form description of the layout
+
+Return ONLY valid JSON, no explanations or extra text.
+"""

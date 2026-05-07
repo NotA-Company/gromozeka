@@ -6,6 +6,7 @@ composite (system_id, layout_name) primary key.
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Optional
 
 from .. import utils as dbUtils
@@ -115,7 +116,7 @@ class DivinationLayoutsRepository(BaseRepository):
         nameEn: str,
         nameRu: str,
         nSymbols: int,
-        positions: list[dict],
+        positions: Sequence[str],
         description: str,
     ) -> bool:
         """Save or update a layout definition in cache using provider.upsert().

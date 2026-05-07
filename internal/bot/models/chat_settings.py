@@ -273,12 +273,13 @@ class ChatSettingsKey(StrEnum):
     DIVINATION_USER_PROMPT_TEMPLATE = "divination-user-prompt-template"
     DIVINATION_IMAGE_PROMPT_TEMPLATE = "divination-image-prompt-template"
     DIVINATION_REPLY_TEMPLATE = "divination-reply-template"
-    DIVINATION_DISCOVERY_INFO_PROMPT = "divination-discovery-info-prompt"
-    """Prompt template for LLM to discover layout info with web search."""
-    DIVINATION_DISCOVERY_STRUCTURE_PROMPT = "divination-discovery-structure-prompt"
-    """Prompt template for LLM to structure discovered layout as JSON."""
     DIVINATION_DISCOVERY_SYSTEM_PROMPT = "divination-discovery-system-prompt"
     """System instruction for layout discovery LLM calls."""
+    DIVINATION_DISCOVERY_INFO_PROMPT = "divination-discovery-info-prompt"
+    """Prompt template for LLM to discover layout info with web search."""
+    DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT = "divination-parse-structure-system-prompt"
+    DIVINATION_PARSE_STRUCTURE_PROMPT = "divination-parse-structure-prompt"
+    """Prompt template for LLM to structure discovered layout as JSON."""
 
     # System settings
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
@@ -615,30 +616,39 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         ),
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
+    ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный промпт для открытия раскладов",
+        "long": (
+            "Системные инструкции для LLM при открытии новых раскладов. "
+            "В этом промпте описывается, как использовать веб-поиск для поиска информации о раскладах."
+        ),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
     ChatSettingsKey.DIVINATION_DISCOVERY_INFO_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Шаблон промпта для поиска информации о раскладе",
         "long": (
             "Промпт для LLM, чтобы найти информацию о раскладе с помощью веб-поиска. "
-            "Используется вместе с divination-discovery-structure-prompt для автоматического поиска новых раскладов."
+            "Используется вместе с divination-parse-structure-prompt для автоматического поиска новых раскладов."
         ),
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
-    ChatSettingsKey.DIVINATION_DISCOVERY_STRUCTURE_PROMPT: {
+    ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT: {
         "type": ChatSettingsType.STRING,
-        "short": "Шаблон промпта для структурирования расклада",
+        "short": "Системный для структурирования расклада",
         "long": (
             "Системный промпт для LLM, который превращает описание расклада в структурированный JSON формат. "
             "Используется после получения информации через divination-discovery-info-prompt."
         ),
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
-    ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT: {
+    ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_PROMPT: {
         "type": ChatSettingsType.STRING,
-        "short": "Системный промпт для открытия раскладов",
+        "short": "Шаблон промпта для структурирования расклада",
         "long": (
-            "Системные инструкции для LLM при открытии новых раскладов. "
-            "В этом промпте описывается, как использовать веб-поиск и как структурировать результаты."
+            "Промпт для LLM, который превращает описание расклада в структурированный JSON формат. "
+            "Используется после получения информации через divination-discovery-info-prompt."
         ),
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
