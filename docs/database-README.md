@@ -232,6 +232,30 @@ operator = provider.getCaseInsensitiveComparison()
 # Returns: 'ILIKE' for PostgreSQL
 ```
 
+#### `getLikeComparison()`
+Get the SQL operator for case-insensitive LIKE pattern matching.
+
+```python
+# Case-insensitive fuzzy search
+operator = provider.getLikeComparison()
+# Returns: 'LOWER(column) LIKE LOWER(:param)' for SQLite
+# Returns: 'LOWER(column) LIKE LOWER(:param)' for MySQL
+# Returns: 'LOWER(column) LIKE LOWER(:param)' for PostgreSQL (or ILIKE)
+```
+
+**Use cases:**
+- Fuzzy/partial text search (e.g., searching layout names in divinations)
+- Type-ahead functionality where user input is incomplete
+- Pattern matching across different RDBMS
+
+**Example:**
+```python
+# Fuzzy search for layout name
+query = f"SELECT * FROM layouts WHERE {provider.getLikeComparison('name', 'search')}"
+# Executes as: SELECT * FROM layouts WHERE LOWER(name) LIKE LOWER(:search)
+# With parameter: search = "%three card%"
+```
+
 #### `applyPagination()`
 Apply pagination to a query with provider-specific syntax.
 

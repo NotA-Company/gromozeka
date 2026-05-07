@@ -35,6 +35,18 @@ logger = logging.getLogger(__name__)
 
 
 LLMToolHandler: TypeAlias = Callable[..., Awaitable[str]]
+"""Type alias for async tool handler functions, dood!
+
+Handlers are async callables that take tool parameters and extra data,
+and return a string result. The function signature is flexible: parameters
+are passed as keyword arguments matching the tool's schema.
+
+Example:
+    LLMToolHandler my_tool = lambda param1, param2, **kwargs: "result"
+
+Attributes:
+    ExtraDataDict: Optional dictionary of extra data passed from the calling context
+"""
 
 
 class LLMService:
@@ -58,8 +70,11 @@ class LLMService:
     _lock = RLock()
 
     def __new__(cls) -> "LLMService":
-        """
-        Create or return singleton instance with thread safety.
+        """Create or return singleton instance with thread safety, dood!
+
+        This method implements the singleton pattern and ensures that only
+        one instance of LLMService exists throughout the application lifecycle.
+        Uses a reentrant lock to guarantee thread-safe initialization.
 
         Returns:
             The singleton LLMService instance
@@ -95,14 +110,21 @@ class LLMService:
     def registerTool(
         self, name: str, description: str, parameters: Sequence[LLMFunctionParameter], handler: LLMToolHandler
     ) -> None:
-        """
-        Register a new tool for the LLM service, dood.
+        """Register a new tool for the LLM service, dood!
+
+        Registers a tool that the LLM can call during text generation. Tools are
+        stored in the toolsHandlers dictionary and can be invoked when the LLM
+        makes tool calls. Each tool has a name, description, parameter schema,
+        and an async handler function.
 
         Args:
-            name: The name of the tool
-            description: The description of the tool
-            parameters: The parameters of the tool
-            handler: The handler function for the tool
+            name: The unique name identifier for the tool (str)
+            description: The description of what the tool does (str)
+            parameters: The parameter schema for the tool function (Sequence[LLMFunctionParameter])
+            handler: The async handler function that executes the tool logic (LLMToolHandler)
+
+        Returns:
+            None
         """
         self.toolsHandlers[name] = LLMToolFunction(
             name=name,
@@ -138,23 +160,36 @@ class LLMService:
         - Detecting and executing tool calls requested by the LLM
         - Managing multi-turn conversations when tools are used
         - Invoking callbacks for tool call events
+        - Condensing context when it exceeds token limits
 
         The method runs in a loop, executing tool calls and feeding results back
-        to the LLM until a final text response is generated.
+        to the LLM until a final text response is generated or an error occurs.
 
         Args:
-            model: The primary LLM model to use for generation
-            fallbackModel: The fallback model to use if the primary model fails
-            messages: List of conversation messages to send to the LLM
-            useTools: Whether to enable tool calling functionality (default: False)
-            callId: Optional unique identifier for this LLM call (auto-generated if None)
+            messages: List of conversation messages to send to the LLM (Sequence[ModelMessage])
+            chatId: The Telegram/Max chat identifier used for rate-limiting (Optional[int])
+            chatSettings: Chat-level settings dict used to resolve models and the rate limiter name (ChatSettingsDict)
+            llmManager: The LLM manager used to look up model instances by key (LLMManager)
+            modelKey: Primary model selector — an AbstractModel instance, a ChatSettingsKey,
+                or None to fall back to ChatSettingsKey.CHAT_MODEL (Optional[Union[AbstractModel, ChatSettingsKey]])
+            fallbackModelKey: Fallback model selector — same semantics as modelKey,
+                defaults to ChatSettingsKey.FALLBACK_MODEL when None (Optional[Union[AbstractModel, ChatSettingsKey]])
+            useTools: Whether to enable tool calling functionality (bool)
+            callId: Optional unique identifier for this LLM call (auto-generated if None) (Optional[str])
             callback: Optional async callback invoked when tool calls are made,
-                     receives the ModelRunResult and extraData
-            extraData: Optional dictionary of extra data passed to tool handlers and callbacks
+                receives the ModelRunResult and extraData
+                (Optional[Callable[[ModelRunResult, ExtraDataDict], Awaitable[None]]])
+            extraData: Optional dictionary of extra data passed to tool handlers and callbacks (ExtraDataDict)
+            keepFirstN: Number of messages to keep from the beginning when condensing context (int)
+            keepLastN: Number of messages to keep from the end when condensing context (int)
+            maxTokensCoeff: Multiplier for context size token limit (0.8 = 80% of context size) (float)
+            condensingPromptKey: Optional key for the condensing prompt text (Optional[Union[str, ChatSettingsKey]])
+            condensingModelKey: Optional model to use for summarizing messages
+                (Optional[Union[AbstractModel, ChatSettingsKey]])
 
         Returns:
             ModelRunResult containing the final LLM response, with toolsUsed flag set
-            if any tools were executed during the conversation
+            if any tools were executed during the conversation (ModelRunResult)
         """
         if callId is None:
             callId = str(uuid.uuid4())
@@ -617,7 +652,22 @@ class LLMService:
     async def generateImage(
         self, prompt: str, chatId: Optional[int], chatSettings: ChatSettingsDict, llmManager: LLMManager
     ) -> ModelRunResult:
-        """Generate image with given prompt and chat settings."""
+        """Generate image with given prompt and chat settings, dood!
+
+        Generates an image using the configured image generation model with
+        fallback support. Applies rate limiting before making the generation
+        request.
+
+        Args:
+            prompt: The text prompt describing the image to generate (str)
+            chatId: The Telegram/Max chat identifier used for rate-limiting (Optional[int])
+            chatSettings: Chat-level settings dict containing the image generation model
+                configuration (ChatSettingsDict)
+            llmManager: The LLM manager used to look up image generation model instances (LLMManager)
+
+        Returns:
+            ModelRunResult containing the generated image response and metadata (ModelRunResult)
+        """
         imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(llmManager)
         fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(llmManager)
 
@@ -626,10 +676,34 @@ class LLMService:
         return await imageGenerationModel.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
 
     async def rateLimit(self, chatId: int, chatSettings: ChatSettingsDict) -> None:
+        """Apply rate limiting to a chat based on its settings, dood!
+
+        Retrieves the rate limiter name from chat settings and applies the
+        rate limit using the configured rate limiter manager for the specific
+        chat identifier.
+
+        Args:
+            chatId: The Telegram/Max chat identifier to rate limit (int)
+            chatSettings: Chat-level settings dict containing the rate limiter configuration (ChatSettingsDict)
+
+        Returns:
+            None
+        """
         rateLimiterName = chatSettings[ChatSettingsKey.LLM_RATELIMITER].toStr()
         await self.rateLimiterManager.applyLimit(rateLimiterName, self.getRateLimiterKey(chatId))
 
     def getRateLimiterKey(self, chatId: int) -> str:
+        """Generate a rate limiter key for a given chat ID, dood!
+
+        Creates a unique key string used by the rate limiter manager to track
+        rate limits per chat. The key format is "chatLLM#<chatId>".
+
+        Args:
+            chatId: The Telegram/Max chat identifier (int)
+
+        Returns:
+            A unique rate limiter key string (str)
+        """
         return f"chatLLM#{chatId}"
 
     def resolveModel(
@@ -640,6 +714,23 @@ class LLMService:
         llmManager: LLMManager,
         defaultKey: ChatSettingsKey,
     ) -> AbstractModel:
+        """Resolve a model key to an actual AbstractModel instance, dood!
+
+        This method provides flexible model resolution, accepting either:
+        - An AbstractModel instance (returned directly)
+        - A ChatSettingsKey (resolved to a model via chatSettings)
+        - None (resolved to the defaultKey model via chatSettings)
+
+        Args:
+            modelKey: The model to resolve — an AbstractModel instance, a ChatSettingsKey,
+                or None to fall back to defaultKey (Optional[Union[AbstractModel, ChatSettingsKey]])
+            chatSettings: Chat-level settings dict used to resolve model keys to instances (ChatSettingsDict)
+            llmManager: The LLM manager used to get model instances (LLMManager)
+            defaultKey: The fallback ChatSettingsKey to use if modelKey is None (ChatSettingsKey)
+
+        Returns:
+            The resolved AbstractModel instance (AbstractModel)
+        """
         if isinstance(modelKey, AbstractModel):
             return modelKey
 

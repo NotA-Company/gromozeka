@@ -3,7 +3,7 @@
 This module provides comprehensive data models for working with Large Language Models (LLMs),
 including message structures, tool calling capabilities, function definitions, and result handling.
 These models are designed to be provider-agnostic and support various LLM providers including
-OpenAI, Yandex Cloud, and OpenRouter.
+OpenAI, Yandex Cloud, and OpenRouter, dood!
 
 Key components:
 - LLMAbstractTool: Base class for LLM tool definitions
@@ -53,19 +53,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Sentinel returned by per-field renderers to signal that the field should be
-#: omitted from the printed output entirely.
+#: omitted from the printed output entirely, dood!
 _OMIT: object = object()
 
 
 def _renderError(value: Optional[Exception]) -> Any:
-    """Render an Exception field compactly: ``"<TypeName>: <message>"``.
+    """Render an Exception field compactly: ``"<TypeName>: <message>"``, dood!
 
     Args:
         value: The error value or None.
 
     Returns:
-        Formatted string when set; ``_OMIT`` when None so it disappears
-        from the printed output.
+        str: Formatted string when set; ``_OMIT`` when None so it disappears
+            from the printed output.
     """
     if value is None:
         return _OMIT
@@ -73,13 +73,13 @@ def _renderError(value: Optional[Exception]) -> Any:
 
 
 def _renderMediaData(value: Optional[bytes]) -> Any:
-    """Render bytes media data as a length tag, never as raw bytes.
+    """Render bytes media data as a length tag, never as raw bytes, dood!
 
     Args:
         value: The media bytes or None.
 
     Returns:
-        ``"<bytes len=N>"`` when set; ``_OMIT`` when None / empty.
+        str: ``"<bytes len=N>"`` when set; ``_OMIT`` when None / empty.
     """
     if value is None or len(value) == 0:
         return _OMIT
@@ -87,19 +87,19 @@ def _renderMediaData(value: Optional[bytes]) -> Any:
 
 
 def _renderStatus(value: "ModelResultStatus") -> Any:
-    """Render a ModelResultStatus as its symbolic name.
+    """Render a ModelResultStatus as its symbolic name, dood!
 
     Args:
         value: The status enum value.
 
     Returns:
-        The enum's ``.name``.
+        str: The enum's ``.name``.
     """
     return value.name
 
 
 class LLMAbstractTool(ABC):
-    """Abstract base class for LLM tools.
+    """Abstract base class for LLM tools, dood!
 
     This class defines the interface that all LLM tool implementations must follow.
     Tools are used to extend LLM capabilities by allowing them to call external functions.
@@ -115,7 +115,7 @@ class LLMAbstractTool(ABC):
 
     @abstractmethod
     def toJson(self) -> Dict[str, Any]:
-        """Convert the tool to a JSON-serializable dictionary.
+        """Convert the tool to a JSON-serializable dictionary, dood!
 
         This method must be implemented by subclasses to provide a representation
         of the tool that can be sent to LLM providers.
@@ -130,7 +130,7 @@ class LLMAbstractTool(ABC):
 
 
 class LLMParameterType(StrEnum):
-    """Enumeration of supported parameter types for LLM function definitions.
+    """Enumeration of supported parameter types for LLM function definitions, dood!
 
     This enum defines the valid types that can be used when defining parameters
     for LLM function tools. These types map to JSON Schema types.
@@ -148,20 +148,20 @@ class LLMParameterType(StrEnum):
         string
     """
 
-    #: String type for text parameters
+    #: String type for text parameters, dood!
     STRING = "string"
-    #: Numeric type for integer or floating-point values
+    #: Numeric type for integer or floating-point values, dood!
     NUMBER = "number"
-    #: Boolean type for true/false values
+    #: Boolean type for true/false values, dood!
     BOOLEAN = "boolean"
-    #: Array type for lists of values
+    #: Array type for lists of values, dood!
     ARRAY = "array"
-    #: Object type for structured data
+    #: Object type for structured data, dood!
     OBJECT = "object"
 
 
 class LLMFunctionParameter:
-    """Represents a parameter definition for an LLM function tool.
+    """Represents a parameter definition for an LLM function tool, dood!
 
     This class defines a single parameter that can be passed to an LLM function tool,
     including its name, description, type, and whether it's required.
@@ -192,7 +192,7 @@ class LLMFunctionParameter:
         required: bool = False,
         extra: Dict[str, Any] = {},
     ):
-        """Initialize a function parameter.
+        """Initialize a function parameter, dood!
 
         Args:
             name: The parameter name.
@@ -211,7 +211,7 @@ class LLMFunctionParameter:
         self.extra = extra.copy()
 
     def toJson(self) -> Dict[str, Any]:
-        """Convert the parameter to a JSON-serializable dictionary.
+        """Convert the parameter to a JSON-serializable dictionary, dood!
 
         Returns:
             Dict[str, Any]: A dictionary representation of the parameter with
@@ -236,7 +236,7 @@ class LLMFunctionParameter:
 
 
 class LLMToolFunction(LLMAbstractTool):
-    """Represents a function tool that can be called by an LLM.
+    """Represents a function tool that can be called by an LLM, dood!
 
     This class defines a function tool with its name, description, parameters,
     and optionally a callable implementation. When an LLM requests to call this tool,
@@ -277,7 +277,7 @@ class LLMToolFunction(LLMAbstractTool):
         parameters: Sequence[LLMFunctionParameter],
         function: Optional[Callable] = None,
     ):
-        """Initialize a function tool.
+        """Initialize a function tool, dood!
 
         Args:
             name: The function name.
@@ -294,7 +294,7 @@ class LLMToolFunction(LLMAbstractTool):
         self.function = function
 
     def call(self, *args, **kwargs) -> Any:
-        """Execute the function with the provided arguments.
+        """Execute the function with the provided arguments, dood!
 
         Args:
             *args: Positional arguments to pass to the function.
@@ -321,7 +321,7 @@ class LLMToolFunction(LLMAbstractTool):
         raise ValueError("No function provided")
 
     def toJson(self) -> Dict[str, Any]:
-        """Convert the tool to a JSON-serializable dictionary.
+        """Convert the tool to a JSON-serializable dictionary, dood!
 
         This method formats the tool definition according to the OpenAI function calling
         specification, which is widely supported by LLM providers.
@@ -396,7 +396,7 @@ class LLMToolFunction(LLMAbstractTool):
 
 
 class LLMToolCall:
-    """Represents a tool call request from an LLM.
+    """Represents a tool call request from an LLM, dood!
 
     This class encapsulates a tool call that an LLM has requested to execute,
     including the call ID, function name, and parameters.
@@ -417,7 +417,7 @@ class LLMToolCall:
     """
 
     def __init__(self, id: Any, name: str, parameters: Dict[Any, Any]):
-        """Initialize a tool call.
+        """Initialize a tool call, dood!
 
         Args:
             id: Unique identifier for the tool call.
@@ -432,7 +432,7 @@ class LLMToolCall:
         self.parameters = parameters
 
     def __str__(self) -> str:
-        """Return a JSON string representation of the tool call.
+        """Return a JSON string representation of the tool call, dood!
 
         Returns:
             str: JSON string containing the tool call's id, name, and parameters.
@@ -443,7 +443,7 @@ class LLMToolCall:
 
 
 class ModelMessage:
-    """Represents a message in an LLM conversation.
+    """Represents a message in an LLM conversation, dood!
 
     This class provides a standard format for messages exchanged with LLMs,
     supporting various roles (user, assistant, system), content formats,
@@ -475,7 +475,7 @@ class ModelMessage:
         toolCallId: Optional[Any] = None,
         weight: Optional[int] = None,
     ):
-        """Initialize a model message.
+        """Initialize a model message, dood!
 
         Args:
             role: The message role (default: "user").
@@ -497,7 +497,7 @@ class ModelMessage:
 
     @classmethod
     def fromDict(cls, d: Dict[str, Any]) -> "ModelMessage":
-        """Create a ModelMessage from a dictionary.
+        """Create a ModelMessage from a dictionary, dood!
 
         This method parses a dictionary representation of a message, handling
         various content keys ("content" or "text") and tool call structures.
@@ -569,7 +569,7 @@ class ModelMessage:
 
     @classmethod
     def fromDictList(cls, dictList: List[Dict[str, Any]]) -> List["ModelMessage"]:
-        """Create a list of ModelMessage objects from a list of dictionaries.
+        """Create a list of ModelMessage objects from a list of dictionaries, dood!
 
         Args:
             dictList: List of dictionaries containing message data.
@@ -594,7 +594,7 @@ class ModelMessage:
         content: Optional[Any] = None,
         skipRole: bool = False,
     ) -> Dict[str, Any]:
-        """Convert the message to a dictionary.
+        """Convert the message to a dictionary, dood!
 
         Args:
             contentKey: Optional override for the content key (default: None, uses self.contentKey).
@@ -646,7 +646,7 @@ class ModelMessage:
         return ret
 
     def __str__(self) -> str:
-        """Return a JSON string representation of the message.
+        """Return a JSON string representation of the message, dood!
 
         Returns:
             str: JSON string representation of the message.
@@ -654,7 +654,7 @@ class ModelMessage:
         return utils.jsonDumps(self.toDict())
 
     def __repr__(self) -> str:
-        """Return a detailed string representation of the message.
+        """Return a detailed string representation of the message, dood!
 
         Returns:
             str: String representation including the class name and JSON content.
@@ -662,7 +662,7 @@ class ModelMessage:
         return f"{type(self).__name__}({str(self)})"
 
     def toLogMessage(self) -> str:
-        """Return a string representation of the message for logging.
+        """Return a string representation of the message for logging, dood!
 
         Returns:
             str: String representation of the message.
@@ -671,7 +671,7 @@ class ModelMessage:
 
 
 class ModelImageMessage(ModelMessage):
-    """Represents a message with image content for multimodal LLMs.
+    """Represents a message with image content for multimodal LLMs, dood!
 
     This class extends ModelMessage to support image content alongside text.
     Images are automatically converted to base64 and embedded in the message
@@ -696,7 +696,7 @@ class ModelImageMessage(ModelMessage):
     """
 
     def __init__(self, role: str = "user", content: str = "", image: bytearray = bytearray()):
-        """Initialize an image message.
+        """Initialize an image message, dood!
 
         Args:
             role: The message role (default: "user").
@@ -715,7 +715,7 @@ class ModelImageMessage(ModelMessage):
         content: Optional[Any] = None,
         skipRole: bool = False,
     ) -> Dict[str, Any]:
-        """Convert the message to a dictionary with image content.
+        """Convert the message to a dictionary with image content, dood!
 
         This method overrides the parent to convert the image to base64 and
         format it according to the OpenAI multimodal message specification.
@@ -765,7 +765,7 @@ class ModelImageMessage(ModelMessage):
         return super().toDict(contentKey, content=content, skipRole=skipRole)
 
     def toLogMessage(self) -> str:
-        """Return a string representation of the message for logging.
+        """Return a string representation of the message for logging, dood!
 
         Returns:
             str: String representation of the message.
@@ -789,7 +789,7 @@ class ModelImageMessage(ModelMessage):
 
 
 class ModelResultStatus(Enum):
-    """Enumeration of possible statuses for LLM model execution results.
+    """Enumeration of possible statuses for LLM model execution results, dood!
 
     This enum defines the various states that can result from running an LLM,
     including success states, partial results, and error conditions.
@@ -810,26 +810,26 @@ class ModelResultStatus(Enum):
         FINAL
     """
 
-    #: The status is not specified
+    #: The status is not specified, dood!
     UNSPECIFIED = 0
-    #: The alternative is partially complete
+    #: The alternative is partially complete, dood!
     PARTIAL = 1
-    #: The alternative is truncated but considered final
+    #: The alternative is truncated but considered final, dood!
     TRUNCATED_FINAL = 2
-    #: The alternative is complete and final
+    #: The alternative is complete and final, dood!
     FINAL = 3
-    #: The alternative has been filtered for content
+    #: The alternative has been filtered for content, dood!
     CONTENT_FILTER = 4
-    #: The alternative involves tool calls
+    #: The alternative involves tool calls, dood!
     TOOL_CALLS = 5
-    #: Represents an unknown status (-1)
+    #: Represents an unknown status (-1), dood!
     UNKNOWN = -1
-    #: An error occurred during execution
+    #: An error occurred during execution, dood!
     ERROR = 6
 
 
 class ModelRunResult:
-    """Unified result structure for LLM model execution.
+    """Unified result structure for LLM model execution, dood!
 
     This class encapsulates all possible outputs from running an LLM, including
     text responses, tool calls, media content, token usage, and error information.
@@ -879,11 +879,11 @@ class ModelRunResult:
         "totalTokens",
     )
 
-    # Per-field rendering overrides for __str__. Maps field name to a callable
-    # that takes the raw value and returns either the ``_OMIT`` sentinel (drop
-    # the field from output) or any object whose repr() is what we want printed.
-    # Fields absent from this dict use the default rule: omit when value is
-    # None, False, or an empty container; otherwise include ``repr(value)``.
+    #: Per-field rendering overrides for __str__, dood! Maps field name to a callable
+    #: that takes the raw value and returns either the ``_OMIT`` sentinel (drop
+    #: the field from output) or any object whose repr() is what we want printed.
+    #: Fields absent from this dict use the default rule: omit when value is
+    #: None, False, or an empty container; otherwise include ``repr(value)``.
     _STR_RENDERERS: Dict[str, Callable[[Any], Any]] = {
         # Raw API response object: too large and too noisy for logs — always omit.
         "result": lambda v: _OMIT,
@@ -906,7 +906,7 @@ class ModelRunResult:
         outputTokens: Optional[int] = None,
         totalTokens: Optional[int] = None,
     ):
-        """Initialize a model run result.
+        """Initialize a model run result, dood!
 
         Args:
             rawResult: The raw result object from the LLM provider.
@@ -941,7 +941,7 @@ class ModelRunResult:
         self.totalTokens = totalTokens
 
     def setFallback(self, isFallback: bool):
-        """Set whether this result is from a fallback mechanism.
+        """Set whether this result is from a fallback mechanism, dood!
 
         Args:
             isFallback: True if this result is from a fallback, False otherwise.
@@ -961,7 +961,7 @@ class ModelRunResult:
         self.isFallback = isFallback
 
     def setToolsUsed(self, isToolsUsed: bool):
-        """Set whether tools were used in generating this result.
+        """Set whether tools were used in generating this result, dood!
 
         Args:
             isToolsUsed: True if tools were used, False otherwise.
@@ -981,7 +981,7 @@ class ModelRunResult:
         self.isToolsUsed = isToolsUsed
 
     def to_json(self) -> str:
-        """Convert the raw result to a JSON string.
+        """Convert the raw result to a JSON string, dood!
 
         Returns:
             str: JSON string representation of the raw result.
@@ -997,7 +997,7 @@ class ModelRunResult:
         return utils.jsonDumps(self.result)
 
     def __str__(self) -> str:
-        """Render this result as ``ClassName({field=value, ...})``.
+        """Render this result as ``ClassName({field=value, ...})``, dood!
 
         Iterates ``__slots__`` (including inherited slots from parent classes
         via the MRO walk) and consults ``_STR_RENDERERS`` for per-field
@@ -1010,7 +1010,7 @@ class ModelRunResult:
         and worth seeing in the output even though ``0`` is falsy in Python.
 
         Returns:
-            Human-readable summary string.  NOT round-trippable via eval —
+            str: Human-readable summary string.  NOT round-trippable via eval —
             intended for logs / debug only.
         """
         parts: List[str] = []
@@ -1058,7 +1058,7 @@ class ModelRunResult:
         return f"{type(self).__name__}({', '.join(parts)})"
 
     def toModelMessage(self) -> ModelMessage:
-        """Convert the result to a ModelMessage.
+        """Convert the result to a ModelMessage, dood!
 
         This is useful for appending the result to a conversation history.
 
@@ -1084,7 +1084,7 @@ class ModelRunResult:
         )
 
     def isMedia(self) -> bool:
-        """Check if the result contains media content.
+        """Check if the result contains media content, dood!
 
         Returns:
             bool: True if both mediaMimeType and mediaData are present, False otherwise.
@@ -1103,7 +1103,7 @@ class ModelRunResult:
 
 
 class ModelStructuredResult(ModelRunResult):
-    """Result of a structured-output LLM call.
+    """Result of a structured-output LLM call, dood!
 
     Extends ModelRunResult with a parsed JSON object. Inherits all of the
     parent's fields: status, resultText (the raw model text BEFORE parse),
@@ -1149,7 +1149,7 @@ class ModelStructuredResult(ModelRunResult):
         outputTokens: Optional[int] = None,
         totalTokens: Optional[int] = None,
     ):
-        """Initialize a structured-output model result.
+        """Initialize a structured-output model result, dood!
 
         Args:
             rawResult: The raw result object from the LLM provider.

@@ -1,4 +1,4 @@
-"""Repository for divination readings and cached layout definitions.
+"""Repository for divination readings and cached layout definitions, dood!
 
 This module provides the DivinationsRepository class which handles all database
 operations related to divination readings (tarot and runes), including persisting
@@ -39,13 +39,13 @@ class DivinationsRepository(BaseRepository):
                 and executing database operations across multiple sources.
     """
 
-    __slots__ = ()
+    __slots__ = ()  # No additional slots needed beyond base class, dood!
 
     def __init__(self, manager: DatabaseManager) -> None:
-        """Initialize the divinations repository.
+        """Initialize the divinations repository, dood!
 
         Args:
-            manager: DatabaseManager instance for provider access
+            manager (DatabaseManager): DatabaseManager instance for provider access
 
         Returns:
             None
@@ -67,7 +67,7 @@ class DivinationsRepository(BaseRepository):
         imagePrompt: Optional[str],
         invokedVia: str,
     ) -> bool:
-        """Insert a single divination reading row.
+        """Insert a single divination reading row, dood!
 
         Persists a tarot or runes reading to the database, including all draw
         data, LLM interpretation, and image generation prompt. The reading is
@@ -134,7 +134,7 @@ class DivinationsRepository(BaseRepository):
             return False
 
     async def getLayout(self, systemId: str, layoutName: str) -> Optional[DivinationLayoutDict]:
-        """Retrieve a cached layout definition.
+        """Retrieve a cached layout definition, dood!
 
         Searches for a layout by trying multiple matching strategies: exact case-insensitive
         match on layout_id/name_en/name_ru, partial match using LIKE operator, and
@@ -215,7 +215,7 @@ class DivinationsRepository(BaseRepository):
             return None
 
     def isNegativeCacheEntry(self, layoutDict: Optional[DivinationLayoutDict]) -> bool:
-        """Check if a layout dictionary represents a negative cache entry.
+        """Check if a layout dictionary represents a negative cache entry, dood!
 
         Negative cache entries are used to prevent repeated API calls for layouts
         that do not exist. They are identified by empty names, n_symbols=0, and
@@ -247,7 +247,7 @@ class DivinationsRepository(BaseRepository):
         positions: Sequence[str],
         description: str,
     ) -> bool:
-        """Save or update a layout definition in cache.
+        """Save or update a layout definition in cache, dood!
 
         Uses provider.upsert() to insert new layouts or update existing ones,
         ensuring idempotent cache updates. Updated_at timestamp is refreshed
@@ -301,7 +301,7 @@ class DivinationsRepository(BaseRepository):
             return False
 
     async def saveNegativeCache(self, systemId: str, layoutId: str) -> bool:
-        """Save a negative cache entry for a non-existent layout.
+        """Save a negative cache entry for a non-existent layout, dood!
 
         Prevents repeated external API calls for layouts that do not exist.
         Negative cache entries are identified by empty names and n_symbols=0.

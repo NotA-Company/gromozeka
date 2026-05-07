@@ -14,7 +14,8 @@
 4. [Adding a Database Migration](#4-adding-a-database-migration)
 5. [Database Models Reference](#5-database-models-reference)
 6. [Adding Methods to Database](#6-adding-methods-to-database)
-7. [Migration Documentation Protocol](#7-migration-documentation-protocol)
+7. [Provider Helper Methods](#7-provider-helper-methods)
+8. [Migration Documentation Protocol](#8-migration-documentation-protocol)
 
 ---
 
@@ -46,6 +47,10 @@
 | `cache` | `clearOldCacheEntries(ttl)` | `None` | Cleanup stale cache |
 | `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `None` | Cleanup old tasks |
 | `divinations` | `insertReading(...)` | `None` | Persist a tarot/runes reading row in `divinations` |
+| `divinations` | `getLayout(systemId, layoutName)` | `Optional[DivinationLayoutDict]` | Get cached layout with fuzzy search |
+| `divinations` | `saveLayout(...)` | `bool` | Save/update layout definition in cache |
+| `divinations` | `saveNegativeCache(systemId, layoutId)` | `bool` | Save negative cache entry for non-existent layout |
+| `divinations` | `isNegativeCacheEntry(layoutDict)` | `bool` | Check if layout dict is a negative cache entry |
 
 ---
 
@@ -417,7 +422,81 @@ class Database:
 
 ---
 
-## 7. Migration Documentation Protocol
+## 7. Provider Helper Methods
+
+**File:** [`internal/database/providers/base.py`](../../internal/database/providers/base.py)
+
+The `BaseSQLProvider` abstract class provides cross-database compatibility methods for common SQL operations. Use these methods instead of writing RDBMS-specific SQL directly, dood!
+
+### `getCaseInsensitiveComparison(column, param)`
+
+Get RDBMS-specific case-insensitive comparison for exact matches.
+
+```python
+# Exact case-insensitive match
+query = sqlProvider.getCaseInsensitiveComparison("name", "userName")
+# Returns: 'LOWER(name) = LOWER(:userName)' for SQLite/MySQL
+# Returns: 'LOWER(name) = LOWER(:userName)' for PostgreSQL (or could use ILIKE)
+```
+
+**Use cases:**
+- Username/email lookups where case doesn't matter
+- Finding chat settings by key
+- Exact string matching across all RDBMS
+
+### `getLikeComparison(column, param)`
+
+Get RDBMS-specific case-insensitive LIKE comparison for pattern matching.
+
+```python
+# Partial/fuzzy case-insensitive match
+query = sqlProvider.getLikeComparison("name", "searchTerm")
+# Returns: 'LOWER(name) LIKE LOWER(:searchTerm)' for SQLite/MySQL/PostgreSQL
+```
+
+**Use cases:**
+- Fuzzy search for layout names in divinations
+- Partial text search where user input may be incomplete
+- Type-ahead/search-as-you-type functionality
+
+**Example - Divination layout search:**
+```python
+from internal.database.providers.base import BaseSQLProvider
+
+async def getLayout(self, systemId: str, layoutName: str) -> Optional[DivinationLayoutDict]:
+    """Search for layout with multiple strategies."""
+    sqlProvider = await self.manager.getProvider(readonly=True)
+
+    # Try exact match first
+    row = await sqlProvider.executeFetchOne(
+        "SELECT * FROM divination_layouts "
+        f"WHERE system_id = :systemId AND {sqlProvider.getCaseInsensitiveComparison('layout_id', 'layoutName')}",
+        {"systemId": systemId, "layoutName": layoutName}
+    )
+
+    # If not found, try fuzzy match with LIKE
+    if not row:
+        row = await sqlProvider.executeFetchOne(
+            "SELECT * FROM divination_layouts "
+            f"WHERE system_id = :systemId AND {sqlProvider.getLikeComparison('name_en', 'layoutName')}",
+            {"systemId": systemId, "layoutName": f"%{layoutName}%"}
+        )
+
+    return row
+```
+
+### Other Provider Methods
+
+| Method | Purpose |
+|---|---|
+| `applyPagination(query, limit, offset)` | Add RDBMS-specific LIMIT/OFFSET clause |
+| `getTextType(maxLength)` | Get appropriate TEXT type for schema migrations |
+| `upsert(table, values, conflictColumns, updateExpressions)` | Portable upsert operation |
+| `isReadOnly()` | Check if provider is in read-only mode |
+
+---
+
+## 8. Migration Documentation Protocol
 
 **Critical lesson from migration_009 documentation error, dood!**
 
