@@ -308,7 +308,9 @@ class SpamHandler(BaseBotHandler):
         spamMessagesCount = 0
         nonSpamMessagesCount = 0
         for msg in userMessages:
-            if msg["message_text"] == ensuredMessage.messageText and msg["message_id"] != ensuredMessage.messageId:
+            if (msg["message_text"] == ensuredMessage.messageText) and (
+                str(msg["message_id"]) != str(ensuredMessage.messageId)
+            ):
                 spamMessagesCount = spamMessagesCount + 1
             else:
                 nonSpamMessagesCount = nonSpamMessagesCount + 1
