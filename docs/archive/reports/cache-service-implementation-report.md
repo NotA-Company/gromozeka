@@ -292,4 +292,4 @@ To test the implementation:
 
 ## Conclusion
 
-The CacheService implementation provides a robust, type-safe, and maintainable caching solution for the Gromozeka bot. The use of `CacheNamespace` enum throughout ensures consistency and prevents errors, while the automatic persistence management simplifies usage. The service is ready for integration into the bot handlers, dood!
+The CacheService implementation provides a robust, type-safe, and maintainable caching solution for the Gromozeka bot. The use of `CacheNamespace` enum throughout ensures consistency and prevents errors, while the automatic persistence management simplifies usage. The service is ready for integration into the bot handlers

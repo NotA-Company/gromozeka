@@ -1,6 +1,13 @@
-# Task Phase 4 Completion Report: Migration Template Cursor Parameter Update
+# Task Phase 4 Completion Report: Migration Template Cursor Parameter Update (HISTORICAL)
 
-**Category:** Database Migration System Refactoring
+> **Status:** HISTORICAL REPORT — describes work on `DatabaseWrapper` which no longer exists
+> **Resolution:** The database architecture has been refactored to Repository pattern with provider abstraction. Migration system uses provider cursor access.
+
+---
+
+**Warning:** This report references `internal/database/wrapper.py` which has been deleted. Migration system now works through provider abstraction in [`internal/database/providers/`](../../internal/database/providers/).
+
+**Category:** Database Migration System Refactoring (historical)
 **Complexity:** Simple
 **Report Date:** 2025-12-01
 **Report Author:** SourceCraft Code Assistant

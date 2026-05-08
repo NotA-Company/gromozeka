@@ -37,7 +37,15 @@ Usage Example:
 
 from typing import TypedDict
 
-from .base import BaseSQLProvider, FetchType, ParametrizedQuery, QueryResult
+from .base import (
+    BaseSQLProvider,
+    ExcludedValue,
+    FetchType,
+    ParametrizedQuery,
+    QueryResult,
+    QueryResultFetchAll,
+    QueryResultFetchOne,
+)
 from .sqlink import SQLinkProvider
 from .sqlite3 import SQLite3Provider
 
@@ -112,8 +120,8 @@ def getSqlProvider(config: SQLProviderConfig) -> BaseSQLProvider:
         >>> provider = getSqlProvider(config)
         >>> result = provider.execute("SELECT 1")
     """
-    provider = config.get("provider")
-    parameters = config.get("parameters", {})
+    provider: str = config.get("provider")
+    parameters: dict = config.get("parameters", {})
 
     if not provider:
         raise ValueError("SQLProviderConfig is missing the required 'provider' key")
@@ -135,4 +143,7 @@ __all__ = [
     "SQLinkProvider",
     "getSqlProvider",
     "SQLProviderConfig",
+    "ExcludedValue",
+    "QueryResultFetchAll",
+    "QueryResultFetchOne",
 ]

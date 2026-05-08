@@ -1,12 +1,34 @@
 # lib.cache - Generic Cache Library Design v0
 
-**Status:** Draft  
-**Created:** 2025-11-13  
-**Author:** SourceCraft Code Assistant (Prinny Mode)  
+**Status:** ✅ Implemented — see `lib/cache/` for current implementation
 
-## Overview, dood!
+**Current Implementation Note:** The implemented system includes these current APIs not documented in the original design:
+- `ValueConverter` protocol — for converting values to/from strings
+- `StringValueConverter` — pass-through string conversion
+- `JsonValueConverter` — JSON string/value conversion
+- `DictCache` constructor accepts `valueConverter` parameter
 
-This document describes the design for `lib.cache` - a generic, reusable caching library that extracts and unifies the caching patterns already implemented in [`lib/yandex_search/`](../../lib/yandex_search/) and [`lib/openweathermap/`](../../lib/openweathermap/), dood!
+**Current Usage:**
+```python
+from lib.cache import DictCache, StringKeyGenerator, JsonValueConverter
+
+cache = DictCache[str, dict](
+    keyGenerator=StringKeyGenerator(),
+    defaultTtl=3600,
+    maxSize=1000,
+    valueConverter=JsonValueConverter()  # Optional value conversion
+)
+```
+
+**Current Export Locations:**
+- `lib/cache/__init__.py` — exports all public APIs
+- Active docs: `docs/llm/libraries.md` §2 lib/cache
+
+---
+
+## Overview
+
+This document describes the design for `lib.cache` - a generic, reusable caching library that extracts and unifies the caching patterns already implemented in [`lib/yandex_search/`](../../lib/yandex_search/) and [`lib/openweathermap/`](../../lib/openweathermap/)
 
 ## Problem Statement
 
@@ -14,13 +36,13 @@ Currently, we have two separate cache implementations:
 - [`lib/yandex_search/cache_interface.py`](../../lib/yandex_search/cache_interface.py) + [`dict_cache.py`](../../lib/yandex_search/dict_cache.py)
 - [`lib/openweathermap/cache_interface.py`](../../lib/openweathermap/cache_interface.py) + [`dict_cache.py`](../../lib/openweathermap/dict_cache.py)
 
-Both implementations share similar patterns but are domain-specific and cannot be reused. We need a generic cache library that can be used across different domains while maintaining the proven patterns, dood!
+Both implementations share similar patterns but are domain-specific and cannot be reused. We need a generic cache library that can be used across different domains while maintaining the proven patterns
 
 ## Analysis of Existing Implementations
 
 ### Common Patterns Found
 
-Both implementations share these core patterns, dood:
+Both implementations share these core patterns
 
 1. **Abstract Interface Pattern**
    - Use ABC with `@abstractmethod` decorators
@@ -42,7 +64,7 @@ Both implementations share these core patterns, dood:
 
 ### Key Differences
 
-**Yandex Search Cache** (more sophisticated, dood):
+**Yandex Search Cache** (more sophisticated):
 - ✅ Thread safety with `threading.RLock`
 - ✅ Max size enforcement with LRU-like eviction
 - ✅ SHA512 hash-based cache key generation
@@ -50,7 +72,7 @@ Both implementations share these core patterns, dood:
 - ✅ Single cache type (focused)
 - ⚠️ Complex key generation from objects
 
-**OpenWeatherMap Cache** (simpler, dood):
+**OpenWeatherMap Cache** (simpler):
 - ❌ No thread safety
 - ❌ No size limits
 - ✅ Simple string keys
@@ -97,26 +119,26 @@ K = TypeVar('K')  # Key type
 V = TypeVar('V')  # Value type
 
 class CacheInterface(ABC, Generic[K, V]):
-    """Generic cache interface for any key-value storage, dood!"""
+    """Generic cache interface for any key-value storage"""
     
     @abstractmethod
     async def get(self, key: K, ttl: Optional[int] = None) -> Optional[V]:
-        """Get cached value by key, dood!"""
+        """Get cached value by key"""
         pass
     
     @abstractmethod
     async def set(self, key: K, value: V) -> bool:
-        """Store value in cache, dood!"""
+        """Store value in cache"""
         pass
     
     @abstractmethod
     def clear(self) -> None:
-        """Clear all cached data, dood!"""
+        """Clear all cached data"""
         pass
     
     @abstractmethod
     def getStats(self) -> dict:
-        """Get cache statistics, dood!"""
+        """Get cache statistics"""
         pass
 ```
 
@@ -128,10 +150,10 @@ from typing import Protocol, TypeVar
 T = TypeVar('T')
 
 class KeyGenerator(Protocol[T]):
-    """Protocol for generating cache keys from objects, dood!"""
+    """Protocol for generating cache keys from objects"""
     
     def generateKey(self, obj: T) -> str:
-        """Generate string cache key from object, dood!"""
+        """Generate string cache key from object"""
         ...
 ```
 
@@ -151,7 +173,7 @@ K = TypeVar('K')
 V = TypeVar('V')
 
 class DictCache(CacheInterface[K, V]):
-    """Thread-safe dictionary-based cache with TTL and size limits, dood!"""
+    """Thread-safe dictionary-based cache with TTL and size limits"""
     
     def __init__(
         self,
@@ -160,7 +182,7 @@ class DictCache(CacheInterface[K, V]):
         maxSize: Optional[int] = 1000,
         threadSafe: bool = True
     ):
-        """Initialize cache with configuration, dood!
+        """Initialize cache with configuration
         
         Args:
             keyGenerator: Strategy for converting keys to strings
@@ -187,7 +209,7 @@ class DictCache(CacheInterface[K, V]):
 
 ```python
 class NullCache(CacheInterface[K, V]):
-    """No-op cache that never stores anything, dood!
+    """No-op cache that never stores anything
     
     Useful for:
     - Testing without cache side effects
@@ -248,7 +270,7 @@ class NullCache(CacheInterface[K, V]):
 ```python
 from lib.cache import DictCache, StringKeyGenerator
 
-# Simple string-keyed cache, dood!
+# Simple string-keyed cache
 cache = DictCache[str, dict](
     keyGenerator=StringKeyGenerator(),
     defaultTtl=3600,
@@ -261,7 +283,7 @@ await cache.set("user:123", {"name": "Prinny", "level": 99})
 # Retrieve data
 userData = await cache.get("user:123")
 if userData:
-    print(f"Found user: {userData['name']}, dood!")
+    print(f"Found user: {userData['name']}")
 ```
 
 ### Complex Object Keys with Hashing
@@ -276,7 +298,7 @@ class SearchQuery:
     filters: dict
     page: int
 
-# Cache with complex keys, dood!
+# Cache with complex keys
 cache = DictCache[SearchQuery, list](
     keyGenerator=JsonKeyGenerator(),
     defaultTtl=1800,
@@ -297,7 +319,7 @@ import hashlib
 import json
 
 class CustomKeyGenerator(KeyGenerator[SearchRequest]):
-    """Custom key generator for SearchRequest, dood!"""
+    """Custom key generator for SearchRequest"""
     
     def generateKey(self, request: SearchRequest) -> str:
         # Custom logic for key generation
@@ -320,7 +342,7 @@ cache = DictCache[SearchRequest, SearchResponse](
 ```python
 from lib.cache import NullCache
 
-# No-op cache for testing, dood!
+# No-op cache for testing
 cache = NullCache[str, dict]()
 
 await cache.set("key", {"data": "value"})
@@ -330,13 +352,13 @@ result = await cache.get("key")  # Always returns None
 ### Thread-Safe vs Non-Thread-Safe
 
 ```python
-# Thread-safe cache (default), dood!
+# Thread-safe cache (default)
 threadSafeCache = DictCache[str, dict](
     keyGenerator=StringKeyGenerator(),
     threadSafe=True  # Uses RLock
 )
 
-# Non-thread-safe cache (faster for single-threaded), dood!
+# Non-thread-safe cache (faster for single-threaded)
 simpleCache = DictCache[str, dict](
     keyGenerator=StringKeyGenerator(),
     threadSafe=False  # No locking overhead
@@ -351,7 +373,7 @@ cache = DictCache[str, dict](
     maxSize=1000
 )
 
-# Get statistics, dood!
+# Get statistics
 stats = cache.getStats()
 print(f"Entries: {stats['entries']}/{stats['maxSize']}")
 print(f"Utilization: {stats['entries'] / stats['maxSize'] * 100:.1f}%")
@@ -360,7 +382,7 @@ print(f"Default TTL: {stats['defaultTtl']}s")
 # Clear cache if needed
 if stats['entries'] > 900:
     cache.clear()
-    print("Cache cleared, dood!")
+    print("Cache cleared")
 ```
 
 ## API Reference
@@ -502,7 +524,7 @@ Protocol for generating cache keys.
 
 ### 2025-11-13: Initial Design
 
-**Decision:** Create generic cache library based on existing patterns, dood!
+**Decision:** Create generic cache library based on existing patterns
 
 **Rationale:**
 - Two implementations already exist with similar patterns
@@ -519,7 +541,7 @@ Protocol for generating cache keys.
 - Use Python generics for type safety
 - Extract best features from both implementations
 - Maintain backward compatibility during migration
-- Focus on simplicity and ease of use, dood!
+- Focus on simplicity and ease of use
 
 ## References
 
@@ -531,6 +553,6 @@ Protocol for generating cache keys.
 
 ## Conclusion
 
-This design provides a solid foundation for a generic, reusable cache library that unifies the patterns from our existing implementations while adding flexibility and type safety. The migration strategy ensures backward compatibility while moving toward a cleaner architecture, dood!
+This design provides a solid foundation for a generic, reusable cache library that unifies the patterns from our existing implementations while adding flexibility and type safety. The migration strategy ensures backward compatibility while moving toward a cleaner architecture
 
-The library will be easy to use, well-tested, and ready for future enhancements like distributed caching and advanced eviction strategies. Let's make it happen, dood! 🐧
+The library will be easy to use, well-tested, and ready for future enhancements like distributed caching and advanced eviction strategies. Let's make it happen 🐧

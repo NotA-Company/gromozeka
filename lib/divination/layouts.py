@@ -30,6 +30,7 @@ class Layout:
             input).
         systemId: Identifier of the divination system this layout belongs to
             (e.g. ``"tarot"`` or ``"runes"``).
+        description: Optional layout description.
     """
 
     id: str
@@ -38,6 +39,7 @@ class Layout:
     positions: Tuple[str, ...]
     aliases: Tuple[str, ...]
     systemId: str
+    description: Optional[str] = None
 
     @property
     def numSymbols(self) -> int:
@@ -91,11 +93,9 @@ def resolveLayout(name: str, *, layouts: Sequence[Layout]) -> Optional[Layout]:
     return None
 
 
-# ---------------------------------------------------------------------------
 # Predefined tarot layouts.
 # Position names are English (source of truth); Russian translations live in
 # :mod:`lib.divination.localization`.
-# ---------------------------------------------------------------------------
 
 TAROT_LAYOUTS: Tuple[Layout, ...] = (
     Layout(
@@ -159,9 +159,7 @@ TAROT_LAYOUTS: Tuple[Layout, ...] = (
 )
 
 
-# ---------------------------------------------------------------------------
 # Predefined rune layouts.
-# ---------------------------------------------------------------------------
 
 RUNE_LAYOUTS: Tuple[Layout, ...] = (
     Layout(

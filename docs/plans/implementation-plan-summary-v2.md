@@ -1,9 +1,16 @@
-# Multi-Source Database Implementation Plan v2 - Simplified
+# Multi-Source Database Implementation Plan v2 - Simplified (HISTORICAL)
 
-**Date:** 2025-11-30  
-**Estimated Duration:** 2-3 days (reduced due to simpler architecture)
+**Historical Note:** This plan targeted the old DatabaseWrapper in `internal/database/wrapper.py` which **no longer exists**. The multi-source database architecture was implemented using a different pattern: `Database` façade class + `DatabaseManager` for provider routing + domain repositories. See current implementation in [`internal/database/database.py`](../../internal/database/database.py) and [`docs/plans/database-multi-source-configuration.md`](database-multi-source-configuration.md).
 
-## Key Changes from v1
+**Date:** 2025-11-30 (historical)
+**Estimated Duration:** 2-3 days (reduced due to simpler architecture) - historical
+**Current Status:** Multi-source is implemented via different architecture
+
+---
+
+## Key Changes from v1 (HISTORICAL CONTEXT)
+
+**NOTE:** These design notes reflect historical considerations. The actual implemented architecture is documented separately.
 - ✅ No circular dependencies - single DatabaseWrapper class
 - ✅ No decorators - simple internal routing logic
 - ✅ Readonly source support

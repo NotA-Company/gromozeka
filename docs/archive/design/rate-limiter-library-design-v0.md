@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-This document describes the design for a reusable rate limiter library that will be placed in `lib/rate_limiter/`. The library will provide a base interface and a simple sliding window implementation, supporting multiple queues and following the singleton pattern used throughout the project, dood!
+This document describes the design for a reusable rate limiter library that will be placed in `lib/rate_limiter/`. The library will provide a base interface and a simple sliding window implementation, supporting multiple queues and following the singleton pattern used throughout the project
 
 ### 1.1 Goals
 
@@ -85,7 +85,7 @@ classDiagram
 
 ### 3.1 Base Interface (`interface.py`)
 
-The base interface defines the contract that all rate limiter implementations must follow, dood!
+The base interface defines the contract that all rate limiter implementations must follow
 
 ```python
 from abc import ABC, abstractmethod
@@ -169,7 +169,7 @@ class RateLimiterInterface(ABC):
 
 ### 3.2 Sliding Window Implementation (`sliding_window.py`)
 
-This implementation is based on the existing rate limiter in [`lib/yandex_search/client.py`](lib/yandex_search/client.py:463-518), but generalized and improved, dood!
+This implementation is based on the existing rate limiter in [`lib/yandex_search/client.py`](lib/yandex_search/client.py:463-518), but generalized and improved
 
 ```python
 import asyncio
@@ -248,7 +248,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         # Register default queue
         self.registerQueue("default", QueueConfig(maxRequests=10, windowSeconds=60))
         self._initialized = True
-        logger.info("SlidingWindowRateLimiter initialized, dood!")
+        logger.info("SlidingWindowRateLimiter initialized")
     
     async def destroy(self) -> None:
         """
@@ -260,7 +260,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         self._locks.clear()
         self._queueConfigs.clear()
         self._initialized = False
-        logger.info("SlidingWindowRateLimiter destroyed, dood!")
+        logger.info("SlidingWindowRateLimiter destroyed")
     
     def registerQueue(
         self,
@@ -289,7 +289,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         self._locks[queue] = asyncio.Lock()
         logger.info(
             f"Registered queue '{queue}' with {config.maxRequests} "
-            f"requests per {config.windowSeconds} seconds, dood!"
+            f"requests per {config.windowSeconds} seconds"
         )
     
     async def applyLimit(self, queue: str = "default") -> None:
@@ -335,7 +335,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
                 if waitTime > 0:
                     logger.debug(
                         f"Rate limit reached for queue '{queue}', "
-                        f"waiting {waitTime:.2f} seconds, dood!"
+                        f"waiting {waitTime:.2f} seconds"
                     )
                     await asyncio.sleep(waitTime)
                     
@@ -407,7 +407,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
 
 ### 3.3 Singleton Manager (`manager.py`)
 
-The manager provides a singleton interface for accessing rate limiters throughout the application, dood!
+The manager provides a singleton interface for accessing rate limiters throughout the application
 
 ```python
 import logging
@@ -465,7 +465,7 @@ class RateLimiterManager:
         if not hasattr(self, "initialized"):
             self._rateLimiter: Optional[RateLimiterInterface] = None
             self.initialized = True
-            logger.info("RateLimiterManager initialized, dood!")
+            logger.info("RateLimiterManager initialized")
     
     @classmethod
     def getInstance(cls) -> "RateLimiterManager":
@@ -490,7 +490,7 @@ class RateLimiterManager:
             >>> manager.setRateLimiter(limiter)
         """
         self._rateLimiter = limiter
-        logger.info(f"Rate limiter set to {type(limiter).__name__}, dood!")
+        logger.info(f"Rate limiter set to {type(limiter).__name__}")
     
     def getRateLimiter(self) -> Optional[RateLimiterInterface]:
         """
@@ -516,7 +516,7 @@ class RateLimiterManager:
             >>> await manager.applyLimit("api")
         """
         if self._rateLimiter is None:
-            raise RuntimeError("No rate limiter has been set, dood!")
+            raise RuntimeError("No rate limiter has been set")
         
         await self._rateLimiter.applyLimit(queue)
     
@@ -539,7 +539,7 @@ class RateLimiterManager:
             >>> print(f"Requests: {stats['requestsInWindow']}/{stats['maxRequests']}")
         """
         if self._rateLimiter is None:
-            raise RuntimeError("No rate limiter has been set, dood!")
+            raise RuntimeError("No rate limiter has been set")
         
         return self._rateLimiter.getStats(queue)
 ```

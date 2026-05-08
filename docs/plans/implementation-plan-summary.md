@@ -1,9 +1,16 @@
-# Multi-Source Database Implementation Plan - Brief Summary
+# Multi-Source Database Implementation Plan - Brief Summary (HISTORICAL)
 
-**Date:** 2025-11-30
-**Estimated Duration:** 3-5 days
+**Historical Note:** This plan targeted the old DatabaseWrapper pattern which has been superseded. The multi-source database architecture was implemented using a different approach: `Database` façade + `DatabaseManager` + provider abstraction. See current implementation in [`internal/database/database.py`](../../internal/database/database.py), [`internal/database/manager.py`](../../internal/database/manager.py), and [`internal/database/providers/`](../../internal/database/providers/).
 
-## Quick Overview
+**Date:** 2025-11-30 (historical)
+**Estimated Duration:** 3-5 days (historical)
+**Current Status:** Multi-source database is implemented, but using a different architecture than described here
+
+---
+
+## Quick Overview (HISTORICAL DESIGN)
+
+**NOTE:** The concepts below describe a historical design approach. The actual implemented architecture differs. For current multi-source database configuration, see [`docs/plans/database-multi-source-configuration.md`](database-multi-source-configuration.md).
 
 Adding support for multiple SQLite database files per chat with simple routing and fallback mechanism.
 

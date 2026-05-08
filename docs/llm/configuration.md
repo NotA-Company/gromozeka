@@ -1,8 +1,8 @@
 # Gromozeka — Configuration Reference
 
-> **Audience:** LLM agents, dood!  
-> **Purpose:** Complete reference for TOML configuration sections, ConfigManager methods, and per-chat settings, dood!  
-> **Self-contained:** Everything needed for configuration work is here, dood!
+> **Audience:** LLM agents  
+> **Purpose:** Complete reference for TOML configuration sections, ConfigManager methods, and per-chat settings  
+> **Self-contained:** Everything needed for configuration work is here
 
 ---
 
@@ -20,7 +20,7 @@
 1. File at `--config` path (default: `config.toml`)
 2. All `*.toml` files in `--config-dir` directories, sorted alphabetically, merged recursively
 
-**Key:** Later files override earlier ones. Nested dicts are merged recursively, dood!
+**Key:** Later files override earlier ones. Nested dicts are merged recursively
 
 **Default config locations:**
 - [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml) — base app defaults
@@ -52,33 +52,35 @@
 | `group-defaults` | dict | Default settings for group chats |
 | `tier-defaults` | dict | Tier-specific default settings |
 
-**IMPORTANT:** `bot_owners` can be username OR int ID — both are valid. Handle both types in owner checks, dood!
+**IMPORTANT:** `bot_owners` can be username OR int ID — both are valid. Handle both types in owner checks
 
 ### `[database]`
 
 | Key | Type | Purpose |
 |---|---|---|
-| `default` | str | Default source name |
-| `sources.<name>.path` | str | Database file path |
-| `sources.<name>.readonly` | bool | Read-only flag |
-| `sources.<name>.pool-size` | int | Connection pool size |
-| `sources.<name>.timeout` | int | Connection timeout (seconds) |
-| `sources.<name>.parameters.keepConnection` | bool\|null | Connect immediately (true), on demand (false), or auto-detect (null) |
-| `chatMapping.<chatId>` | str | Map chat ID to source name |
+| `default` | str | Default provider name |
+| `providers.<name>.provider` | str | Provider type: `"sqlite3"` or `"sqlink"` (selectable); `"mysql"` and `"postgresql"` exist but are not yet selectable |
+| `providers.<name>.parameters.dbPath` | str | Database file path (SQLite providers) |
+| `providers.<name>.parameters.readOnly` | bool | Read-only flag |
+| `providers.<name>.parameters.timeout` | int | Connection timeout (seconds) |
+| `providers.<name>.parameters.useWal` | bool | Enable WAL mode (SQLite providers) |
+| `providers.<name>.parameters.keepConnection` | bool\|null | Connect immediately (true), on demand (false) |
+| `chatMapping.<chatId>` | str | Map chat ID to provider name |
 
 **Example:**
 ```toml
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot_data.db"
-readonly = false
-pool-size = 5
-timeout = 30
+[database.providers.default]
+provider = "sqlite3"
 
-[database.sources.default.parameters]
-keepConnection = false  # Connect on demand (default for file-based DBs)
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
+timeout = 30
+useWal = true
+keepConnection = true  # Connect on creation and keep connection open
 
 [database.chatMapping]
 -1001234567890 = "default"
@@ -89,23 +91,23 @@ keepConnection = false  # Connect on demand (default for file-based DBs)
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "bot.db"
+readOnly = false
 timeout = 30
+useWal = true
+keepConnection = true
 
-[database.sources.default.parameters]
-keepConnection = false  # Connect on demand
+[database.providers.readonly]
+provider = "sqlink"
 
-[database.sources.readonly]
-path = "archive.db"
-readonly = true
-pool-size = 10
+[database.providers.readonly.parameters]
+dbPath = "archive.db"
+readOnly = true
 timeout = 10
-
-[database.sources.readonly.parameters]
-keepConnection = true  # Connect immediately (good for readonly replicas)
 
 [database.chatMapping]
 -1001234567890 = "readonly"  # Old inactive chat
@@ -115,10 +117,9 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 **`keepConnection` parameter details:**
 - `true` — Connect immediately when provider is created (good for readonly replicas, in-memory DBs)
 - `false` — Connect on first query (default for file-based DBs, saves resources)
-- `null` — Auto-detect: `true` for in-memory SQLite3, `false` otherwise
 - **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
 
-**Note:** Database configuration uses `sources` (not `providers`) for multi-source routing with repository pattern. See [`database.md`](database.md) for details on multi-source routing and repository usage.
+**Note:** Database configuration uses `providers` (not `sources`) for provider abstraction with `provider = "sqlite3"` or `"sqlink"`. MySQL and PostgreSQL providers exist in the codebase but are not selectable yet. See [`database.md`](database.md) for details on multi-source routing and repository usage.
 
 ### `[models]`
 
@@ -232,11 +233,12 @@ mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
 
 ### `[divination]`
 
-Defaults live in [`configs/00-defaults/divination.toml`](../../configs/00-defaults/divination.toml). The handler is registered conditionally on `enabled = true`, dood!
+Defaults live in [`configs/00-defaults/divination.toml`](../../configs/00-defaults/divination.toml). The handler is registered conditionally on `enabled = true`
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch — operator must flip to register `DivinationHandler` |
+| `discovery-enabled` | bool | `true` | Enable automatic layout discovery via LLM + web search for unknown layouts |
 | `tarot-enabled` | bool | `true` | Enable `/taro` command and `do_tarot_reading` LLM tool |
 | `runes-enabled` | bool | `true` | Enable `/runes` command and `do_runes_reading` LLM tool |
 | `image-generation` | bool | `true` | Whether to call `generateImage` per reading |
@@ -270,10 +272,15 @@ When invoked via LLM tool, the handler **does not send a text bot message**. The
 | `DIVINATION_USER_PROMPT_TEMPLATE` | `divination-user-prompt-template` | `BOT_OWNER_SYSTEM` | Template for the user message sent to the LLM |
 | `DIVINATION_IMAGE_PROMPT_TEMPLATE` | `divination-image-prompt-template` | `BOT_OWNER_SYSTEM` | Template used when `image-generation = true` |
 | `DIVINATION_REPLY_TEMPLATE` | `divination-reply-template` | `BOT_OWNER_SYSTEM` | Template for the user-visible reply on the **slash-command path only** (`/taro`, `/runes`). Placeholders: `{layoutName}`, `{drawnSymbolsBlock}`, `{interpretation}`. The LLM-tool path still returns the bare interpretation in JSON and does not use this template. |
+| `DIVINATION_DISCOVERY_SYSTEM_PROMPT` | `divination-discovery-system-prompt` | `BOT_OWNER_SYSTEM` | System instruction for layout discovery (both web search and parsing LLM calls) |
+| `DIVINATION_DISCOVERY_INFO_PROMPT` | `divination-discovery-info-prompt` | `BOT_OWNER_SYSTEM` | Prompt for web search LLM call (finds layout info via web_search tool) |
+| `DIVINATION_DISCOVERY_STRUCTURE_PROMPT` | `divination-discovery-structure-prompt` | `BOT_OWNER_SYSTEM` | Prompt for structured JSON parsing LLM call (converts description to schema) |
 
 User-template placeholders: `{userName}`, `{question}`, `{layoutName}`, `{positionsBlock}`, `{cardsBlock}`.
 Image-template placeholders: `{layoutName}`, `{spreadDescription}`, `{styleHint}`.
 Reply-template placeholders: `{layoutName}` (Russian layout name), `{drawnSymbolsBlock}` (numbered list of drawn symbols with position, name, and reversal flag), `{interpretation}` (raw LLM-generated text).
+Discovery-info-template placeholders: `{systemId}`, `{layoutName}`.
+Discovery-structure-template placeholders: `{description}` (from web search results).
 
 ---
 
@@ -305,7 +312,7 @@ Reply-template placeholders: `{layoutName}` (Russian layout name), `{drawnSymbol
 
 ```python
 def getMyFeatureConfig(self) -> Dict[str, Any]:
-    """Get my feature configuration, dood!
+    """Get my feature configuration
 
     Returns:
         Dict with feature configuration settings
@@ -353,5 +360,5 @@ apiKey: str = myConfig.get("api-key", "")
 
 ---
 
-*This guide is auto-maintained and should be updated whenever configuration sections change, dood!*
-*Last updated: 2026-05-02, dood!*
+*This guide is auto-maintained and should be updated whenever configuration sections change*
+*Last updated: 2026-05-02*

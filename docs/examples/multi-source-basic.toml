@@ -6,28 +6,29 @@
 default = "primary"
 
 # Primary database - main active bot database
-[database.sources.primary]
-path = "bot.db"
-readonly = false
-pool-size = 5
-timeout = 30.0
+[database.providers.primary]
+provider = "sqlite3"
 
-[database.sources.primary.parameters]
-keepConnection = false  # Connect on demand (default for file-based DBs)
+[database.providers.primary.parameters]
+dbPath = "bot.db"
+readOnly = false
+timeout = 30
+useWal = true
+keepConnection = true  # Connect on creation and keep connection open
 
 # Archive database - old/inactive chats (readonly for safety)
-[database.sources.archive]
-path = "archive.db"
-readonly = true  # Prevents accidental modifications
-pool-size = 3    # Lower pool size for readonly source
-timeout = 30.0
+[database.providers.archive]
+provider = "sqlink"
 
-[database.sources.archive.parameters]
+[database.providers.archive.parameters]
+dbPath = "archive.db"
+readOnly = true  # Prevents accidental modifications
+timeout = 10
 keepConnection = true  # Connect immediately (good for readonly replicas)
 
-# Chat-to-source mapping
-# Map specific chats to the archive database
+# Chat-to-provider mapping
+# Map specific chats to specific providers
 [database.chatMapping]
 -1001234567890 = "archive"  # Old inactive chat
 -1002345678901 = "archive"  # Another old chat
-# All other chats use the default "primary" source
+# All other chats use the default "primary" provider

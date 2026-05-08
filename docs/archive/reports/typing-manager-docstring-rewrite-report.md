@@ -16,7 +16,7 @@ Rewrote all docstrings in [`internal/bot/common/typing_manager.py`](internal/bot
 docs(typing_manager): rewrite all docstrings following project conventions
 
 Replaced verbose docstrings with concise, professional documentation.
-Removed informal "dood!" references from docstrings while maintaining
+Removed informal "" references from docstrings while maintaining
 proper Args/Returns sections for all methods and class documentation.
 
 Task: typing-manager-docstring-rewrite
@@ -36,7 +36,7 @@ Comprehensive rewrite of all docstrings in the TypingManager module to improve c
 
 ### Technical Decisions
 - **Concise Documentation:** Replaced verbose explanations with focused, essential information
-- **Professional Tone:** Removed informal "dood!" references from docstrings while keeping Prinny personality in comments
+- **Professional Tone:** Removed informal "" references from docstrings while keeping Prinny personality in comments
 - **Standardized Format:** Applied consistent Args/Returns documentation format across all methods
 - **Essential Information Only:** Focused on parameters, return values, and core functionality rather than implementation details
 

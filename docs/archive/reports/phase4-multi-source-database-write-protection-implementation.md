@@ -34,7 +34,7 @@ def getCursor(
     requireWrite: bool = False,
 ):
     """
-    Context manager for database operations with routing support, dood!
+    Context manager for database operations with routing support
 
     Args:
         chatId: Optional chat ID for routing in multi-source mode
@@ -140,7 +140,7 @@ def addMediaAttachment(self, ...):
 2. `getCursor()` calls `_getConnection(requireWrite=True)`
 3. `_getConnection()` determines target source (via chatId or default)
 4. If target source is readonly, raises `ValueError`
-5. Clear error message: "Cannot perform write operation on readonly source '{sourceName}', dood!"
+5. Clear error message: "Cannot perform write operation on readonly source '{sourceName}'"
 
 **Benefits:**
 - Fail-fast behavior prevents data corruption
@@ -209,7 +209,7 @@ wrapper = DatabaseWrapper(config=config)
 try:
     wrapper.saveChatMessage(chatId=12345, ...)  # Routes to 'archive' (readonly)
 except ValueError as e:
-    print(e)  # "Cannot perform write operation on readonly source 'archive', dood!"
+    print(e)  # "Cannot perform write operation on readonly source 'archive'"
 ```
 
 ### Example 2: Successful Write to Writable Source

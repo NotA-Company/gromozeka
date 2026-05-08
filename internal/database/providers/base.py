@@ -33,11 +33,19 @@ class ExcludedValue:
 
         Args:
             column: Optional column name. If None, uses the key from update_expressions dict.
+
+        Returns:
+            None.
         """
         self.column = column
+        """Optional column name for this excluded value."""
 
     def __repr__(self) -> str:
-        """Return string representation of ExcludedValue."""
+        """Return string representation of ExcludedValue.
+
+        Returns:
+            String representation in format ExcludedValue(column).
+        """
         return f"ExcludedValue({self.column})"
 
 
@@ -78,14 +86,18 @@ class ParametrizedQuery:
     """
 
     __slots__ = ("query", "params", "fetchType")
+    """Slots for query, params, and fetchType attributes."""
 
     def __init__(self, query: str, params: Optional[QueryParams] = None, fetchType: FetchType = FetchType.NO_FETCH):
-        """Initialise a parametrized query.
+        """Initialize a parametrized query.
 
         Args:
             query: Raw SQL query string.
             params: Parameters to bind; defaults to an empty list when ``None``.
             fetchType: Row-fetch strategy; defaults to :attr:`FetchType.FETCH_ALL`.
+
+        Returns:
+            None.
         """
         self.query: str = query
         """Raw SQL query string."""
@@ -102,15 +114,20 @@ class BaseSQLProvider(ABC):
     """Abstract base class for SQL database providers.
 
     Concrete subclasses must implement :meth:`connect`, :meth:`disconnect`,
-    :meth:`_execute`, and :meth:`batchExecute`.  The class also supports
+    :meth:`_execute`, and :meth:`batchExecute`. The class also supports
     the async context-manager protocol via :meth:`__aenter__` /
     :meth:`__aexit__`.
     """
 
     __slots__ = ()
+    """Empty tuple for base class."""
 
     def __init__(self) -> None:
-        """Initialise the provider base (no-op)."""
+        """Initialize the provider base (no-op).
+
+        Returns:
+            None.
+        """
         pass
 
     def __repr__(self) -> str:
@@ -134,6 +151,9 @@ class BaseSQLProvider(ABC):
 
         Raises:
             NotImplementedError: Must be overridden by subclasses.
+
+        Returns:
+            None.
         """
         raise NotImplementedError
 
@@ -143,6 +163,9 @@ class BaseSQLProvider(ABC):
 
         Raises:
             NotImplementedError: Must be overridden by subclasses.
+
+        Returns:
+            None.
         """
         raise NotImplementedError
 
@@ -165,6 +188,9 @@ class BaseSQLProvider(ABC):
             exc_type: Exception type, or ``None`` if no exception occurred.
             exc: Exception instance, or ``None``.
             tb: Traceback object, or ``None``.
+
+        Returns:
+            None.
         """
         await self.disconnect()
         if exc_type is not None:
@@ -307,6 +333,9 @@ class BaseSQLProvider(ABC):
 
         Returns:
             True if the provider is in read-only mode, False otherwise.
+
+        Raises:
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
@@ -321,6 +350,9 @@ class BaseSQLProvider(ABC):
 
         Returns:
             The query with pagination clause appended.
+
+        Raises:
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
@@ -334,6 +366,9 @@ class BaseSQLProvider(ABC):
 
         Returns:
             The appropriate TEXT type for the provider.
+
+        Raises:
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
 
@@ -347,5 +382,24 @@ class BaseSQLProvider(ABC):
 
         Returns:
             A SQL expression string for case-insensitive comparison.
+
+        Raises:
+            NotImplementedError: Must be overridden by subclasses.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def getLikeComparison(self, column: str, param: str) -> str:
+        """Get RDBMS-specific case-insensitive LIKE comparison.
+
+        Args:
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
+
+        Returns:
+            A SQL expression string for case-insensitive LIKE comparison.
+
+        Raises:
+            NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError

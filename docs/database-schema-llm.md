@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 14 (up to `migration_014`)
+**Migrations**: 15 (up to `migration_015`)
 
 ---
 
@@ -407,6 +407,39 @@ CREATE TABLE divinations (
 
 ---
 
+### divination_layouts
+**Purpose**: Cache layout definitions discovered via LLM for reuse
+**Primary Key**: `(system_id, layout_id)`
+
+```sql
+CREATE TABLE divination_layouts (
+    system_id      TEXT    NOT NULL,                          -- 'tarot' | 'runes'
+    layout_id      TEXT    NOT NULL,                          -- Machine-readable identifier
+    name_en        TEXT    NOT NULL,                          -- English name (source of truth)
+    name_ru        TEXT    NOT NULL,                          -- Russian display name
+    n_symbols      INTEGER NOT NULL,                          -- Number of positions
+    positions      TEXT    NOT NULL,                          -- JSON array of position definitions
+    description    TEXT,                                       -- Layout description
+    created_at     TIMESTAMP NOT NULL,
+    updated_at     TIMESTAMP NOT NULL,
+    PRIMARY KEY (system_id, layout_id)
+)
+```
+
+**Indexes**: `idx_divination_layouts_system` on `system_id`
+
+**Repository**: `DivinationLayoutsRepository`
+
+**Usage**:
+- Caches discovered layouts from LLM + web search
+- Negative cache entries prevent repeated failed discoveries (`name_en=''`, `n_symbols=0`)
+- Retrieved via `DivinationLayoutsRepository.getLayout()`
+- Saved via `DivinationLayoutsRepository.saveLayout()`
+
+**Note**: Only populated when `[divination] enabled = true`. Negative cache pattern stores failed discoveries with empty `name_en` and `n_symbols=0`.
+
+---
+
 ### delayed_tasks
 **Purpose**: Scheduled task execution
 **Primary Key**: `id`
@@ -680,7 +713,7 @@ db.chatSettings.getChatSetting(
 db.chatSettings.getChatSettings(
     chatId: int,
     dataSource: Optional[str] = None
-) -> Dict[str, str]
+) -> Dict[str, tuple[str, int]]  # Returns tuple: (value, updated_by)
 ```
 
 **Set Chat Setting**
@@ -688,7 +721,8 @@ db.chatSettings.getChatSettings(
 db.chatSettings.setChatSetting(
     chatId: int,
     key: str,
-    value: str
+    value: str,
+    updatedBy: int  # REQUIRED keyword-only argument - user ID who changed the setting
 ) -> bool
 ```
 
@@ -961,20 +995,22 @@ db.delayedTasks.markDelayedTaskDone(
 [database]
 default = "default"
 
-[database.sources.default]
-path = "data/bot.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "data/bot.db"
+readOnly = false
 timeout = 30
+useWal = true
 
-[database.sources.archive]
-path = "data/archive.db"
-readonly = true
-pool-size = 3
+[database.providers.archive]
+provider = "sqlite3"
+
+[database.providers.archive.parameters]
+dbPath = "data/archive.db"
+readOnly = true
 timeout = 10
-
-[database.chatMapping]
--1001234567890 = "archive"
 ```
 
 ### Usage Examples
@@ -1016,8 +1052,10 @@ thread_messages = db.chatMessages.getChatMessagesByRootId(
 ### Get Chat Configuration
 ```python
 settings = db.chatSettings.getChatSettings(chatId=chat_id)
-model = settings.get('chat-model', 'default-model')
-use_tools = settings.get('use-tools', 'false') == 'true'
+# Returns Dict[str, tuple[str, int]] where tuple is (value, updated_by)
+model = settings.get('chat-model', ('gpt-4', 0))[0]  # Index [0] for value
+updatedBy = settings.get('chat-model', ('gpt-4', 0))[1]  # Index [1] for updated_by
+use_tools = settings.get('use-tools', ('false', 0))[0] == 'true'
 ```
 
 ### Cache API Response

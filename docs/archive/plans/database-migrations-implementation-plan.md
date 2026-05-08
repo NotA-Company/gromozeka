@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-This plan outlines the implementation of a database migrations system for the Gromozeka bot, dood! The system will:
+This plan outlines the implementation of a database migrations system for the Gromozeka bot The system will:
 - Track migration versions using the existing `settings` table
 - Support sequential migration execution
 - Provide rollback capabilities
@@ -97,7 +97,7 @@ if TYPE_CHECKING:
     from ..wrapper import DatabaseWrapper
 
 class BaseMigration(ABC):
-    """Base class for all database migrations, dood!"""
+    """Base class for all database migrations"""
     
     # Migration metadata
     version: int
@@ -752,4 +752,4 @@ stateDiagram-v2
 
 **End of Plan**
 
-*This plan will be updated as implementation progresses and new requirements emerge, dood!*
+*This plan will be updated as implementation progresses and new requirements emerge*

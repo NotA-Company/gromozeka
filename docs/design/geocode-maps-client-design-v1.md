@@ -1,9 +1,14 @@
 # Geocode Maps API Client Design Document
 
-**Version:** 1.0  
-**Date:** 2025-11-14  
-**Status:** Design Phase  
-**Author:** SourceCraft Code Assistant
+**Version:** 1.0
+**Date:** 2025-11-14
+**Status:** ✅ Implemented — see `lib/geocode_maps/` for current implementation
+
+**Current Implementation:** The design has been implemented with minor adjustments. See `lib/geocode_maps/client.py` for the actual client.
+
+**Note:** This is a historical design document. For current usage, see the source code and golden data tests in `tests/geocode_maps/golden/`.
+
+---
 
 ## Table of Contents
 
@@ -21,41 +26,41 @@
 
 ## Overview
 
-This document describes the design for a Python async client library for the Geocode Maps API (geocode.maps.co). The client will provide type-safe, cached, and rate-limited access to geocoding services including forward geocoding (address to coordinates), reverse geocoding (coordinates to address), and OSM object lookup, dood!
+This document describes the design for a Python async client library for the Geocode Maps API (geocode.maps.co). The client will provide type-safe, cached, and rate-limited access to geocoding services including forward geocoding (address to coordinates), reverse geocoding (coordinates to address), and OSM object lookup
 
 ### Goals
 
-- **Type Safety**: Use TypedDict for all data models with comprehensive type hints, dood
-- **Performance**: Implement efficient caching with configurable TTL, dood
-- **Reliability**: Integrate rate limiting to prevent API quota exhaustion, dood
-- **Consistency**: Follow established patterns from [`lib.openweathermap`](lib/openweathermap/client.py) and [`lib.yandex_search`](lib/yandex_search/client.py), dood
-- **Maintainability**: Clear separation of concerns with well-documented code, dood
+- **Type Safety**: Use TypedDict for all data models with comprehensive type hints
+- **Performance**: Implement efficient caching with configurable TTL
+- **Reliability**: Integrate rate limiting to prevent API quota exhaustion
+- **Consistency**: Follow established patterns from [`lib.openweathermap`](lib/openweathermap/client.py) and [`lib.yandex_search`](lib/yandex_search/client.py)
+- **Maintainability**: Clear separation of concerns with well-documented code
 
 ### Non-Goals
 
-- Support for formats other than `jsonv2` (can be added later if needed), dood
-- Batch processing utilities (can be built on top of the client), dood
-- Synchronous API (async-only design), dood
+- Support for formats other than `jsonv2` (can be added later if needed)
+- Batch processing utilities (can be built on top of the client)
+- Synchronous API (async-only design)
 
 ## Requirements
 
 Based on [`docs/design/geocode-maps-client-design-v0.md`](docs/design/geocode-maps-client-design-v0.md):
 
-1. **HTTP Client**: Use `httpx` for async HTTP requests, dood
-2. **Caching**: Use [`lib.cache`](lib/cache/interface.py) interface for result caching, dood
-3. **Rate Limiting**: Use [`lib.rate_limiter`](lib/rate_limiter/manager.py) with default queue `geocode-maps`, dood
-4. **Authentication**: Use `Authorization: Bearer YOUR_SECRET_API_KEY` HTTP header, dood
-5. **Output Format**: Always use `jsonv2` format for responses, dood
-6. **Request Method**: Implement `_makeRequest()` as single point for all HTTP requests, dood
-7. **Language Support**: Support global `accept-language` setting per client instance, dood
+1. **HTTP Client**: Use `httpx` for async HTTP requests
+2. **Caching**: Use [`lib.cache`](lib/cache/interface.py) interface for result caching
+3. **Rate Limiting**: Use [`lib.rate_limiter`](lib/rate_limiter/manager.py) with default queue `geocode-maps`
+4. **Authentication**: Use `Authorization: Bearer YOUR_SECRET_API_KEY` HTTP header
+5. **Output Format**: Always use `jsonv2` format for responses
+6. **Request Method**: Implement `_makeRequest()` as single point for all HTTP requests
+7. **Language Support**: Support global `accept-language` setting per client instance
 
 ### API Endpoints
 
 The client must support three endpoints from [`docs/other/geocode-maps/Geocode-Maps-API.md`](docs/other/geocode-maps/Geocode-Maps-API.md):
 
-1. **`/search`** - Forward geocoding (address → coordinates), dood
-2. **`/reverse`** - Reverse geocoding (coordinates → address), dood
-3. **`/lookup`** - OSM object lookup by ID, dood
+1. **`/search`** - Forward geocoding (address → coordinates)
+2. **`/reverse`** - Reverse geocoding (coordinates → address)
+3. **`/lookup`** - OSM object lookup by ID
 
 ## Architecture Analysis
 
@@ -66,44 +71,44 @@ The client must support three endpoints from [`docs/other/geocode-maps/Geocode-M
 From [`lib/openweathermap/client.py`](lib/openweathermap/client.py:1-381):
 
 **Strengths:**
-- Clean separation between geocoding and weather data caching, dood
-- Simple cache key generation (string-based), dood
-- Clear method naming (`getCoordinates()`, `getWeather()`, `getWeatherByCity()`), dood
-- Comprehensive error handling in `_makeRequest()`, dood
+- Clean separation between geocoding and weather data caching
+- Simple cache key generation (string-based)
+- Clear method naming (`getCoordinates()`, `getWeather()`, `getWeatherByCity()`)
+- Comprehensive error handling in `_makeRequest()`
 
 **Patterns to Adopt:**
-- Separate cache instances for different data types, dood
-- Round coordinates for cache keys (4 decimal places ≈ 11m precision), dood
-- Use camelCase for method names (project convention), dood
-- Create new `httpx.AsyncClient` per request for thread safety, dood
+- Separate cache instances for different data types
+- Round coordinates for cache keys (4 decimal places ≈ 11m precision)
+- Use camelCase for method names (project convention)
+- Create new `httpx.AsyncClient` per request for thread safety
 
 #### Yandex Search Client Pattern
 
 From [`lib/yandex_search/client.py`](lib/yandex_search/client.py:1-278):
 
 **Strengths:**
-- Complex request object as cache key (using custom key generator), dood
-- Comprehensive TypedDict models with enums, dood
-- Detailed docstrings with examples, dood
-- Bearer token authentication pattern, dood
+- Complex request object as cache key (using custom key generator)
+- Comprehensive TypedDict models with enums
+- Detailed docstrings with examples
+- Bearer token authentication pattern
 
 **Patterns to Adopt:**
-- Use TypedDict for request/response structures, dood
-- Implement detailed logging at debug level, dood
-- Support both API key and alternative auth methods, dood
-- Cache entire request objects when appropriate, dood
+- Use TypedDict for request/response structures
+- Implement detailed logging at debug level
+- Support both API key and alternative auth methods
+- Cache entire request objects when appropriate
 
 ### Key Design Decisions
 
-1. **Cache Strategy**: Use separate cache instances for each endpoint type (search, reverse, lookup), dood
-2. **Cache Keys**: Use string-based keys for simplicity (following OpenWeatherMap pattern), dood
-3. **Authentication**: Support only Bearer token (as per API docs), dood
-4. **Language Handling**: Store `acceptLanguage` as instance variable, apply to all requests, dood
-5. **Error Handling**: Return `Optional[T]` for all methods, log errors, never raise exceptions, dood
+1. **Cache Strategy**: Use separate cache instances for each endpoint type (search, reverse, lookup)
+2. **Cache Keys**: Use string-based keys for simplicity (following OpenWeatherMap pattern)
+3. **Authentication**: Support only Bearer token (as per API docs)
+4. **Language Handling**: Store `acceptLanguage` as instance variable, apply to all requests
+5. **Error Handling**: Return `Optional[T]` for all methods, log errors, never raise exceptions
 
 ## Data Models
 
-All models will be defined in [`lib/geocode_maps/models.py`](lib/geocode_maps/models.py) using TypedDict for runtime compatibility and type safety, dood!
+All models will be defined in [`lib/geocode_maps/models.py`](lib/geocode_maps/models.py) using TypedDict for runtime compatibility and type safety
 
 ### Response Models
 
@@ -113,7 +118,7 @@ Based on example responses in [`docs/other/geocode-maps/`](docs/other/geocode-ma
 
 ```python
 class Address(TypedDict, total=False):
-    """Structured address components from geocoding response, dood!
+    """Structured address components from geocoding response
     
     All fields are optional as different locations have different address structures.
     """
@@ -136,7 +141,7 @@ class Address(TypedDict, total=False):
 
 ```python
 class NameDetails(TypedDict, total=False):
-    """Name translations in different languages, dood!"""
+    """Name translations in different languages"""
     name: str                   # Default name
     int_name: str              # International name
     # Language-specific names (examples)
@@ -153,7 +158,7 @@ class NameDetails(TypedDict, total=False):
 
 ```python
 class ExtraTags(TypedDict, total=False):
-    """Additional OSM tags and metadata, dood!"""
+    """Additional OSM tags and metadata"""
     website: str               # Official website URL
     wikidata: str             # Wikidata ID
     wikipedia: str            # Wikipedia article reference
@@ -170,7 +175,7 @@ class ExtraTags(TypedDict, total=False):
 
 ```python
 class SearchResult(TypedDict):
-    """Single result from /search endpoint, dood!"""
+    """Single result from /search endpoint"""
     place_id: int                      # Unique place identifier
     licence: str                       # Data licence information
     osm_type: str                      # OSM object type (node/way/relation)
@@ -195,7 +200,7 @@ class SearchResult(TypedDict):
 
 ```python
 class ReverseResult(TypedDict):
-    """Result from /reverse endpoint, dood!"""
+    """Result from /reverse endpoint"""
     place_id: int                      # Unique place identifier
     licence: str                       # Data licence information
     osm_type: str                      # OSM object type
@@ -219,7 +224,7 @@ class ReverseResult(TypedDict):
 
 ```python
 class LookupResult(TypedDict):
-    """Result from /lookup endpoint, dood!"""
+    """Result from /lookup endpoint"""
     place_id: int                      # Unique place identifier
     licence: str                       # Data licence information
     osm_type: str                      # OSM object type
@@ -253,7 +258,7 @@ LookupResponse = List[LookupResult]    # /lookup returns array
 
 ```python
 class Coordinates(TypedDict):
-    """Latitude/longitude pair, dood!"""
+    """Latitude/longitude pair"""
     lat: float
     lon: float
 ```
@@ -264,7 +269,7 @@ class Coordinates(TypedDict):
 
 ```python
 class GeocodeMapsClient:
-    """Async client for Geocode Maps API with caching and rate limiting, dood!
+    """Async client for Geocode Maps API with caching and rate limiting
     
     Provides type-safe access to geocoding services with automatic caching
     and rate limiting. Creates new HTTP session for each request to support
@@ -312,7 +317,7 @@ def __init__(
     acceptLanguage: str = "en",
     rateLimiterQueue: str = "geocode-maps",
 ):
-    """Initialize Geocode Maps client, dood!
+    """Initialize Geocode Maps client
     
     Args:
         apiKey: Geocode Maps API key (required)
@@ -346,7 +351,7 @@ async def search(
     namedetails: bool = True,
     dedupe: bool = True,
 ) -> Optional[SearchResponse]:
-    """Forward geocoding: convert address to coordinates, dood!
+    """Forward geocoding: convert address to coordinates
     
     Searches for locations matching the query string and returns
     geographic coordinates and structured address information.
@@ -389,7 +394,7 @@ async def reverse(
     extratags: bool = True,
     namedetails: bool = True,
 ) -> Optional[ReverseResponse]:
-    """Reverse geocoding: convert coordinates to address, dood!
+    """Reverse geocoding: convert coordinates to address
     
     Finds the nearest OSM object to the given coordinates and returns
     its address and metadata.
@@ -431,7 +436,7 @@ async def lookup(
     polygonSvg: bool = False,
     polygonText: bool = False,
 ) -> Optional[LookupResponse]:
-    """Lookup OSM objects by ID, dood!
+    """Lookup OSM objects by ID
     
     Retrieves details for one or more OSM objects using their IDs.
     IDs must include type prefix: N (node), W (way), or R (relation).
@@ -470,7 +475,7 @@ async def _makeRequest(
     endpoint: str,
     params: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    """Make HTTP request to Geocode Maps API, dood!
+    """Make HTTP request to Geocode Maps API
     
     Single point for all HTTP requests with error handling, rate limiting,
     and authentication. Creates new session per request for thread safety.
@@ -496,7 +501,7 @@ async def _makeRequest(
 
 ```python
 def _buildCacheKey(self, prefix: str, *parts: Any) -> str:
-    """Build cache key from components, dood!
+    """Build cache key from components
     
     Creates consistent cache keys by joining prefix and parts with colons.
     Handles None values and converts all parts to strings.
@@ -518,13 +523,13 @@ def _buildCacheKey(self, prefix: str, *parts: Any) -> str:
 
 ### Cache Strategy
 
-Following the pattern from [`lib/openweathermap/client.py`](lib/openweathermap/client.py:50-86), we'll use separate cache instances for each endpoint type, dood!
+Following the pattern from [`lib/openweathermap/client.py`](lib/openweathermap/client.py:50-86), we'll use separate cache instances for each endpoint type
 
 **Rationale:**
-- Different data types have different characteristics, dood
-- Allows independent TTL configuration per endpoint, dood
-- Simplifies cache key generation, dood
-- Enables selective cache clearing, dood
+- Different data types have different characteristics
+- Allows independent TTL configuration per endpoint
+- Simplifies cache key generation
+- Enables selective cache clearing
 
 ### Cache Key Design
 
@@ -535,9 +540,9 @@ Format: `search:{normalized_query}:{limit}:{countrycodes}:{viewbox}:{bounded}`
 Example: `search:angarsk russia:10:ru::false`
 
 **Normalization:**
-- Convert query to lowercase, dood
-- Trim whitespace, dood
-- Keep original spacing for accuracy, dood
+- Convert query to lowercase
+- Trim whitespace
+- Keep original spacing for accuracy
 
 #### Reverse Cache Keys
 
@@ -546,9 +551,9 @@ Format: `reverse:{lat_rounded}:{lon_rounded}:{zoom}`
 Example: `reverse:52.5443:103.8882:18`
 
 **Coordinate Rounding:**
-- Round to 4 decimal places (~11 meter precision), dood
-- Balances cache efficiency with location accuracy, dood
-- Same precision as OpenWeatherMap client, dood
+- Round to 4 decimal places (~11 meter precision)
+- Balances cache efficiency with location accuracy
+- Same precision as OpenWeatherMap client
 
 #### Lookup Cache Keys
 
@@ -557,24 +562,24 @@ Format: `lookup:{sorted_osm_ids}:{polygon_flags}`
 Example: `lookup:R2623018,W205445534:0000`
 
 **ID Sorting:**
-- Sort OSM IDs alphabetically for consistent keys, dood
-- Polygon flags as 4-bit string (geojson, kml, svg, text), dood
+- Sort OSM IDs alphabetically for consistent keys
+- Polygon flags as 4-bit string (geojson, kml, svg, text)
 
 ### Cache TTL Recommendations
 
 Based on data volatility analysis:
 
 - **Search Results**: 30 days (2,592,000 seconds)
-  - Place names and coordinates rarely change, dood
-  - Long TTL reduces API calls significantly, dood
+  - Place names and coordinates rarely change
+  - Long TTL reduces API calls significantly
 
 - **Reverse Results**: 30 days (2,592,000 seconds)
-  - Address assignments are stable, dood
-  - Same rationale as search, dood
+  - Address assignments are stable
+  - Same rationale as search
 
 - **Lookup Results**: 30 days (2,592,000 seconds)
-  - OSM object metadata is relatively stable, dood
-  - Geometry data changes infrequently, dood
+  - OSM object metadata is relatively stable
+  - Geometry data changes infrequently
 
 ### Cache Implementation Example
 
@@ -612,7 +617,7 @@ client = GeocodeMapsClient(
 
 ### Configuration
 
-Following the pattern from [`lib/openweathermap/client.py`](lib/openweathermap/client.py:59-86) and [`lib/yandex_search/client.py`](lib/yandex_search/client.py:73-111), dood!
+Following the pattern from [`lib/openweathermap/client.py`](lib/openweathermap/client.py:59-86) and [`lib/yandex_search/client.py`](lib/yandex_search/client.py:73-111)
 
 ```python
 from lib.rate_limiter import RateLimiterManager, SlidingWindowRateLimiter, QueueConfig
@@ -639,7 +644,7 @@ manager.bindQueue("geocode-maps", "geocode-maps-limiter")
 
 ```python
 async def _makeRequest(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Make HTTP request with rate limiting, dood!"""
+    """Make HTTP request with rate limiting"""
     try:
         logger.debug(f"Making request to {endpoint} with params: {params}")
         
@@ -654,26 +659,26 @@ async def _makeRequest(self, endpoint: str, params: Dict[str, Any]) -> Optional[
 
 Based on typical geocoding API limits:
 
-- **Free Tier**: 1 request/second (60 requests/minute), dood
-- **Paid Tier**: Higher limits based on plan, dood
+- **Free Tier**: 1 request/second (60 requests/minute)
+- **Paid Tier**: Higher limits based on plan
 
 **Configuration Strategy:**
-- Start conservative (1 req/sec), dood
-- Monitor API responses for rate limit headers, dood
-- Adjust based on actual API plan, dood
-- Use separate queue name for easy reconfiguration, dood
+- Start conservative (1 req/sec)
+- Monitor API responses for rate limit headers
+- Adjust based on actual API plan
+- Use separate queue name for easy reconfiguration
 
 ## Error Handling
 
 ### Error Handling Strategy
 
-Following the established pattern of returning `Optional[T]` and logging errors, dood!
+Following the established pattern of returning `Optional[T]` and logging errors
 
 ### HTTP Status Codes
 
 ```python
 async def _makeRequest(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Handle all HTTP status codes, dood!"""
+    """Handle all HTTP status codes"""
     try:
         async with httpx.AsyncClient(timeout=self.requestTimeout) as session:
             response = await session.get(url, params=params, headers=headers)
@@ -747,7 +752,7 @@ except Exception as e:
 
 ### Phase 1: Core Structure (Priority: High)
 
-1. **Create module structure**, dood:
+1. **Create module structure**
    ```
    lib/geocode_maps/
    ├── __init__.py
@@ -756,78 +761,78 @@ except Exception as e:
    └── README.md
    ```
 
-2. **Implement data models** in [`models.py`](lib/geocode_maps/models.py), dood:
-   - Define all TypedDict classes, dood
-   - Add comprehensive docstrings, dood
-   - Include usage examples, dood
+2. **Implement data models** in [`models.py`](lib/geocode_maps/models.py)
+   - Define all TypedDict classes
+   - Add comprehensive docstrings
+   - Include usage examples
 
-3. **Implement client skeleton** in [`client.py`](lib/geocode_maps/client.py), dood:
-   - Class definition with `__init__()`, dood
-   - Method signatures with docstrings, dood
-   - Import statements, dood
+3. **Implement client skeleton** in [`client.py`](lib/geocode_maps/client.py)
+   - Class definition with `__init__()`
+   - Method signatures with docstrings
+   - Import statements
 
 ### Phase 2: Core Functionality (Priority: High)
 
-4. **Implement `_makeRequest()` method**, dood:
-   - HTTP request handling, dood
-   - Authentication header, dood
-   - Error handling, dood
-   - Rate limiting integration, dood
+4. **Implement `_makeRequest()` method**
+   - HTTP request handling
+   - Authentication header
+   - Error handling
+   - Rate limiting integration
 
-5. **Implement `_buildCacheKey()` helper**, dood:
-   - Key generation logic, dood
-   - Normalization, dood
-   - Consistent formatting, dood
+5. **Implement `_buildCacheKey()` helper**
+   - Key generation logic
+   - Normalization
+   - Consistent formatting
 
-6. **Implement `search()` method**, dood:
-   - Parameter validation, dood
-   - Cache key generation, dood
-   - Cache check, dood
-   - API request, dood
-   - Cache storage, dood
+6. **Implement `search()` method**
+   - Parameter validation
+   - Cache key generation
+   - Cache check
+   - API request
+   - Cache storage
 
 ### Phase 3: Additional Endpoints (Priority: High)
 
-7. **Implement `reverse()` method**, dood:
-   - Coordinate rounding, dood
-   - Cache integration, dood
-   - API request, dood
+7. **Implement `reverse()` method**
+   - Coordinate rounding
+   - Cache integration
+   - API request
 
-8. **Implement `lookup()` method**, dood:
-   - OSM ID validation, dood
-   - ID sorting for cache keys, dood
-   - API request, dood
+8. **Implement `lookup()` method**
+   - OSM ID validation
+   - ID sorting for cache keys
+   - API request
 
 ### Phase 4: Documentation (Priority: Medium)
 
-9. **Create README.md**, dood:
-   - Overview and features, dood
-   - Installation instructions, dood
-   - Usage examples, dood
-   - API reference, dood
+9. **Create README.md**
+   - Overview and features
+   - Installation instructions
+   - Usage examples
+   - API reference
 
-10. **Add module docstring**, dood:
-    - Module purpose, dood
-    - Quick start example, dood
-    - Links to documentation, dood
+10. **Add module docstring**
+    - Module purpose
+    - Quick start example
+    - Links to documentation
 
 ### Phase 5: Testing (Priority: High)
 
-11. **Create test files**, dood:
-    - [`test_client.py`](lib/geocode_maps/test_client.py) - Unit tests, dood
-    - [`test_integration.py`](lib/geocode_maps/test_integration.py) - Integration tests, dood
-    - [`test_models.py`](lib/geocode_maps/test_models.py) - Model validation, dood
+11. **Create test files**
+    - [`test_client.py`](lib/geocode_maps/test_client.py) - Unit tests
+    - [`test_integration.py`](lib/geocode_maps/test_integration.py) - Integration tests
+    - [`test_models.py`](lib/geocode_maps/test_models.py) - Model validation
 
-12. **Implement unit tests**, dood:
-    - Mock HTTP responses, dood
-    - Test cache behavior, dood
-    - Test error handling, dood
-    - Test rate limiting, dood
+12. **Implement unit tests**
+    - Mock HTTP responses
+    - Test cache behavior
+    - Test error handling
+    - Test rate limiting
 
-13. **Implement integration tests**, dood:
-    - Real API calls (with test key), dood
-    - End-to-end workflows, dood
-    - Performance testing, dood
+13. **Implement integration tests**
+    - Real API calls (with test key)
+    - End-to-end workflows
+    - Performance testing
 
 ## Testing Strategy
 
@@ -843,7 +848,7 @@ from lib.cache import DictCache
 
 @pytest.mark.asyncio
 async def test_search_with_cache_hit():
-    """Test search with cached result, dood!"""
+    """Test search with cached result"""
     # Setup
     cache = DictCache()
 cache)
@@ -861,7 +866,7 @@ cache)
 
 @pytest.mark.asyncio
 async def test_search_with_cache_miss():
-    """Test search with API call, dood!"""
+    """Test search with API call"""
     # Setup
     cache = DictCache()
     client = GeocodeMapsClient(apiKey="test_key", searchCache=cache)
@@ -882,7 +887,7 @@ async def test_search_with_cache_miss():
 
 @pytest.mark.asyncio
 async def test_reverse_coordinate_rounding():
-    """Test coordinate rounding for cache keys, dood!"""
+    """Test coordinate rounding for cache keys"""
     client = GeocodeMapsClient(apiKey="test_key")
     
     # Test rounding
@@ -894,7 +899,7 @@ async def test_reverse_coordinate_rounding():
 
 @pytest.mark.asyncio
 async def test_error_handling_401():
-    """Test handling of authentication error, dood!"""
+    """Test handling of authentication error"""
     client = GeocodeMapsClient(apiKey="invalid_key")
     
     with patch('httpx.AsyncClient') as mock_client:
@@ -908,7 +913,7 @@ async def test_error_handling_401():
 
 @pytest.mark.asyncio
 async def test_rate_limiting():
-    """Test rate limiter integration, dood!"""
+    """Test rate limiter integration"""
     client = GeocodeMapsClient(apiKey="test_key")
     
     with patch.object(client._rateLimiter, 'applyLimit') as mock_limit:
@@ -937,7 +942,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.asyncio
 async def test_real_search():
-    """Test real search request, dood!"""
+    """Test real search request"""
     apiKey = os.getenv("GEOCODE_MAPS_API_KEY")
     client = GeocodeMapsClient(apiKey=apiKey)
     
@@ -950,7 +955,7 @@ async def test_real_search():
 
 @pytest.mark.asyncio
 async def test_real_reverse():
-    """Test real reverse geocoding, dood!"""
+    """Test real reverse geocoding"""
     apiKey = os.getenv("GEOCODE_MAPS_API_KEY")
     client = GeocodeMapsClient(apiKey=apiKey)
     
@@ -963,7 +968,7 @@ async def test_real_reverse():
 
 @pytest.mark.asyncio
 async def test_real_lookup():
-    """Test real OSM lookup, dood!"""
+    """Test real OSM lookup"""
     apiKey = os.getenv("GEOCODE_MAPS_API_KEY")
     client = GeocodeMapsClient(apiKey=apiKey)
     
@@ -976,7 +981,7 @@ async def test_real_lookup():
 
 @pytest.mark.asyncio
 async def test_caching_behavior():
-    """Test that caching works correctly, dood!"""
+    """Test that caching works correctly"""
     apiKey = os.getenv("GEOCODE_MAPS_API_KEY")
     cache = DictCache()
     client = GeocodeMapsClient(apiKey=apiKey, searchCache=cache)
@@ -1011,7 +1016,7 @@ from lib.geocode_maps.models import (
 )
 
 def test_search_result_structure():
-    """Test SearchResult TypedDict structure, dood!"""
+    """Test SearchResult TypedDict structure"""
     result: SearchResult = {
         "place_id": 123,
         "licence": "ODbL",
@@ -1040,7 +1045,7 @@ def test_search_result_structure():
     assert result["lat"] == "52.5443"
 
 def test_address_optional_fields():
-    """Test Address with optional fields, dood!"""
+    """Test Address with optional fields"""
     address: Address = {
         "city": "Angarsk",
         "country": "Russia"
@@ -1053,32 +1058,32 @@ def test_address_optional_fields():
 
 ### Test Coverage Goals
 
-- **Unit Tests**: >90% code coverage, dood
-- **Integration Tests**: All public methods with real API, dood
-- **Model Tests**: Validate TypedDict structures, dood
-- **Error Cases**: All error paths tested, dood
+- **Unit Tests**: >90% code coverage
+- **Integration Tests**: All public methods with real API
+- **Model Tests**: Validate TypedDict structures
+- **Error Cases**: All error paths tested
 
 ## References
 
 ### Internal Documentation
 
-- [`docs/design/geocode-maps-client-design-v0.md`](docs/design/geocode-maps-client-design-v0.md) - Original requirements, dood
-- [`docs/other/geocode-maps/Geocode-Maps-API.md`](docs/other/geocode-maps/Geocode-Maps-API.md) - API reference documentation, dood
-- [`lib/openweathermap/client.py`](lib/openweathermap/client.py) - Reference implementation pattern, dood
-- [`lib/yandex_search/client.py`](lib/yandex_search/client.py) - Reference implementation pattern, dood
-- [`lib/cache/interface.py`](lib/cache/interface.py) - Cache interface documentation, dood
-- [`lib/rate_limiter/manager.py`](lib/rate_limiter/manager.py) - Rate limiter documentation, dood
+- [`docs/design/geocode-maps-client-design-v0.md`](docs/design/geocode-maps-client-design-v0.md) - Original requirements
+- [`docs/other/geocode-maps/Geocode-Maps-API.md`](docs/other/geocode-maps/Geocode-Maps-API.md) - API reference documentation
+- [`lib/openweathermap/client.py`](lib/openweathermap/client.py) - Reference implementation pattern
+- [`lib/yandex_search/client.py`](lib/yandex_search/client.py) - Reference implementation pattern
+- [`lib/cache/interface.py`](lib/cache/interface.py) - Cache interface documentation
+- [`lib/rate_limiter/manager.py`](lib/rate_limiter/manager.py) - Rate limiter documentation
 
 ### Example Responses
 
-- [`docs/other/geocode-maps/search-Angarsk-jsonv2.json`](docs/other/geocode-maps/search-Angarsk-jsonv2.json) - Search endpoint example, dood
-- [`docs/other/geocode-maps/reverse-Angarsk-jsonv2.json`](docs/other/geocode-maps/reverse-Angarsk-jsonv2.json) - Reverse endpoint example, dood
-- [`docs/other/geocode-maps/lookup-Angarsk-jsonv2.json`](docs/other/geocode-maps/lookup-Angarsk-jsonv2.json) - Lookup endpoint example, dood
+- [`docs/other/geocode-maps/search-Angarsk-jsonv2.json`](docs/other/geocode-maps/search-Angarsk-jsonv2.json) - Search endpoint example
+- [`docs/other/geocode-maps/reverse-Angarsk-jsonv2.json`](docs/other/geocode-maps/reverse-Angarsk-jsonv2.json) - Reverse endpoint example
+- [`docs/other/geocode-maps/lookup-Angarsk-jsonv2.json`](docs/other/geocode-maps/lookup-Angarsk-jsonv2.json) - Lookup endpoint example
 
 ### External Resources
 
-- [Geocode Maps API Documentation](https://geocode.maps.co/docs/endpoints/) - Official API docs, dood
-- [OpenStreetMap Wiki](https://wiki.openstreetmap.org/) - OSM data reference, dood
+- [Geocode Maps API Documentation](https://geocode.maps.co/docs/endpoints/) - Official API docs
+- [OpenStreetMap Wiki](https://wiki.openstreetmap.org/) - OSM data reference
 
 ## Architecture Diagram
 
@@ -1142,39 +1147,39 @@ graph TB
 
 ## Summary
 
-This design document provides a comprehensive blueprint for implementing a production-ready Geocode Maps API client that follows established patterns in the codebase, dood!
+This design document provides a comprehensive blueprint for implementing a production-ready Geocode Maps API client that follows established patterns in the codebase
 
 ### Key Features
 
-✅ **Type Safety**: Comprehensive TypedDict models with full type hints, dood  
-✅ **Performance**: Multi-level caching with configurable TTL, dood  
-✅ **Reliability**: Rate limiting and robust error handling, dood  
-✅ **Consistency**: Follows patterns from existing clients, dood  
-✅ **Maintainability**: Clear architecture and comprehensive documentation, dood  
-✅ **Testability**: Complete test strategy with unit and integration tests, dood  
+✅ **Type Safety**: Comprehensive TypedDict models with full type hints,  
+✅ **Performance**: Multi-level caching with configurable TTL,  
+✅ **Reliability**: Rate limiting and robust error handling,  
+✅ **Consistency**: Follows patterns from existing clients,  
+✅ **Maintainability**: Clear architecture and comprehensive documentation,  
+✅ **Testability**: Complete test strategy with unit and integration tests,  
 
 ### Next Steps
 
-1. Review and approve this design document, dood
-2. Create implementation plan with task breakdown, dood
-3. Implement Phase 1 (Core Structure), dood
-4. Implement Phase 2 (Core Functionality), dood
-5. Implement Phase 3 (Additional Endpoints), dood
-6. Implement Phase 4 (Documentation), dood
-7. Implement Phase 5 (Testing), dood
-8. Code review and refinement, dood
-9. Integration with existing systems, dood
-10. Production deployment, dood
+1. Review and approve this design document
+2. Create implementation plan with task breakdown
+3. Implement Phase 1 (Core Structure)
+4. Implement Phase 2 (Core Functionality)
+5. Implement Phase 3 (Additional Endpoints)
+6. Implement Phase 4 (Documentation)
+7. Implement Phase 5 (Testing)
+8. Code review and refinement
+9. Integration with existing systems
+10. Production deployment
 
 ### Questions for Review
 
-1. **Cache TTL**: Are 30-day TTLs appropriate for all endpoint types, dood?
-2. **Rate Limiting**: Should we start with 1 req/sec or higher, dood?
-3. **Language Support**: Should we support per-request language override, dood?
-4. **Polygon Data**: Should we add convenience methods for polygon handling, dood?
-5. **Batch Operations**: Should we add batch lookup support in v1, dood?
+1. **Cache TTL**: Are 30-day TTLs appropriate for all endpoint types?
+2. **Rate Limiting**: Should we start with 1 req/sec or higher?
+3. **Language Support**: Should we support per-request language override?
+4. **Polygon Data**: Should we add convenience methods for polygon handling?
+5. **Batch Operations**: Should we add batch lookup support in v1?
 
 ---
 
-**Document Status**: Ready for Review, dood! 🎉
+**Document Status**: Ready for Review 🎉
     client = GeocodeMapsClient(apiKey="test_key", searchCache=

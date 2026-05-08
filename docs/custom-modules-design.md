@@ -1,8 +1,17 @@
 # Custom Handler Modules — Design Document
 
-> **Status:** Draft  
-> **Date:** 2026-03-29  
+> **Status:** Implemented  
+> **Date:** 2026-03-29 (design), 2026-05-08 (implementation)  
 > **Scope:** Dynamic loading of custom handler modules via TOML configuration
+
+---
+
+## Implementation Note
+
+This custom handler loading system has been fully implemented in:
+- [`internal/bot/common/handlers/module_loader.py`](internal/bot/common/handlers/module_loader.py) — `CustomHandlerLoader` class
+- [`internal/bot/common/handlers/example_custom_handler.py`](internal/bot/common/handlers/example_custom_handler.py) — Example template
+- [`configs/00-defaults/custom-handlers.toml`](../../configs/00-defaults/custom-handlers.toml) — Default configuration
 
 ---
 

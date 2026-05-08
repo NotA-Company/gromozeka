@@ -1,8 +1,11 @@
 # Multi-Source Database Configuration Guide
 
-**Version:** 1.0  
-**Date:** 2025-11-30  
-**Status:** Production Ready
+> **Status:** ✅ OPERATIONAL — This is a current/reference-style documentation retained in `docs/plans/` for easy access
+> **Note:** Multi-source database architecture is implemented and operational using the provider abstraction pattern. This guide is kept in `plans/` as it serves as operational reference documentation rather than a forward-looking implementation plan.
+
+**Version:** 1.0
+**Date:** 2025-11-30
+**Status:** Production Ready (Operational Reference)
 
 ## Table of Contents
 
@@ -244,7 +247,7 @@ Readonly providers provide safe access to databases that should not be modified.
 db.chatMessages.addMessage(chatId=-1001234567890, ...)  # If chat mapped to readonly provider
 
 # Error message:
-# ValueError: Cannot perform write operation on readonly source 'archive', dood!
+# ValueError: Cannot perform write operation on readonly source 'archive'.
 # This source is configured as readonly.
 ```
 
@@ -833,11 +836,11 @@ The [`DatabaseManager`](../internal/database/manager.py:39) validates configurat
 ```python
 # Error: No providers
 config = {"providers": {}}
-# ValueError: No providers found in configuration, dood
+# ValueError: No providers found in configuration
 
 # Error: Default provider doesn't exist
 config = {"default": "missing", "providers": {"primary": {"provider": "sqlite3", "parameters": {"dbPath": "bot.db"}}}}
-# ValueError: Default source 'missing' not found in configuration, please check your configuration and try again, dood!
+# ValueError: Default source 'missing' not found in configuration, please check your configuration and try again.
 
 # Error: Provider missing required fields
 config = {"providers": {"primary": {"parameters": {"dbPath": "bot.db"}}}}

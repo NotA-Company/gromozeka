@@ -1,8 +1,8 @@
 # Gromozeka LLM Agent Guide — Index & Quick Reference
 
-> **Audience:** LLM agents (Roo, Cline, GitHub Copilot, Cursor, etc.), dood!  
-> **Purpose:** Entry point and quick reference for navigating the Gromozeka project, dood!  
-> **NOT for humans** — use [`docs/developer-guide.md`](../developer-guide.md) for human-friendly docs, dood!
+> **Audience:** LLM agents (Roo, Cline, GitHub Copilot, Cursor, etc.)  
+> **Purpose:** Entry point and quick reference for navigating the Gromozeka project  
+> **NOT for humans** — use [`docs/developer-guide.md`](../developer-guide.md) for human-friendly docs
 
 ---
 
@@ -48,16 +48,16 @@
 ## 2. Critical Commands
 
 ```bash
-# ALWAYS run before AND after changes, dood!
+# ALWAYS run before AND after changes
 make format lint
 
-# Run AFTER any change, dood!
+# Run AFTER any change
 make test
 
-# Run bot from project root ONLY (never cd into subdirs), dood!
+# Run bot from project root ONLY (never cd into subdirs)
 ./venv/bin/python3 main.py --config-dir configs/
 
-# Run single test file, dood!
+# Run single test file
 ./venv/bin/pytest tests/test_db_wrapper.py -v
 ```
 
@@ -65,7 +65,7 @@ make test
 
 ## 3. Mandatory Rules
 
-### 3.1 Naming Conventions (MUST follow, dood!)
+### 3.1 Naming Conventions (MUST follow)
 
 | Entity | Convention | Example |
 |---|---|---|
@@ -79,7 +79,7 @@ make test
 
 **Source:** [`.roo/rules/camelCase.md`](../../.roo/rules/camelCase.md)
 
-### 3.2 Docstrings (MUST have, dood!)
+### 3.2 Docstrings (MUST have)
 
 - Every module, class, method, field, and function MUST have a docstring
 - Docstrings MUST be concise but describe all arguments and return type
@@ -88,7 +88,7 @@ make test
 **Example (correct):**
 ```python
 def getChatSettings(self, chatId: Optional[int], *, returnDefault: bool = True) -> ChatSettingsDict:
-    """Get merged chat settings with tier-aware filtering, dood!
+    """Get merged chat settings with tier-aware filtering
 
     Args:
         chatId: Chat ID to retrieve settings for, or None for defaults only
@@ -101,39 +101,39 @@ def getChatSettings(self, chatId: Optional[int], *, returnDefault: bool = True) 
 
 **Source:** [`.roo/rules/doctrings.md`](../../.roo/rules/doctrings.md)
 
-### 3.3 Type Hints (MUST have, dood!)
+### 3.3 Type Hints (MUST have)
 
 - ALWAYS write type hints for function/method arguments
 - ALWAYS write type hints for returned values
 - Write type hints for local variables when type is not obvious
 
 ```python
-# CORRECT, dood!
+# CORRECT
 def parseCommand(self, ensuredMessage: EnsuredMessage) -> Optional[Tuple[str, str]]:
     commandText: str = ensuredMessage.messageText.strip()
     ...
 
-# WRONG - no type hints, dood!
+# WRONG - no type hints
 def parseCommand(self, ensuredMessage):
     ...
 ```
 
-### 3.4 Python Runtime (MUST follow, dood!)
+### 3.4 Python Runtime (MUST follow)
 
 - Use `./venv/bin/python3` to run Python — NOT `python` or `python3`
 - Do NOT `cd` into subdirectories — run all scripts from project root
 - Do NOT use `python -c ...` for one-time tests — create a test script file instead
 
 ```bash
-# CORRECT, dood!
+# CORRECT
 ./venv/bin/python3 main.py
 
-# WRONG, dood!
+# WRONG
 python main.py
 cd internal && python test.py
 ```
 
-### 3.5 Code Quality Workflow (MUST run, dood!)
+### 3.5 Code Quality Workflow (MUST run)
 
 ```bash
 # Step 1 - Before making changes
@@ -190,11 +190,11 @@ make test
 
 | Path | Lines | Purpose |
 |---|---|---|
-| [`main.py`](../../main.py) | 236 | App entry, `GromozekBot`, daemon mode |
+| [`main.py`](../../main.py) | 241 | App entry, `GromozekBot`, daemon mode |
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | 1000 | `TheBot` – platform-agnostic bot ops |
-| [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | 1805 | `BaseBotHandler`, `HandlerResultStatus` |
-| [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | 892 | `HandlersManager` – handler chain |
-| [`internal/database/database.py`](../../internal/database/database.py) | 191 | `Database` – all DB operations with repository pattern |
+| [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | 1974 | `BaseBotHandler`, `HandlerResultStatus` |
+| [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | 1148 | `HandlersManager` – handler chain |
+| [`internal/database/database.py`](../../internal/database/database.py) | 297 | `Database` – all DB operations with repository pattern |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | 280 | `ConfigManager` – TOML loading |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | 796 | `CacheService` singleton |
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | 531 | `LLMService` singleton |
@@ -205,10 +205,10 @@ make test
 
 ### 4.5 `internal/` Directory
 
-| Path | Purpose |
+ | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-| [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 18+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`) |
+| [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 21+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, plus base/manager/module_loader, tests, examples, and 15+ handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |
@@ -261,5 +261,5 @@ make test
 
 ---
 
-*This guide is auto-maintained and should be updated whenever significant architectural changes are made, dood!*  
-*Last updated: 2026-05-06, dood!*
+*This guide is auto-maintained and should be updated whenever significant architectural changes are made*  
+*Last updated: 2026-05-06*

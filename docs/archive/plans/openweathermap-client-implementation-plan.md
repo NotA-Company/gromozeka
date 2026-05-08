@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-Yo, dood! This plan outlines the implementation of an async OpenWeatherMap API client for the Gromozeka Telegram bot. The client will provide geocoding (city name → coordinates) and weather data retrieval with database-backed caching and configurable TTL.
+Yo This plan outlines the implementation of an async OpenWeatherMap API client for the Gromozeka Telegram bot. The client will provide geocoding (city name → coordinates) and weather data retrieval with database-backed caching and configurable TTL.
 
 ### 1.1 Goals
 
@@ -782,7 +782,7 @@ async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
         await update.message.reply_text(message)
     else:
-        await update.message.reply_text("Город не найден, dood!")
+        await update.message.reply_text("Город не найден")
 ```
 
 ---

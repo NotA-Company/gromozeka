@@ -1,4 +1,17 @@
-Yo dood. We've done with golden collector for openweathermap and Yandex Search, but for it we had to patch whole _makeRequest method there and I want to make some more general solution.
+**Status:** ✅ Superseded by v2 Implementation
+
+This document describes the initial concept that led to the golden data testing system v2. The system has been fully implemented in `lib/aurumentation` with transport-level httpx patching.
+
+**Current Implementation:**
+- See `golden-data-testing-system-v2.md` for the completed design
+- Implementation location: `lib/aurumentation/`
+- Usage: `tests/lib_ai/golden/`, `tests/openweathermap/golden/`, `tests/yandex_search/golden/`, `tests/geocode_maps/golden/`, `tests/divination/golden/`
+
+---
+
+**Historical Document (Retained for Reference)**
+
+We've done with golden collector for openweathermap and Yandex Search, but for it we had to patch whole _makeRequest method there and I want to make some more general solution.
 
 Can we instead somehow patch\wrap httpx get/post methods.
 

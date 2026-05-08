@@ -66,10 +66,12 @@ class MessageCategory(StrEnum):
 
         Args:
             value: String value to convert.
-            default: Default value to return if conversion fails. Defaults to UNSPECIFIED.
+            default: Optional default value to return if conversion fails. If not provided,
+                defaults to MessageCategory.UNSPECIFIED.
 
         Returns:
-            MessageCategory enum value or default if conversion fails.
+            MessageCategory enum value, or default if conversion fails and default was
+            provided, otherwise MessageCategory.UNSPECIFIED.
         """
         try:
             return cls(value)
@@ -359,3 +361,37 @@ class CacheType(StrEnum):
     """Geocode Maps reverse geocoding cache."""
     GM_LOOKUP = "geocode_maps_lookup"
     """Geocode Maps lookup cache."""
+
+
+class DivinationLayoutDict(TypedDict):
+    """Dictionary representing a cached divination layout definition.
+
+    Layouts are cached from external divination APIs to avoid repeated API calls.
+    """
+
+    system_id: str
+    """Divination system identifier (e.g., 'tarot', 'runes')."""
+
+    layout_id: str
+    """Layout name within the system."""
+
+    name_en: str
+    """English layout name."""
+
+    name_ru: str
+    """Russian layout name."""
+
+    n_symbols: int
+    """Number of symbols/positions in the layout."""
+
+    positions: list[str]
+    """List of position definitions."""
+
+    description: Optional[str]
+    """Optional layout description."""
+
+    created_at: datetime.datetime
+    """Record creation timestamp."""
+
+    updated_at: datetime.datetime
+    """Record last update timestamp."""

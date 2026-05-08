@@ -80,6 +80,7 @@ class Database:
         spam: Repository for spam detection and filtering data.
         delayedTasks: Repository for delayed task scheduling and management.
         divinations: Repository for tarot/runes divination readings.
+        divinationLayouts: Repository for divination layout definitions cache.
         cache: Repository for caching operations.
         _migrationManager: Internal migration manager for schema versioning and updates.
 
@@ -260,7 +261,7 @@ class Database:
         database instance itself, allowing direct access to repositories.
 
         Returns:
-            The database instance itself, enabling access to all repositories and
+            Database: The database instance itself, enabling access to all repositories and
             database operations.
 
         Example:
@@ -282,6 +283,9 @@ class Database:
                      occurred during the context.
             exc: Exception instance if an exception occurred, or None.
             tb: Traceback object if an exception occurred, or None.
+
+        Returns:
+            None
 
         Note:
             This method automatically closes all database connections, so explicit

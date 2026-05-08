@@ -1,5 +1,5 @@
 # Multi-Source Database Configuration - Migration Example
-# This example shows how to migrate from single-database to multi-source configuration
+# This example shows how to migrate from single-database to multi-provider configuration
 # with backward compatibility and step-by-step migration path
 
 # ============================================================================
@@ -8,12 +8,18 @@
 # Your current configuration (before migration):
 #
 # [database]
-# path = "bot.db"
-# max_connections = 5
-# timeout = 30
+# default = "default"
+#
+# [database.providers.default]
+# provider = "sqlite3"
+#
+# [database.providers.default.parameters]
+# dbPath = "bot_data.db"
 #
 # Python code:
-# db = DatabaseWrapper(dbPath="bot.db", maxConnections=5, timeout=30.0)
+# from internal.database import Database
+# config = {...}  # Load from config.toml
+# db = Database(config=config)
 
 # ============================================================================
 # STEP 2: CONVERT TO MULTI-SOURCE (BACKWARD COMPATIBLE)
@@ -23,26 +29,33 @@
 [database]
 default = "primary"
 
-[database.sources.primary]
-path = "bot.db"  # Same database file as before
-readonly = false
-pool-size = 5    # Same as old maxConnections
-timeout = 30.0   # Same as before
+[database.providers.primary]
+provider = "sqlite3"
+
+[database.providers.primary.parameters]
+dbPath = "bot.db"
+readOnly = false
+timeout = 30
+useWal = true
+keepConnection = true
 
 # At this point, your bot works exactly the same as before!
-# No chat mappings needed yet - everything uses "primary" source
+# No chat mappings needed yet - everything uses "primary" provider
 
 # ============================================================================
-# STEP 3: ADD ARCHIVE DATABASE (OPTIONAL)
+# STEP 3: ADD ARCHIVE PROVIDER (OPTIONAL)
 # ============================================================================
-# Once comfortable with multi-source, add an archive database
+# Once comfortable with multi-source, add an archive provider
 
 # Uncomment to enable archive:
-# [database.sources.archive]
-# path = "archive.db"
-# readonly = true  # Readonly for safety
-# pool-size = 3
-# timeout = 30.0
+# [database.providers.archive]
+# provider = "sqlink"
+#
+# [database.providers.archive.parameters]
+# dbPath = "archive.db"
+# readOnly = true  # Readonly for safety
+# timeout = 10
+# keepConnection = true
 
 # ============================================================================
 # STEP 4: MAP OLD CHATS TO ARCHIVE (OPTIONAL)
@@ -55,22 +68,29 @@ timeout = 30.0   # Same as before
 # -1002345678901 = "archive"  # Another old chat
 
 # ============================================================================
-# STEP 5: ADD MORE SOURCES AS NEEDED (OPTIONAL)
+# STEP 5: ADD MORE PROVIDERS AS NEEDED (OPTIONAL)
 # ============================================================================
 
-# Example: Test database for development
-# [database.sources.test]
-# path = "test.db"
-# readonly = false
-# pool-size = 5
-# timeout = 30.0
+# Example: Test provider for development
+# [database.providers.test]
+# provider = "sqlite3"
+#
+# [database.providers.test.parameters]
+# dbPath = "test.db"
+# readOnly = false
+# timeout = 30
+# useWal = true
+# keepConnection = true
 
-# Example: External bot database (readonly)
-# [database.sources.other_bot]
-# path = "/shared/other_bot.db"
-# readonly = true
-# pool-size = 2
-# timeout = 10.0
+# Example: External bot provider (readonly)
+# [database.providers.other_bot]
+# provider = "sqlink"
+#
+# [database.providers.other_bot.parameters]
+# dbPath = "/shared/other_bot.db"
+# readOnly = true
+# timeout = 10
+# keepConnection = true
 
 # ============================================================================
 # MIGRATION CHECKLIST
@@ -78,21 +98,21 @@ timeout = 30.0   # Same as before
 
 # Before Migration:
 # [ ] Backup your current database
-# [ ] Test multi-source config in development first
+# [ ] Test multi-provider config in development first
 # [ ] Verify all existing functionality works
 
 # During Migration:
-# [ ] Start with Step 2 (single source in multi-source format)
-# [ ] Test thoroughly before adding more sources
-# [ ] Add archive database (Step 3)
+# [ ] Start with Step 2 (single provider in multi-provider format)
+# [ ] Test thoroughly before adding more providers
+# [ ] Add archive provider (Step 3)
 # [ ] Gradually map old chats to archive (Step 4)
-# [ ] Monitor performance and adjust pool sizes
+# [ ] Monitor performance and adjust settings as needed
 
 # After Migration:
 # [ ] Verify all chats are accessible
 # [ ] Check that writes work correctly
 # [ ] Confirm readonly protection works
-# [ ] Monitor connection pool usage
+# [ ] Monitor connection usage
 # [ ] Adjust configuration as needed
 
 # ============================================================================
@@ -100,36 +120,32 @@ timeout = 30.0   # Same as before
 # ============================================================================
 
 # If you need to rollback to single-database mode:
-#
-# Option 1: Use legacy constructor
-# db = DatabaseWrapper(dbPath="bot.db", maxConnections=5, timeout=30.0)
-#
-# Option 2: Keep multi-source config with single source
-# (This is actually recommended - gives you flexibility for future)
+# You can keep the multi-provider config with a single provider
+# This is actually recommended - gives you flexibility for future
 
 # ============================================================================
 # COMMON MIGRATION ISSUES
 # ============================================================================
 
-# Issue 1: "Cannot perform write operation on readonly source"
-# Solution: Check if chat is mapped to readonly source
-#          Remove from chatMapping or change source to writable
+# Issue 1: "Cannot perform write operation on readonly provider"
+# Solution: Check if chat is mapped to readonly provider
+#          Remove from chatMapping or change provider to writable
 
-# Issue 2: "Source 'name' not found in configuration"
-# Solution: Verify source name spelling in chatMapping
-#          Ensure source is defined in [database.sources.name]
+# Issue 2: "Provider 'name' not found in configuration"
+# Solution: Verify provider name spelling in chatMapping
+#          Ensure provider is defined in [database.providers.name]
 
 # Issue 3: Performance degradation
-# Solution: Adjust pool-size values
+# Solution: Adjust timeout values
 #          Use explicit dataSource for known locations
-#          Consider separating high-traffic chats
+#          Consider separating high-traffic chats to different providers
 
 # ============================================================================
 # BEST PRACTICES FOR MIGRATION
 # ============================================================================
 
 # 1. Start Simple
-#    - Begin with single source in multi-source format
+#    - Begin with single provider in multi-provider format
 #    - Add complexity gradually
 
 # 2. Test Thoroughly
@@ -137,8 +153,8 @@ timeout = 30.0   # Same as before
 #    - Verify backward compatibility
 
 # 3. Monitor Performance
-#    - Watch connection pool usage
-#    - Adjust pool sizes based on actual load
+#    - Watch connection usage
+#    - Adjust settings based on actual load
 
 # 4. Use Readonly Wisely
 #    - Mark archives as readonly
@@ -146,39 +162,24 @@ timeout = 30.0   # Same as before
 
 # 5. Document Changes
 #    - Keep track of chat mappings
-#    - Document why chats are in specific sources
+#    - Document why chats are in specific providers
 
 # ============================================================================
 # EXAMPLE PYTHON CODE FOR MIGRATION
 # ============================================================================
 
-# Before (single database):
+# Before (single database - old style):
 # from internal.database import DatabaseWrapper
 # db = DatabaseWrapper(dbPath="bot.db")
 
-# After (multi-source, backward compatible):
-# from internal.database import DatabaseWrapper
-# config = {
-#     "default": "primary",
-#     "sources": {
-#         "primary": {
-#             "path": "bot.db",
-#             "readonly": False,
-#             "pool-size": 5,
-#             "timeout": 30.0
-#         }
-#     }
-# }
-# db = DatabaseWrapper(config=config)
+# After (multi-provider, backward compatible):
+# from internal.database import Database
+# from internal.config import ConfigManager
+#
+# configManager = ConfigManager()
+# configManager.load(["--config-dir", "configs"])
+# db = Database(config=configManager)
 
 # Later (with archive):
-# config["sources"]["archive"] = {
-#     "path": "archive.db",
-#     "readonly": True,
-#     "pool-size": 3,
-#     "timeout": 30.0
-# }
-# config["chatMapping"] = {
-#     -1001234567890: "archive"
-# }
-# db = DatabaseWrapper(config=config)
+# Just update config.toml to add archive provider and chat mapping
+# No code changes needed!

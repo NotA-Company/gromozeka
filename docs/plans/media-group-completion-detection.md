@@ -1,5 +1,7 @@
 # Media Group Completion Detection Plan
 
+> **Status:** Active plan (architecture references updated to current codebase)
+
 ## Problem Statement
 
 When resending messages from Telegram to Max Messenger, media groups (albums) arrive as separate messages but need to be resent together. Telegram sends each media item in a group as a separate message with the same `media_group_id`, but doesn't indicate when all items have arrived.
@@ -35,14 +37,45 @@ flowchart TD
 
 ### 1. New Database Method
 
-Add to `internal/database/wrapper.py`:
+Add to the appropriate repository. Media group data should be accessed via `Database` façade through the `mediaAttachments` repository:
 
 ```python
-def getMediaGroupLastUpdatedAt(
+# In internal/database/repositories/media_attachments.py (new method)
+
+async def getMediaGroupLastUpdatedAt(
+    self, mediaGroupId: str, *, sqlProvider: BaseSQLProvider
+) -> Optional[datetime.datetime]:
+    """Get the timestamp of the most recently added media in a group.
+
+    Args:
+        mediaGroupId: Media group ID to query
+        sqlProvider: SQL provider for database operations
+
+    Returns:
+        datetime of the most recent media addition, or None if group not found
+    """
+    with sqlProvider.executeFetchOne(
+        """
+        SELECT MAX(created_at) as last_updated
+        FROM media_attachments
+        WHERE media_group_id = :mediaGroupId
+        """,
+        {"mediaGroupId": mediaGroupId},
+    ) as cursor:
+        row = cursor.fetchone()
+        if row and row["last_updated"]:
+            return row["last_updated"]
+        return None
+```
+
+Then expose via Database façade:
+```python
+# In internal/database/database.py
+
+async def getMediaGroupLastUpdatedAt(
     self, mediaGroupId: str, *, dataSource: Optional[str] = None
 ) -> Optional[datetime.datetime]:
-    """
-    Get the timestamp of the most recently added media in a group.
+    """Get the timestamp of the most recently added media in a group.
 
     Args:
         mediaGroupId: Media group ID to query
@@ -51,19 +84,8 @@ def getMediaGroupLastUpdatedAt(
     Returns:
         datetime of the most recent media addition, or None if group not found
     """
-    with self.getCursor(readonly=True, dataSource=dataSource) as cursor:
-        cursor.execute(
-            """
-            SELECT MAX(created_at) as last_updated
-            FROM media_groups
-            WHERE media_group_id = ?
-            """,
-            (mediaGroupId,),
-        )
-        row = cursor.fetchone()
-        if row and row["last_updated"]:
-            return row["last_updated"]
-        return None
+    provider = await self.manager.getProvider(dataSource=dataSource)
+    return await self.mediaAttachments.getMediaGroupLastUpdatedAt(mediaGroupId, sqlProvider=provider)
 ```
 
 ### 2. Per-Job Configuration Option
@@ -163,7 +185,8 @@ async def _dtCronJob(self, task: DelayedTask) -> None:
 
 | Component | Change |
 |-----------|--------|
-| `DatabaseWrapper` | Add `getMediaGroupLastUpdatedAt()` method |
+| `internal/database/repositories/media_attachments.py` | Add `getMediaGroupLastUpdatedAt()` method to repository |
+| `internal/database/database.py` | Expose method on Database façade with dataSource support |
 | `ResendJob` class | Add `mediaGroupDelaySecs` attribute (default: 5.0) |
 | `ResenderHandler._dtCronJob` | Check `job.mediaGroupDelaySecs` before processing media groups |
 
@@ -200,6 +223,7 @@ async def _dtCronJob(self, task: DelayedTask) -> None:
 
 ## Files to Modify
 
-1. `internal/database/wrapper.py` - Add `getMediaGroupLastUpdatedAt()` method
-2. `internal/bot/common/handlers/resender.py` - Add `mediaGroupDelaySecs` to `ResendJob`, update `_dtCronJob`
-3. `tests/unit/test_database_wrapper.py` - Add unit tests for new method
+1. `internal/database/repositories/media_attachments.py` - Add `getMediaGroupLastUpdatedAt()` method to repository
+2. `internal/database/database.py` - Expose method on Database façade
+3. `internal/bot/common/handlers/resender.py` - Add `mediaGroupDelaySecs` to `ResendJob`, update `_dtCronJob`
+4. `tests/test_database_repositories.py` - Add unit tests for new repository method (or create specific test file)

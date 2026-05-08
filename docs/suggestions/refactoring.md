@@ -1,7 +1,7 @@
-# Gromozeka Refactoring Suggestions, dood!
+# Gromozeka Refactoring Suggestions
 
 > **Purpose:** Structural improvements for better maintainability, testability, and SOLID adherence.
-> These are NOT feature additions — pure code quality improvements, dood!
+> These are NOT feature additions — pure code quality improvements
 >
 > **Generated:** 2026-04-18
 
@@ -29,7 +29,7 @@
 | 16 | [ ] | [Add `__slots__` to `TheBot` and High-Frequency Data Classes](#16-add-__slots__-to-thebot-and-high-frequency-data-classes) | Medium | S | [`bot.py`](../../internal/bot/common/bot.py) |
 | 17 | [ ] | [Extract `MarkdownRenderer` Platform Bridge from `TheBot`](#17-extract-markdownrenderer-platform-bridge-from-thebot) | Medium | S | [`bot.py`](../../internal/bot/common/bot.py) |
 | 18 | [ ] | [Unify Singleton Pattern with Generic `SingletonMixin`](#18-unify-singleton-pattern-with-generic-singletonmixin) | Medium | S | Multiple service files |
-| 19 | 🔄 NEEDS UPDATE | [Move Inline DB Schema DDL out of `_initDatabase`](#19-move-inline-db-schema-ddl-out-of-_initdatabase) | Low | S | [`database.py`](../../internal/database/database.py) |
+| 19 | ❌ WONTFIX / DELIBERATE DESIGN | [Move Inline DB Schema DDL out of `_initDatabase`](#19-move-inline-db-schema-ddl-out-of-_initdatabase) | Low | S | [`database.py`](../../internal/database/database.py) |
 | 20 | [ ] | [Replace Bare `Dict[str, Any]` Config Passing with Typed Config Dataclasses](#20-replace-bare-dictstr-any-config-passing-with-typed-config-dataclasses) | Low | M | Multiple files |
 | 21 | [ ] | [Extract `awaitStepDone` Polling into `asyncio.Condition`-Based Wait](#21-extract-awaitstepone-polling-into-asynciocondition-based-wait) | Low | S | [`manager.py`](../../internal/bot/common/handlers/manager.py) |
 
@@ -47,7 +47,7 @@
 
 #### Current Problem (HISTORICAL)
 
-[`DatabaseWrapper`](../internal/database/wrapper.py:113) was a 3 021-line class that violated every dimension of the Single Responsibility Principle, dood! It mixed:
+[`DatabaseWrapper`](../internal/database/wrapper.py:113) was a 3 021-line class that violated every dimension of the Single Responsibility Principle It mixed:
 
 - Connection pool management (lines ~140–310)
 - Schema migrations bootstrapping (~352–388)
@@ -58,16 +58,16 @@
 - Cache persistence
 - Delayed-task persistence
 
-Every feature area forces edits to the same enormous file. There is no seam for unit-testing individual domains without standing up the full SQLite engine, dood!
+Every feature area forces edits to the same enormous file. There is no seam for unit-testing individual domains without standing up the full SQLite engine
 
 #### Proposed Solution
 
-Introduce a thin `BaseRepository` that receives a cursor factory, then extract one focused repository per domain, dood:
+Introduce a thin `BaseRepository` that receives a cursor factory, then extract one focused repository per domain
 
 ```python
 # internal/database/connection_pool.py
 class ConnectionPool:
-    """Manages per-source thread-local SQLite connections, dood!"""
+    """Manages per-source thread-local SQLite connections"""
     def __init__(self, sources: Dict[str, SourceConfig]) -> None: ...
     def getCursor(self, *, chatId: Optional[int] = None,
                   dataSource: Optional[str] = None,
@@ -76,7 +76,7 @@ class ConnectionPool:
 
 # internal/database/base_repository.py
 class BaseRepository:
-    """Provides getCursor to all domain repositories, dood!"""
+    """Provides getCursor to all domain repositories"""
     def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
 
@@ -84,37 +84,37 @@ class BaseRepository:
 
 # internal/database/repositories/chat_repository.py
 class ChatRepository(BaseRepository):
-    """CRUD operations for chats and chat-settings, dood!"""
+    """CRUD operations for chats and chat-settings"""
     ...
 
 # internal/database/repositories/message_repository.py
 class MessageRepository(BaseRepository):
-    """CRUD operations for chat messages, dood!"""
+    """CRUD operations for chat messages"""
     ...
 
 # internal/database/repositories/user_repository.py
 class UserRepository(BaseRepository):
-    """CRUD operations for users and chat_users, dood!"""
+    """CRUD operations for users and chat_users"""
     ...
 
 # internal/database/repositories/spam_repository.py
 class SpamRepository(BaseRepository):
-    """Spam message storage and retrieval, dood!"""
+    """Spam message storage and retrieval"""
     ...
 
 # internal/database/repositories/cache_repository.py
 class CacheRepository(BaseRepository):
-    """DB-backed cache persistence layer, dood!"""
+    """DB-backed cache persistence layer"""
     ...
 
 # internal/database/repositories/task_repository.py
 class TaskRepository(BaseRepository):
-    """Delayed task CRUD, dood!"""
+    """Delayed task CRUD"""
     ...
 
 # internal/database/wrapper.py  (kept as a façade)
 class DatabaseWrapper:
-    """Façade that composes all domain repositories, dood!"""
+    """Façade that composes all domain repositories"""
     def __init__(self, config: Dict[str, Any]) -> None:
         pool = ConnectionPool(...)
         self.chats = ChatRepository(pool)
@@ -125,7 +125,7 @@ class DatabaseWrapper:
         self.tasks = TaskRepository(pool)
 ```
 
-Callers keep using `db.getChatInfo(...)` etc. by delegating on the façade — backward compatible, dood!
+Callers keep using `db.getChatInfo(...)` etc. by delegating on the façade — backward compatible
 
 #### Expected Benefits
 
@@ -154,7 +154,7 @@ Callers keep using `db.getChatInfo(...)` etc. by delegating on the façade — b
 
 #### Current Problem
 
-[`BaseBotHandler`](../internal/bot/common/handlers/base.py:110) is 1 805 lines with at least five distinct responsibility clusters, dood:
+[`BaseBotHandler`](../internal/bot/common/handlers/base.py:110) is 1 805 lines with at least five distinct responsibility clusters
 
 | Responsibility | Approximate Lines |
 |---|---|
@@ -164,7 +164,7 @@ Callers keep using `db.getChatInfo(...)` etc. by delegating on the façade — b
 | Media processing (`_processMediaV2`, sticker, OCR) | ~900–1400 |
 | Database helpers (`updateChatInfo`, `updateUserInfo`) | ~1400–1805 |
 
-Every handler subclass inherits ALL of this even when it needs only two of five concerns. This makes tests bulky and the class hard to reason about, dood!
+Every handler subclass inherits ALL of this even when it needs only two of five concerns. This makes tests bulky and the class hard to reason about
 
 #### Proposed Solution
 
@@ -173,27 +173,27 @@ Extract protocol-based mixins:
 ```python
 # internal/bot/common/handlers/mixins/chat_settings_mixin.py
 class ChatSettingsMixin:
-    """getChatSettings, setChatSetting, getChatTier, dood!"""
+    """getChatSettings, setChatSetting, getChatTier"""
     ...
 
 # internal/bot/common/handlers/mixins/user_data_mixin.py
 class UserDataMixin:
-    """getUserData, setUserData, getUserActiveAction, dood!"""
+    """getUserData, setUserData, getUserActiveAction"""
     ...
 
 # internal/bot/common/handlers/mixins/message_sender_mixin.py
 class MessageSenderMixin:
-    """sendMessage, sendMarkdownMessage, editMessage, dood!"""
+    """sendMessage, sendMarkdownMessage, editMessage"""
     ...
 
 # internal/bot/common/handlers/mixins/media_mixin.py
 class MediaMixin:
-    """_processMediaV2, _processSticker, getMediaFromMessage, dood!"""
+    """_processMediaV2, _processSticker, getMediaFromMessage"""
     ...
 
 # internal/bot/common/handlers/mixins/db_update_mixin.py
 class DbUpdateMixin:
-    """updateChatInfo, updateUserInfo, updateChatUser, dood!"""
+    """updateChatInfo, updateUserInfo, updateChatUser"""
     ...
 
 # internal/bot/common/handlers/base.py
@@ -205,11 +205,11 @@ class BaseBotHandler(
     DbUpdateMixin,
     CommandHandlerMixin,
 ):
-    """Composes all mixins, dood!"""
+    """Composes all mixins"""
     ...
 ```
 
-Handlers that only need message-sending can declare `MessageSenderMixin` directly without dragging in media processing weight, dood!
+Handlers that only need message-sending can declare `MessageSenderMixin` directly without dragging in media processing weight
 
 #### Expected Benefits
 
@@ -236,7 +236,7 @@ Handlers that only need message-sending can declare `MessageSenderMixin` directl
 
 #### Current Problem
 
-[`TheBot`](../internal/bot/common/bot.py:31) is 1 000 lines and every public method contains an `if self.botProvider == BotProvider.TELEGRAM … elif self.botProvider == BotProvider.MAX …` branch, dood! Examples seen at lines 116, 171, 178, 231, 269, 289. This pattern will be duplicated for every new operation and every new platform.
+[`TheBot`](../internal/bot/common/bot.py:31) is 1 000 lines and every public method contains an `if self.botProvider == BotProvider.TELEGRAM … elif self.botProvider == BotProvider.MAX …` branch Examples seen at lines 116, 171, 178, 231, 269, 289. This pattern will be duplicated for every new operation and every new platform.
 
 #### Proposed Solution
 
@@ -247,7 +247,7 @@ Apply the Strategy pattern — extract a `PlatformAdapter` abstract class:
 from abc import ABC, abstractmethod
 
 class AbstractPlatformAdapter(ABC):
-    """Platform-specific bot operations, dood!"""
+    """Platform-specific bot operations"""
 
     @abstractmethod
     async def getBotId(self) -> int: ...
@@ -279,7 +279,7 @@ class MaxAdapter(AbstractPlatformAdapter):
 
 # internal/bot/common/bot.py  (slimmed down)
 class TheBot:
-    """Thin orchestrator delegating to platform adapter, dood!"""
+    """Thin orchestrator delegating to platform adapter"""
     def __init__(self, adapter: AbstractPlatformAdapter, config: Dict[str, Any]) -> None:
         self._adapter = adapter
         ...
@@ -319,39 +319,39 @@ class TheBot:
 
 #### Current Problem
 
-[`MaxBotClient`](../lib/max_bot/client.py:75) is 1 751 lines covering messaging, chat management, user management, file uploads, polling, and low-level HTTP. This is a classic god-class in the API client layer, dood!
+[`MaxBotClient`](../lib/max_bot/client.py:75) is 1 751 lines covering messaging, chat management, user management, file uploads, polling, and low-level HTTP. This is a classic god-class in the API client layer
 
 #### Proposed Solution
 
 ```python
 # lib/max_bot/http_client.py
 class MaxHttpClient:
-    """Raw HTTP request/response cycle with auth and retry, dood!"""
+    """Raw HTTP request/response cycle with auth and retry"""
     async def request(self, method: str, path: str, **kwargs) -> Any: ...
 
 # lib/max_bot/api/messages_api.py
 class MessagesApi:
-    """sendMessage, editMessage, deleteMessage, dood!"""
+    """sendMessage, editMessage, deleteMessage"""
     def __init__(self, http: MaxHttpClient) -> None: ...
 
 # lib/max_bot/api/chats_api.py
 class ChatsApi:
-    """getChats, getChatInfo, getAdmins, dood!"""
+    """getChats, getChatInfo, getAdmins"""
     ...
 
 # lib/max_bot/api/uploads_api.py
 class UploadsApi:
-    """uploadPhoto, uploadVideo, uploadAudio, dood!"""
+    """uploadPhoto, uploadVideo, uploadAudio"""
     ...
 
 # lib/max_bot/api/polling_api.py
 class PollingApi:
-    """getUpdates polling loop, dood!"""
+    """getUpdates polling loop"""
     ...
 
 # lib/max_bot/client.py  (façade)
 class MaxBotClient:
-    """Composes all API sub-clients, dood!"""
+    """Composes all API sub-clients"""
     def __init__(self, accessToken: str, ...) -> None:
         http = MaxHttpClient(accessToken, ...)
         self.messages = MessagesApi(http)
@@ -384,7 +384,7 @@ class MaxBotClient:
 
 #### Current Problem
 
-[`CacheService`](../internal/services/cache/service.py:88) is 796 lines and manages four different data domains (chats, chat-users, users, chat-persistent) through a single dict of `LRUCache` objects. Every convenience method for every domain lives in one class. Methods like `getChatSettings`, `setChatSetting`, `getChatAdmins`, `setUserData`, `getUserActiveAction` etc. are all jumbled together, dood!
+[`CacheService`](../internal/services/cache/service.py:88) is 796 lines and manages four different data domains (chats, chat-users, users, chat-persistent) through a single dict of `LRUCache` objects. Every convenience method for every domain lives in one class. Methods like `getChatSettings`, `setChatSetting`, `getChatAdmins`, `setUserData`, `getUserActiveAction` etc. are all jumbled together
 
 Additionally, the circular-import workaround at line 249 (`from internal.bot.models.chat_settings import ...` inside a method) indicates tight coupling that should be resolved structurally.
 
@@ -393,7 +393,7 @@ Additionally, the circular-import workaround at line 249 (`from internal.bot.mod
 ```python
 # internal/services/cache/chat_cache.py
 class ChatCache:
-    """Manages chat-level in-memory cache (settings, admins), dood!"""
+    """Manages chat-level in-memory cache (settings, admins)"""
     def __init__(self, maxSize: int) -> None: ...
     def getSettings(self, chatId: int) -> ChatSettingsDict: ...
     def setSettings(self, chatId: int, settings: ChatSettingsDict) -> None: ...
@@ -402,7 +402,7 @@ class ChatCache:
 
 # internal/services/cache/user_cache.py
 class UserCache:
-    """Manages user-level in-memory cache, dood!"""
+    """Manages user-level in-memory cache"""
     def getData(self, userId: int, key: str) -> Optional[UserDataValueType]: ...
     def setData(self, userId: int, key: str, value: UserDataValueType) -> None: ...
 
@@ -444,7 +444,7 @@ class CacheService:
 - Adding any new handler requires modifying `HandlersManager`
 - Conditional handler loading (`WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`) embeds feature-toggle logic deep inside the constructor
 - The class is hard to test because instantiating it creates all handlers
-- The list of handlers is not discoverable at runtime without reading source code, dood!
+- The list of handlers is not discoverable at runtime without reading source code
 
 #### Proposed Solution
 
@@ -455,7 +455,7 @@ from typing import Type
 
 @dataclass
 class HandlerRegistration:
-    """Describes how a handler should be registered, dood!"""
+    """Describes how a handler should be registered"""
     handlerClass: Type[BaseBotHandler]
     parallelism: HandlerParallelism
     enabledConfigPath: Optional[str] = None  # e.g. "resender.enabled"
@@ -480,7 +480,7 @@ DEFAULT_HANDLER_REGISTRATIONS: List[HandlerRegistration] = [
 
 # internal/bot/common/handlers/factory.py
 class HandlerFactory:
-    """Creates handler instances from registrations, dood!"""
+    """Creates handler instances from registrations"""
     def buildHandlers(
         self,
         registrations: List[HandlerRegistration],
@@ -526,14 +526,14 @@ self.handlers = factory.buildHandlers(
 
 #### Current Problem
 
-[`HandlersManager`](../internal/bot/common/handlers/manager.py:177) mixes two very different responsibilities: handler chain orchestration AND per-chat message queue state management (`chatStates`, `addMessageToChatQueue`, `_dtCronJob` for stale-state cleanup). The `ChatProcessingState` and `MessageQueueRecord` classes (lines 77–174) are essentially a mini queue subsystem embedded inside the manager, dood!
+[`HandlersManager`](../internal/bot/common/handlers/manager.py:177) mixes two very different responsibilities: handler chain orchestration AND per-chat message queue state management (`chatStates`, `addMessageToChatQueue`, `_dtCronJob` for stale-state cleanup). The `ChatProcessingState` and `MessageQueueRecord` classes (lines 77–174) are essentially a mini queue subsystem embedded inside the manager
 
 #### Proposed Solution
 
 ```python
 # internal/bot/common/chat_queue_manager.py
 class ChatQueueManager:
-    """Manages per-chat message ordering queues, dood!"""
+    """Manages per-chat message ordering queues"""
     def __init__(self, maxTasksPerChat: int) -> None: ...
 
     async def addMessage(
@@ -543,7 +543,7 @@ class ChatQueueManager:
     async def markProcessed(self, record: MessageQueueRecord) -> None: ...
 
     async def cleanupStaleStates(self) -> None:
-        """Remove queues idle > 1 hour, dood!"""
+        """Remove queues idle > 1 hour"""
         ...
 
 # HandlersManager uses it:
@@ -578,7 +578,7 @@ class HandlersManager:
 
 #### Current Problem
 
-Every method in [`TheBot`](../internal/bot/common/bot.py:31) repeats the same `if self.botProvider == BotProvider.TELEGRAM … elif self.botProvider == BotProvider.MAX` pattern. As seen at line 116 (`getBotId`), line 150 (`getChatAdmins`), line 196 (`isAdmin`), line 268 (`editMessage`), etc. This is a textbook Open/Closed violation — adding a third platform means modifying every method, dood!
+Every method in [`TheBot`](../internal/bot/common/bot.py:31) repeats the same `if self.botProvider == BotProvider.TELEGRAM … elif self.botProvider == BotProvider.MAX` pattern. As seen at line 116 (`getBotId`), line 150 (`getChatAdmins`), line 196 (`isAdmin`), line 268 (`editMessage`), etc. This is a textbook Open/Closed violation — adding a third platform means modifying every method
 
 This is closely related to refactoring #3 but can be done incrementally even before the full platform adapter extraction.
 
@@ -593,7 +593,7 @@ class TheBot:
         telegramCoro: Callable,
         maxCoro: Callable,
     ) -> Any:
-        """Dispatch to platform-specific coroutine, dood!"""
+        """Dispatch to platform-specific coroutine"""
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot:
             return await telegramCoro()
         elif self.botProvider == BotProvider.MAX and self.maxBot:
@@ -607,7 +607,7 @@ class TheBot:
         )
 ```
 
-Long-term, use the `AbstractPlatformAdapter` from refactoring #3, dood!
+Long-term, use the `AbstractPlatformAdapter` from refactoring #3
 
 #### Expected Benefits
 
@@ -631,14 +631,14 @@ Long-term, use the `AbstractPlatformAdapter` from refactoring #3, dood!
 
 #### Current Problem
 
-[`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py:62) is 847 lines. A significant portion builds conversation context: assembling `ModelMessage` sequences from DB history, trimming to context window size, formatting user/system prompts, injecting tool results, etc. This context-building logic has no clear boundary and is interleaved with trigger detection (is this a reply? a mention? a random message?) and actual LLM call logic, dood!
+[`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py:62) is 847 lines. A significant portion builds conversation context: assembling `ModelMessage` sequences from DB history, trimming to context window size, formatting user/system prompts, injecting tool results, etc. This context-building logic has no clear boundary and is interleaved with trigger detection (is this a reply? a mention? a random message?) and actual LLM call logic
 
 #### Proposed Solution
 
 ```python
 # internal/services/llm/context_builder.py
 class LLMContextBuilder:
-    """Builds ModelMessage sequences for LLM calls, dood!"""
+    """Builds ModelMessage sequences for LLM calls"""
 
     def __init__(self, db: DatabaseWrapper, configManager: ConfigManager) -> None: ...
 
@@ -651,7 +651,7 @@ class LLMContextBuilder:
         maxTokens: int,
         model: AbstractModel,
     ) -> Sequence[ModelMessage]:
-        """Load message history and trim to fit context window, dood!"""
+        """Load message history and trim to fit context window"""
         ...
 
     def buildReplyChain(
@@ -659,7 +659,7 @@ class LLMContextBuilder:
         ensuredMessage: EnsuredMessage,
         chatSettings: ChatSettingsDict,
     ) -> Sequence[ModelMessage]:
-        """Follow reply chain to build conversation thread, dood!"""
+        """Follow reply chain to build conversation thread"""
         ...
 ```
 
@@ -699,7 +699,7 @@ def getChatSettings(self, chatId: int) -> ...:
     ...
 ```
 
-This is a deferred import used to break a circular dependency, dood! The TODO comment even acknowledges it. Deferred imports hide the real dependency graph, slow down the first call, and confuse type checkers.
+This is a deferred import used to break a circular dependency The TODO comment even acknowledges it. Deferred imports hide the real dependency graph, slow down the first call, and confuse type checkers.
 
 #### Proposed Solution
 
@@ -707,7 +707,7 @@ This is a deferred import used to break a circular dependency, dood! The TODO co
 2. Both `CacheService` and `internal/bot/models/` import from `internal/models/chat_settings.py`
 3. The circular dependency is broken by inverting the dependency direction
 
-Alternatively, define a `ChatSettingsProtocol` in `internal/services/cache/types.py` that both sides satisfy, dood!
+Alternatively, define a `ChatSettingsProtocol` in `internal/services/cache/types.py` that both sides satisfy
 
 #### Expected Benefits
 
@@ -741,14 +741,14 @@ Alternatively, define a `ChatSettingsProtocol` in `internal/services/cache/types
 
 #### Current Problem (HISTORICAL)
 
-[`DatabaseWrapper._validateDictIsChatMessageDict`](../internal/database/wrapper.py:394) and similar `_validateDict*` methods performed row-to-TypedDict validation. These methods were private helpers duplicated across the wrapper — each did essentially the same enum-coercion + required-field check pattern, dood! They added ~200+ lines to the already-massive wrapper.
+[`DatabaseWrapper._validateDictIsChatMessageDict`](../internal/database/wrapper.py:394) and similar `_validateDict*` methods performed row-to-TypedDict validation. These methods were private helpers duplicated across the wrapper — each did essentially the same enum-coercion + required-field check pattern They added ~200+ lines to the already-massive wrapper.
 
 #### Proposed Solution
 
 ```python
 # internal/database/row_validator.py
 class DatabaseRowValidator:
-    """Validates and coerces raw sqlite3.Row dicts to TypedDicts, dood!"""
+    """Validates and coerces raw sqlite3.Row dicts to TypedDicts"""
 
     @staticmethod
     def toChatMessageDict(rowDict: Dict[str, Any]) -> ChatMessageDict: ...
@@ -765,7 +765,7 @@ class DatabaseRowValidator:
         field: str,
         enumClass: type,
     ) -> None:
-        """Generic enum coercion helper, dood!"""
+        """Generic enum coercion helper"""
         if field in rowDict and isinstance(rowDict[field], str):
             try:
                 rowDict[field] = enumClass(rowDict[field])
@@ -797,7 +797,7 @@ class DatabaseRowValidator:
 
 #### Current Problem
 
-[`TelegramBotApplication`](../internal/bot/telegram/application.py:62) and [`MaxBotApplication`](../internal/bot/max/application.py:29) duplicate a significant lifecycle pattern, dood:
+[`TelegramBotApplication`](../internal/bot/telegram/application.py:62) and [`MaxBotApplication`](../internal/bot/max/application.py:29) duplicate a significant lifecycle pattern
 
 - Both store `configManager`, `database`, `llmManager`, `handlerManager`, `queueService`, `_schedulerTask`
 - Both have `postInit` / `postStop` with nearly identical steps (start scheduler, inject bot, shutdown handlerManager, stop queueService)
@@ -809,7 +809,7 @@ class DatabaseRowValidator:
 ```python
 # internal/bot/base_application.py
 class BaseBotApplication(ABC):
-    """Common lifecycle for all platform bot applications, dood!"""
+    """Common lifecycle for all platform bot applications"""
 
     def __init__(
         self,
@@ -828,24 +828,24 @@ class BaseBotApplication(ABC):
         self._schedulerTask: Optional[asyncio.Task] = None
 
     async def _startScheduler(self) -> None:
-        """Start the delayed task scheduler, dood!"""
+        """Start the delayed task scheduler"""
         self._schedulerTask = asyncio.create_task(
             self.queueService.startDelayedScheduler(self.database)
         )
 
     async def _stopScheduler(self) -> None:
-        """Stop scheduler and await completion, dood!"""
+        """Stop scheduler and await completion"""
         await self.queueService.beginShutdown()
         if self._schedulerTask is not None:
             await self._schedulerTask
 
     @abstractmethod
     async def _platformPostInit(self) -> None:
-        """Platform-specific post-init steps, dood!"""
+        """Platform-specific post-init steps"""
 
     @abstractmethod
     def run(self) -> None:
-        """Start the event loop and bot, dood!"""
+        """Start the event loop and bot"""
 ```
 
 #### Expected Benefits
@@ -873,7 +873,7 @@ class BaseBotApplication(ABC):
 
 #### Current Problem
 
-[`HandlersManager.injectBot`](../internal/bot/common/handlers/manager.py:389) does two very different things: it creates a `TheBot` instance AND resolves bot-owner usernames to user IDs by querying the database, dood! This username→ID resolution is a cross-cutting concern that should be separate:
+[`HandlersManager.injectBot`](../internal/bot/common/handlers/manager.py:389) does two very different things: it creates a `TheBot` instance AND resolves bot-owner usernames to user IDs by querying the database This username→ID resolution is a cross-cutting concern that should be separate:
 
 ```python
 # lines 411–413 in manager.py
@@ -887,18 +887,18 @@ for botOwner in theBot.botOwnersUsername:
 ```python
 # internal/bot/bot_owner_resolver.py
 class BotOwnerResolver:
-    """Resolves bot-owner usernames to user IDs from DB, dood!"""
+    """Resolves bot-owner usernames to user IDs from DB"""
     def __init__(self, db: DatabaseWrapper) -> None:
         self._db = db
 
     def resolveUsernames(self, bot: TheBot) -> None:
-        """Populate bot.botOwnersId from DB for all known usernames, dood!"""
+        """Populate bot.botOwnersId from DB for all known usernames"""
         for username in bot.botOwnersUsername:
             for userId in self._db.getUserIdByUserName(username.lower()):
                 bot.botOwnersId.add(userId)
 ```
 
-`HandlersManager.injectBot` calls `BotOwnerResolver(self.db).resolveUsernames(theBot)`, dood!
+`HandlersManager.injectBot` calls `BotOwnerResolver(self.db).resolveUsernames(theBot)`
 
 #### Expected Benefits
 
@@ -929,7 +929,7 @@ class BotOwnerResolver:
 await asyncio.gather(*self.handlerTasks)
 ```
 
-Without cancellation support or timeout. If any task hangs, shutdown hangs forever, dood! The `MaxBotApplication.postStop` uses a busy-wait `while len(self._tasks) > 0: await asyncio.sleep(1)` pattern (line 85–87) which is both wasteful and non-deterministic.
+Without cancellation support or timeout. If any task hangs, shutdown hangs forever The `MaxBotApplication.postStop` uses a busy-wait `while len(self._tasks) > 0: await asyncio.sleep(1)` pattern (line 85–87) which is both wasteful and non-deterministic.
 
 #### Proposed Solution
 
@@ -937,7 +937,7 @@ Use `asyncio.TaskGroup` with cancellation on timeout:
 
 ```python
 class TaskTracker:
-    """Tracks background tasks with graceful shutdown, dood!"""
+    """Tracks background tasks with graceful shutdown"""
     def __init__(self, shutdownTimeout: float = 30.0) -> None:
         self._tasks: Set[asyncio.Task] = set()
         self._shutdownTimeout = shutdownTimeout
@@ -947,7 +947,7 @@ class TaskTracker:
         task.add_done_callback(self._tasks.discard)
 
     async def shutdown(self) -> None:
-        """Cancel all tasks and wait up to timeout, dood!"""
+        """Cancel all tasks and wait up to timeout"""
         if not self._tasks:
             return
         for task in self._tasks:
@@ -980,14 +980,14 @@ class TaskTracker:
 
 #### Current Problem
 
-[`BaseBotHandler.getChatSettings`](../internal/bot/common/handlers/base.py:195) is an 80+ line method with complex logic for determining which settings are available at each chat tier. It mixes tier comparison, bot-owner bypass logic, and model validation into one tangled block (lines 280–308). Adding a new tier or a new settings type requires modifying this core method, dood!
+[`BaseBotHandler.getChatSettings`](../internal/bot/common/handlers/base.py:195) is an 80+ line method with complex logic for determining which settings are available at each chat tier. It mixes tier comparison, bot-owner bypass logic, and model validation into one tangled block (lines 280–308). Adding a new tier or a new settings type requires modifying this core method
 
 #### Proposed Solution
 
 ```python
 # internal/bot/models/tier_policy.py
 class TierPolicy:
-    """Encapsulates the rules for what settings are available at a given tier, dood!"""
+    """Encapsulates the rules for what settings are available at a given tier"""
 
     def __init__(self, tier: ChatTier, llmManager: LLMManager) -> None:
         self._tier = tier
@@ -1000,7 +1000,7 @@ class TierPolicy:
         *,
         isSetByBotOwner: bool,
     ) -> bool:
-        """Return True if the setting should be included in resolved settings, dood!"""
+        """Return True if the setting should be included in resolved settings"""
         settingInfo = getChatSettingsInfo()[key]
         requiredTier = settingInfo["page"].minTier()
         if not self._tier.isBetterOrEqualThan(requiredTier) and not isSetByBotOwner:
@@ -1012,7 +1012,7 @@ class TierPolicy:
     def _isModelAllowed(self, value: ChatSettingsValue, *, isSetByBotOwner: bool) -> bool: ...
 ```
 
-`getChatSettings` becomes a simple loop over settings calling `policy.isSettingAllowed(...)`, dood!
+`getChatSettings` becomes a simple loop over settings calling `policy.isSettingAllowed(...)`
 
 #### Expected Benefits
 
@@ -1038,7 +1038,7 @@ class TierPolicy:
 
 #### Current Problem
 
-[`TheBot`](../internal/bot/common/bot.py:44) has a TODO comment `# TODO Add __slots__` at line 44. `TheBot` instances are created per-session, and the class has at least 6 instance attributes that are accessed on every message. Missing `__slots__` means a `__dict__` is allocated per instance and attribute access is slower, dood!
+[`TheBot`](../internal/bot/common/bot.py:44) has a TODO comment `# TODO Add __slots__` at line 44. `TheBot` instances are created per-session, and the class has at least 6 instance attributes that are accessed on every message. Missing `__slots__` means a `__dict__` is allocated per instance and attribute access is slower
 
 Additionally, other frequently-created objects like `MessageQueueRecord` (line 81 already has `__slots__`) and `ChatProcessingState` (line 120) already use slots — but `TheBot`, `BaseBotHandler` subclasses, and similar objects do not.
 
@@ -1053,7 +1053,7 @@ class TheBot:
     ...
 ```
 
-Audit all frequently-instantiated classes for missing `__slots__` and add them systematically, dood!
+Audit all frequently-instantiated classes for missing `__slots__` and add them systematically
 
 #### Expected Benefits
 
@@ -1079,20 +1079,20 @@ Audit all frequently-instantiated classes for missing `__slots__` and add them s
 
 #### Current Problem
 
-[`TheBot.editMessage`](../internal/bot/common/bot.py:246) and other message-sending methods inline the Markdown→MarkdownV2 conversion and platform-specific `parse_mode` selection. The same pattern is scattered across `sendMessage`, `sendReply`, `editMessage` etc. in `TheBot` and also in `BaseBotHandler`, dood! `markdownToMarkdownV2` is imported directly in `bot.py` at line 26.
+[`TheBot.editMessage`](../internal/bot/common/bot.py:246) and other message-sending methods inline the Markdown→MarkdownV2 conversion and platform-specific `parse_mode` selection. The same pattern is scattered across `sendMessage`, `sendReply`, `editMessage` etc. in `TheBot` and also in `BaseBotHandler` `markdownToMarkdownV2` is imported directly in `bot.py` at line 26.
 
 #### Proposed Solution
 
 ```python
 # internal/bot/common/message_formatter.py
 class MessageFormatter:
-    """Formats message text for platform-specific delivery, dood!"""
+    """Formats message text for platform-specific delivery"""
 
     def __init__(self, botProvider: BotProvider) -> None:
         self._provider = botProvider
 
     def formatText(self, text: str, *, useMarkdown: bool) -> Tuple[str, Optional[str]]:
-        """Return (formattedText, parseMode) for the target platform, dood!"""
+        """Return (formattedText, parseMode) for the target platform"""
         if not useMarkdown:
             return text, None
         if self._provider == BotProvider.TELEGRAM:
@@ -1102,7 +1102,7 @@ class MessageFormatter:
         return text, None
 ```
 
-All message-sending paths call `self._formatter.formatText(text, useMarkdown=useMarkdown)`, dood!
+All message-sending paths call `self._formatter.formatText(text, useMarkdown=useMarkdown)`
 
 #### Expected Benefits
 
@@ -1128,7 +1128,7 @@ All message-sending paths call `self._formatter.formatText(text, useMarkdown=use
 
 #### Current Problem
 
-[`CacheService`](../internal/services/cache/service.py:105), [`QueueService`](../internal/services/queue_service/service.py:82), [`LLMService`](../internal/services/llm/service.py), [`StorageService`](../internal/services/storage/service.py), and [`RateLimiterManager`](../lib/rate_limiter/manager.py) all implement the same boilerplate singleton pattern: `_instance`, `_lock`, `__new__`, `getInstance()`, dood! This is 15+ lines of identical code copy-pasted across 5+ classes.
+[`CacheService`](../internal/services/cache/service.py:105), [`QueueService`](../internal/services/queue_service/service.py:82), [`LLMService`](../internal/services/llm/service.py), [`StorageService`](../internal/services/storage/service.py), and [`RateLimiterManager`](../lib/rate_limiter/manager.py) all implement the same boilerplate singleton pattern: `_instance`, `_lock`, `__new__`, `getInstance()` This is 15+ lines of identical code copy-pasted across 5+ classes.
 
 #### Proposed Solution
 
@@ -1140,7 +1140,7 @@ from typing import ClassVar, TypeVar, Type
 _T = TypeVar("_T", bound="SingletonMixin")
 
 class SingletonMixin:
-    """Thread-safe singleton base class, dood!"""
+    """Thread-safe singleton base class"""
     _instance: ClassVar[Optional["SingletonMixin"]] = None
     _lock: ClassVar[RLock] = RLock()
 
@@ -1152,7 +1152,7 @@ class SingletonMixin:
 
     @classmethod
     def getInstance(cls: Type[_T]) -> _T:
-        """Get or create singleton instance, dood!"""
+        """Get or create singleton instance"""
         return cls()
 ```
 
@@ -1195,19 +1195,19 @@ class CacheService(SingletonMixin):
 
 **Priority:** Low | **Effort:** S (hours)
 
-> **🔄 NEEDS UPDATE (as of 2026-05-02):** The architecture has changed significantly. The old `_initDatabase` in `DatabaseWrapper` is gone. The `settings` table creation now lives in [`Database.migrateDatabase()`](../../internal/database/database.py:133) at line 158 and is still inline DDL (`CREATE TABLE IF NOT EXISTS settings ...`), but the context is different — it's now per-provider via `addProviderInitializationHook`. The `settings` table is required *before* migrations run (for version tracking), making it a chicken-and-egg problem. This suggestion should be revised to account for the new provider-based architecture, or simply closed as a deliberate design choice.
+> **❌ WONTFIX / DELIBERATE DESIGN (as of 2026-05-08):** The `settings` table creation in [`Database.migrateDatabase()`](../../internal/database/database.py:158) is intentional bootstrap DDL. The architecture has changed from old DatabaseWrapper to new `Database` façade + provider pattern. The `settings` table is a prerequisite for the migration system itself (stores migration version data), creating a chicken-and-egg problem. Keeping `CREATE TABLE IF NOT EXISTS settings (...)` inline as initial bootstrap DDL is the deliberate solution — migrations require the table to exist first. This is not a bug but a deliberate architectural choice for bootstrap ordering.
 
 #### Current Problem (REVISED)
 
-[`Database.migrateDatabase()`](../../internal/database/database.py:133) still hardcodes the `CREATE TABLE IF NOT EXISTS settings (...)` DDL inline at line 158. However, the `settings` table is a prerequisite for the migration system itself (it stores migration version data), so it cannot be moved into a migration without a bootstrap mechanism, dood!
+[`Database.migrateDatabase()`](../../internal/database/database.py:133) still hardcodes the `CREATE TABLE IF NOT EXISTS settings (...)` DDL inline at line 158. However, the `settings` table is a prerequisite for the migration system itself (it stores migration version data), so it cannot be moved into a migration without a bootstrap mechanism
 
 #### Proposed Solution
 
-Move the `settings` table creation into the lowest-numbered migration (`migration_001` or a new `migration_000`), and make `_initDatabase` solely responsible for running migrations, not DDL, dood:
+Move the `settings` table creation into the lowest-numbered migration (`migration_001` or a new `migration_000`), and make `_initDatabase` solely responsible for running migrations, not DDL
 
 ```python
 def _initDatabase(self) -> None:
-    """Run all pending migrations for each writable source, dood!"""
+    """Run all pending migrations for each writable source"""
     migrationManager = MigrationManager(self)
     migrationManager.loadMigrationsFromVersions()
     for sourceName, sourceConfig in self._sources.items():
@@ -1215,7 +1215,7 @@ def _initDatabase(self) -> None:
             migrationManager.migrate(dataSource=sourceName)
 ```
 
-The `settings` table creation moves into a bootstrap migration, dood!
+The `settings` table creation moves into a bootstrap migration
 
 #### Expected Benefits
 
@@ -1240,13 +1240,13 @@ The `settings` table creation moves into a bootstrap migration, dood!
 
 #### Current Problem
 
-Throughout the codebase, configuration is passed as untyped `Dict[str, Any]` dood! Examples:
+Throughout the codebase, configuration is passed as untyped `Dict[str, Any]`  Examples:
 
 - [`TheBot.__init__`](../internal/bot/common/bot.py:46): `config: Dict[str, Any]`
 - [`DatabaseWrapper.__init__`](../internal/database/wrapper.py:119): `config: Dict[str, Any]`
 - [`GromozekBot.__init__`](../main.py:34) passes `configManager.getBotConfig()` which returns `Dict[str, Any]`
 
-Access is via string keys like `config.get("bot_owners", [])` (line 85), `config.get("max-tasks", 1024)` (line 245) — typos silently return defaults, dood!
+Access is via string keys like `config.get("bot_owners", [])` (line 85), `config.get("max-tasks", 1024)` (line 245) — typos silently return defaults
 
 #### Proposed Solution
 
@@ -1257,7 +1257,7 @@ from typing import List, Union
 
 @dataclass
 class BotConfig:
-    """Typed bot configuration, dood!"""
+    """Typed bot configuration"""
     mode: str = "telegram"
     botOwners: List[Union[int, str]] = field(default_factory=list)
     maxTasks: int = 1024
@@ -1275,7 +1275,7 @@ class BotConfig:
         )
 ```
 
-`ConfigManager` provides `getBotConfig() -> BotConfig` instead of raw dict, dood!
+`ConfigManager` provides `getBotConfig() -> BotConfig` instead of raw dict
 
 #### Expected Benefits
 
@@ -1321,7 +1321,7 @@ while self.queue and self.queue[0].getId() != messageId:
     await asyncio.sleep(0.1)
 ```
 
-These 100ms polling loops waste CPU cycles and add latency, dood!
+These 100ms polling loops waste CPU cycles and add latency
 
 #### Proposed Solution
 
@@ -1336,13 +1336,13 @@ class MessageQueueRecord:
         self._stepCondition: asyncio.Condition = asyncio.Condition()
 
     async def advanceStep(self, step: int) -> None:
-        """Called by the processor to advance step, dood!"""
+        """Called by the processor to advance step"""
         async with self._stepCondition:
             self.step = step
             self._stepCondition.notify_all()
 
     async def awaitStepDone(self, step: int) -> None:
-        """Wait until step reached without polling, dood!"""
+        """Wait until step reached without polling"""
         async with self._stepCondition:
             await self._stepCondition.wait_for(
                 lambda: self.handled.is_set() or self.step >= step
@@ -1368,7 +1368,7 @@ class MessageQueueRecord:
 
 ## Implementation Order Recommendation
 
-Given the interdependencies, dood, here is the suggested order (updated 2026-05-02):
+Given the interdependencies, here is the suggested order (updated 2026-05-02):
 
 ```
 Phase 1 (Foundation, no breaking changes):
@@ -1404,5 +1404,5 @@ Phase 5 (Config & misc):
 
 ---
 
-*Generated by code analysis of Gromozeka source — 2026-04-18, dood!*
+*Generated by code analysis of Gromozeka source — 2026-04-18*
 *Status review updated: 2026-05-02*

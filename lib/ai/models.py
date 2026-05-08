@@ -64,8 +64,8 @@ def _renderError(value: Optional[Exception]) -> Any:
         value: The error value or None.
 
     Returns:
-        Formatted string when set; ``_OMIT`` when None so it disappears
-        from the printed output.
+        str: Formatted string when set; ``_OMIT`` when None so it disappears
+            from the printed output.
     """
     if value is None:
         return _OMIT
@@ -79,7 +79,7 @@ def _renderMediaData(value: Optional[bytes]) -> Any:
         value: The media bytes or None.
 
     Returns:
-        ``"<bytes len=N>"`` when set; ``_OMIT`` when None / empty.
+        str: ``"<bytes len=N>"`` when set; ``_OMIT`` when None / empty.
     """
     if value is None or len(value) == 0:
         return _OMIT
@@ -93,7 +93,7 @@ def _renderStatus(value: "ModelResultStatus") -> Any:
         value: The status enum value.
 
     Returns:
-        The enum's ``.name``.
+        str: The enum's ``.name``.
     """
     return value.name
 
@@ -103,9 +103,6 @@ class LLMAbstractTool(ABC):
 
     This class defines the interface that all LLM tool implementations must follow.
     Tools are used to extend LLM capabilities by allowing them to call external functions.
-
-    Attributes:
-        None
 
     Example:
         >>> class CustomTool(LLMAbstractTool):
@@ -135,28 +132,21 @@ class LLMParameterType(StrEnum):
     This enum defines the valid types that can be used when defining parameters
     for LLM function tools. These types map to JSON Schema types.
 
-    Attributes:
-        STRING: String type for text parameters.
-        NUMBER: Numeric type for integer or floating-point values.
-        BOOLEAN: Boolean type for true/false values.
-        ARRAY: Array type for lists of values.
-        OBJECT: Object type for structured data.
-
     Example:
         >>> param_type = LLMParameterType.STRING
         >>> print(param_type)
         string
     """
 
-    #: String type for text parameters
+    #: String type for text parameters.
     STRING = "string"
-    #: Numeric type for integer or floating-point values
+    #: Numeric type for integer or floating-point values.
     NUMBER = "number"
-    #: Boolean type for true/false values
+    #: Boolean type for true/false values.
     BOOLEAN = "boolean"
-    #: Array type for lists of values
+    #: Array type for lists of values.
     ARRAY = "array"
-    #: Object type for structured data
+    #: Object type for structured data.
     OBJECT = "object"
 
 
@@ -165,13 +155,6 @@ class LLMFunctionParameter:
 
     This class defines a single parameter that can be passed to an LLM function tool,
     including its name, description, type, and whether it's required.
-
-    Attributes:
-        name: The parameter name.
-        description: Human-readable description of the parameter.
-        type: The parameter type from LLMParameterType enum.
-        required: Whether the parameter is required (default: False).
-        extra: Additional metadata for the parameter (default: empty dict).
 
     Example:
         >>> param = LLMFunctionParameter(
@@ -241,12 +224,6 @@ class LLMToolFunction(LLMAbstractTool):
     This class defines a function tool with its name, description, parameters,
     and optionally a callable implementation. When an LLM requests to call this tool,
     the function can be executed with the provided arguments.
-
-    Attributes:
-        name: The function name.
-        description: Human-readable description of what the function does.
-        parameters: Sequence of LLMFunctionParameter objects defining the function's parameters.
-        function: Optional callable that implements the function logic.
 
     Example:
         >>> def get_weather(location: str) -> str:
@@ -401,11 +378,6 @@ class LLMToolCall:
     This class encapsulates a tool call that an LLM has requested to execute,
     including the call ID, function name, and parameters.
 
-    Attributes:
-        id: Unique identifier for the tool call.
-        name: Name of the function to call.
-        parameters: Dictionary of parameter names to values.
-
     Example:
         >>> tool_call = LLMToolCall(
         ...     id="call_123",
@@ -448,14 +420,6 @@ class ModelMessage:
     This class provides a standard format for messages exchanged with LLMs,
     supporting various roles (user, assistant, system), content formats,
     and tool calling capabilities.
-
-    Attributes:
-        role: The message role (e.g., "user", "assistant", "system").
-        content: The message content text.
-        contentKey: The key used for content in serialization (default: "content").
-        toolCalls: List of tool calls requested by the assistant.
-        toolCallId: ID of the tool call this message is responding to.
-        weight: Optional weight for the message (used in some contexts).
 
     Example:
         >>> message = ModelMessage(
@@ -659,7 +623,15 @@ class ModelMessage:
         Returns:
             str: String representation including the class name and JSON content.
         """
-        return f"ModelMessage({str(self)})"
+        return f"{type(self).__name__}({str(self)})"
+
+    def toLogMessage(self) -> str:
+        """Return a string representation of the message for logging.
+
+        Returns:
+            str: String representation of the message.
+        """
+        return repr(self)
 
 
 class ModelImageMessage(ModelMessage):
@@ -668,11 +640,6 @@ class ModelImageMessage(ModelMessage):
     This class extends ModelMessage to support image content alongside text.
     Images are automatically converted to base64 and embedded in the message
     with appropriate MIME type detection.
-
-    Attributes:
-        role: The message role (default: "user").
-        content: The text content of the message (default: "").
-        image: The image data as a bytearray (default: empty bytearray).
 
     Example:
         >>> with open("image.jpg", "rb") as f:
@@ -756,6 +723,29 @@ class ModelImageMessage(ModelMessage):
 
         return super().toDict(contentKey, content=content, skipRole=skipRole)
 
+    def toLogMessage(self) -> str:
+        """Return a string representation of the message for logging.
+
+        Returns:
+            str: String representation of the message.
+        """
+        selfDict = self.toDict()
+        if "content" in selfDict and isinstance(selfDict["content"], list):
+            newContent = []
+            for item in selfDict["content"]:
+                if isinstance(item, dict) and "image_url" in item:
+                    newItem = item.copy()
+                    if isinstance(item["image_url"], dict) and "url" in item["image_url"]:
+                        urlLen = len(item["image_url"]["url"])
+                        newItem["image_url"]["url"] = f"{newItem['image_url']['url'][:32]}...({urlLen} bytes)"
+
+                    newContent.append(item)
+                    continue
+                newContent.append(item)
+            selfDict["content"] = newContent
+
+        return f"{type(self).__name__}({utils.jsonDumps(selfDict)})"
+
 
 class ModelResultStatus(Enum):
     """Enumeration of possible statuses for LLM model execution results.
@@ -763,37 +753,27 @@ class ModelResultStatus(Enum):
     This enum defines the various states that can result from running an LLM,
     including success states, partial results, and error conditions.
 
-    Attributes:
-        UNSPECIFIED: The status is not specified.
-        PARTIAL: The result is partially complete.
-        TRUNCATED_FINAL: The result is truncated but considered final.
-        FINAL: The result is complete and final.
-        CONTENT_FILTER: The result was filtered for content policy violations.
-        TOOL_CALLS: The result involves tool calls that need to be executed.
-        UNKNOWN: Represents an unknown status.
-        ERROR: An error occurred during execution.
-
     Example:
         >>> status = ModelResultStatus.FINAL
         >>> print(status.name)
         FINAL
     """
 
-    #: The status is not specified
+    #: The status is not specified.
     UNSPECIFIED = 0
-    #: The alternative is partially complete
+    #: The result is partially complete.
     PARTIAL = 1
-    #: The alternative is truncated but considered final
+    #: The result is truncated but considered final.
     TRUNCATED_FINAL = 2
-    #: The alternative is complete and final
+    #: The result is complete and final.
     FINAL = 3
-    #: The alternative has been filtered for content
+    #: The result has been filtered for content.
     CONTENT_FILTER = 4
-    #: The alternative involves tool calls
+    #: The result involves tool calls.
     TOOL_CALLS = 5
-    #: Represents an unknown status (-1)
+    #: Represents an unknown status (-1).
     UNKNOWN = -1
-    #: An error occurred during execution
+    #: An error occurred during execution.
     ERROR = 6
 
 
@@ -803,21 +783,6 @@ class ModelRunResult:
     This class encapsulates all possible outputs from running an LLM, including
     text responses, tool calls, media content, token usage, and error information.
     It provides a consistent interface regardless of the underlying LLM provider.
-
-    Attributes:
-        status: The execution status from ModelResultStatus.
-        resultText: The text content of the response.
-        result: The raw result object from the LLM provider.
-        toolCalls: List of tool calls requested by the LLM.
-        mediaMimeType: MIME type of media content if present.
-        mediaData: Binary data of media content if present.
-        error: Exception if an error occurred.
-        toolUsageHistory: History of messages used in tool execution.
-        isFallback: Whether this result is from a fallback mechanism.
-        isToolsUsed: Whether tools were used in generating this result.
-        inputTokens: Number of input tokens used.
-        outputTokens: Number of output tokens generated.
-        totalTokens: Total number of tokens used.
 
     Example:
         >>> result = ModelRunResult(
@@ -848,11 +813,11 @@ class ModelRunResult:
         "totalTokens",
     )
 
-    # Per-field rendering overrides for __str__. Maps field name to a callable
-    # that takes the raw value and returns either the ``_OMIT`` sentinel (drop
-    # the field from output) or any object whose repr() is what we want printed.
-    # Fields absent from this dict use the default rule: omit when value is
-    # None, False, or an empty container; otherwise include ``repr(value)``.
+    #: Per-field rendering overrides for __str__. Maps field name to a callable
+    #: that takes the raw value and returns either the ``_OMIT`` sentinel (drop
+    #: the field from output) or any object whose repr() is what we want printed.
+    #: Fields absent from this dict use the default rule: omit when value is
+    #: None, False, or an empty container; otherwise include ``repr(value)``.
     _STR_RENDERERS: Dict[str, Callable[[Any], Any]] = {
         # Raw API response object: too large and too noisy for logs — always omit.
         "result": lambda v: _OMIT,
@@ -979,7 +944,7 @@ class ModelRunResult:
         and worth seeing in the output even though ``0`` is falsy in Python.
 
         Returns:
-            Human-readable summary string.  NOT round-trippable via eval —
+            str: Human-readable summary string.  NOT round-trippable via eval —
             intended for logs / debug only.
         """
         parts: List[str] = []
@@ -1090,9 +1055,6 @@ class ModelStructuredResult(ModelRunResult):
     On other failures (content filter, API error, schema rejection by the
     provider): status reflects the cause, data is None, error is set if
     relevant.
-
-    Attributes:
-        data: The parsed JSON object on success, or None on failure.
 
     Example:
         >>> result = ModelStructuredResult(

@@ -412,7 +412,7 @@ await sqlProvider.execute(
 **Files Affected**: 12 files
 **Impact**: Incorrect timestamp values, timezone issues
 
-**Status**: ✅ **RESOLVED** - Implemented in migration_013 and provider methods
+**Status**: ✅ **RESOLVED** - Portable SQL patterns implemented in migration_013 and all repository code
 
 #### Problem Description
 
@@ -431,11 +431,10 @@ This can cause inconsistencies in timestamp comparisons and data integrity issue
 - Applications must explicitly provide `created_at` and `updated_at` values
 - Ensures consistent timestamp handling across all RDBMS
 
-**Provider Method**: `getCurrentTimestamp()` in all providers
-- Returns provider-specific timestamp expression for UTC time
-- SQLite: `datetime('now')`
-- MySQL: `UTC_TIMESTAMP()`
-- PostgreSQL: `CURRENT_TIMESTAMP AT TIME ZONE 'UTC'`
+**Repository Code**: All timestamp generation moved to Python application code
+- Uses `datetime.datetime.now(datetime.UTC)` for consistent UTC timestamps
+- No RDBMS-specific timestamp functions in application queries
+- Portable across all supported providers
 
 #### Affected Locations (Historical)
 
@@ -458,9 +457,8 @@ VALUES (:namespace, :key, :value, CURRENT_TIMESTAMP)
 **After (Resolved)**:
 ```python
 import datetime
-from internal.database.providers.utils import getCurrentTimestamp
 
-# Generate timestamp in Python (recommended)
+# Generate timestamp in Python (cross-RDBMS compatible)
 current_time = datetime.datetime.now(datetime.UTC)
 
 # Use in queries
@@ -478,9 +476,6 @@ await sqlProvider.execute(
         "updatedAt": current_time,
     },
 )
-
-# Or use provider method for SQL expressions
-timestamp_expr = sqlProvider.getCurrentTimestamp()
 ```
 
 #### Implementation Details
@@ -490,18 +485,19 @@ timestamp_expr = sqlProvider.getCurrentTimestamp()
 - Updates schema to require explicit timestamp values
 - Ensures cross-RDBMS compatibility
 
-**Provider Method**: [`BaseSQLProvider.getCurrentTimestamp()`](../internal/database/providers/base.py:1)
-- Implemented in all providers (SQLite3, SQLink, MySQL, PostgreSQL)
-- Returns UTC timestamp expression for each RDBMS
-- Used by repositories for consistent timestamp generation
+**Repository Pattern**: All repositories now use `datetime.datetime.now(datetime.UTC)` for timestamps
+- Consistent UTC timestamp generation
+- Cross-RDBMS portable
+- No RDBMS-specific SQL functions needed
 
 ---
 
 ### Issue #4: String Case Sensitivity in WHERE Clauses
 
-**Severity**: Medium  
-**Files Affected**: 3 files  
+**Severity**: Medium
+**Files Affected**: 3 files
 **Impact**: Case-sensitive comparisons may fail unexpectedly
+**Status**: ✅ **RESOLVED** - Portable `getCaseInsensitiveComparison()` and `getLikeComparison()` methods implemented
 
 #### Problem Description
 
@@ -532,24 +528,12 @@ WHERE
 
 **Recommended Solution**:
 
-Use explicit case-insensitive comparison functions:
+**Status**: ✅ Implemented — Use `getCaseInsensitiveComparison()` from provider
+
+Use the provider's `getCaseInsensitiveComparison()` method for explicit case-insensitive equality comparisons:
 
 ```python
-# internal/database/providers/base.py
-def getCaseInsensitiveComparison(self, column: str, param: str) -> str:
-    """Get RDBMS-specific case-insensitive comparison."""
-    provider_type = self.getProviderType()
-    
-    if provider_type == "sqlite":
-        return f"LOWER({column}) = LOWER(:{param})"
-    elif provider_type == "mysql":
-        return f"{column} COLLATE utf8mb4_general_ci = :{param}"
-    elif provider_type == "postgresql":
-        return f"LOWER({column}) = LOWER(:{param})"
-    else:
-        raise ValueError(f"Unsupported provider type: {provider_type}")
-
-# Usage
+# Usage in repository code
 comparison = sqlProvider.getCaseInsensitiveComparison("username", "username")
 query = f"""
     SELECT * FROM chat_users
@@ -557,7 +541,157 @@ query = f"""
         chat_id = :chatId
         AND {comparison}
 """
+
+# Example from actual implementation (divinations repository)
+layoutNameComparison = sqlProvider.getCaseInsensitiveComparison("name_en", "layoutName")
+query = f"""
+    SELECT * FROM divination_layouts
+    WHERE system_id = :systemId
+        AND {layoutNameComparison}
+"""
 ```
+
+**Provider Implementations**:
+
+- **SQLite**: `LOWER({column}) = LOWER(:{param})` — portable, works for both ASCII and Unicode
+- **MySQL**: `{column} COLLATE utf8mb4_general_ci = :{param}` — efficient, uses collation for case-insensitive matching
+- **PostgreSQL**: `LOWER({column}) = LOWER(:{param})` — portable, standard approach
+
+**For Pattern Matching**: Use `getLikeComparison()` instead (see below section).
+
+---
+
+### Case-Insensitive LIKE Pattern Matching
+
+**Severity**: Medium
+**Files Affected**: Base provider abstract method, MySQL/PostgreSQL implementations
+**Impact**: Pattern matching queries may fail to match across cases
+**Status**: ✅ **RESOLVED** - Portable `getLikeComparison()` method implemented
+
+#### Problem Description
+
+LIKE pattern matching with case-insensitive matching behaves differently across RDBMS:
+- **SQLite**: `LIKE` is case-insensitive for ASCII by default, case-sensitive for Unicode
+- **MySQL**: `LIKE` case-sensitivity depends on column collation (can vary by configuration)
+- **PostgreSQL**: `LIKE` is case-sensitive by default
+
+This affects text search queries where you want to match patterns regardless of case (e.g., searching for layout names).
+
+#### Solution Implemented
+
+**Base Provider Abstract Method**: Added `getLikeComparison()` to `BaseSQLProvider` to abstract RDBMS-specific syntax:
+
+```python
+# internal/database/providers/base.py
+@abstractmethod
+def getLikeComparison(self, column: str, param: str) -> str:
+    """Get RDBMS-specific case-insensitive LIKE comparison.
+
+    Args:
+        column: The column name to compare.
+        param: The parameter name to use in the comparison.
+
+    Returns:
+        A SQL expression string for case-insensitive LIKE comparison.
+
+    Raises:
+        NotImplementedError: Must be overridden by subclasses.
+    """
+    raise NotImplementedError
+```
+
+**Provider Implementations**:
+
+```python
+# internal/database/providers/mysql.py
+def getLikeComparison(self, column: str, param: str) -> str:
+    """Get MySQL-specific case-insensitive LIKE comparison expression.
+
+    Generates a SQL expression that performs a case-insensitive pattern
+    match using the ``LIKE`` operator. Uses ``LOWER()`` on both sides
+    for reliable case-insensitive matching across MySQL configurations.
+
+    Args:
+        column: The column name to compare against.
+        param: The parameter name to use in the comparison (with ``:`` prefix).
+
+    Returns:
+        A SQL expression string for case-insensitive LIKE comparison, formatted as
+        ``"LOWER({column}) LIKE LOWER(:{param})"``.
+
+    Note:
+        Using ``LOWER()`` on both sides prevents index usage on most MySQL
+        configurations. For high-performance queries on large datasets,
+        consider adding a functional index on ``LOWER(column)`` or using a
+        case-insensitive collation column with a direct ``LIKE`` comparison.
+    """
+    return f"LOWER({column}) LIKE LOWER(:{param})"
+
+# internal/database/providers/postgresql.py
+def getLikeComparison(self, column: str, param: str) -> str:
+    """Get PostgreSQL-specific case-insensitive LIKE comparison expression.
+
+    Uses ``LOWER()`` on both sides of the LIKE operator for case-insensitive
+    pattern matching.
+
+    Args:
+        column: The column name to compare against.
+        param: The parameter name to use in the comparison (with ``:`` prefix).
+
+    Returns:
+        A SQL expression string for case-insensitive LIKE comparison, formatted as
+        ``"LOWER({column}) LIKE LOWER(:{param})"``.
+    """
+    return f"LOWER({column}) LIKE LOWER(:{param})"
+
+# internal/database/providers/sqlink.py (SQLite)
+def getLikeComparison(self, column: str, param: str) -> str:
+    """Get SQLite-specific case-insensitive LIKE comparison expression.
+
+    Uses ``LOWER()`` on both sides of the LIKE operator to ensure
+    case-insensitive matching for Unicode (SQLite's default behavior varies).
+
+    Args:
+        column: The column name to compare against.
+        param: The parameter name to use in the comparison (with ``:`` prefix).
+
+    Returns:
+        A SQL expression string for case-insensitive LIKE comparison, formatted as
+        ``"LOWER({column}) LIKE LOWER(:{param})"``.
+    """
+    return f"LOWER({column}) LIKE LOWER(:{param})"
+```
+
+**Usage Example**:
+
+```python
+# Pattern matching with wildcards
+layoutNameComparison = sqlProvider.getLikeComparison("name_en", "layoutName")
+query = f"""
+    SELECT * FROM divination_layouts
+    WHERE system_id = :systemId
+        AND {layoutNameComparison}
+"""
+params = {
+    "systemId": "tarot",
+    "layoutName": "%celtic%"
+}
+
+async with sqlProvider.cursor() as cursor:
+    await cursor.execute(query, params)
+    results = await cursor.fetchall()
+```
+
+**Performance Considerations**:
+
+- **MySQL**: The `LOWER() LIKE LOWER()` pattern cannot use standard indexes. For high-performance queries on large tables, consider:
+  1. Adding a functional index: `CREATE INDEX idx_name_en_lower ON divination_layouts(LOWER(name_en))`
+  2. Using a column with case-insensitive collation and direct `LIKE` comparison
+- **PostgreSQL**: Functional indexes on `LOWER(column)` are supported and recommended for performance
+- **SQLite**: Performance impact is minimal; no index optimization needed for most use cases
+
+**Trade-off**:
+The portable implementation prioritizes consistency across RDBMS and configurability over optimal performance. If you encounter performance issues with LIKE queries on large MySQL tables, create a functional index on `LOWER(column)` or switch to a case-insensitive collation column for that specific query.
 
 ---
 
@@ -1071,13 +1205,13 @@ class PostgreSQLProvider(BaseSQLProvider):
 **Configuration example:**
 
 ```toml
-[database.sources.default.parameters]
+[database.providers.default.parameters]
 keepConnection = false  # Connect on demand (default for file-based DBs)
 
-[database.sources.readonly.parameters]
+[database.providers.readonly.parameters]
 keepConnection = true  # Connect immediately (good for readonly replicas)
 
-[database.sources.inmemory.parameters]
+[database.providers.inmemory.parameters]
 dbPath = ":memory:"
 keepConnection = true  # Required for in-memory databases
 ```
@@ -1143,10 +1277,11 @@ The migration system now relies on the provider's `keepConnection` parameter for
    - Update 12 affected files
    - Ensure timezone consistency
 
-4. **Address String Comparisons**
-   - Add case-insensitive comparison helpers
-   - Update 3 affected files
-   - Test username lookups
+ 4. **Address String Comparisons** ✅ **DONE**
+    - ✅ Add case-insensitive comparison helpers (`getCaseInsensitiveComparison()`)
+    - ✅ Add case-insensitive LIKE helpers (`getLikeComparison()`)
+    - ℹ️ Implementation in base provider, MySQL, PostgreSQL, SQLite providers
+    - ℹ️ Used in divinations repository for layout name searches
 
 ### Phase 3: Schema Migration (Week 5-6)
 
@@ -1232,6 +1367,8 @@ The following items have been intentionally skipped for now:
   - [ ] Implement `upsert()` method
   - [ ] Implement `applyPagination()` method
   - [ ] Implement `getTextType()` method
+  - [ ] Implement `getCaseInsensitiveComparison()` method
+  - [ ] Implement `getLikeComparison()` method
   - [ ] Implement all abstract methods
   - [ ] Add MySQL-specific optimizations
 
@@ -1240,6 +1377,8 @@ The following items have been intentionally skipped for now:
   - [ ] Implement `upsert()` method
   - [ ] Implement `applyPagination()` method
   - [ ] Implement `getTextType()` method
+  - [ ] Implement `getCaseInsensitiveComparison()` method
+  - [ ] Implement `getLikeComparison()` method
   - [ ] Implement all abstract methods
   - [ ] Add PostgreSQL-specific optimizations
 

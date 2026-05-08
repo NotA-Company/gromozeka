@@ -1,8 +1,8 @@
 # Gromozeka — Architecture & Design Decisions
 
-> **Audience:** LLM agents, dood!  
-> **Purpose:** Architecture Decision Records, component dependencies, design patterns, dood!  
-> **Self-contained:** Everything needed for architecture understanding is here, dood!
+> **Audience:** LLM agents  
+> **Purpose:** Architecture Decision Records, component dependencies, design patterns  
+> **Self-contained:** Everything needed for architecture understanding is here
 
 ---
 
@@ -18,38 +18,38 @@
 
 ### ADR-001: Singleton Services
 
-**Decision:** `CacheService`, `QueueService`, `LLMService`, `StorageService`, `RateLimiterManager` are all singletons, dood!
+**Decision:** `CacheService`, `QueueService`, `LLMService`, `StorageService`, `RateLimiterManager` are all singletons
 
-**Why:** Single instance ensures consistent state across all handlers and avoids duplicate resource usage, dood!
+**Why:** Single instance ensures consistent state across all handlers and avoids duplicate resource usage
 
 **Constraint:** Always use `getInstance()` — never `SomeService()` directly:
 ```python
-# CORRECT, dood!
+# CORRECT
 cache = CacheService.getInstance()
 
-# WRONG — creates duplicate state, dood!
+# WRONG — creates duplicate state
 cache = CacheService()
 ```
 
-**Thread safety:** All singletons use `RLock` for thread-safe instantiation, dood!
+**Thread safety:** All singletons use `RLock` for thread-safe instantiation
 
 **Singleton pattern (MUST preserve when modifying services):**
 ```python
 class MyService:
-    """Singleton service, dood!"""
+    """Singleton service"""
 
     _instance: Optional["MyService"] = None
     _lock: RLock = RLock()
 
     def __new__(cls) -> "MyService":
-        """Create or return singleton instance, dood!"""
+        """Create or return singleton instance"""
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self) -> None:
-        """Initialize service once, dood!"""
+        """Initialize service once"""
         if hasattr(self, "initialized"):
             return
         self.initialized = True
@@ -57,7 +57,7 @@ class MyService:
 
     @classmethod
     def getInstance(cls) -> "MyService":
-        """Get the singleton instance, dood!
+        """Get the singleton instance
 
         Returns:
             The singleton MyService instance
@@ -69,11 +69,11 @@ class MyService:
 
 ### ADR-002: Handler Chain Pattern
 
-**Decision:** Messages flow through an ordered list of `BaseBotHandler` subclasses via [`HandlersManager`](../../internal/bot/common/handlers/manager.py:892), dood!
+**Decision:** Messages flow through an ordered list of `BaseBotHandler` subclasses via [`HandlersManager`](../../internal/bot/common/handlers/manager.py:892)
 
-**Why:** Separation of concerns — each handler does one thing. Easy to add new features without modifying existing handlers, dood!
+**Why:** Separation of concerns — each handler does one thing. Easy to add new features without modifying existing handlers
 
-**Chain order (CRITICAL, dood!):**
+**Chain order (CRITICAL):**
 1. `MessagePreprocessorHandler` — SEQUENTIAL — saves message + media
 2. `SpamHandler` — SEQUENTIAL — spam check before all others
 3. `ConfigureCommandHandler` — PARALLEL — settings config
@@ -85,9 +85,10 @@ class MyService:
 9. `HelpHandler` — PARALLEL — help command
 10. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
 11. (Telegram only) `TopicManagerHandler` — PARALLEL
-12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler` — PARALLEL
-13. (custom handlers) — PARALLEL
-14. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
+12. (if enabled) `DivinationHandler` — PARALLEL — tarot/runes divination
+13. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler` — PARALLEL
+14. (custom handlers via CustomHandlerLoader) — PARALLEL
+15. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
 **Return values:** Handlers return [`HandlerResultStatus`](../../internal/bot/common/handlers/base.py:82):
 - `FINAL` — stop chain, success
@@ -100,19 +101,19 @@ class MyService:
 
 ### ADR-003: Multi-Platform Abstraction (`TheBot`)
 
-**Decision:** [`TheBot`](../../internal/bot/common/bot.py:31) wraps both Telegram and Max Messenger APIs behind a unified interface, dood!
+**Decision:** [`TheBot`](../../internal/bot/common/bot.py:31) wraps both Telegram and Max Messenger APIs behind a unified interface
 
-**Why:** Handlers don't need to know which platform they're on, dood!
+**Why:** Handlers don't need to know which platform they're on
 
-**Constraint:** Never call Telegram/Max APIs directly from handlers. Always use `self.sendMessage()`, `self.deleteMessage()`, etc. from `BaseBotHandler`, dood!
+**Constraint:** Never call Telegram/Max APIs directly from handlers. Always use `self.sendMessage()`, `self.deleteMessage()`, etc. from `BaseBotHandler`
 
 ---
 
 ### ADR-004: Multi-Source Database Routing
 
-**Decision:** [`Database`](../../internal/database/database.py) supports multiple database sources with internal routing using repository pattern, dood!
+**Decision:** [`Database`](../../internal/database/database.py) supports multiple database sources with internal routing using repository pattern
 
-**Why:** Allows read replicas, separate databases for different data types, cross-bot data reading, dood!
+**Why:** Allows read replicas, separate databases for different data types, cross-bot data reading
 
 **Architecture Principles:**
 - **Repository Pattern**: 12 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common)
@@ -121,21 +122,26 @@ class MyService:
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
 - **SQL Portability**: All SQL is provider-agnostic, supporting SQLite3, PostgreSQL, MySQL, and SQLink
 
-**Config:** `[database.sources.*]` in TOML, routing via `dataSource` parameter on read methods:
+**Config:** `[database.providers.*]` in TOML, routing via `chatMapping` for specific chats:
 ```toml
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot_data.db"
-readonly = false
-pool-size = 5
-timeout = 30
+[database.providers.default]
+provider = "sqlite3"
 
-[database.sources.readonly]
-path = "bot_data.db"
-readonly = true
-pool-size = 10
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
+timeout = 30
+useWal = true
+
+[database.providers.readonly]
+provider = "sqlink"
+
+[database.providers.readonly.parameters]
+dbPath = "archive.db"
+readOnly = true
 timeout = 10
 ```
 
@@ -169,9 +175,9 @@ timeout = 10
 
 ### ADR-005: LLM Provider Fallback
 
-**Decision:** [`LLMManager`](../../lib/ai/manager.py:17) supports multiple providers with automatic fallback, dood!
+**Decision:** [`LLMManager`](../../lib/ai/manager.py:17) supports multiple providers with automatic fallback
 
-**Why:** If primary LLM provider fails, automatically falls back to secondary, dood!
+**Why:** If primary LLM provider fails, automatically falls back to secondary
 
 **Providers:** `yc-openai`, `openrouter`, `yc-sdk`, `custom-openai`.
 
@@ -179,31 +185,31 @@ timeout = 10
 
 ### ADR-006: Command Discovery via Decorators
 
-**Decision:** Commands are discovered via `@commandHandlerV2(...)` decorator on methods, dood!
+**Decision:** Commands are discovered via `@commandHandlerV2(...)` decorator on methods
 
-**Why:** Zero-registration — add decorator, command is auto-discovered by `HandlersManager`, dood!
+**Why:** Zero-registration — add decorator, command is auto-discovered by `HandlersManager`
 
-**Decorator location:** Imported from `internal.bot.models` as `commandHandlerV2`, dood!
+**Decorator location:** Imported from `internal.bot.models` as `commandHandlerV2`
 
 ---
 
 ### ADR-007: Configuration Layering
 
-**Decision:** Config loads from multiple TOML files and merges them in order, dood!
+**Decision:** Config loads from multiple TOML files and merges them in order
 
-**Why:** Separates defaults from environment-specific overrides, dood!
+**Why:** Separates defaults from environment-specific overrides
 
-**Load order:** `--config` file first, then `--config-dir` files sorted alphabetically, dood!
+**Load order:** `--config` file first, then `--config-dir` files sorted alphabetically
 
-**Merge behavior:** Later files override earlier ones. Nested dicts are merged recursively, dood!
+**Merge behavior:** Later files override earlier ones. Nested dicts are merged recursively
 
 ---
 
 ### ADR-008: Cross-Source Aggregation with Intelligent Deduplication
 
-**Decision:** Cross-source database queries use semantic deduplication keys per method type, dood!
+**Decision:** Cross-source database queries use semantic deduplication keys per method type
 
-**Why:** Prevents duplicates when aggregating data across multiple SQLite sources, dood!
+**Why:** Prevents duplicates when aggregating data across multiple SQLite sources
 
 **Deduplication Keys Strategy:**
 - `getUserChats()`: `(userId, chat_id)` — user-chat relationship uniqueness
@@ -212,15 +218,15 @@ timeout = 10
 - `getCacheStorage()`: `(namespace, key)` — cache entry uniqueness
 - `getCacheEntry()`: First match (no deduplication) — performance optimization
 
-**Error Handling:** Continue aggregation on individual source failures with warning logs, dood!
+**Error Handling:** Continue aggregation on individual source failures with warning logs
 
 ---
 
 ### ADR-009: Time-Based Media Group Completion Detection
 
-**Decision:** Telegram media groups (albums) use time-based completion detection with configurable delay, dood!
+**Decision:** Telegram media groups (albums) use time-based completion detection with configurable delay
 
-**Why:** Telegram sends media groups as separate messages with same `media_group_id` but doesn't indicate when all items have arrived, dood!
+**Why:** Telegram sends media groups as separate messages with same `media_group_id` but doesn't indicate when all items have arrived
 
 **Solution:** Wait a configurable delay after the last media item is received before considering a media group complete.
 
@@ -253,9 +259,9 @@ mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
 
 ### ADR-010: Chat Settings Audit Trail
 
-**Decision:** `chat_settings` table includes `updated_by` column (INTEGER NOT NULL) to track which user last modified each setting, dood!
+**Decision:** `chat_settings` table includes `updated_by` column (INTEGER NOT NULL) to track which user last modified each setting
 
-**Why:** Required for audit capability — knowing who changed what setting, dood!
+**Why:** Required for audit capability — knowing who changed what setting
 
 **Implementation:**
 - Migration `migration_010` adds `updated_by` column via table recreation pattern
@@ -266,6 +272,82 @@ mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
 - `getChatSetting(chatId, setting)` — returns `Optional[str]` (just the value for backward compatibility)
 - `getChatSettings(chatId)` — returns `Dict[str, tuple[str, int]]` where tuple is `(value, updated_by)`
 - This minimizes breaking changes while providing audit capability
+
+---
+
+### ADR-011: Divination Layout Discovery Pattern
+
+**Decision:** Unknown tarot/runes layouts trigger automatic LLM + web search discovery, cached in `divination_layouts` table with negative cache for failures
+
+**Why:** Allows users to request any layout (not just predefined ones), avoids repeated failed discoveries, and scales to thousands of possible layouts
+
+**Discovery Flow (Multi-Tier Resolution):**
+
+**Tier 1**: Predefined layouts in `lib/divination/layouts.py`
+- Fast lookup in `TAROT_LAYOUTS` and `RUNES_LAYOUTS` dicts
+- Zero database queries for known layouts
+
+**Tier 2**: Database cache (`divination_layouts` table)
+- Composite PK: `(system_id, layout_id)`
+- Successful discoveries: Full layout definition cached
+- Failed discoveries (negative cache): `name_en=''`, `n_symbols=0` entries prevent retries
+- Case-insensitive fuzzy search via `getLikeComparison()` for partial matches
+
+**Tier 3**: LLM + Web Search discovery (if `divination discovery-enabled = true`)
+- Call 1: `LLMService.generateText(tools=True)` with web search
+  - Prompt: `divination-discovery-info-prompt`
+  - System: `divination-discovery-system-prompt`
+  - Tool: `web_search` automatically used by LLM
+- Call 2: `LLMService.generateStructured(schema)` to parse description
+  - Prompt: `divination-discovery-structure-prompt`
+  - Schema: Strict JSON Schema with required fields
+  - Returns validated dictionary
+- Save: Persist to `divination_layouts` cache on success
+- Negative cache: On failure, store empty entry with 24-hour implied TTL
+
+**Performance Optimizations:**
+- Negative cache prevents spamming LLM for non-existent layouts
+- Fuzzy search: `divinationLayouts.getLayout()` tries exact match first, then LIKE pattern
+- Case-insensitive search: Uses `getCaseInsensitiveComparison()` for exact, `getLikeComparison()` for fuzzy
+- No blocking: Discovery only triggered for unknown layouts, not every request
+
+**Configuration:**
+```toml
+[divination]
+discovery-enabled = true  # Master switch
+```
+
+**Chat Settings for Discovery:**
+- `divination-discovery-system-prompt` — System instruction (both calls)
+- `divination-discovery-info-prompt` — Web search prompt (first call)
+- `divination-discovery-structure-prompt` — Structured parsing prompt (second call)
+
+**Repository Pattern:**
+```python
+from internal.database.repositories import DivinationLayoutsRepository
+
+repo = DivinationLayoutsRepository(db.manager)
+layout = await repo.getLayout(systemId='tarot', layoutName='three_card')
+
+# Negative cache check
+if repo.isNegativeCacheEntry(layout):
+    # Layout doesn't exist, don't retry
+    return None
+
+# Save successful discovery
+await repo.saveLayout(
+    systemId='tarot',
+    layoutId='custom_layout',
+    nameEn='Custom Layout',
+    nameRu='Кастомный расклад',
+    nSymbols=3,
+    positions=json.dumps([...]),
+    description='Custom description'
+)
+
+# Save negative cache
+await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
+```
 
 ---
 
@@ -302,7 +384,7 @@ GromozekBot (main.py)
                     └── Platform API (Telegram ExtBot or MaxBotClient)
 ```
 
-### 2.2 Service Initialization Order (Critical, dood!)
+### 2.2 Service Initialization Order (Critical)
 
 Services MUST be initialized in this order:
 
@@ -336,19 +418,19 @@ Services MUST be initialized in this order:
 
 ### 2.4 Safe vs. Risky Modifications
 
-#### Safe (isolated, dood!)
+#### Safe (isolated)
 - Adding a new repository to `Database` without changing existing repositories
 - Adding a new handler file without modifying `manager.py`
 - Adding a new config getter to `ConfigManager`
 - Adding a new LLM provider to `lib/ai/providers/`
 - Adding tests
 
-#### Moderate Risk (dood!)
+#### Moderate Risk ()
 - Modifying `CacheService` internal data structures
 - Changing handler execution order in `HandlersManager`
 - Modifying `BaseBotHandler.sendMessage()` signature
 
-#### High Risk (ALWAYS run full `make test`, dood!)
+#### High Risk (ALWAYS run full `make test`)
 - Modifying `BaseBotHandler.__init__()` signature
 - Changing `Database` core connection methods or repository interfaces
 - Modifying `ConfigManager._loadConfig()` or `_mergeConfigs()`
@@ -389,7 +471,7 @@ Three-layer structure:
 
 ### 3.5 Migration Documentation Protocol
 
-**Critical lesson from migration_009 and migration_012 errors, dood!**
+**Critical lesson from migration_009 and migration_012 errors**
 
 When creating or modifying database migrations, ALWAYS:
 
@@ -424,7 +506,7 @@ When creating or modifying database migrations, ALWAYS:
 
 ### 3.6 Migration Versioning Protocol
 
-**Critical lesson from migration version conflict, dood!**
+**Critical lesson from migration version conflict**
 
 **Mandatory Migration Creation Protocol:**
 
@@ -455,5 +537,5 @@ When creating or modifying database migrations, ALWAYS:
 
 ---
 
-*This guide is auto-maintained and should be updated whenever significant architectural changes are made, dood!*
-*Last updated: 2026-05-02, dood!*
+*This guide is auto-maintained and should be updated whenever significant architectural changes are made*
+*Last updated: 2026-05-02*

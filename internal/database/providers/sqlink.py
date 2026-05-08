@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 class SQLinkProvider(BaseSQLProvider):
     """SQL provider backed by the ``sqlink`` async client library.
 
+    Wraps the SQLink async client to provide a concrete implementation of
+    :class:`BaseSQLProvider` for remote database operations.
+
     Attributes:
         url: Base URL of the SQLink database server.
         user: Username used for authentication.
@@ -53,6 +56,9 @@ class SQLinkProvider(BaseSQLProvider):
             keepConnection: If ``True``, connect on creation and keep connection open.
                 If ``False``, do not connect on creation.
                 If ``None`` (default), treat as ``False``.
+
+        Returns:
+            None.
         """
         super().__init__()
         self.url: str = url
@@ -81,6 +87,9 @@ class SQLinkProvider(BaseSQLProvider):
 
         Uses a lock to prevent race conditions when multiple coroutines
         try to connect simultaneously.
+
+        Returns:
+            None.
         """
         # Fast path: if already connected, return immediately
         if self._connection is not None:
@@ -104,7 +113,11 @@ class SQLinkProvider(BaseSQLProvider):
             logger.debug(f"Connected to SQLink database {self.url}/{self.database}")
 
     async def disconnect(self) -> None:
-        """Close the SQLink connection if it is open."""
+        """Close the SQLink connection if it is open.
+
+        Returns:
+            None.
+        """
         if self._connection is not None:
             await self._connection.close()
             self._connection = None
@@ -243,7 +256,7 @@ class SQLinkProvider(BaseSQLProvider):
             maxLength: Optional maximum length for the text field (ignored in SQLite).
 
         Returns:
-            The TEXT type for SQLite.
+            The TEXT type for SQLite (maxLength is ignored).
         """
         return "TEXT"
 
@@ -255,9 +268,21 @@ class SQLinkProvider(BaseSQLProvider):
             param: The parameter name to use in the comparison.
 
         Returns:
-            A SQL expression string for case-insensitive comparison.
+            A SQL expression string for case-insensitive comparison using LOWER().
         """
         return f"LOWER({column}) = LOWER(:{param})"
+
+    def getLikeComparison(self, column: str, param: str) -> str:
+        """Get SQLite-specific case-insensitive LIKE comparison.
+
+        Args:
+            column: The column name to compare.
+            param: The parameter name to use in the comparison.
+
+        Returns:
+            A SQL expression string for case-insensitive LIKE comparison using LOWER().
+        """
+        return f"LOWER({column}) LIKE LOWER(:{param})"
 
     async def upsert(
         self,

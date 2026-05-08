@@ -1,7 +1,7 @@
 
 # Database Schema Documentation
 
-This document provides comprehensive documentation for the Gromozeka bot's database schema, dood!
+This document provides comprehensive documentation for the Gromozeka bot's database schema
 
 ## Table of Contents
 
@@ -34,6 +34,7 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
   - [delayed_tasks](#delayed_tasks)
 - [Divination Tables](#divination-tables)
   - [divinations](#divinations)
+  - [divination_layouts](#divination_layouts)
 - [System Tables](#system-tables)
   - [settings](#settings)
 - [Enums](#enums)
@@ -72,22 +73,24 @@ Multi-source configuration is defined in the bot's config file:
 
 ```toml
 [database]
-default = "default"  # Default source name
+default = "default"  # Default provider name
 
-[database.sources.default]
-path = "data/bot.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "data/bot.db"
+readOnly = false
 timeout = 30
+useWal = true
 
-[database.sources.archive]
-path = "data/archive.db"
-readonly = true
-pool-size = 3
+[database.providers.archive]
+provider = "sqlite3"
+
+[database.providers.archive.parameters]
+dbPath = "data/archive.db"
+readOnly = true
 timeout = 10
-
-[database.chatMapping]
--1001234567890 = "archive"  # Route specific chat to archive source
 ```
 
 ### Routing Logic
@@ -151,6 +154,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 12 | [`migration_012_unify_cache_tables.py`](../internal/database/migrations/versions/migration_012_unify_cache_tables.py:1) | Unifies all cache tables into single [`cache`](#cache) table |
 | 13 | [`migration_013_remove_timestamp_defaults.py`](../internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:1) | Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns |
 | 14 | [`migration_014_add_divinations_table.py`](../internal/database/migrations/versions/migration_014_add_divinations_table.py:1) | Creates [`divinations`](#divinations) table and `idx_divinations_user_created` index |
+| 15 | [`migration_015_add_divination_layouts_table.py`](../internal/database/migrations/versions/migration_015_add_divination_layouts_table.py:1) | Creates [`divination_layouts`](#divination_layouts) table and `idx_divination_layouts_system` index |
 
 ### Creating New Migrations
 
@@ -348,10 +352,16 @@ Stores per-chat configuration settings.
 ```python
 # Get chat settings
 settings = db.chatSettings.getChatSettings(chatId=-1001234567890)
-chatModel = settings.get('chat-model', 'default-model')
+# Returns Dict[str, tuple[str, int]] where tuple is (value, updated_by)
+chatModel = settings.get('chat-model', ('gpt-4', 0))[0]  # Index [0] for value
 
-# Set a setting
-db.chatSettings.setChatSetting(chatId=-1001234567890, key='parse-images', value='true')
+# Set a setting (updatedBy is REQUIRED)
+db.chatSettings.setChatSetting(
+    chatId=-1001234567890,
+    key='parse-images',
+    value='true',
+    updatedBy=userId  # Required keyword-only argument
+)
 ```
 
 ---
@@ -664,7 +674,7 @@ Stores tasks scheduled for delayed execution.
 
 ### divinations
 
-Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/bot/common/handlers/divination.py`](../internal/bot/common/handlers/divination.py:1)). One row per reading, keyed off the originating `/taro` / `/runes` user-command message — same composite-PK pattern as [`chat_messages`](#chat_messages), dood!
+Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/bot/common/handlers/divination.py`](../internal/bot/common/handlers/divination.py:1)). One row per reading, keyed off the originating `/taro` / `/runes` user-command message — same composite-PK pattern as [`chat_messages`](#chat_messages)
 
 **Primary Key**: `(chat_id, message_id)`
 
@@ -687,6 +697,71 @@ Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/b
 - `idx_divinations_user_created` on `(chat_id, user_id, created_at)` — for "recent readings by user" queries
 
 **Note**: Uses the same composite-PK convention as [`chat_messages`](#chat_messages). This table has no foreign-key relationships to other tables; image media is resolved via the normal message-history pipeline. Created by `migration_014`; only populated when `[divination] enabled = true`. See [`docs/llm/configuration.md`](llm/configuration.md) for feature config.
+
+---
+
+### divination_layouts
+
+Caches layout definitions discovered via LLM for reuse in divination readings.
+
+**Primary Key**: `(system_id, layout_id)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `system_id` | TEXT | No | - | Divination system (`tarot`, `runes`) |
+| `layout_id` | TEXT | No | - | Machine-readable layout identifier |
+| `name_en` | TEXT | No | - | English name (source of truth) |
+| `name_ru` | TEXT | No | - | Russian display name |
+| `n_symbols` | INTEGER | No | - | Number of positions in the layout |
+| `positions` | TEXT | No | - | JSON-serialized array of position definitions |
+| `description` | TEXT | Yes | NULL | Layout description |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
+
+**Indexes**:
+- `idx_divination_layouts_system` on `system_id`
+
+**Negative Cache Pattern**: Failed layout discoveries are stored as negative cache entries:
+- `name_en` set to empty string (`''`)
+- `n_symbols` set to `0`
+- This prevents repeated failed discovery attempts for the same layout
+
+**Usage Examples**:
+```python
+from internal.database.repositories import DivinationLayoutsRepository
+
+# Get a layout from cache
+repo = DivinationLayoutsRepository(db.manager)
+layout = await repo.getLayout(systemId='tarot', layoutId='three_card')
+
+# Save a discovered layout
+await repo.saveLayout(
+    systemId='tarot',
+    layoutId='three_card',
+    nameEn='Three Card Spread',
+    nameRu='Расклад на три карты',
+    nSymbols=3,
+    positions=json.dumps([
+        {'name': 'Past', 'description': 'Past events'},
+        {'name': 'Present', 'description': 'Current situation'},
+        {'name': 'Future', 'description': 'Future outcome'}
+    ]),
+    description='Simple three-card spread for time-based readings'
+)
+
+# Negative cache pattern for failed discovery
+await repo.saveLayout(
+    systemId='tarot',
+    layoutId='unknown_layout',
+    nameEn='',  # Empty indicates negative cache
+    nameRu='',
+    nSymbols=0,  # Zero indicates negative cache
+    positions='[]',
+    description=None
+)
+```
+
+**Note**: Created by `migration_015`. This table caches layout definitions discovered through LLM and web search to avoid repeated API calls. Only populated when `[divination] enabled = true` and layout discovery is used.
 
 ---
 
@@ -811,7 +886,7 @@ These TypedDict models provide:
 The database uses a repository pattern with 12 specialized repositories, each handling a specific domain:
 
 | Repository | File | Purpose |
-|------------|------|---------|
+|---|---|---|
 | `chatMessages` | [`chat_messages.py`](../internal/database/repositories/chat_messages.py) | Chat message operations |
 | `chatUsers` | [`chat_users.py`](../internal/database/repositories/chat_users.py) | User information and statistics |
 | `chatInfo` | [`chat_info.py`](../internal/database/repositories/chat_info.py) | Chat metadata |
@@ -824,6 +899,7 @@ The database uses a repository pattern with 12 specialized repositories, each ha
 | `bayesTokens` | [`bayes_tokens.py`](../internal/database/repositories/bayes_tokens.py) | Bayesian spam filtering tokens |
 | `cache` | [`cache.py`](../internal/database/repositories/cache.py) | Unified cache operations |
 | `delayedTasks` | [`delayed_tasks.py`](../internal/database/repositories/delayed_tasks.py) | Task scheduling |
+| `divinations` | [`divinations.py`](../internal/database/repositories/divinations.py) | Tarot/runes readings and layout discovery |
 
 ### Accessing Repositories
 

@@ -454,6 +454,7 @@ async def testGenerateTextWithoutTools(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=False,
+        extraData={},
     )
 
     assert result == expectedResult
@@ -489,6 +490,7 @@ async def testGenerateTextWithCallId(
         fallbackModelKey=mockFallbackModel,
         useTools=False,
         callId=customCallId,
+        extraData={},
     )
 
     assert result is not None
@@ -519,6 +521,7 @@ async def testGenerateTextAutoGeneratesCallId(
             fallbackModelKey=mockFallbackModel,
             useTools=False,
             callId=None,
+            extraData={},
         )
 
         mockUuid.assert_called_once()
@@ -573,6 +576,7 @@ async def testGenerateTextWithToolCall(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     assert result.status == ModelResultStatus.FINAL
@@ -627,6 +631,7 @@ async def testGenerateTextWithMultipleToolCalls(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     assert result.isToolsUsed is True
@@ -679,6 +684,7 @@ async def testGenerateTextWithMultipleToolCallRounds(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     assert result.isToolsUsed is True
@@ -771,6 +777,7 @@ async def testGenerateTextToolCallResultFormatting(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     # Verify second call includes tool result message
@@ -830,6 +837,7 @@ async def testToolCallMessageConstruction(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     # Check second call messages
@@ -884,6 +892,7 @@ async def testConversationContextPreserved(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     # Verify original messages are preserved in second call
@@ -930,6 +939,7 @@ async def testToolExecutionException(
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
 
@@ -958,6 +968,7 @@ async def testMissingToolHandler(
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
 
@@ -995,6 +1006,7 @@ async def testCallbackException(
             fallbackModelKey=mockFallbackModel,
             useTools=True,
             callback=failingCallback,
+            extraData={},
         )
 
 
@@ -1192,6 +1204,7 @@ async def testFullWorkflowRegisterGenerateExecute(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     # Step 4: Verify
@@ -1256,6 +1269,7 @@ async def testConversationWithMultipleToolCallRounds(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     assert result.isToolsUsed is True
@@ -1300,6 +1314,7 @@ async def testToolResultsAffectSubsequentResponses(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     # Verify second call includes tool result
@@ -1395,6 +1410,7 @@ async def testEmptyToolCallsList(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     assert result.isToolsUsed is True
@@ -1435,6 +1451,7 @@ async def testToolReturnsNone(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     # Should handle None gracefully
@@ -1481,6 +1498,7 @@ async def testToolReturnsComplexObject(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     # Verify complex object was serialized
@@ -1531,6 +1549,7 @@ async def testNoCallbackProvided(
         fallbackModelKey=mockFallbackModel,
         useTools=True,
         callback=None,
+        extraData={},
     )
 
     assert result.status == ModelResultStatus.FINAL
@@ -1568,6 +1587,7 @@ async def testToolsListPassedToModel(
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     # Verify tools were passed
@@ -1682,6 +1702,7 @@ async def testManySequentialToolCalls(llmService, mockModel, mockFallbackModel, 
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
         useTools=True,
+        extraData={},
     )
 
     assert result.isToolsUsed is True

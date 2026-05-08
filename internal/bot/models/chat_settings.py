@@ -22,13 +22,13 @@ class ChatTier(StrEnum):
     """
 
     BANNED = "banned"
-    """Tier for banned users."""
+    """Tier for banned users with no access."""
     FREE = "free"
-    """Tier for free chats."""
+    """Tier for free chats with basic access."""
     FREE_PERSONAL = "free-personal"
     """Tier for free private chats, allows a bit more capabilities."""
     PAID = "paid"
-    """Paid chats of users."""
+    """Paid chats of users with premium access."""
     FRIEND = "friend"
     """Friends with maximum abilities."""
     BOT_OWNER = "bot-owner"
@@ -139,14 +139,23 @@ class ChatSettingsPage(IntEnum):
     """
 
     STANDART = auto()
+    """Standard settings page for basic chat configuration."""
     EXTENDED = auto()
+    """Extended settings page for advanced chat configuration."""
     SPAM = auto()
+    """Spam detection and management settings page."""
     LLM_BASE = auto()
+    """Base LLM configuration settings page."""
     LLM_PAID = auto()
+    """Premium LLM configuration settings page."""
     PAID = auto()
+    """Paid features and premium settings page."""
     FRIEND = auto()
+    """Friend-only settings page for enhanced features."""
     BOT_OWNER = auto()
+    """Bot owner-only settings page for administrative features."""
     BOT_OWNER_SYSTEM = auto()
+    """System settings page for bot owner only - do not modify unless necessary."""
 
     def getName(self) -> str:
         """Get the display name of the settings page.
@@ -230,11 +239,15 @@ class ChatSettingsType(StrEnum):
     """
 
     STRING = "string"
+    """Plain text string value type."""
     INT = "int"
+    """Integer number value type."""
     FLOAT = "float"
+    """Floating point number value type."""
     BOOL = "bool"
+    """Boolean value type (true/false)."""
     MODEL = "model"
-    """Model name, can be chosen from list of choosable models."""
+    """LLM model name, can be chosen from list of choosable models."""
     IMAGE_MODEL = "image-model"
     """Image-generation model name, can be chosen from list of choosable models."""
 
@@ -247,90 +260,138 @@ class ChatSettingsKey(StrEnum):
     """
 
     UNKNOWN = "unknown"
-
+    """Unknown setting key placeholder."""
     # LLM Models
     CHAT_MODEL = "chat-model"
+    """Primary LLM model for chat conversations."""
     FALLBACK_MODEL = "fallback-model"
+    """Backup LLM model used when primary model fails."""
     SUMMARY_MODEL = "summary-model"
+    """LLM model for summarizing messages."""
     SUMMARY_FALLBACK_MODEL = "summary-fallback-model"
+    """Backup LLM model for summarizing when primary fails."""
     IMAGE_PARSING_MODEL = "image-parsing-model"
+    """LLM model for analyzing and parsing images."""
     IMAGE_PARSING_FALLBACK_MODEL = "image-parsing-fallback-model"
+    """Backup LLM model for image parsing when primary fails."""
     IMAGE_GENERATION_MODEL = "image-generation-model"
+    """LLM model for generating images."""
     IMAGE_GENERATION_FALLBACK_MODEL = "image-generation-fallback-model"
+    """Backup LLM model for image generation when primary fails."""
     CONDENSING_MODEL = "condensing-model"
-
+    """LLM model for condensing large context."""
     # Prompts for different actions
     SUMMARY_PROMPT = "summary-prompt"
+    """System prompt for message summarization."""
     PARSE_IMAGE_PROMPT = "parse-image-prompt"
+    """System prompt for image analysis and parsing."""
     CHAT_PROMPT = "chat-prompt"
+    """Main system prompt defining bot personality."""
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
+    """Additional suffix appended to chat system prompt."""
     CONDENSING_PROMPT = "condensing-prompt"
+    """System prompt for context condensing."""
     DOCUMENT_CONDENSING_PROMPT = "document-condensing-prompt"
-
+    """System prompt for condensing long documents like web pages."""
     # Divination prompts (tarot & runes readings)
     TAROT_SYSTEM_PROMPT = "tarot-system-prompt"
+    """System prompt for tarot card readings."""
     RUNES_SYSTEM_PROMPT = "runes-system-prompt"
+    """System prompt for rune readings."""
     DIVINATION_USER_PROMPT_TEMPLATE = "divination-user-prompt-template"
+    """Template for user-facing divination readings."""
     DIVINATION_IMAGE_PROMPT_TEMPLATE = "divination-image-prompt-template"
+    """Template for generating divination illustrations."""
     DIVINATION_REPLY_TEMPLATE = "divination-reply-template"
-
+    """Template for final divination response messages."""
+    DIVINATION_DISCOVERY_SYSTEM_PROMPT = "divination-discovery-system-prompt"
+    """System instruction for layout discovery LLM calls."""
+    DIVINATION_DISCOVERY_INFO_PROMPT = "divination-discovery-info-prompt"
+    """Prompt template for LLM to discover layout info with web search."""
+    DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT = "divination-parse-structure-system-prompt"
+    """System prompt for structuring discovered layouts as JSON."""
+    DIVINATION_PARSE_STRUCTURE_PROMPT = "divination-parse-structure-prompt"
+    """Prompt template for LLM to structure discovered layout as JSON."""
     # System settings
     ADMIN_CAN_CHANGE_SETTINGS = "admin-can-change-settings"
+    """Whether chat admins can modify chat settings."""
     BOT_NICKNAMES = "bot-nicknames"
+    """List of nicknames the bot responds to."""
     LLM_MESSAGE_FORMAT = "llm-message-format"
+    """Message format for LLM (text, json, smart)."""
     USE_TOOLS = "use-tools"
+    """Whether bot can use tools (web, images, memory, etc.)."""
     PARSE_ATTACHMENTS = "parse-attachments"
-
+    """Whether bot analyzes attachments (images, stickers)."""
     SAVE_ATTACHMENTS = "save-attachments"
+    """Whether bot saves attachments for later use."""
     SAVE_PREFIX = "save-prefix"
-
+    """Prefix for saved attachment files."""
     TOOLS_USED_PREFIX = "tools-used-prefix"
+    """Prefix when tools were used in response."""
     FALLBACK_HAPPENED_PREFIX = "fallback-happened-prefix"
+    """Prefix when backup model was used."""
     INTERMEDIATE_MESSAGE_PREFIX = "intermediate-message-prefix"
-
+    """Prefix for intermediate messages during processing."""
     # Allowing different commands in chat
     ALLOW_TOOLS_COMMANDS = "allow-tools-commands"
-    # Should bot delete /command command if command wasn't allowed
+    """Whether tool commands (/draw, /analyze, etc.) are allowed."""
     DELETE_DENIED_COMMANDS = "delete-denied-commands"
-
+    """Whether to delete messages with denied commands."""
     # Allowing different reactions in chat (to mention/reply/random)
     ALLOW_MENTION = "allow-mention"
+    """Whether bot responds to being mentioned."""
     ALLOW_REPLY = "allow-reply"
+    """Whether bot responds to replies to its messages."""
     RANDOM_ANSWER_PROBABILITY = "random-answer-probability"
+    """Probability (0-1) of random responses to messages."""
     RANDOM_ANSWER_TO_ADMIN = "random-answer-to-admin"
-
+    """Whether random responses include admin messages."""
     # Spam-related settings
     ALLOW_USER_SPAM_COMMAND = "allow-user-spam-command"
+    """Whether non-admins can use /spam command."""
     SPAM_DELETE_ALL_USER_MESSAGES = "spam-delete-all-user-messages"
+    """Whether to delete all user messages when marked as spammer."""
     DETECT_SPAM = "detect-spam"
+    """Whether to automatically check messages for spam."""
     AUTO_SPAM_MAX_MESSAGES = "auto-spam-max-messages"
+    """Max messages before user is exempt from spam checking (0 = always check)."""
     ALLOW_MARK_SPAM_OLD_USERS = "allow-mark-spam-old-users"
+    """Whether to allow marking established users as spam."""
     SPAM_BAN_TRESHOLD = "spam-ban-treshold"
+    """Spam confidence threshold (0-100) for banning user."""
     SPAM_WARN_TRESHOLD = "spam-warn-treshold"
-
+    """Spam confidence threshold (0-100) for warning user."""
     # Bayes filter settings
     BAYES_ENABLED = "bayes-enabled"
+    """Whether Bayesian spam filter is enabled."""
     BAYES_MIN_CONFIDENCE = "bayes-min-confidence"
+    """Minimum confidence (0.0-1.0) for Bayes filter decision."""
     BAYES_AUTO_LEARN = "bayes-auto-learn"
+    """Whether Bayes filter auto-learns from marked messages."""
     BAYES_USE_TRIGRAMS = "bayes-use-trigrams"
+    """Whether Bayes filter uses trigrams for better accuracy."""
     BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM = "bayes-min-confedence-to-autolearn-spam"
+    """Minimum confidence (0.0-1.0) for auto-learning spam messages."""
     BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_HAM = "bayes-min-confedence-to-autolearn-ham"
-
+    """Minimum confidence (0.0-1.0) for auto-learning non-spam messages."""
     # Reaction settings
-    # JSON-serialized Dict(userID|"username" -> "emoji")
     REACTION_AUTHOR_TO_EMOJI_MAP = "reaction-author-to-emoji-map"
-
+    """JSON mapping user IDs/usernames to reaction emojis."""
     # Message management
     DELETE_JOIN_MESSAGES = "delete-join-messages"
+    """Whether to delete user join messages."""
     DELETE_LEFT_MESSAGES = "delete-left-messages"
-
+    """Whether to delete user left messages."""
     # Tier-related
     BASE_TIER = "base-tier"
+    """Default tier level for the chat."""
     PAID_TIER = "paid-tier"
+    """Paid tier level for the chat."""
     PAID_TIER_UNTILL_TS = "paid-tier-untill-ts"
-
+    """Timestamp until paid tier is valid."""
     LLM_RATELIMITER = "llm-ratelimiter"
-
+    """Rate limiter configuration for LLM/tool usage."""
     # System settings. Not to be used/configured
     CACHED_TS = "cached-ts"
     """Timestamp when chat settings were cached, to be used in Cache Service only."""
@@ -370,6 +431,10 @@ class ChatSettingsValue:
 
     Provides type conversion methods for converting string values to different types.
     Tracks which user last updated the setting.
+
+    Attributes:
+        value: The string value stored for this setting.
+        updatedBy: User ID who last updated this setting, or 0 if unknown.
     """
 
     __slots__ = ("value", "updatedBy")
@@ -379,7 +444,7 @@ class ChatSettingsValue:
 
         Args:
             value: The value to store (will be converted to string).
-            updatedBy: User ID who last updated this setting, or 0 if unknown.
+            updatedBy: User ID who last updated this setting, defaults to 0 if None.
         """
         self.value = str(value).strip()
         self.updatedBy = updatedBy if updatedBy is not None else 0
@@ -472,6 +537,17 @@ class ChatSettingsValue:
 
 
 class ChatSettingsInfoValue(TypedDict):
+    """Metadata dictionary for a chat setting.
+
+    Contains type information and descriptions for a single chat setting key.
+
+    Attributes:
+        type: The data type of the setting (string, int, float, bool, model, etc.).
+        short: Short human-readable description of the setting.
+        long: Detailed human-readable description of the setting.
+        page: The UI page where this setting can be configured.
+    """
+
     type: ChatSettingsType
     short: str
     long: str
@@ -606,6 +682,42 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "long": (
             "Шаблон сообщения, отправляемого пользователю при /taro и /runes. "
             "Плейсхолдеры: {layoutName}, {drawnSymbolsBlock}, {interpretation}."
+        ),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный промпт для открытия раскладов",
+        "long": (
+            "Системные инструкции для LLM при открытии новых раскладов. "
+            "В этом промпте описывается, как использовать веб-поиск для поиска информации о раскладах."
+        ),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.DIVINATION_DISCOVERY_INFO_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Шаблон промпта для поиска информации о раскладе",
+        "long": (
+            "Промпт для LLM, чтобы найти информацию о раскладе с помощью веб-поиска. "
+            "Используется вместе с divination-parse-structure-prompt для автоматического поиска новых раскладов."
+        ),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный для структурирования расклада",
+        "long": (
+            "Системный промпт для LLM, который превращает описание расклада в структурированный JSON формат. "
+            "Используется после получения информации через divination-discovery-info-prompt."
+        ),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Шаблон промпта для структурирования расклада",
+        "long": (
+            "Промпт для LLM, который превращает описание расклада в структурированный JSON формат. "
+            "Используется после получения информации через divination-discovery-info-prompt."
         ),
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
