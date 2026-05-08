@@ -81,18 +81,23 @@ color: "#34C759"
 permission:
   bash:
     "*": deny
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git status*": allow
     "git blame*": allow
-    "git ls-files*": allow
-    "git rev-parse*": allow
-    "git stash list*": allow
-    "git tag": allow
     "git branch": allow
     "git branch --show-current*": allow
+    "git diff*": allow
+    "git grep*": allow
+    "git log*": allow
+    "git ls-files*": allow
     "git remote -v*": allow
+    "git rev-parse*": allow
+    "git shortlog*": allow
+    "git show*": allow
+    "git stash list*": allow
+    "git status*": allow
+    "git tag": allow
+    "grep *": allow
+    "tail *": allow
+    "head *": allow
   edit: deny
   write: deny
   task: deny
