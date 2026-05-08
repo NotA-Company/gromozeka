@@ -6,7 +6,7 @@ captures only what an agent would likely get wrong without help.
 
 ## Stack snapshot
 
-- Python **3.12** only (pyright/black target = `py312`, line length **120**).
+- Python **3.12** or newer (pyright/black target = `py312`, line length **120**).
 - Single-process app, async, singleton services. **SQLite today** behind a
   provider abstraction; SQL must stay portable across SQLite/PostgreSQL/MySQL
   (see "SQL portability" below). Custom migrations live under

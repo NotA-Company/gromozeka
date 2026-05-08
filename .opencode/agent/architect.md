@@ -173,26 +173,7 @@ Avoid over-engineering. Prefer boring, proven patterns over novel ones unless th
 
 ## Project-Specific Rules (Gromozeka)
 
-Any proposal targeting this repo must respect these constraints — they are non-negotiable. Cite `AGENTS.md` when surfacing them to the user:
-
-- **Python 3.12** only; line length 120; `pyright` basic mode; `flake8` + `isort` + `black` enforced via `make format lint`.
-- **Naming**: camelCase for variables/args/fields/functions/methods; PascalCase for classes; UPPER_CASE for constants. (Snake_case is wrong here even though it's idiomatic Python.)
-- **Docstrings required** on every module/class/method/function/field with `Args:` and `Returns:`. Type hints required on all params and returns.
-- **No pydantic.** Use TypedDict / hand-rolled type-hinted classes. Don't propose pydantic-based designs.
-- **Singletons** are accessed via `Service.getInstance()`, never `Service()`. New services should follow the same pattern (with the `hasattr(self, 'initialized')` init guard).
-- **SQL portability** across SQLite/PostgreSQL/MySQL is mandatory:
-  - Go through `BaseSQLProvider` (`execute`, `executeFetchOne`, `executeFetchAll`, `batchExecute`, `upsert`)
-  - Use `:named` placeholders, `provider.applyPagination`, `provider.getTextType`, `provider.getCaseInsensitiveComparison`
-  - **No `AUTOINCREMENT` / `AUTO_INCREMENT` / `SERIAL`** — use composite natural keys, single natural keys, or app-generated UUID/ULID `TEXT PRIMARY KEY`
-  - **No `DEFAULT CURRENT_TIMESTAMP`** — set `created_at`/`updated_at` in application code
-  - Portable column types only: `TEXT`, `INTEGER`, `REAL`, `TIMESTAMP`, `BOOLEAN`. JSON stored as `TEXT`.
-- **Handler ordering**: `LLMMessageHandler` must remain the last handler in the registration list (catch-all).
-- **Multi-platform bot**: Telegram and Max share `internal/bot/common/`. Designs must work for both unless explicitly platform-specific. `MessageIdType = Union[int, str]` — never assume `int`.
-- **Config**: TOML-based, hierarchical merging; defaults in `configs/00-defaults/`, secrets via `.env*` (never commit, never echo).
-- **Tests** live in `tests/`, `lib/`, and `internal/` (collocated tests are real); `asyncio_mode = "auto"`; reuse fixtures in `tests/conftest.py`.
-- **Run commands** the project way: `./venv/bin/python3`, `make format lint`, `make test`. Never recommend `python -c '...'` or `cd` into subdirs.
-
-If your proposal violates any of these, either change it or explicitly justify the deviation and flag it as a rule exception requiring user sign-off.
+Read `AGENTS.md` at the repo root. All hard rules there are non-negotiable for this repo. When in doubt about a constraint (naming, SQL portability, handler ordering, no-pydantic, singleton access, etc.), consult `AGENTS.md` before consulting code.
 
 ## Documentation Sync
 

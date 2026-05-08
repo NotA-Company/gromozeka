@@ -148,27 +148,14 @@ Answer technical questions about codebases by reading the actual source, tracing
 
 ## Project-Specific Conventions (Don't Mischaracterize These)
 
-This repo has deliberate conventions that look unusual at first glance. **Recognize them as intentional patterns, not anomalies, bugs, or sloppiness.** When explaining code that uses these, call them out as the project's standard, not as oddities:
+This repo has deliberate conventions that look unusual. **Recognize them as intentional, not bugs or sloppiness.** Read `AGENTS.md` for the full set; these are the ones that most often cause false-positive analysis:
 
-- **camelCase for Python identifiers** (variables, args, fields, functions, methods); PascalCase classes; UPPER_CASE constants. Snake_case is the wrong convention here even though it's idiomatic Python.
-- **No pydantic** anywhere — TypedDict and hand-rolled type-hinted classes are used instead. If you see raw dicts with type hints, that's by design.
-- **Singletons via `Service.getInstance()`** with a `hasattr(self, 'initialized')` init guard. Direct `Service()` calls are wrong; the guard is intentional.
-- **`MessageIdType = Union[int, str]`** — Telegram message IDs are `int`, Max Messenger uses `str`. Code that handles both is multi-platform support, not type confusion.
-- **Chat type inferred from sign**: `chatId > 0` is private, otherwise group. Not a typo.
-- **`DEFAULT_THREAD_ID = 0`** (int, not `None`). DB queries expect 0.
-- **`getChatSettings()` returns `Dict[key, tuple[value, updatedBy]]`** — the `[0]` indexing on the result is correct.
-- **Custom migrations** under `internal/database/migrations/versions/NNN_*.py` (not Alembic).
-- **SQL portability rules** (SQLite/PostgreSQL/MySQL):
-  - Access goes through `BaseSQLProvider` (`execute`, `executeFetchOne`, `executeFetchAll`, `batchExecute`, `upsert`).
-  - `:named` placeholders, `provider.applyPagination`, `provider.getTextType`, `provider.getCaseInsensitiveComparison`.
-  - **No `AUTOINCREMENT`** — composite/single natural keys or app-generated UUID/ULID `TEXT PRIMARY KEY`.
-  - **No `DEFAULT CURRENT_TIMESTAMP`** — `created_at`/`updated_at` are set in application code (migration 013 removed them).
-  - Portable column types only: `TEXT`, `INTEGER`, `REAL`, `TIMESTAMP`, `BOOLEAN`. JSON stored as `TEXT`.
-- **Handler ordering**: `LLMMessageHandler` is intentionally last in `HandlersManager` — it's the catch-all. The "everything before it gets first crack" pattern is the design.
-- **Multi-platform bot**: `internal/bot/common/` is shared; `internal/bot/{telegram,max}/` are platform adapters. Bot mode chosen by `bot.mode` config.
-- **Config**: TOML-based, hierarchical merge of `configs/00-defaults/` + `configs/<env>/`; `${VAR}` substitution from `.env*` files.
+- **camelCase identifiers** (not snake_case), **no pydantic**, **`MessageIdType = Union[int, str]`** for multi-platform
+- **SQL portability**: `BaseSQLProvider` with `:named` params; no `AUTOINCREMENT` / `DEFAULT CURRENT_TIMESTAMP`
+- **`getChatSettings()` returns `Dict[key, tuple[value, updatedBy]]`** — `[0]` indexing is correct
+- **Handler ordering**: `LLMMessageHandler` is intentionally last (catch-all); **chat type**: `chatId > 0` = private
 
-If you see code that follows any of the above, describe it as "the project's standard pattern" — never as "this should probably use X instead" unless the user explicitly asks for a critique.
+Describe code following these as "the project's standard pattern" — never suggest changing them unless explicitly asked.
 
 ## Quality Standards
 

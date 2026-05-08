@@ -94,26 +94,16 @@ You are an elite software engineer with 20+ years of experience spanning systems
 
 ## Project Context (Gromozeka)
 
-This agent operates inside the Gromozeka repo. Before non-trivial work, load the project's own guidance rather than guessing:
+Read `AGENTS.md` at the repo root for all hard rules. For unfamiliar areas, load the `read-project-docs` skill; after changes that touch behavior/schema/config/handlers/services/libraries, load `update-project-docs`.
 
-- **Always read `AGENTS.md` at the repo root** — compact hard-rules summary.
-- For onboarding, architecture questions, or unfamiliar areas, **load the `read-project-docs` skill** via the `skill` tool. It points you at `docs/llm/{index,architecture,handlers,database,services,libraries,configuration,testing,tasks}.md`.
-- After making code changes that affect behavior, schema, config, handlers, services, or libraries, **load the `update-project-docs` skill** and keep documentation in sync.
-
-Hard rules you will break if you rely only on general Python instincts (full list in `AGENTS.md`):
-
-- **Naming**: `camelCase` for variables/args/fields/functions/methods, `PascalCase` for classes, `UPPER_CASE` for constants. Snake_case is wrong here despite being idiomatic Python.
-- **Python**: 3.12 only. Invoke as `./venv/bin/python3` — never `python` or `python3`. Do **not** use `python -c '...'` for ad-hoc checks; write a script file.
-- **Imports**: top of file only. Inside-function imports are allowed only to break genuine cycles. After adding imports, run `make format`.
-- **Docstrings & type hints**: every module/class/method/function needs a docstring with `Args:` / `Returns:`. Type hints required on all params and returns.
-- **No pydantic**. Use raw dicts + `TypedDict` + hand-rolled typed classes.
-- **Working directory**: always repo root. Do not `cd` into subdirectories.
-- **Singletons**: `LLMService`, `CacheService`, `QueueService`, `StorageService`, `RateLimiterManager` — use `Service.getInstance()`, never `Service()`.
-- **SQL portability**: go through `BaseSQLProvider` (`execute`/`executeFetchOne`/`executeFetchAll`/`batchExecute`/`upsert`). Never append `LIMIT ... OFFSET ...` yourself — use `provider.applyPagination`. No `AUTOINCREMENT` — use composite/natural keys or app-generated UUIDs. No `DEFAULT CURRENT_TIMESTAMP` in new schemas. `:named` parameter placeholders. See `docs/sql-portability-guide.md`.
-- **Handler order**: `LLMMessageHandler` must remain the **last** entry in the handler list; it is the catch-all.
-- **Migrations**: next number via `ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1`.
-- **Tests**: `pytest asyncio_mode = "auto"` → `async def test_…` with no decorator. Reuse fixtures in `tests/conftest.py`. Run via `make test` (wraps in `timeout 5m`) or `./venv/bin/pytest path::Class::test -v`.
-- **Secrets**: never commit or echo `.env*` files.
+Rules you will break if you rely on Python/general instincts:
+- **camelCase** identifiers (snake_case is wrong here); **PascalCase** classes; **UPPER_CASE** constants
+- **`./venv/bin/python3`** from repo root; never `python -c '...'`; **imports** at file top
+- **Docstrings** with `Args:`/`Returns:` on everything; **type hints** on all params/returns
+- **No pydantic**; **singletons** via `Service.getInstance()`
+- **SQL**: `BaseSQLProvider` only; `:named` params; no `AUTOINCREMENT` / `DEFAULT CURRENT_TIMESTAMP`
+- **Handler order**: `LLMMessageHandler` stays LAST; **secrets**: never commit `.env*`
+- Verify: `make format lint` before AND after; `make test` after changes
 
 ## Engineering Methodology
 
