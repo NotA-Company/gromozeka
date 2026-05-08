@@ -2,93 +2,85 @@
 name: read-project-docs
 description: >
   Instructs the agent to read Gromozeka project documentation and build context
-  before making any changes. Use this skill when onboarding to the project,
-  starting a new task, or when the agent needs to understand project architecture,
-  conventions, patterns, and current state. Triggers: read docs, understand project,
-  build context, onboarding, project overview, learn codebase, project structure,
-  how does this work, what patterns, get familiar.
+  before making non-trivial changes or answering non-trivial questions. Use this
+  skill when onboarding to the project, starting a new task, or when the agent
+  needs to understand project architecture, conventions, patterns, and current
+  state. Triggers: read docs, understand project, build context, onboarding,
+  project overview, learn codebase, project structure, how does this work, what
+  patterns, get familiar.
 ---
 
 # Read Gromozeka Project Documentation
 
 ## When to use
 
-- Before making any changes to the Gromozeka codebase for the first time in a session
-- When you need to understand project architecture, conventions, or patterns
-- When starting a new task and you lack project context
-- When explicitly asked to "read the docs" or "understand the project"
-
-## Inputs required
-
-- None — this skill only reads documentation files
+- First non-trivial action in a new session on this repo.
+- Before designing or implementing a feature, refactor, migration, or integration.
+- When answering architectural or "how does X work" questions that require grounded references.
 
 ## When NOT to use
 
-- You have already read the documentation in this session and have full context
-- The task is trivial and self-contained (e.g., fixing a typo in a comment)
-- You are asked to do something unrelated to the Gromozeka codebase
+- You already read the relevant docs in this session and retained the context.
+- The task is a trivial, self-contained edit (typo fix, comment tweak, one-line rename with no semantic impact).
+- The work is unrelated to this repo.
 
-## Workflow
+## Inputs
 
-### Step 1 — Read the LLM Index (REQUIRED, do this FIRST)
+None — this skill only reads documentation.
 
-**Read:** `docs/llm/index.md`
+## Read order (strict)
 
-This is the entry point to all project documentation, dood. It gives you:
-- Project identity and mandatory rules
-- Project map (every directory and key file with purpose)
-- **Navigation decision matrix** — tells you exactly which other `docs/llm/` files to read based on your task
+The repo enforces a specific order of authority. Follow it.
 
-Do NOT skip this file. Everything else flows from it.
+### Step 1 — Hard rules: root `AGENTS.md`
 
-### Step 2 — Read Task-Relevant LLM Docs (REQUIRED)
+**Read:** [`AGENTS.md`](../../../AGENTS.md) at the repo root.
 
-Based on your task, read **only** the relevant focused docs from `docs/llm/`. Do NOT read all of them — be selective, dood!
+This is the compact agent guide. It is authoritative for: naming conventions, no-pydantic rule, docstring/type-hint requirements, SQL portability rules (the single highest-risk area in this repo), handler ordering, run commands (`./venv/bin/python3`, `make format lint`, `make test`), and known gotchas.
 
-| If your task involves… | Read this file |
+Do not skip this. Everything downstream assumes you've seen it.
+
+### Step 2 — LLM index: `docs/llm/index.md`
+
+**Read:** [`docs/llm/index.md`](../../../docs/llm/index.md).
+
+Gives you the project map (directories, key files with line counts), singleton access table, entry points, and a navigation matrix pointing to focused docs.
+
+### Step 3 — Task-relevant focused docs (selective)
+
+`docs/llm/` contains 9 focused docs. **Read only those that match your task** — do not read them all.
+
+| Your task involves… | Read |
 |---|---|
-| Working on handlers | `docs/llm/handlers.md` |
-| Working on database / migrations | `docs/llm/database.md` |
-| Working on services | `docs/llm/services.md` |
-| Working on libraries | `docs/llm/libraries.md` |
-| Working on configuration | `docs/llm/configuration.md` |
-| Writing or modifying tests | `docs/llm/testing.md` |
-| Understanding architecture / ADRs | `docs/llm/architecture.md` |
-| Need task guidance / decision trees | `docs/llm/tasks.md` |
+| Creating/modifying a handler or bot command | [`docs/llm/handlers.md`](../../../docs/llm/handlers.md) |
+| Database schema, migrations, queries | [`docs/llm/database.md`](../../../docs/llm/database.md) **and** [`docs/sql-portability-guide.md`](../../../docs/sql-portability-guide.md) |
+| Schema documentation updates | [`docs/database-schema.md`](../../../docs/database-schema.md) **and** [`docs/database-schema-llm.md`](../../../docs/database-schema-llm.md) (dual docs, keep in sync) |
+| Singleton services (Cache/Queue/LLM/Storage/RateLimiter) | [`docs/llm/services.md`](../../../docs/llm/services.md) |
+| `lib/` libraries, LLM providers, Max client, markdown, bayes, etc. | [`docs/llm/libraries.md`](../../../docs/llm/libraries.md) |
+| TOML configuration, `ConfigManager`, `.env*` | [`docs/llm/configuration.md`](../../../docs/llm/configuration.md) |
+| Writing or modifying tests | [`docs/llm/testing.md`](../../../docs/llm/testing.md) |
+| Architectural decisions, ADRs, component dependencies | [`docs/llm/architecture.md`](../../../docs/llm/architecture.md) |
+| Step-by-step task recipes, anti-patterns, gotchas | [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) |
 
-Multiple files may apply. For example, adding a new handler with database access would need both `handlers.md` and `database.md`.
+Multiple rows may apply (e.g. handler + DB → both `handlers.md` and `database.md` + `sql-portability-guide.md`).
 
-### Step 3 — Read Developer Guide (OPTIONAL)
+### Step 4 — Human-oriented guide (optional)
 
-Only if deeper understanding is needed beyond what the LLM docs provide.
+[`docs/developer-guide.md`](../../../docs/developer-guide.md) is human-oriented and partially redundant with the LLM docs. Consult only when the LLM docs leave a gap you can't close otherwise. Do not trust hardcoded section numbers — find content by heading.
 
-**Read:** `docs/developer-guide.md`
+## Rules of engagement
 
-Contains detailed coverage of:
-- Project overview and architecture overview with diagrams
-- Detailed directory structure
-- Configuration system details
-- Database layer deep dive
-- Handler system explanation
-- Service layer documentation
-- Libraries reference
-- Testing guide
-- Code quality standards
-- Deployment instructions
-- Common development task walkthroughs
-
-## Important: Selective Reading
-
-The `docs/llm/` directory contains 9 focused documents. **Do NOT read all of them**, dood! The index file (Step 1) contains a navigation matrix that tells you which files are relevant to your task. Read only what you need — this saves context and keeps you focused.
+- **Code wins on conflict.** If docs contradict the source, the source is authoritative; flag the drift in your response so docs can be corrected later.
+- **Be selective.** Reading all nine `docs/llm/*.md` wastes context. The navigation matrix above is the budget.
+- **`lib/ext_modules/*`** subpackages (e.g. `grabliarium`) have their own `pyproject.toml` and are formatted separately by `make format`. If you're editing there, note it.
 
 ## Verification
 
-After completing Steps 1–3, you should be able to answer all of the following:
+Before acting on the task, you should be able to state — in task-specific terms — the answers to:
 
-1. **Naming conventions** — What casing is used for variables/functions vs classes vs constants?
-2. **Design patterns** — What architectural patterns does Gromozeka use (e.g., handler registration, service layer, config hierarchy)?
-3. **Handler structure** — How are handlers created, registered, and organized?
-4. **Available services** — What services exist and how are they accessed?
-5. **Architecture decisions** — What key ADRs or design choices shape the codebase?
+1. Which hard rules from `AGENTS.md` constrain this change (naming, no-pydantic, SQL portability, handler ordering, secrets)?
+2. Which file(s) you'll touch, by concrete path.
+3. Which docs will need updating after the change (if any). If the change is structural, load the `update-project-docs` skill afterward.
+4. Which command(s) you'll run to verify the change (`make format lint`, `make test`, targeted pytest).
 
-If you cannot answer any of these, re-read the relevant file from Steps 1–3, dood!
+If any answer is fuzzy, re-read the relevant doc from Steps 1–3.

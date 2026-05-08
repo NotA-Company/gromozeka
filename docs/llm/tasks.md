@@ -91,12 +91,23 @@ START
 ├── Step 2: Create migration file
 │         Path: internal/database/migrations/versions/NNN_description.py
 │         Class: MigrationNNNDescription(BaseMigration)
-│         Implement: up(cursor), down(cursor)
-│         Set: version = NNN (next sequential number)
+│         Implement:
+│             async def up(self, sqlProvider: BaseSQLProvider) -> None
+│             async def down(self, sqlProvider: BaseSQLProvider) -> None
+│         Export: def getMigration() -> Type[BaseMigration]
+│         Set: version: int = NNN (next sequential number)
+│         Follow SQL portability rules — no AUTOINCREMENT,
+│           no DEFAULT CURRENT_TIMESTAMP, no COLLATE NOCASE, no SERIAL,
+│           use :named placeholders, portable types only.
+│           See docs/sql-portability-guide.md for the full ruleset.
 │
 ├── Step 3: Add Database methods
-│         In internal/database/database.py
-│         Follow existing patterns with self._getConnection()
+│         In internal/database/ (Database class or relevant repository submodule)
+│         Go through BaseSQLProvider helpers:
+│           execute / executeFetchOne / executeFetchAll / batchExecute / upsert
+│         Use :named placeholders and provider.applyPagination /
+│         provider.getCaseInsensitiveComparison for portability.
+│         Do NOT use raw sqlite3 calls or self._getConnection().
 │
 ├── Step 4: Update models if needed
 │         In internal/database/models.py
@@ -106,9 +117,12 @@ START
 │         If frequently accessed data: add cache layer in CacheService
 │
 ├── Step 6: Update documentation (CRITICAL)
-│         Update docs/database-schema.md AND docs/database-schema-llm.md
-│         Add migration entry with description
-│         Update affected table schemas
+│         Update all three schema docs in sync:
+│           - docs/database-schema.md (human-oriented)
+│           - docs/database-schema-llm.md (LLM-oriented)
+│           - docs/llm/database.md (migration pattern + version list)
+│         Add migration entry with description.
+│         Update affected table schemas.
 │
 └── Step 7: Tests
           - tests/test_db_wrapper.py
@@ -119,6 +133,8 @@ START
 
 **Reference docs:**
 - [`database.md`](database.md) — full migration guide with checklist
+- [`../sql-portability-guide.md`](../sql-portability-guide.md) — cross-RDBMS SQL rules
+- [`.agents/skills/add-database-migration/SKILL.md`](../../.agents/skills/add-database-migration/SKILL.md) — loadable skill with scaffolding template
 
 ---
 
@@ -416,21 +432,27 @@ When adding new `ChatSettingsKey` enum values, you **must** also add correspondi
 **What you need to do:**
 
 ```python
-# 1. Add enum value to ChatSettingsKey
-class ChatSettingsKey(str, Enum):
-    YOUR_NEW_SETTING = "your_new_setting"
+# 1. Add enum value to ChatSettingsKey (StrEnum; string value is kebab-case
+#    and must match the TOML default key exactly)
+class ChatSettingsKey(StrEnum):
+    YOUR_NEW_SETTING = "your-new-setting"
+    """Short code-level description of the setting."""
 
-# 2. Add entry to _chatSettingsInfo dictionary in same file
-_chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingInfo] = {
-    # ... existing entries
-    ChatSettingsKey.YOUR_NEW_SETTING: ChatSettingInfo(
-        type=ChatSettingsType.STRING,  # or INTEGER, BOOLEAN, etc.
-        short="Короткое описание на русском",  # Russian short description
-        long="Длинное описание на русском",  # Russian long description
-        page=ChatSettingsPage.BOT_OWNER_SYSTEM,  # Which settings page
-    ),
+# 2. Add entry to _chatSettingsInfo dictionary in same file.
+#    The value type is ChatSettingsInfoValue — a TypedDict, so entries are
+#    dict literals, NOT dataclass-style constructor calls.
+_chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
+    # ... existing entries ...
+    ChatSettingsKey.YOUR_NEW_SETTING: {
+        "type": ChatSettingsType.STRING,           # or MODEL, BOOL, INT, FLOAT, IMAGE_MODEL
+        "short": "Короткое описание на русском",    # shown in /settings list
+        "long": "Длинное описание на русском",     # shown when editing
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,  # which settings page
+    },
 }
 ```
+
+> **Convention:** `UPPER_CASE` Python name ↔ `kebab-case` string value ↔ `kebab-case` TOML key. All three must match. Do not use underscores in the string value or TOML key.
 
 **Requirement for Default Values:**
 
@@ -511,6 +533,7 @@ Return a detailed description of the layout including all position meanings.
 - Look at `internal/bot/models/chat_settings.py` for the full pattern
 - Examine existing entries to understand the metadata structure
 - Check `configs/00-defaults/bot-defaults.toml` for default value examples
+- Load the [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md) skill for a step-by-step recipe covering all four required sites and the `getChatSettings()` tuple-return gotcha
 
 ---
 

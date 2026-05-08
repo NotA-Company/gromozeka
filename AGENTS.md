@@ -196,6 +196,12 @@ process of reviewing and maintaining documentation.
 - [`docs/database-schema.md`](docs/database-schema.md) and
   [`docs/database-schema-llm.md`](docs/database-schema-llm.md) — keep both in
   sync when changing schema
-- [`.agents/skills/update-project-docs/SKILL.md`](.agents/skills/update-project-docs/SKILL.md) —
-  Post-change documentation workflow with decision matrix (load after behavior/schema/config changes)
+- [`.agents/skills/`](.agents/skills/) — loadable task-specific skills. Load
+  the matching one via the `skill` tool when its trigger applies:
+  - [`read-project-docs`](.agents/skills/read-project-docs/SKILL.md) — onboarding / context-building before non-trivial work
+  - [`update-project-docs`](.agents/skills/update-project-docs/SKILL.md) — post-change documentation sync with decision matrix
+  - [`run-quality-gates`](.agents/skills/run-quality-gates/SKILL.md) — the exact `./venv/bin/python3` / `make format lint` / `make test` workflow
+  - [`add-database-migration`](.agents/skills/add-database-migration/SKILL.md) — new migration scaffolding + SQL portability rules
+  - [`add-handler`](.agents/skills/add-handler/SKILL.md) — add a bot handler end-to-end, with the `LLMMessageHandler`-stays-last invariant
+  - [`add-chat-setting`](.agents/skills/add-chat-setting/SKILL.md) — wire a new `ChatSettingsKey` across all four required sites
 - [`README.md`](README.md), [`README_BOT.md`](README_BOT.md) — user docs
