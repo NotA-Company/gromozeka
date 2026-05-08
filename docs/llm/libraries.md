@@ -57,17 +57,53 @@ from lib.ai.models import (
 
 **Key methods on `AbstractModel`:**
 ```python
-model.generateText(messages: Sequence[ModelMessage], tools=None) -> ModelRunResult
+model.generateText(
+    messages: Sequence[ModelMessage],
+    tools=None,
+    *,
+    fallbackModels: Optional[List[AbstractModel]] = None,
+) -> ModelRunResult
+model.generateImage(
+    messages: Sequence[ModelMessage],
+    *,
+    fallbackModels: Optional[List[AbstractModel]] = None,
+) -> ModelRunResult
 model.generateStructured(
     messages: Sequence[ModelMessage],
     schema: Dict[str, Any],
-    *, schemaName: str = "response",
+    *,
+    schemaName: str = "response",
     strict: bool = True,
+    fallbackModels: Optional[List[AbstractModel]] = None,
 ) -> ModelStructuredResult
 model.getEstimateTokensCount(messages: list) -> int
 model.contextSize  # int
 model.temperature  # float
 model.modelId      # str
+```
+
+**Fallback mechanism:**
+All three public generation methods (`generateText`, `generateImage`, `generateStructured`)
+support an optional `fallbackModels` parameter. When provided, the methods will
+automatically try each model in the list until one succeeds (returns non-error status).
+
+The `fallbackModels` parameter is an ordered list where:
+- The first element is the primary model (the model you're calling the method on)
+- Subsequent elements are fallback models to try if the primary fails
+
+Example:
+```python
+primaryModel = llmManager.getModel("primary-model")
+fallbackModel = llmManager.getModel("fallback-model")
+
+result = await primaryModel.generateText(
+    messages,
+    tools=tools,
+    fallbackModels=[fallbackModel],
+)
+
+if result.isFallback:
+    print("Used fallback model!")
 ```
 
 **Key methods on `LLMManager`:**
@@ -119,6 +155,13 @@ hinting at JSON output; the wrapper does not inject one.
 (`custom-openai`, `openrouter`, `yc-openai`). The `yc-sdk` provider
 overrides `_generateStructured` to raise `NotImplementedError` — see
 [`docs/plans/lib-ai-structured-output.md`](../plans/lib-ai-structured-output.md) §3.6.
+
+**Abstract/split pattern:** Similar to `generateText` / `_generateText`,
+the image generation methods follow the same pattern:
+- `_generateImage` — the `@abstractmethod` that providers implement
+- `generateImage` — the public wrapper that handles fallback and JSON logging
+This split allows the public API to provide consistent behavior (fallback,
+JSON logging) while keeping provider implementations simple.
 
 **Schema requirements (strict mode).** Most providers forward your
 schema to OpenAI's `response_format = {"type": "json_schema",

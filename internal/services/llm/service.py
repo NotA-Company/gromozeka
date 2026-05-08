@@ -509,7 +509,8 @@ class LLMService:
         """Generate text via the configured chat model with fallback support.
 
         Resolves the primary and fallback models from chatSettings, applies rate limiting,
-        then delegates to AbstractModel.generateTextWithFallBack with optional tool support.
+        then delegates to AbstractModel.generateText with fallbackModels parameter and
+        optional tool support.
 
         Args:
             prompt: Sequence of ModelMessage objects representing the conversation history
@@ -550,7 +551,11 @@ class LLMService:
                 messageHistoryStr += f"\t{msg.toLogMessage()}\n"
             logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
 
-        ret = await llmModel.generateTextWithFallBack(prompt, fallbackModel, tools=tools)
+        ret = await llmModel.generateText(
+            prompt,
+            tools=tools,
+            fallbackModels=[fallbackModel],
+        )
 
         if doDebugLogging:
             logger.debug(f"LLM returned: {ret}")
@@ -573,8 +578,8 @@ class LLMService:
         """Generate structured (JSON) output via the configured chat model.
 
         Resolves the primary and fallback models from chatSettings, applies rate limiting,
-        then delegates to AbstractModel.generateStructuredWithFallBack with fallback support.
-        Raises if neither resolved model supports structured output.
+        then delegates to AbstractModel.generateStructured with fallbackModels parameter
+        and fallback support. Raises if neither resolved model supports structured output.
 
         NOTE: callers should include a system message hinting at JSON output; this wrapper
         will not inject one.
@@ -642,8 +647,12 @@ class LLMService:
                 f"{fallbackModel}, schema_keys={list(schema.keys())}"
             )
 
-        ret: ModelStructuredResult = await llmModel.generateStructuredWithFallBack(
-            prompt, fallbackModel, schema=schema, schemaName=schemaName, strict=strict
+        ret: ModelStructuredResult = await llmModel.generateStructured(
+            prompt,
+            schema,
+            schemaName=schemaName,
+            strict=strict,
+            fallbackModels=[fallbackModel],
         )
 
         if doDebugLogging:
@@ -651,7 +660,12 @@ class LLMService:
         return ret
 
     async def generateImage(
-        self, prompt: str, chatId: Optional[int], chatSettings: ChatSettingsDict, llmManager: LLMManager
+        self,
+        prompt: str,
+        *,
+        chatId: Optional[int],
+        chatSettings: ChatSettingsDict,
+        llmManager: LLMManager,
     ) -> ModelRunResult:
         """Generate image with given prompt and chat settings.
 
@@ -674,7 +688,10 @@ class LLMService:
 
         if chatId is not None:
             await self.rateLimit(chatId, chatSettings)
-        return await imageGenerationModel.generateImageWithFallBack([ModelMessage(content=prompt)], fallbackImageLLM)
+        return await imageGenerationModel.generateImage(
+            [ModelMessage(content=prompt)],
+            fallbackModels=[fallbackImageLLM],
+        )
 
     async def rateLimit(self, chatId: int, chatSettings: ChatSettingsDict) -> None:
         """Apply rate limiting to a chat based on its settings.

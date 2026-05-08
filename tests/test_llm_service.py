@@ -49,7 +49,7 @@ def mockModel():
     model.modelVersion = "1.0"
     model.temperature = 0.7
     model.contextSize = 4096
-    model.generateTextWithFallBack = createAsyncMock()
+    model.generateText = createAsyncMock()
     model.getEstimateTokensCount = Mock(return_value=100)
     return model
 
@@ -444,7 +444,7 @@ async def testGenerateTextWithoutTools(
         status=ModelResultStatus.FINAL,
         resultText="The weather is sunny!",
     )
-    mockModel.generateTextWithFallBack.return_value = expectedResult
+    mockModel.generateText.return_value = expectedResult
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -463,8 +463,8 @@ async def testGenerateTextWithoutTools(
     assert result.isToolsUsed is False
 
     # Verify model was called with empty tools list
-    mockModel.generateTextWithFallBack.assert_called_once()
-    callArgs = mockModel.generateTextWithFallBack.call_args
+    mockModel.generateText.assert_called_once()
+    callArgs = mockModel.generateText.call_args
     assert callArgs.kwargs["tools"] == []
 
 
@@ -478,7 +478,7 @@ async def testGenerateTextWithCallId(
         status=ModelResultStatus.FINAL,
         resultText="Response",
     )
-    mockModel.generateTextWithFallBack.return_value = expectedResult
+    mockModel.generateText.return_value = expectedResult
 
     customCallId = "custom-call-123"
     result = await llmService.generateTextViaLLM(
@@ -494,7 +494,7 @@ async def testGenerateTextWithCallId(
     )
 
     assert result is not None
-    mockModel.generateTextWithFallBack.assert_called_once()
+    mockModel.generateText.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -507,7 +507,7 @@ async def testGenerateTextAutoGeneratesCallId(
         status=ModelResultStatus.FINAL,
         resultText="Response",
     )
-    mockModel.generateTextWithFallBack.return_value = expectedResult
+    mockModel.generateText.return_value = expectedResult
 
     with patch("uuid.uuid4") as mockUuid:
         mockUuid.return_value = uuid.UUID("12345678-1234-5678-1234-567812345678")
@@ -566,7 +566,7 @@ async def testGenerateTextWithToolCall(
         resultText="The weather in Tokyo is 20°C",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
+    mockModel.generateText.side_effect = [toolCallResult, finalResult]
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -584,7 +584,7 @@ async def testGenerateTextWithToolCall(
     assert result.isToolsUsed is True
 
     # Verify model was called twice
-    assert mockModel.generateTextWithFallBack.call_count == 2
+    assert mockModel.generateText.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -621,7 +621,7 @@ async def testGenerateTextWithMultipleToolCalls(
         resultText="Combined results",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
+    mockModel.generateText.side_effect = [toolCallResult, finalResult]
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -635,7 +635,7 @@ async def testGenerateTextWithMultipleToolCalls(
     )
 
     assert result.isToolsUsed is True
-    assert mockModel.generateTextWithFallBack.call_count == 2
+    assert mockModel.generateText.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -674,7 +674,7 @@ async def testGenerateTextWithMultipleToolCallRounds(
         resultText="Final answer",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [round1, round2, finalRound]
+    mockModel.generateText.side_effect = [round1, round2, finalRound]
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -688,7 +688,7 @@ async def testGenerateTextWithMultipleToolCallRounds(
     )
 
     assert result.isToolsUsed is True
-    assert mockModel.generateTextWithFallBack.call_count == 3
+    assert mockModel.generateText.call_count == 3
 
 
 @pytest.mark.asyncio
@@ -717,7 +717,7 @@ async def testGenerateTextWithToolCallCallback(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
+    mockModel.generateText.side_effect = [toolCallResult, finalResult]
 
     # Create callback mock
     callbackMock = createAsyncMock()
@@ -767,7 +767,7 @@ async def testGenerateTextToolCallResultFormatting(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
+    mockModel.generateText.side_effect = [toolCallResult, finalResult]
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -781,8 +781,8 @@ async def testGenerateTextToolCallResultFormatting(
     )
 
     # Verify second call includes tool result message
-    assert mockModel.generateTextWithFallBack.call_count == 2
-    secondCallArgs = mockModel.generateTextWithFallBack.call_args_list[1]
+    assert mockModel.generateText.call_count == 2
+    secondCallArgs = mockModel.generateText.call_args_list[1]
     messagesArg = secondCallArgs.args[0]
 
     # Find tool result message
@@ -825,7 +825,7 @@ async def testToolCallMessageConstruction(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
+    mockModel.generateText.side_effect = [toolCallResult, finalResult]
 
     originalMessageCount = len(sampleMessages)
 
@@ -841,7 +841,7 @@ async def testToolCallMessageConstruction(
     )
 
     # Check second call messages
-    secondCallArgs = mockModel.generateTextWithFallBack.call_args_list[1]
+    secondCallArgs = mockModel.generateText.call_args_list[1]
     messagesArg = secondCallArgs.args[0]
 
     # Should have: original messages + assistant message + tool result
@@ -882,7 +882,7 @@ async def testConversationContextPreserved(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResult, finalResult]
+    mockModel.generateText.side_effect = [toolCallResult, finalResult]
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -896,7 +896,7 @@ async def testConversationContextPreserved(
     )
 
     # Verify original messages are preserved in second call
-    secondCallArgs = mockModel.generateTextWithFallBack.call_args_list[1]
+    secondCallArgs = mockModel.generateText.call_args_list[1]
     messagesArg = secondCallArgs.args[0]
 
     # First messages should match original
@@ -928,7 +928,7 @@ async def testToolExecutionException(
         toolCalls=[LLMToolCall(id="call_1", name="failingTool", parameters={})],
     )
 
-    mockModel.generateTextWithFallBack.return_value = toolCallResult
+    mockModel.generateText.return_value = toolCallResult
 
     with pytest.raises(RuntimeError, match="Tool failed!"):
         await llmService.generateTextViaLLM(
@@ -957,7 +957,7 @@ async def testMissingToolHandler(
         toolCalls=[LLMToolCall(id="call_1", name="nonexistentTool", parameters={})],
     )
 
-    mockModel.generateTextWithFallBack.return_value = toolCallResult
+    mockModel.generateText.return_value = toolCallResult
 
     with pytest.raises(KeyError):
         await llmService.generateTextViaLLM(
@@ -990,7 +990,7 @@ async def testCallbackException(
         toolCalls=[LLMToolCall(id="call_1", name="testTool", parameters={})],
     )
 
-    mockModel.generateTextWithFallBack.return_value = toolCallResult
+    mockModel.generateText.return_value = toolCallResult
 
     # Create callback that raises exception
     async def failingCallback(result, extraData):
@@ -1193,7 +1193,7 @@ async def testFullWorkflowRegisterGenerateExecute(
         resultText="It is 12:00 PM on 2024-01-15",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
+    mockModel.generateText.side_effect = [toolCallResponse, finalResponse]
 
     # Step 3: Execute
     result = await llmService.generateTextViaLLM(
@@ -1211,7 +1211,7 @@ async def testFullWorkflowRegisterGenerateExecute(
     assert result.status == ModelResultStatus.FINAL
     assert result.resultText == "It is 12:00 PM on 2024-01-15"
     assert result.isToolsUsed is True
-    assert mockModel.generateTextWithFallBack.call_count == 2
+    assert mockModel.generateText.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -1259,7 +1259,7 @@ async def testConversationWithMultipleToolCallRounds(
         resultText="The answer is 12",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [round1, round2, round3]
+    mockModel.generateText.side_effect = [round1, round2, round3]
 
     result = await llmService.generateTextViaLLM(
         messages=messages,
@@ -1274,7 +1274,7 @@ async def testConversationWithMultipleToolCallRounds(
 
     assert result.isToolsUsed is True
     assert result.resultText == "The answer is 12"
-    assert mockModel.generateTextWithFallBack.call_count == 3
+    assert mockModel.generateText.call_count == 3
 
 
 @pytest.mark.asyncio
@@ -1304,7 +1304,7 @@ async def testToolResultsAffectSubsequentResponses(
         resultText="Info retrieved",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
+    mockModel.generateText.side_effect = [toolCallResponse, finalResponse]
 
     await llmService.generateTextViaLLM(
         messages=messages,
@@ -1318,7 +1318,7 @@ async def testToolResultsAffectSubsequentResponses(
     )
 
     # Verify second call includes tool result
-    secondCallArgs = mockModel.generateTextWithFallBack.call_args_list[1]
+    secondCallArgs = mockModel.generateText.call_args_list[1]
     messagesArg = secondCallArgs.args[0]
 
     toolMessages = [m for m in messagesArg if m.role == "tool"]
@@ -1357,7 +1357,7 @@ async def testExtraDataPassedToTools(llmService, mockModel, mockFallbackModel, m
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
+    mockModel.generateText.side_effect = [toolCallResponse, finalResponse]
 
     extraData = {"userId": 123, "chatId": 456}
 
@@ -1400,7 +1400,7 @@ async def testEmptyToolCallsList(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [emptyToolCallsResult, finalResult]
+    mockModel.generateText.side_effect = [emptyToolCallsResult, finalResult]
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -1414,7 +1414,7 @@ async def testEmptyToolCallsList(
     )
 
     assert result.isToolsUsed is True
-    assert mockModel.generateTextWithFallBack.call_count == 2
+    assert mockModel.generateText.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -1441,7 +1441,7 @@ async def testToolReturnsNone(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
+    mockModel.generateText.side_effect = [toolCallResponse, finalResponse]
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -1488,7 +1488,7 @@ async def testToolReturnsComplexObject(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
+    mockModel.generateText.side_effect = [toolCallResponse, finalResponse]
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -1502,7 +1502,7 @@ async def testToolReturnsComplexObject(
     )
 
     # Verify complex object was serialized
-    secondCallArgs = mockModel.generateTextWithFallBack.call_args_list[1]
+    secondCallArgs = mockModel.generateText.call_args_list[1]
     messagesArg = secondCallArgs.args[0]
     toolMessages = [m for m in messagesArg if m.role == "tool"]
 
@@ -1537,7 +1537,7 @@ async def testNoCallbackProvided(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.side_effect = [toolCallResponse, finalResponse]
+    mockModel.generateText.side_effect = [toolCallResponse, finalResponse]
 
     # No callback provided
     result = await llmService.generateTextViaLLM(
@@ -1577,7 +1577,7 @@ async def testToolsListPassedToModel(
         resultText="Done",
     )
 
-    mockModel.generateTextWithFallBack.return_value = finalResponse
+    mockModel.generateText.return_value = finalResponse
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
@@ -1591,7 +1591,7 @@ async def testToolsListPassedToModel(
     )
 
     # Verify tools were passed
-    callArgs = mockModel.generateTextWithFallBack.call_args
+    callArgs = mockModel.generateText.call_args
     toolsArg = callArgs.kwargs["tools"]
 
     assert len(toolsArg) == 2
@@ -1692,7 +1692,7 @@ async def testManySequentialToolCalls(llmService, mockModel, mockFallbackModel, 
         )
     )
 
-    mockModel.generateTextWithFallBack.side_effect = responses
+    mockModel.generateText.side_effect = responses
 
     result = await llmService.generateTextViaLLM(
         messages=messages,
@@ -1706,7 +1706,7 @@ async def testManySequentialToolCalls(llmService, mockModel, mockFallbackModel, 
     )
 
     assert result.isToolsUsed is True
-    assert mockModel.generateTextWithFallBack.call_count == 11
+    assert mockModel.generateText.call_count == 11
 
 
 # ============================================================================
@@ -1743,10 +1743,10 @@ def testServiceHasProperAttributes(llmService):
 
 
 def _makeStructuredModel(supportsStructured: bool, modelId: str = "test-model") -> Mock:
-    """Build a mock AbstractModel with configured support_structured_output flag, dood!
+    """Create a mock AbstractModel wired for generateStructured tests, dood!
 
     Args:
-        supportsStructured: Value to return for the ``support_structured_output`` key.
+        supportsStructured: If True, model.getInfo() reports support_structured_output=True.
         modelId: Model identifier string used for __str__ / error messages.
 
     Returns:
@@ -1756,7 +1756,7 @@ def _makeStructuredModel(supportsStructured: bool, modelId: str = "test-model") 
     model.modelId = modelId
     model.contextSize = 4096
     model.getInfo = Mock(return_value={"support_structured_output": supportsStructured})
-    model.generateStructuredWithFallBack = createAsyncMock()
+    model.generateStructured = createAsyncMock()
     model.__str__ = Mock(return_value=modelId)
     return model
 
@@ -1784,7 +1784,7 @@ async def testGenerateStructuredHappyPath(llmService, mockChatSettings, mockLlmM
         data={"x": 1},
         resultText='{"x": 1}',
     )
-    primaryModel.generateStructuredWithFallBack.return_value = expectedResult
+    primaryModel.generateStructured.return_value = expectedResult
 
     result = await llmService.generateStructured(
         [ModelMessage(content="give me x")],
@@ -1800,11 +1800,11 @@ async def testGenerateStructuredHappyPath(llmService, mockChatSettings, mockLlmM
     assert result.status == ModelResultStatus.FINAL
     assert result.data == {"x": 1}
 
-    primaryModel.generateStructuredWithFallBack.assert_called_once()
-    callKwargs = primaryModel.generateStructuredWithFallBack.call_args.kwargs
-    assert callKwargs["schema"] == sampleSchema
+    primaryModel.generateStructured.assert_called_once()
+    callKwargs = primaryModel.generateStructured.call_args.kwargs
     assert callKwargs["schemaName"] == "response"
     assert callKwargs["strict"] is True
+    assert callKwargs["fallbackModels"] == [fallbackModel]
 
 
 async def testGenerateStructuredCustomSchemaNameAndStrict(llmService, mockChatSettings, mockLlmManager, sampleSchema):
@@ -1812,7 +1812,7 @@ async def testGenerateStructuredCustomSchemaNameAndStrict(llmService, mockChatSe
     primaryModel = _makeStructuredModel(True)
     fallbackModel = _makeStructuredModel(True)
 
-    primaryModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
+    primaryModel.generateStructured.return_value = ModelStructuredResult(
         rawResult=None,
         status=ModelResultStatus.FINAL,
         data={"x": 2},
@@ -1831,7 +1831,7 @@ async def testGenerateStructuredCustomSchemaNameAndStrict(llmService, mockChatSe
         strict=False,
     )
 
-    callKwargs = primaryModel.generateStructuredWithFallBack.call_args.kwargs
+    callKwargs = primaryModel.generateStructured.call_args.kwargs
     assert callKwargs["schemaName"] == "myShape"
     assert callKwargs["strict"] is False
 
@@ -1843,7 +1843,7 @@ async def testGenerateStructuredPrimaryUnsupportedFallbackSupported(
     primaryModel = _makeStructuredModel(False, "primary-model")
     fallbackModel = _makeStructuredModel(True, "fallback-model")
 
-    fallbackModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
+    fallbackModel.generateStructured.return_value = ModelStructuredResult(
         rawResult=None,
         status=ModelResultStatus.FINAL,
         data={"x": 3},
@@ -1863,9 +1863,9 @@ async def testGenerateStructuredPrimaryUnsupportedFallbackSupported(
     assert result.data == {"x": 3}
 
     # Fallback (now acting as primary after swap) must have been called.
-    fallbackModel.generateStructuredWithFallBack.assert_called_once()
+    fallbackModel.generateStructured.assert_called_once()
     # Primary must NOT have been called.
-    primaryModel.generateStructuredWithFallBack.assert_not_called()
+    primaryModel.generateStructured.assert_not_called()
 
 
 async def testGenerateStructuredNeitherSupports(llmService, mockChatSettings, mockLlmManager, sampleSchema):
@@ -1888,8 +1888,8 @@ async def testGenerateStructuredNeitherSupports(llmService, mockChatSettings, mo
     assert "primary-model" in errorMsg
     assert "fallback-model" in errorMsg
 
-    primaryModel.generateStructuredWithFallBack.assert_not_called()
-    fallbackModel.generateStructuredWithFallBack.assert_not_called()
+    primaryModel.generateStructured.assert_not_called()
+    fallbackModel.generateStructured.assert_not_called()
 
 
 async def testGenerateStructuredAppliesRateLimit(llmService, mockChatSettings, mockLlmManager, sampleSchema):
@@ -1897,7 +1897,7 @@ async def testGenerateStructuredAppliesRateLimit(llmService, mockChatSettings, m
     primaryModel = _makeStructuredModel(True)
     fallbackModel = _makeStructuredModel(True)
 
-    primaryModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
+    primaryModel.generateStructured.return_value = ModelStructuredResult(
         rawResult=None,
         status=ModelResultStatus.FINAL,
         data={"x": 4},
@@ -1925,7 +1925,7 @@ async def testGenerateStructuredNoRateLimitWhenChatIdNone(llmService, mockChatSe
     primaryModel = _makeStructuredModel(True)
     fallbackModel = _makeStructuredModel(True)
 
-    primaryModel.generateStructuredWithFallBack.return_value = ModelStructuredResult(
+    primaryModel.generateStructured.return_value = ModelStructuredResult(
         rawResult=None,
         status=ModelResultStatus.FINAL,
         data={"x": 5},

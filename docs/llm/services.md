@@ -179,7 +179,7 @@ async def generateStructured(
 `generateStructured` mirrors `generateText` end-to-end: it resolves
 the primary and fallback models from `chatSettings`, applies rate
 limiting for non-`None` `chatId`, then delegates to
-`AbstractModel.generateStructuredWithFallBack`. Key differences:
+ `AbstractModel.generateStructured` (with `fallbackModels` parameter). Key differences:
 
 - Raises `NotImplementedError` if **neither** the primary nor the
   fallback model has `support_structured_output = true` in its config.

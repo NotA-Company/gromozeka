@@ -73,7 +73,7 @@ class MockModel(AbstractModel):
             resultText="Mock response",
         )
 
-    async def generateImage(self, messages: list) -> ModelRunResult:
+    async def _generateImage(self, messages: list) -> ModelRunResult:
         """Generate mock image response.
 
         Args:

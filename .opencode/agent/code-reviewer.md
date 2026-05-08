@@ -96,8 +96,11 @@ permission:
     "git status*": allow
     "git tag": allow
     "grep *": allow
+    "rg *": allow
     "tail *": allow
     "head *": allow
+    "wc": allow
+    "wc *": allow
   edit: deny
   write: deny
   task: deny
