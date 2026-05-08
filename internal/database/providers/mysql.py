@@ -326,8 +326,8 @@ class MySQLProvider(BaseSQLProvider):
         """Get MySQL-specific case-insensitive LIKE comparison expression.
 
         Generates a SQL expression that performs a case-insensitive pattern
-        match using the ``LIKE`` operator with the ``utf8mb4_general_ci``
-        collation.
+        match using the ``LIKE`` operator. Uses ``LOWER()`` on both sides
+        for reliable case-insensitive matching across MySQL configurations.
 
         Args:
             column: The column name to compare against.
@@ -335,9 +335,18 @@ class MySQLProvider(BaseSQLProvider):
 
         Returns:
             A SQL expression string for case-insensitive LIKE comparison, formatted
-            as ``"{column} LIKE :{param} COLLATE utf8mb4_general_ci"``.
+            as ``"LOWER({column}) LIKE LOWER(:{param})"``.
+
+        Note:
+            Performance consideration: Using ``LOWER()`` on both sides prevents
+            index usage on the column in most MySQL configurations. For frequently
+            queried columns where performance matters, consider adding a
+            functional index on ``LOWER(column)`` or using a case-insensitive
+            collation column with a direct ``LIKE`` comparison. This tradeoff
+            was intentional to maintain portability across SQLite, PostgreSQL,
+            and MySQL without database-specific features.
         """
-        return f"{column} LIKE :{param} COLLATE utf8mb4_general_ci"
+        return f"LOWER({column}) LIKE LOWER(:{param})"
 
     async def upsert(
         self,

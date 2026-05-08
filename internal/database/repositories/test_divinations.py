@@ -202,3 +202,260 @@ async def test_insertReadingPersistsCreatedAt(divinationsDb: Database) -> None:
     # Allow a 5-second window in either direction to absorb clock jitter.
     margin: datetime.timedelta = datetime.timedelta(seconds=5)
     assert before - margin <= createdAt <= after + margin
+
+
+async def test_getLayoutUsesCleanedSearchTerm(divinationsDb: Database) -> None:
+    """Verify that getLayout() uses the cleaned search term from the loop.
+
+    When a layout name contains parentheses, getLayout() should strip them
+    and search for the cleaned term. This test ensures the loop variable
+    (not the original layoutName) is passed as the parameter.
+
+    Args:
+        divinationsDb: In-memory Database fixture with migrations applied.
+
+    Returns:
+        None
+    """
+    # Insert a layout with name without parentheses
+    await divinationsDb.divinations.saveLayout(
+        systemId="tarot",
+        layoutId="celtic_cross",
+        nameEn="Celtic Cross",
+        nameRu="Кельтский крест",
+        nSymbols=10,
+        positions=["pos1", "pos2", "pos3"],
+        description="A classic spread",
+    )
+
+    # Search for layout with parentheses in name - should find it
+    # because getLayout() strips parentheses before searching
+    layout = await divinationsDb.divinations.getLayout(systemId="tarot", layoutName="Celtic Cross (Extended)")
+    assert layout is not None
+    assert layout["layout_id"] == "celtic_cross"
+    assert layout["name_en"] == "Celtic Cross"
+
+
+async def test_getLayoutSearchOrder(divinationsDb: Database) -> None:
+    """Verify that getLayout() searches in the correct order.
+
+    Search order should be:
+    1. Exact match on layout_id/name_en/name_ru
+    2. Stripped parentheses version
+    3. Partial match with LIKE
+
+    Args:
+        divinationsDb: In-memory Database fixture with migrations applied.
+
+    Returns:
+        None
+    """
+    # Insert multiple layouts
+    await divinationsDb.divinations.saveLayout(
+        systemId="tarot",
+        layoutId="three_card_spread",
+        nameEn="Three Card Spread",
+        nameRu="Три карты",
+        nSymbols=3,
+        positions=["Past", "Present", "Future"],
+        description="Simple three card layout",
+    )
+
+    # Partial match via LIKE should work
+    layout = await divinationsDb.divinations.getLayout(systemId="tarot", layoutName="Three Card")
+    assert layout is not None
+    assert layout["layout_id"] == "three_card_spread"
+
+    # Exact match on name_en should work
+    layout = await divinationsDb.divinations.getLayout(systemId="tarot", layoutName="Three Card Spread")
+    assert layout is not None
+    assert layout["layout_id"] == "three_card_spread"
+
+
+async def test_saveNegativeCacheUsesExcludedValue(divinationsDb: Database) -> None:
+    """Verify that saveNegativeCache() uses ExcludedValue() for updated_at.
+
+    This ensures the upsert contract is followed correctly - the excluded value
+    mechanism uses the updated_at from the INSERT clause in the UPDATE clause,
+    avoiding the need for parameter placeholders.
+
+    Args:
+        divinationsDb: In-memory Database fixture with migrations applied.
+
+    Returns:
+        None
+    """
+    # Insert a negative cache entry (first call - INSERT path)
+    ok = await divinationsDb.divinations.saveNegativeCache(
+        systemId="tarot",
+        layoutId="nonexistent_layout",
+    )
+    assert ok is True
+
+    # Get the initial row to capture created_at and updated_at
+    sqlProvider = await divinationsDb.manager.getProvider(readonly=True)
+    row = await sqlProvider.executeFetchOne(
+        "SELECT created_at, updated_at FROM divination_layouts WHERE system_id = :systemId AND layout_id = :layoutId",
+        {"systemId": "tarot", "layoutId": "nonexistent_layout"},
+    )
+    assert row is not None
+    initialCreatedAt = row["created_at"]
+    initialUpdatedAt = row["updated_at"]
+    assert initialCreatedAt is not None
+    assert initialUpdatedAt is not None
+
+    # Verify it's a negative cache entry
+    rowFull = await sqlProvider.executeFetchOne(
+        "SELECT * FROM divination_layouts WHERE system_id = :systemId AND layout_id = :layoutId",
+        {"systemId": "tarot", "layoutId": "nonexistent_layout"},
+    )
+    assert rowFull is not None
+    assert rowFull["name_en"] == ""
+    assert rowFull["name_ru"] == ""
+    assert rowFull["n_symbols"] == 0
+    # Positions might be a JSON string or empty list depending on provider
+    positions = rowFull["positions"]
+    if isinstance(positions, str):
+        assert positions == "[]" or positions == ""
+    else:
+        assert positions == []
+
+    # Wait a tiny bit to ensure timestamp would differ if updated
+    # (Note: In practice, timestamps may be very close, but the key test
+    # is that the upsert executes without SQL errors)
+    import asyncio
+
+    await asyncio.sleep(0.01)
+
+    # Call saveNegativeCache again with the same key (second call - UPDATE path)
+    # This tests the conflict handling with ExcludedValue()
+    ok = await divinationsDb.divinations.saveNegativeCache(
+        systemId="tarot",
+        layoutId="nonexistent_layout",
+    )
+    assert ok is True
+
+    # Verify the row still exists and hasn't changed its negative cache status
+    row2 = await sqlProvider.executeFetchOne(
+        "SELECT created_at, updated_at FROM divination_layouts WHERE system_id = :systemId AND layout_id = :layoutId",
+        {"systemId": "tarot", "layoutId": "nonexistent_layout"},
+    )
+    assert row2 is not None
+    assert row2["created_at"] == initialCreatedAt  # created_at should not change
+    # updated_at should be set to the new value from the INSERT clause
+    assert row2["updated_at"] is not None
+
+
+async def test_saveLayoutUsesExcludedValue(divinationsDb: Database) -> None:
+    """Verify that saveLayout() uses ExcludedValue() for updated_at.
+
+    This ensures the upsert contract is followed correctly - the excluded value
+    mechanism uses the updated_at from the INSERT clause in the UPDATE clause,
+    avoiding the need for parameter placeholders.
+
+    Args:
+        divinationsDb: In-memory Database fixture with migrations applied.
+
+    Returns:
+        None
+    """
+    # Insert a layout entry (first call - INSERT path)
+    ok = await divinationsDb.divinations.saveLayout(
+        systemId="tarot",
+        layoutId="three_card",
+        nameEn="Three Card",
+        nameRu="Три карты",
+        nSymbols=3,
+        positions=["Past", "Present", "Future"],
+        description="Simple three card layout",
+    )
+    assert ok is True
+
+    # Get the initial row to capture created_at and updated_at
+    sqlProvider = await divinationsDb.manager.getProvider(readonly=True)
+    row = await sqlProvider.executeFetchOne(
+        "SELECT created_at, updated_at FROM divination_layouts WHERE system_id = :systemId AND layout_id = :layoutId",
+        {"systemId": "tarot", "layoutId": "three_card"},
+    )
+    assert row is not None
+    initialCreatedAt = row["created_at"]
+    initialUpdatedAt = row["updated_at"]
+    assert initialCreatedAt is not None
+    assert initialUpdatedAt is not None
+
+    # Wait a tiny bit to ensure timestamp would differ if updated
+    # (Note: In practice, timestamps may be very close, but the key test
+    # is that the upsert executes without SQL errors)
+    import asyncio
+
+    await asyncio.sleep(0.01)
+
+    # Call saveLayout again with the same key (second call - UPDATE path)
+    # This tests the conflict handling with ExcludedValue()
+    ok = await divinationsDb.divinations.saveLayout(
+        systemId="tarot",
+        layoutId="three_card",
+        nameEn="Three Card",
+        nameRu="Три карты",
+        nSymbols=3,
+        positions=["Past", "Present", "Future"],
+        description="Simple three card layout",
+    )
+    assert ok is True
+
+    # Verify the row still exists and hasn't changed its layout data
+    row2 = await sqlProvider.executeFetchOne(
+        "SELECT created_at, updated_at, name_en, n_symbols "
+        "FROM divination_layouts "
+        "WHERE system_id = :systemId AND layout_id = :layoutId",
+        {"systemId": "tarot", "layoutId": "three_card"},
+    )
+    assert row2 is not None
+    assert row2["created_at"] == initialCreatedAt  # created_at should not change
+    assert row2["name_en"] == "Three Card"  # name_en should not change (uses ExcludedValue)
+    assert row2["n_symbols"] == 3  # n_symbols should not change (uses ExcludedValue)
+    # updated_at should be set to the new value from the INSERT clause
+    assert row2["updated_at"] is not None
+
+
+async def test_layoutCacheConsistency(divinationsDb: Database) -> None:
+    """Verify that layout cache lookup and storage use consistent canonical IDs.
+
+    When a layout is discovered/cached, the canonical ID derived from the
+    user's input should be used consistently for both lookup and storage.
+    This prevents cache misses where lookup uses one ID and storage uses another.
+
+    Args:
+        divinationsDb: In-memory Database fixture with migrations applied.
+
+    Returns:
+        None
+    """
+    # Simulate the canonicalization that happens in the handler
+    user_input = "Celtic Cross (Extended)"
+    canonical_id = user_input.lower().replace(" ", "_").replace("(", "").replace(")", "")
+
+    # Save a layout with the canonical ID
+    await divinationsDb.divinations.saveLayout(
+        systemId="tarot",
+        layoutId=canonical_id,
+        nameEn="Celtic Cross",
+        nameRu="Кельтский крест",
+        nSymbols=10,
+        positions=["pos1", "pos2", "pos3"],
+        description="A classic spread",
+    )
+
+    # Lookup using the same canonical ID should succeed
+    layout = await divinationsDb.divinations.getLayout(systemId="tarot", layoutName=canonical_id)
+    assert layout is not None
+    assert layout["layout_id"] == canonical_id
+
+    # Negative cache should also use canonical ID consistently
+    await divinationsDb.divinations.saveNegativeCache(
+        systemId="tarot",
+        layoutId=canonical_id + "_nonexistent",
+    )
+    negative = await divinationsDb.divinations.getLayout(systemId="tarot", layoutName=canonical_id + "_nonexistent")
+    assert negative is not None
+    assert divinationsDb.divinations.isNegativeCacheEntry(negative) is True

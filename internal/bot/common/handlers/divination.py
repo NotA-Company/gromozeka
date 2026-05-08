@@ -889,6 +889,11 @@ class DivinationHandler(BaseBotHandler):
 
         Returns:
             Resolved Layout object if found, None otherwise (caller handles error).
+
+        Note:
+            The canonical layout ID for caching is generated from the user's
+            original input (after normalization) and is used consistently for
+            both cache lookups and storage. This ensures cache consistency.
         """
         # Step 1: Try to resolve from predefined layouts
         resolvedLayout: Optional[Layout] = systemCls.resolveLayout(layoutName)
@@ -900,18 +905,26 @@ class DivinationHandler(BaseBotHandler):
             logger.debug(f"Layout '{layoutName}' not found and discovery disabled for {systemCls.systemId}")
             return None
 
-        # Step 3: Check database cache
-        cacheKey: str = self._generateLayoutId(layoutName)
+        # Step 3: Generate canonical cache key from user input
+        # This key will be used for both lookup and storage to ensure consistency
+        canonicalLayoutId: str = self._generateLayoutId(layoutName)
+
+        # Step 4: Check database cache using multiple search strategies
+        # Pass both canonical ID and original user input for best match chances
         cachedLayout: Optional[DivinationLayoutDict] = await self.db.divinations.getLayout(
-            systemId=systemCls.systemId, layoutName=cacheKey
+            systemId=systemCls.systemId, layoutName=[canonicalLayoutId, layoutName]
         )
 
-        # Step 4: If negative cache entry found, return None
+        # Step 5: If negative cache entry found, return None
         if cachedLayout is not None and self.db.divinations.isNegativeCacheEntry(cachedLayout):
-            logger.debug(f"Negative cache entry found for layout '{layoutName}' in {systemCls.systemId}")
+            logger.debug(
+                f"Layout discovery blocked: negative cache entry for '{layoutName}' "
+                f"(canonical key: '{canonicalLayoutId}', found key: '{cachedLayout.get('layout_id')}') "
+                f"in {systemCls.systemId}"
+            )
             return None
 
-        # Step 5: If valid cache entry found, reconstruct Layout object
+        # Step 6: If valid cache entry found, reconstruct Layout object
         if cachedLayout is not None:
             positions = tuple(cachedLayout["positions"])
             discoveredLayout = Layout(
@@ -922,25 +935,36 @@ class DivinationHandler(BaseBotHandler):
                 aliases=(),  # No aliases for discovered layouts
                 systemId=cachedLayout["system_id"],
             )
-            logger.debug(f"Found cached layout '{layoutName}' in {systemCls.systemId}")
+            logger.debug(
+                f"Cache hit for layout '{layoutName}' "
+                f"(canonical key: '{canonicalLayoutId}', matched key: '{cachedLayout.get('layout_id')}', "
+                f"name: '{cachedLayout.get('name_en')}') in {systemCls.systemId}"
+            )
             return discoveredLayout
 
-        # Step 6: No cache entry - try to discover layout via web search
-        logger.info(f"Attempting to discover layout '{layoutName}' for {systemCls.systemId}")
+        # Step 7: No cache entry - try to discover layout via web search
+        logger.debug(
+            f"Cache miss: attempting web search discovery for '{layoutName}' "
+            f"(canonical key: '{canonicalLayoutId}') in {systemCls.systemId}"
+        )
         discoveredLayout: Optional[Layout] = await self._discoverLayoutWithLLM(
             systemCls=systemCls,
             layoutName=layoutName,
+            canonicalLayoutId=canonicalLayoutId,
             chatId=chatId,
             ensuredMessage=ensuredMessage,
             typingManager=typingManager,
         )
 
         if discoveredLayout is not None:
-            logger.info(f"Successfully discovered layout '{layoutName}' for {systemCls.systemId}")
-            # Save to database
+            logger.info(
+                f"Discovery success: found layout '{layoutName}' "
+                f"(canonical key: '{canonicalLayoutId}', system: {systemCls.systemId})"
+            )
+            # Save to database using the canonical layout ID
             await self.db.divinations.saveLayout(
                 systemId=discoveredLayout.systemId,
-                layoutId=discoveredLayout.id,
+                layoutId=canonicalLayoutId,
                 nameEn=discoveredLayout.nameEn,
                 nameRu=discoveredLayout.nameRu,
                 nSymbols=len(discoveredLayout.positions),
@@ -948,10 +972,14 @@ class DivinationHandler(BaseBotHandler):
                 description=discoveredLayout.description or "",
             )
         else:
-            logger.debug(f"Failed to discover layout '{layoutName}' for {systemCls.systemId}")
+            logger.info(
+                f"Discovery failed: unable to find layout '{layoutName}' "
+                f"(canonical key: '{canonicalLayoutId}', system: {systemCls.systemId}) "
+                f"- saving negative cache entry (24h TTL)"
+            )
             await self.db.divinations.saveNegativeCache(
                 systemId=systemCls.systemId,
-                layoutId=self._generateLayoutId(layoutName),
+                layoutId=canonicalLayoutId,
             )
 
         return discoveredLayout
@@ -960,6 +988,7 @@ class DivinationHandler(BaseBotHandler):
         self,
         systemCls: Type[BaseDivinationSystem],
         layoutName: str,
+        canonicalLayoutId: str,
         chatId: int,
         *,
         ensuredMessage: EnsuredMessage,
@@ -968,12 +997,13 @@ class DivinationHandler(BaseBotHandler):
         """Discover layout using web search, then call _extractLayoutFromText.
 
         This is a convenience wrapper that:
-        1. Calls LLM with tools enabled to get layout description
+        1. Calls LLM with tools enabled to get layout description via web search
         2. Delegates to _extractLayoutFromText with the description
 
         Args:
             systemCls: The divination system class.
             layoutName: Raw user-provided layout name.
+            canonicalLayoutId: Normalized layout ID for cache consistency.
             chatId: Chat ID for rate limiting and settings.
             ensuredMessage: The originating user message for error replies.
             typingManager: Typing indicator manager (may be ``None``).
@@ -1003,6 +1033,10 @@ class DivinationHandler(BaseBotHandler):
 
         try:
             # Call LLM with tools enabled (web_search)
+            logger.debug(
+                f"Starting discovery LLM call 1/2 (web search) for '{layoutName}' "
+                f"(key: '{canonicalLayoutId}', system: {systemCls.systemId})"
+            )
             infoRet = await self.llmService.generateTextViaLLM(
                 messages=infoMessages,
                 chatId=chatId,
@@ -1017,17 +1051,24 @@ class DivinationHandler(BaseBotHandler):
                 },
             )
         except Exception as e:
-            logger.error(f"LLM discovery info call failed for '{layoutName}': {e}")
+            logger.error(
+                f"Discovery LLM call 1/2 (web search) failed for '{layoutName}' "
+                f"(key: '{canonicalLayoutId}', system: {systemCls.systemId}): {e}"
+            )
             return None
 
         if infoRet.status != ModelResultStatus.FINAL or not infoRet.resultText:
-            logger.warning(f"LLM discovery info returned non-final: {infoRet.status}")
+            logger.warning(
+                f"Discovery LLM call 1/2 (web search) returned non-final for '{layoutName}' "
+                f"(key: '{canonicalLayoutId}', status: {infoRet.status})"
+            )
             return None
 
         # Now call _extractLayoutFromText with the description
         return await self._extractLayoutFromText(
             systemCls=systemCls,
             layoutName=layoutName,
+            canonicalLayoutId=canonicalLayoutId,
             chatId=chatId,
             layoutDescription=infoRet.resultText,
         )
@@ -1036,6 +1077,7 @@ class DivinationHandler(BaseBotHandler):
         self,
         systemCls: Type[BaseDivinationSystem],
         layoutName: str,
+        canonicalLayoutId: str,
         chatId: int,
         layoutDescription: str,
     ) -> Optional[Layout]:
@@ -1044,16 +1086,22 @@ class DivinationHandler(BaseBotHandler):
         Discovery process:
         1. Call LLM with web_search tool enabled to find layout information (already have layoutDescription)
         2. Call LLM.generateStructured() to parse description into Layout object
-        3. Validate and save to database (full layout or negative cache)
+        3. Validate and return Layout object with canonical layout ID
 
         Args:
             systemCls: The divination system class (TarotSystem or RunesSystem).
             layoutName: Raw user-provided layout name.
+            canonicalLayoutId: Normalized layout ID for cache consistency.
             chatId: Chat ID for rate limiting and settings.
             layoutDescription: Description from first LLM call with web search.
 
         Returns:
             Discovered Layout if successful, None otherwise.
+
+        Note:
+            The Layout object's id field is set to canonicalLayoutId to ensure
+            cache consistency. The LLM-provided layout_id is discarded in favor
+            of the canonical ID derived from user input.
         """
         # Get prompts from chat settings
         chatSettings = await self.getChatSettings(chatId=chatId)
@@ -1078,6 +1126,10 @@ class DivinationHandler(BaseBotHandler):
 
         try:
             # Call LLM with structured output
+            logger.debug(
+                f"Starting discovery LLM call 2/2 (structured parse) for '{layoutName}' "
+                f"(key: '{canonicalLayoutId}', system: {systemCls.systemId})"
+            )
             structuredRet = await self.llmService.generateStructured(
                 prompt=structureMessages,
                 schema={
@@ -1105,12 +1157,18 @@ class DivinationHandler(BaseBotHandler):
             )
             jsonRet: Optional[Dict[str, Any]] = structuredRet.data
         except Exception as e:
-            logger.error(f"LLM discovery structured call failed for '{layoutName}': {e}")
+            logger.error(
+                f"Discovery LLM call 2/2 (structured parse) failed for '{layoutName}' "
+                f"(key: '{canonicalLayoutId}', system: {systemCls.systemId}): {e}"
+            )
             return None
 
         # Check if we got a valid structured result
         if structuredRet.status != ModelResultStatus.FINAL or jsonRet is None:
-            logger.warning(f"LLM generateStructured returned non-final or missing data: status={structuredRet.status}")
+            logger.warning(
+                f"Discovery LLM call 2/2 (structured parse) returned non-final or missing data "
+                f"for '{layoutName}' (key: '{canonicalLayoutId}', status: {structuredRet.status})"
+            )
             return None
 
         if not isinstance(jsonRet, dict):
@@ -1128,9 +1186,9 @@ class DivinationHandler(BaseBotHandler):
             logger.error("Discovered layout has invalid positions list")
             return None
 
-        # Construct Layout object
+        # Construct Layout object using the canonical layout ID for cache consistency
         discoveredLayout = Layout(
-            id=self._generateLayoutId(jsonRet["layout_id"]),
+            id=canonicalLayoutId,
             nameEn=jsonRet["name_en"],
             nameRu=jsonRet["name_ru"],
             positions=tuple(jsonRet["positions"]),
@@ -1139,6 +1197,6 @@ class DivinationHandler(BaseBotHandler):
             description=utils.jsonDumps({"full": layoutDescription, "short": jsonRet.get("description")}),
         )
 
-        logger.info(f"Successfully discovered layout: {systemCls.systemId}/{discoveredLayout.id}")
+        logger.info(f"Successfully discovered layout: {systemCls.systemId}/{canonicalLayoutId}")
 
         return discoveredLayout

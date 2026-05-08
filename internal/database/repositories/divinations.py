@@ -133,7 +133,7 @@ class DivinationsRepository(BaseRepository):
             logger.error(f"Failed to insert divination row chat={chatId} msg={messageId}: {e}")
             return False
 
-    async def getLayout(self, systemId: str, layoutName: str) -> Optional[DivinationLayoutDict]:
+    async def getLayout(self, systemId: str, layoutName: str | Sequence[str]) -> Optional[DivinationLayoutDict]:
         """Retrieve a cached layout definition.
 
         Searches for a layout by trying multiple matching strategies: exact case-insensitive
@@ -142,7 +142,10 @@ class DivinationsRepository(BaseRepository):
 
         Args:
             systemId: The divination system ID (e.g., 'tarot', 'runes')
-            layoutName: The layout name or identifier to search for
+            layoutName: The layout name(s) or identifier(s) to search for. Can be a single
+                string (most common) or a sequence of strings for multi-strategy search.
+                Each name will be searched with multiple strategies (exact, partial,
+                trimmed parentheses).
 
         Returns:
             Dictionary with layout definition if found, None if not found or on error
@@ -152,18 +155,28 @@ class DivinationsRepository(BaseRepository):
 
         Note:
             Returns None if layout is not in cache or an error occurs. Search is
-            performed in this order: exact match, suffix match (after stripping
-            parentheses), partial match with wildcards.
+            performed in this order for each name provided: exact match (case-insensitive
+            on layout_id, name_en, or name_ru), partial/near match with LIKE operator.
+            If a sequence of names is provided, each name is tried in order until a match
+            is found, allowing the caller to pass multiple search strategies (e.g., both
+            the canonical ID and the original user input).
         """
         try:
             sqlProvider = await self.manager.getProvider(readonly=True)
+            if isinstance(layoutName, str):
+                layoutName = [layoutName]
 
-            searchFor = [layoutName.strip()]
-            # Try to drop everything between parentheses
-            noParentheses = re.sub(r"\(.*\)", "", layoutName)
-            if noParentheses != layoutName:
-                searchFor.append(noParentheses.strip())
-
+            searchFor: Sequence[str] = []
+            for lName in layoutName:
+                searchFor.append(lName.strip())
+                # Try to drop everything between parentheses
+                noParentheses = re.sub(r"\(.*\)", "", lName)
+                if noParentheses != lName:
+                    searchFor.append(noParentheses.strip())
+            logger.debug(
+                f"getLayout searching system_id={systemId} with {len(layoutName)} inputs, "
+                f"expanded to {len(searchFor)} search variants"
+            )
             selectPrefix = """
                     SELECT
                         *
@@ -173,7 +186,7 @@ class DivinationsRepository(BaseRepository):
             row: QueryResultFetchOne = None
             for s in searchFor:
                 logger.debug(f"Searching for {s}")
-
+                # Try exact match first
                 row = await sqlProvider.executeFetchOne(
                     selectPrefix
                     + sqlProvider.getCaseInsensitiveComparison("layout_id", "layoutName")
@@ -184,12 +197,14 @@ class DivinationsRepository(BaseRepository):
                     + ")",
                     {
                         "systemId": systemId,
-                        "layoutName": layoutName,
+                        "layoutName": s,
                     },
                 )
                 if row:
+                    logger.debug(f"getLayout found exact match for variant: {s}")
                     break
 
+                # Try partial/near match if exact failed
                 row = await sqlProvider.executeFetchOne(
                     selectPrefix
                     + sqlProvider.getLikeComparison("layout_id", "layoutName")
@@ -200,14 +215,16 @@ class DivinationsRepository(BaseRepository):
                     + ")",
                     {
                         "systemId": systemId,
-                        "layoutName": f"%{layoutName}%",
+                        "layoutName": f"%{s}%",
                     },
                 )
                 if row:
+                    logger.debug(f"getLayout found partial match for variant: {s}")
                     break
 
             if row:
                 return dbUtils.sqlToTypedDict(row, DivinationLayoutDict)
+            logger.debug(f"getLayout no match found for system_id={systemId}")
             return None
         except Exception as e:
             logger.error(f"Failed to get layout {systemId}/{layoutName}: {e}")
@@ -290,7 +307,7 @@ class DivinationsRepository(BaseRepository):
                     "n_symbols": ExcludedValue(),
                     "positions": ExcludedValue(),
                     "description": ExcludedValue(),
-                    "updated_at": ":updated_at",  # Use parameter placeholder
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True
@@ -333,7 +350,7 @@ class DivinationsRepository(BaseRepository):
                 },
                 conflictColumns=["system_id", "layout_id"],
                 updateExpressions={
-                    "updated_at": now,
+                    "updated_at": ExcludedValue(),
                 },
             )
             return True
