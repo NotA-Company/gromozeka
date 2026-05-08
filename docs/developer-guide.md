@@ -334,8 +334,8 @@ Any value in TOML can reference environment variables using `${VAR_NAME}` syntax
 [bot]
 token = "${TELEGRAM_BOT_TOKEN}"
 
-[database.sources.default]
-path = "${DB_PATH}"
+[database.providers.default.parameters]
+dbPath = "${DB_PATH}"
 ```
 
 The `.env` file (default path, configurable with `--dotenv-file`) is loaded before substitution happens
@@ -416,20 +416,21 @@ random-answer-probability = 0
 
 ```toml
 [database]
-default = "default"           # Name of the default source
+default = "default"           # Name of the default provider
 
-[database.sources.default]
-path = "bot_data.db"          # Path to SQLite file
-readonly = false
-pool-size = 5                 # Max connections per source
-timeout = 30                  # Connection timeout in seconds
+[database.providers.default]
+provider = "sqlite3"
 
-[database.sources.default.parameters]
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
+timeout = 30
+useWal = true
 keepConnection = false        # Connect on demand (default for file-based DBs)
 
 # Multi-source: map specific chats to different databases
 [database.chatMapping]
-"-1001234567890" = "secondary"   # Chat ID string -> source name
+"-1001234567890" = "secondary"   # Chat ID string -> provider name
 ```
 
 **`keepConnection` parameter:**
@@ -525,23 +526,24 @@ The database layer provides SQL access via [`Database`](internal/database/databa
 
 ### Database
 
-[`Database`](internal/database/database.py) is the main interface to the database It supports multiple named database sources, with per-chat routing so different chats can use different databases The database uses a repository pattern with 12 specialized repositories for different data domains
+[`Database`](internal/database/database.py) is the main interface to the database It supports multiple named database providers, with per-chat routing so different chats can use different databases The database uses a repository pattern with 12 specialized repositories for different data domains
 
 ```python
 from internal.database import Database
 
 db = Database(config={
     "default": "default",
-    "sources": {
+    "providers": {
         "default": {
-            "type": "sqlite3",
-            "path": "bot_data.db",
-            "readonly": False,
-            "pool-size": 5,
-            "timeout": 30,
+            "provider": "sqlite3",
+            "parameters": {
+                "dbPath": "bot_data.db",
+                "readOnly": False,
+                "timeout": 30,
+            },
         }
     },
-    # Optional: route specific chats to other sources
+    # Optional: route specific chats to other providers
     "chatMapping": {
         "-1001234567890": "secondary",
     }
@@ -603,10 +605,10 @@ Database providers support configurable connection management via the `keepConne
 
 **Configuration example:**
 ```toml
-[database.sources.default.parameters]
+[database.providers.default.parameters]
 keepConnection = false  # Connect on demand (default for file-based DBs)
 
-[database.sources.readonly.parameters]
+[database.providers.readonly.parameters]
 keepConnection = true  # Connect immediately (good for readonly replicas)
 ```
 
@@ -693,6 +695,19 @@ The handler system is the core of message processing All incoming messages go th
 ### Handler Lifecycle
 
 ```
+1. HandlersManager.__init__() is called during bot startup
+2. Built-in handlers are registered in order:
+   - MessagePreprocessorHandler (always SEQUENTIAL, first)
+   - SpamHandler (always SEQUENTIAL, second)
+   - ConfigureCommandHandler, SummarizationHandler, UserDataHandler,
+     DevCommandsHandler, MediaHandler, CommonHandler, HelpHandler
+   - Platform-specific handlers (Telegram-only)
+   - Config-gated handlers: DivinationHandler (if divination.enabled),
+     WeatherHandler, YandexSearchHandler, ResenderHandler
+   - Custom handlers via CustomHandlerLoader.loadAll() (if custom-handlers.enabled)
+3. LLMMessageHandler is registered last (always SEQUENTIAL)
+4. Messages flow through handlers in the specified order
+```
 Incoming Message
        │
        ▼
@@ -705,24 +720,25 @@ Incoming Message
   [SpamHandler] ← SEQUENTIAL (runs second)
        │ checks for spam, may block further processing
        ▼
-  [All other handlers] ← PARALLEL (run concurrently)
-       │
-       ├── ConfigureCommandHandler
-       ├── SummarizationHandler
-       ├── UserDataHandler
-       ├── DevCommandsHandler
-       ├── MediaHandler
-       ├── CommonHandler
-       ├── HelpHandler
-       ├── ReactOnUserMessageHandler (Telegram only)
-       ├── TopicManagerHandler (Telegram only)
-       ├── WeatherHandler (if enabled)
-       ├── YandexSearchHandler (if enabled)
-       ├── ResenderHandler (if enabled)
-       └── [custom handlers]
-       │
-       ▼
-  [LLMMessageHandler] ← SEQUENTIAL (always runs last)
+   [All other handlers] ← PARALLEL (run concurrently)
+        │
+        ├── ConfigureCommandHandler
+        ├── SummarizationHandler
+        ├── UserDataHandler
+        ├── DevCommandsHandler
+        ├── MediaHandler
+        ├── CommonHandler
+        ├── HelpHandler
+        ├── ReactOnUserMessageHandler (Telegram only)
+        ├── TopicManagerHandler (Telegram only)
+        ├── DivinationHandler (if enabled)
+        ├── WeatherHandler (if enabled)
+        ├── YandexSearchHandler (if enabled)
+        ├── ResenderHandler (if enabled)
+        ├── [custom handlers via CustomHandlerLoader]
+        │
+        ▼
+   [LLMMessageHandler] ← SEQUENTIAL (always runs last)
 ```
 
 ### HandlerResultStatus
@@ -826,6 +842,7 @@ async def myCommandHandler(
 | `HelpHandler` | [`help_command.py`](internal/bot/common/handlers/help_command.py) | `/help` command |
 | `ReactOnUserMessageHandler` | [`react_on_user.py`](internal/bot/common/handlers/react_on_user.py) | User join/leave reactions |
 | `TopicManagerHandler` | [`topic_manager.py`](internal/bot/common/handlers/topic_manager.py) | Forum topic management |
+| `DivinationHandler` | [`divination.py`](internal/bot/common/handlers/divination.py) | `/taro` and `/runes` divination commands |
 | `WeatherHandler` | [`weather.py`](internal/bot/common/handlers/weather.py) | Weather query handler |
 | `YandexSearchHandler` | [`yandex_search.py`](internal/bot/common/handlers/yandex_search.py) | Web search handler |
 | `ResenderHandler` | [`resender.py`](internal/bot/common/handlers/resender.py) | Message forwarding |
@@ -936,11 +953,19 @@ from .my_handler import MyNewHandler
 **Alternatively**, use the **custom handler loader** for out-of-tree handlers Configure in TOML:
 
 ```toml
-[bot.custom-handlers.my-handler]
+[custom-handlers]
+enabled = true
+
+[[custom-handlers.handlers]]
+id = "my-handler"
 module = "path.to.my_handler"
 class = "MyNewHandler"
+parallelism = "parallel"
+order = 10
 enabled = true
 ```
+
+See [`custom-modules-design.md`](../../custom-modules-design.md) for the complete custom handler loading system documentation.
 
 ### 6.1 Divination Layout Discovery
 
@@ -1586,7 +1611,7 @@ def tempDb():
 
     db = Database(config={
         "default": "default",
-        "sources": {"default": {"type": "sqlite3", "path": dbPath, "readonly": False}},
+        "providers": {"default": {"provider": "sqlite3", "parameters": {"dbPath": dbPath, "readOnly": False}}},
     })
     yield db
 
@@ -1822,11 +1847,14 @@ spam-button-salt = "random-secret-salt-here"
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot_data.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
 timeout = 30
+useWal = true
 
 [models.providers.openrouter]
 type = "openrouter"
@@ -1877,8 +1905,8 @@ By default, the bot changes its working directory to the `root-dir` specified in
 [application]
 root-dir = "/var/lib/gromozeka"   # All files created here
 
-[database.sources.default]
-path = "bot_data.db"              # -> /var/lib/gromozeka/bot_data.db
+[database.providers.default.parameters]
+dbPath = "bot_data.db"            # -> /var/lib/gromozeka/bot_data.db
 
 [logging]
 file = "logs/gromozeka.log"       # -> /var/lib/gromozeka/logs/gromozeka.log
@@ -1928,9 +1956,9 @@ file = "logs/gromozeka.log"
 error-file = "logs/gromozeka.err.log"
 rotate = true
 
-[database.sources.default]
-pool-size = 10       # More connections for production load
+[database.providers.default.parameters]
 timeout = 60
+useWal = true
 
 [ratelimiter.ratelimiters.default]
 type = "SlidingWindow"

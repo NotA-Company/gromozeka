@@ -1,16 +1,22 @@
-# Task 4.5: Fix DatabaseWrapper TODOs
+# Task 4.5: Fix DatabaseWrapper TODOs (HISTORICAL)
 
-**Phase:** Phase 4: Multi-Source Database Implementation
-**Category:** Code Quality & Technical Debt
-**Priority:** High
-**Complexity:** Moderate
-**Estimated Duration:** 4-6 hours
-**Assigned To:** Code Assistant
-**Date Created:** 2025-11-30
+**Historical Note:** This plan targeted the old `internal/database/wrapper.py` file which **no longer exists**. The monolithic DatabaseWrapper was refactored into a clean `Database` façade pattern with domain repositories. See the repository pattern in [`internal/database/database.py`](../../internal/database/database.py) and [`internal/database/repositories/`](../../internal/database/repositories/).
 
-## Objective
+**Phase:** Phase 4: Multi-Source Database Implementation (historical)
+**Category:** Code Quality & Technical Debt (superseded)
+**Priority:** High (historical)
+**Complexity:** Moderate (historical)
+**Estimated Duration:** 4-6 hours (historical)
+**Assigned To:** Code Assistant (historical)
+**Date Created:** 2025-11-30 (historical)
+
+---
+
+## Objective (HISTORICAL - NOT IMPLEMENTED)
 
 Fix all 14 TODOs in [`internal/database/wrapper.py`](internal/database/wrapper.py:1) to complete the multi-source database implementation. This includes improving docstrings, fixing default parameters, implementing proper connection management, and adding dataSource support to remaining methods.
+
+**NOTE:** The wrapper.py file was deleted as part of a large refactoring. This plan is archived for historical reference only; the TODOs described here do not apply to the current codebase.
 
 **Success Definition:** All TODOs resolved, tests passing, code properly formatted and linted, with no breaking changes to existing functionality.
 

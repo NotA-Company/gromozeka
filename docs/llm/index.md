@@ -190,11 +190,11 @@ make test
 
 | Path | Lines | Purpose |
 |---|---|---|
-| [`main.py`](../../main.py) | 236 | App entry, `GromozekBot`, daemon mode |
+| [`main.py`](../../main.py) | 241 | App entry, `GromozekBot`, daemon mode |
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | 1000 | `TheBot` – platform-agnostic bot ops |
-| [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | 1805 | `BaseBotHandler`, `HandlerResultStatus` |
-| [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | 892 | `HandlersManager` – handler chain |
-| [`internal/database/database.py`](../../internal/database/database.py) | 191 | `Database` – all DB operations with repository pattern |
+| [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | 1974 | `BaseBotHandler`, `HandlerResultStatus` |
+| [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | 1148 | `HandlersManager` – handler chain |
+| [`internal/database/database.py`](../../internal/database/database.py) | 297 | `Database` – all DB operations with repository pattern |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | 280 | `ConfigManager` – TOML loading |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | 796 | `CacheService` singleton |
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | 531 | `LLMService` singleton |
@@ -205,10 +205,10 @@ make test
 
 ### 4.5 `internal/` Directory
 
-| Path | Purpose |
+ | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-| [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 18+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`) |
+| [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 21+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, plus base/manager/module_loader, tests, examples, and 15+ handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |

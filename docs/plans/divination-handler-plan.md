@@ -1,6 +1,7 @@
 # Divination Handler — Tarot & Runes Spreads (Plan)
 
-> **Status:** proposal, not yet implemented
+> **Status:** ✅ COMPLETED — implemented and registered
+> **Implementation:** See [`internal/bot/common/handlers/divination.py`](../../internal/bot/common/handlers/divination.py), [`lib/divination/`](../../lib/divination/) (library), migration_014 in [`internal/database/migrations/versions/`](../../internal/database/migrations/versions/)
 > **Owner:** TBD
 > **Scope:** new feature — single bot handler covering tarot and runes readings, plus
 > a reusable `lib/divination` library so we can grow into other systems later

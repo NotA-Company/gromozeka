@@ -367,11 +367,11 @@ Integrate into [`AbstractLLMProvider`](../lib/ai/abstract.py) so each provider i
 
 #### Current State
 
-[`DatabaseWrapper`](../internal/database/wrapper.py) raises raw `sqlite3.OperationalError` and `sqlite3.IntegrityError` exceptions In [`HandlersManager`](../internal/bot/common/handlers/manager.py) there is no catch-all error recovery for DB failures in the handler chain A transient SQLite `database is locked` error would crash the entire message processing coroutine
+[`Database`](../../internal/database/database.py) façade raises raw `sqlite3.OperationalError` and `sqlite3.IntegrityError` exceptions in underlying repositories In [`HandlersManager`](../internal/bot/common/handlers/manager.py) there is no catch-all error recovery for DB failures in the handler chain A transient SQLite `database is locked` error would crash the entire message processing coroutine
 
 #### Proposed Improvement
 
-1. Wrap all `DatabaseWrapper` public methods with a retry decorator for transient errors
+1. Wrap repository methods with a retry decorator for transient errors
 
 ```python
 # internal/database/retry.py
@@ -407,7 +407,7 @@ def withRetry(maxAttempts: int = 3, delayMs: float = 50.0):
 
 #### Affected Files
 
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py)
+- [`internal/database/repositories/base.py`](../../internal/database/repositories/base.py) (apply retry decorator to BaseRepository or individual repositories)
 - [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
 - `internal/database/retry.py` (new)
 
@@ -425,7 +425,7 @@ def withRetry(maxAttempts: int = 3, delayMs: float = 50.0):
 
 #### Current State
 
-[`DatabaseWrapper`](../internal/database/wrapper.py) uses `threading.local()` or a custom pool for synchronous SQLite connections All DB calls run in the same thread as the asyncio event loop, blocking it during I/O With 15+ tables and 3000+ lines of wrapper code, the DB layer is the most likely bottleneck under concurrent messages
+[`Database`](../../internal/database/database.py) uses synchronous SQLite connections through provider abstraction All DB calls run in the same thread as the asyncio event loop, blocking it during I/O Database operations are distributed across 11 domain repositories which may have pooling at the provider level
 
 #### Proposed Improvement
 
@@ -456,9 +456,9 @@ Long-term: migrate `_getConnection()` to use `aiosqlite.connect()`
 
 #### Affected Files
 
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py)
+- [`internal/database/providers/`](../../internal/database/providers/) (add aiosqlite provider)
 - [`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py)
-- All handlers that call `self.db.*` directly
+- Handlers that call `self.db.*` (now through repositories)
 
 ---
 
@@ -654,7 +654,7 @@ cursor.execute("""
 #### Affected Files
 
 - [`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py)
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py)
+- Internal database repositories (for admin_actions persistence - TBD which repository)
 - `internal/database/migrations/versions/NNN_add_admin_actions.py` (new)
 - [`main.py`](../main.py)
 
@@ -793,6 +793,9 @@ Chat settings exist via [`ChatSettingsKey`](../internal/bot/models/chat_settings
 
 Add a `UserPreferences` data store (new DB table + cache layer) and a `/preferences` command
 
+// Add schema validation tests
+  - Add a `UserPreferences` data store (new DB table + cache layer) and a `/preferences` command
+
 ```python
 # New table: user_preferences
 # Fields: user_id, key, value, updated_at
@@ -815,7 +818,7 @@ In [`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py) merge 
 #### Affected Files
 
 - `internal/database/migrations/versions/NNN_add_user_preferences.py` (new)
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py)
+- [`internal/database/repositories/user_preferences.py`](../../internal/database/repositories/) (new repository)
 - [`internal/services/cache/service.py`](../internal/services/cache/service.py)
 - `internal/bot/common/handlers/preferences.py` (new handler)
 - [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
@@ -913,7 +916,7 @@ Trigger `DelayedTaskFunction.CRON_JOB` daily to post cost summary to admin chat
 - `internal/analytics/cost_tracker.py` (new)
 - [`lib/ai/models.py`](../lib/ai/models.py)
 - [`internal/services/llm/service.py`](../internal/services/llm/service.py)
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py)
+- `internal/database` repositories (cost tracking storage - TBD specific repository)
 
 ---
 

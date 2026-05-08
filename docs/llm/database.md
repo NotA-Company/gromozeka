@@ -74,22 +74,25 @@ self.db.chatSettings.setChatSetting(
 self.db.chatSettings.unsetChatSetting(chatId=chatId, key=ChatSettingsKey.CHAT_MODEL)
 ```
 
-**IMPORTANT:** `getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]` where each value is a `(value, updated_by)` tuple. The `updated_by` field is the user ID who last changed the setting (0 for system changes)
+**IMPORTANT:** `getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]` where each value is a `(value, updated_by)` tuple. Always index `[0]` to get the value. The `updated_by` field is the user ID who last changed the setting (0 for system changes).
 
-**Via CacheService (preferred for hot path):**
 ```python
-# Import
-from internal.services.cache import CacheService
+# Get settings ( from cache, falls back to DB)
+chatSettings: ChatSettingsDict = self.db.chatSettings.getChatSettings(chatId)
 
-# Get settings with cache
-cache = CacheService.getInstance()
-chatSettings: ChatSettingsDict = cache.getCachedChatSettings(chatId)
+# Access individual setting value (index [0] for the value)
+value = chatSettings.get('chat-model', ('gpt-4', 0))[0]
 
-# Set a setting (passes userId to setChatSetting automatically)
-cache.setChatSetting(chatId, key, value, userId=user.id)
+# Set a setting (updatedBy is REQUIRED keyword-only arg)
+self.db.chatSettings.setChatSetting(
+    chatId=chatId,
+    key=ChatSettingsKey.CHAT_MODEL,
+    value=ChatSettingsValue("gpt-4"),
+    updatedBy=messageSender.id,
+)
 
-# Unset a setting
-cache.unsetChatSetting(chatId=chatId, key=key)
+# Remove a setting (revert to default)
+self.db.chatSettings.unsetChatSetting(chatId=chatId, key=ChatSettingsKey.CHAT_MODEL)
 ```
 
 ---
@@ -101,32 +104,37 @@ cache.unsetChatSetting(chatId=chatId, key=key)
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot_data.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
 timeout = 30
+useWal = true
+keepConnection = true  # Connect on creation and keep connection open
 
-[database.sources.default.parameters]
-keepConnection = false  # Connect on demand (default for file-based DBs)
+[database.providers.readonly]
+provider = "sqlite3"
 
-[database.sources.readonly]
-path = "bot_data.db"
-readonly = true
-pool-size = 10
+[database.providers.readonly.parameters]
+dbPath = "archive.db"
+readOnly = true
 timeout = 10
-
-[database.sources.readonly.parameters]
 keepConnection = true  # Connect immediately (good for readonly replicas)
+
+[database.chatMapping]
+-1001234567890 = "readonly"
 ```
 
 **`keepConnection` parameter:**
 - `true` — Connect immediately when provider is created (good for readonly replicas, in-memory DBs)
 - `false` — Connect on first query (default for file-based DBs, saves resources)
-- `None` — Auto-detect: `true` for in-memory SQLite3, `false` otherwise
 - **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
 
-**Key class:** [`SourceConfig`](../../internal/database/database.py:81) — config for one DB source.
+**Key classes:**
+- [`SourceConfig`](../../internal/config/types.py) — config for one DB provider
+- [`SQLProviderConfig`](../../internal/database/providers/__init__.py) — provider config dict with `provider` and `parameters`
 
 **Routing priority:** `dataSource` param → `chatId` mapping → default source
 
@@ -164,112 +172,20 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
 - `getCacheEntry()`: First match (no deduplication) — performance optimization
 
 **Migration Connection Management:**
-- Migrations now rely on the provider's `keepConnection` parameter for connection management
+- Migrations rely on the provider's `keepConnection` parameter for connection management
 - No explicit `await sqlProvider.connect()` call is made during migration
 - Providers with `keepConnection=true` connect immediately before migrations run
 - Providers with `keepConnection=false` connect on first query during migration
 - This ensures consistent behavior across all database operations
 
----
-
-## 4. Adding a Database Migration
-
-### Step 1: Check existing migrations first (CRITICAL)
-
-```bash
-ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tail -1
-# Identifies the highest numbered migration
-```
-
-**Version Calculation:** `New Version = Latest Version + 1`
-
-### Step 2: Create migration file
-
-**Path:** `internal/database/migrations/versions/NNN_description.py`
-
-```python
-"""Migration: add_my_table - vNNN"""
-
-from internal.database.migrations.base import BaseMigration
-
-
-class MigrationAddMyTable(BaseMigration):
-    """Migration to add my_table
-
-    Attributes:
-        version: Migration version number
-        description: Migration description
-    """
-
-    version: int = NNN  # Next sequential version number
-    description: str = "Add my_table"
-
-    def up(self, cursor) -> None:
-        """Apply migration
-
-        Args:
-            cursor: SQLite cursor for executing SQL
-        """
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS my_table (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER NOT NULL,
-                value TEXT,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_my_table_chat_id ON my_table(chat_id)
-        """)
-
-    def down(self, cursor) -> None:
-        """Revert migration
-
-        Args:
-            cursor: SQLite cursor for executing SQL
-        """
-        cursor.execute("DROP TABLE IF EXISTS my_table")
-```
-
-### Step 3: Register migration
-
-Check `internal/database/migrations/__init__.py` or the DB manager for registration pattern
-
-### Step 4: Add methods to `Database`
-
-In [`internal/database/database.py`](../../internal/database/database.py), add methods to use the new table (see [Section 6](#6-adding-methods-to-database))
-
-### Step 5: Update models if needed
-
-In [`internal/database/models.py`](../../internal/database/models.py), add new `TypedDict` or enum values
-
-### Step 6: Update documentation
-
-**CRITICAL: Always update docs in the same commit as migration**
-
-1. Update `docs/database-schema.md` — add migration entry with description
-2. Update `docs/database-schema-llm.md` — update affected table schemas
-3. Document any API changes resulting from schema changes
-
-### Step 7: Write tests
-
-In `tests/test_db_wrapper.py` and `internal/database/migrations/test_migrations.py`
-
-### Step 8: Run quality checks
-
-```bash
-make format lint
-make test
-```
-
 ### Migration checklist
 
 - [ ] Checked highest existing version number first
 - [ ] Created migration file with correct sequential version
-- [ ] Implemented `up(cursor)` with `IF NOT EXISTS` guards
-- [ ] Implemented `down(cursor)` for rollback
-- [ ] Registered migration in registry
+- [ ] Implemented `up(sqlProvider: BaseSQLProvider)` using `ParametrizedQuery` and `batchExecute`
+- [ ] Implemented `down(sqlProvider: BaseSQLProvider)` for rollback
+- [ ] Migration uses portable SQL (no AUTOINCREMENT, no DEFAULT CURRENT_TIMESTAMP)
+- [ ] Migration registered in versions directory (auto-discovered)
 - [ ] Added `Database` repository methods to use new table
 - [ ] Updated `internal/database/models.py` if new types needed
 - [ ] Updated documentation files

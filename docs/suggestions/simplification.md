@@ -1168,7 +1168,7 @@ These don't need a full section but are worth noting:
 | [`internal/bot/common/bot.py:75`](../internal/bot/common/bot.py:75) | Typo: `"tgBot need to be providen if botProvider is Telegram"` — says Telegram even for Max case | Fix the error message |
 | [`internal/bot/common/handlers/manager.py:616`](../internal/bot/common/handlers/manager.py:616) | `canProcess = False; pass` — `pass` after `canProcess = False` is dead code | Remove `pass` |
 | [`internal/bot/models/ensured_message.py:1111`](../internal/bot/models/ensured_message.py:1111) | `raise RuntimeError("Unreacible code has been reached")` after exhaustive match | Fix typo "Unreacible" + this IS reachable if `format` is some unknown value |
-| [`lib/ai/manager.py:51-53`](../lib/ai/manager.py:51) | f-string without f prefix: `"Provider type is not specified for provider {provider_name}"` | Add `f` prefix |
+| [`lib/ai/manager.py:51-53`](../lib/ai/manager.py:51) | ⚠️ VERIFIED STILL PRESENT (2026-05-08): f-string without f prefix: `"Provider type is not specified for provider {provider_name}"` | Add `f` prefix |
 | [`internal/bot/common/handlers/manager.py:447`](../internal/bot/common/handlers/manager.py:447) | `TODO: Write docstring` on `addMessageToChatQueue` | Write it or remove comment |
 
 ---

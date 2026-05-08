@@ -30,26 +30,25 @@ cache = CacheService.getInstance()
 cache.injectDatabase(dbWrapper)
 
 # Chat settings
-chatSettings: ChatSettingsDict = cache.getCachedChatSettings(chatId)
+chatSettings: ChatSettingsDict = await cache.getCachedChatSettings(chatId, ttl=3600)
 cache.cacheChatSettings(chatId, settings)
 cache.setChatSetting(chatId, key, value, userId=user.id)
 cache.unsetChatSetting(chatId=chatId, key=key)
 
 # Chat info
-chatInfo: Optional[ChatInfoDict] = cache.getChatInfo(chatId)
-cache.setChatInfo(chatId, chatInfo)
+chatInfo: Optional[ChatInfoDict] = await cache.getChatInfo(chatId)
+await cache.setChatInfo(chatId, chatInfo)
 
-# Chat admins
-admins: Optional[Dict[int, Tuple[str, str]]] = cache.getChatAdmins(chatId)
+# Chat admins (synchronous methods with TTL parameter)
+admins: Optional[Dict[int, Tuple[str, str]]] = cache.getChatAdmins(chatId, ttl=3600)
 cache.setChatAdmins(chatId, admins)
 
-# User data
-userData = cache.getChatUserData(chatId=chatId, userId=userId)
+# User data (async methods)
+userData = await cache.getChatUserData(chatId=chatId, userId=userId)
+await cache.setChatUserData(chatId=chatId, userId=userId, key=key, value=value)
 
-# Default settings
-cache.setDefaultChatSettings(None, defaultSettings)  # Global defaults
-cache.setDefaultChatSettings(ChatType.GROUP, groupDefaults)  # Type-specific
-cache.setDefaultChatSettings("tier-paid", tierDefaults)  # Tier-specific
+# Default chat settings are handled by config/database, not CacheService
+# Use config files in configs/ for defaults, or set per-chat via setChatSetting()
 ```
 
 **Key types from** [`internal/services/cache/types.py`](../../internal/services/cache/types.py):

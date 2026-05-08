@@ -1,5 +1,18 @@
 # AI Aurumentation System Design Document
 
+**Status:** ✅ Implemented (in lib/aurumentation)
+
+**Implementation Location:** `lib/aurumentation/` — complete implementation of the golden data testing system for AI providers
+
+**Current Usage:**
+- See `tests/lib_ai/golden/` for AI provider golden data
+- See `docs/llm/testing.md` §6 for current golden data testing documentation
+- See `golden-data-testing-system-v2.md` for the complete system design
+
+**Note:** This design document was implemented and is now in production use. The `lib/aurumentation` library provides generic HTTP traffic recording/replay that works for any httpx-based client, including all AI providers.
+
+---
+
 ## 1. Overview
 
 ### 1.1 Purpose and Goals

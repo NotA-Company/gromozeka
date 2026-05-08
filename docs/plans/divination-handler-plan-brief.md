@@ -1,6 +1,7 @@
 # Divination Handler — Brief Plan
 
-> **Companion to:** [`divination-handler-plan.md`](divination-handler-plan.md) (full design).
+> **Status:** ✅ COMPLETED — implemented (see full plan for details)
+> **Companion to:** [`divination-handler-plan.md`](divination-handler-plan.md) (full design) — NOW IMPLEMENTED
 > **Audience:** quick-glance overview for reviewers / future-you.
 
 ---

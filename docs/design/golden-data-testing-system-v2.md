@@ -1,10 +1,30 @@
 # Golden Data Testing System Design v2.0
 
-**Created:** 2025-11-02  
-**Status:** Design Phase  
-**Priority:** High  
-**Author:** Architect Mode  
+**Created:** 2025-11-02
+**Status:** ✅ Implemented (in lib/aurumentation)
+**Implementation Location:** `lib/aurumentation/` — see golden data directories: `tests/lib_ai/golden/`, `tests/openweathermap/golden/`, `tests/yandex_search/golden/`, `tests/geocode_maps/golden/`, `tests/divination/golden/`
+**Priority:** High
+**Author:** Architect Mode
 **Supersedes:** golden-data-testing-system-v1.md
+
+---
+
+## Implementation Note
+
+This design was fully implemented in the `lib/aurumentation` library. The key implementation details:
+
+- **GoldenDataRecorder** (`lib/aurumentation/recorder.py`) — captures HTTP traffic via httpx transport patching
+- **GoldenDataReplayer** (`lib/aurumentation/replayer.py`) — replays captured HTTP traffic during tests
+- **SecretMasker** (`lib/aurumentation/masker.py`) — automatically masks API keys, tokens, and sensitive data
+- **Collector** (`lib/aurumentation/collector.py`) — generic collector script that works with any httpx-based client
+
+The system is currently in production use for:
+- AI provider testing (OpenAI, Yandex Cloud, OpenRouter)
+- OpenWeatherMap client testing
+- Yandex Search client testing
+- Geocoding service testing
+
+For current usage examples, see files in `tests/lib_ai/test_*.py` and the per-service golden directories listed above.
 
 ## Executive Summary
 

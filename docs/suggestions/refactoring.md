@@ -29,7 +29,7 @@
 | 16 | [ ] | [Add `__slots__` to `TheBot` and High-Frequency Data Classes](#16-add-__slots__-to-thebot-and-high-frequency-data-classes) | Medium | S | [`bot.py`](../../internal/bot/common/bot.py) |
 | 17 | [ ] | [Extract `MarkdownRenderer` Platform Bridge from `TheBot`](#17-extract-markdownrenderer-platform-bridge-from-thebot) | Medium | S | [`bot.py`](../../internal/bot/common/bot.py) |
 | 18 | [ ] | [Unify Singleton Pattern with Generic `SingletonMixin`](#18-unify-singleton-pattern-with-generic-singletonmixin) | Medium | S | Multiple service files |
-| 19 | 🔄 NEEDS UPDATE | [Move Inline DB Schema DDL out of `_initDatabase`](#19-move-inline-db-schema-ddl-out-of-_initdatabase) | Low | S | [`database.py`](../../internal/database/database.py) |
+| 19 | ❌ WONTFIX / DELIBERATE DESIGN | [Move Inline DB Schema DDL out of `_initDatabase`](#19-move-inline-db-schema-ddl-out-of-_initdatabase) | Low | S | [`database.py`](../../internal/database/database.py) |
 | 20 | [ ] | [Replace Bare `Dict[str, Any]` Config Passing with Typed Config Dataclasses](#20-replace-bare-dictstr-any-config-passing-with-typed-config-dataclasses) | Low | M | Multiple files |
 | 21 | [ ] | [Extract `awaitStepDone` Polling into `asyncio.Condition`-Based Wait](#21-extract-awaitstepone-polling-into-asynciocondition-based-wait) | Low | S | [`manager.py`](../../internal/bot/common/handlers/manager.py) |
 
@@ -1195,7 +1195,7 @@ class CacheService(SingletonMixin):
 
 **Priority:** Low | **Effort:** S (hours)
 
-> **🔄 NEEDS UPDATE (as of 2026-05-02):** The architecture has changed significantly. The old `_initDatabase` in `DatabaseWrapper` is gone. The `settings` table creation now lives in [`Database.migrateDatabase()`](../../internal/database/database.py:133) at line 158 and is still inline DDL (`CREATE TABLE IF NOT EXISTS settings ...`), but the context is different — it's now per-provider via `addProviderInitializationHook`. The `settings` table is required *before* migrations run (for version tracking), making it a chicken-and-egg problem. This suggestion should be revised to account for the new provider-based architecture, or simply closed as a deliberate design choice.
+> **❌ WONTFIX / DELIBERATE DESIGN (as of 2026-05-08):** The `settings` table creation in [`Database.migrateDatabase()`](../../internal/database/database.py:158) is intentional bootstrap DDL. The architecture has changed from old DatabaseWrapper to new `Database` façade + provider pattern. The `settings` table is a prerequisite for the migration system itself (stores migration version data), creating a chicken-and-egg problem. Keeping `CREATE TABLE IF NOT EXISTS settings (...)` inline as initial bootstrap DDL is the deliberate solution — migrations require the table to exist first. This is not a bug but a deliberate architectural choice for bootstrap ordering.
 
 #### Current Problem (REVISED)
 

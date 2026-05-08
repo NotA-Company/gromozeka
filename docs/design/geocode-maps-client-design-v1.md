@@ -1,9 +1,14 @@
 # Geocode Maps API Client Design Document
 
-**Version:** 1.0  
-**Date:** 2025-11-14  
-**Status:** Design Phase  
-**Author:** SourceCraft Code Assistant
+**Version:** 1.0
+**Date:** 2025-11-14
+**Status:** ✅ Implemented — see `lib/geocode_maps/` for current implementation
+
+**Current Implementation:** The design has been implemented with minor adjustments. See `lib/geocode_maps/client.py` for the actual client.
+
+**Note:** This is a historical design document. For current usage, see the source code and golden data tests in `tests/geocode_maps/golden/`.
+
+---
 
 ## Table of Contents
 

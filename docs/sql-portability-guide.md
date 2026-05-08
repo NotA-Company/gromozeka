@@ -412,7 +412,7 @@ await sqlProvider.execute(
 **Files Affected**: 12 files
 **Impact**: Incorrect timestamp values, timezone issues
 
-**Status**: ✅ **RESOLVED** - Implemented in migration_013 and provider methods
+**Status**: ✅ **RESOLVED** - Portable SQL patterns implemented in migration_013 and all repository code
 
 #### Problem Description
 
@@ -431,11 +431,10 @@ This can cause inconsistencies in timestamp comparisons and data integrity issue
 - Applications must explicitly provide `created_at` and `updated_at` values
 - Ensures consistent timestamp handling across all RDBMS
 
-**Provider Method**: `getCurrentTimestamp()` in all providers
-- Returns provider-specific timestamp expression for UTC time
-- SQLite: `datetime('now')`
-- MySQL: `UTC_TIMESTAMP()`
-- PostgreSQL: `CURRENT_TIMESTAMP AT TIME ZONE 'UTC'`
+**Repository Code**: All timestamp generation moved to Python application code
+- Uses `datetime.datetime.now(datetime.UTC)` for consistent UTC timestamps
+- No RDBMS-specific timestamp functions in application queries
+- Portable across all supported providers
 
 #### Affected Locations (Historical)
 
@@ -458,9 +457,8 @@ VALUES (:namespace, :key, :value, CURRENT_TIMESTAMP)
 **After (Resolved)**:
 ```python
 import datetime
-from internal.database.providers.utils import getCurrentTimestamp
 
-# Generate timestamp in Python (recommended)
+# Generate timestamp in Python (cross-RDBMS compatible)
 current_time = datetime.datetime.now(datetime.UTC)
 
 # Use in queries
@@ -478,9 +476,6 @@ await sqlProvider.execute(
         "updatedAt": current_time,
     },
 )
-
-# Or use provider method for SQL expressions
-timestamp_expr = sqlProvider.getCurrentTimestamp()
 ```
 
 #### Implementation Details
@@ -490,10 +485,10 @@ timestamp_expr = sqlProvider.getCurrentTimestamp()
 - Updates schema to require explicit timestamp values
 - Ensures cross-RDBMS compatibility
 
-**Provider Method**: [`BaseSQLProvider.getCurrentTimestamp()`](../internal/database/providers/base.py:1)
-- Implemented in all providers (SQLite3, SQLink, MySQL, PostgreSQL)
-- Returns UTC timestamp expression for each RDBMS
-- Used by repositories for consistent timestamp generation
+**Repository Pattern**: All repositories now use `datetime.datetime.now(datetime.UTC)` for timestamps
+- Consistent UTC timestamp generation
+- Cross-RDBMS portable
+- No RDBMS-specific SQL functions needed
 
 ---
 
@@ -1071,13 +1066,13 @@ class PostgreSQLProvider(BaseSQLProvider):
 **Configuration example:**
 
 ```toml
-[database.sources.default.parameters]
+[database.providers.default.parameters]
 keepConnection = false  # Connect on demand (default for file-based DBs)
 
-[database.sources.readonly.parameters]
+[database.providers.readonly.parameters]
 keepConnection = true  # Connect immediately (good for readonly replicas)
 
-[database.sources.inmemory.parameters]
+[database.providers.inmemory.parameters]
 dbPath = ":memory:"
 keepConnection = true  # Required for in-memory databases
 ```

@@ -1,12 +1,15 @@
 # `lib/ai` — Structured (JSON-Schema) Output
 
-> **Status:** plan, not yet implemented
+> **Status:** ✅ COMPLETED — implemented in current codebase
+> **Implementation:** `ModelStructuredResult` class exists in [`lib/ai/models.py`](../../lib/ai/models.py), `generateStructured()` method exists in [`lib/ai/abstract.py`](../../lib/ai/abstract.py:326-404)
 > **Scope:** `lib/ai/` (abstract + models + all providers), `internal/services/llm/service.py`, model configs, tests.
 > **Out of scope:** wiring into specific handlers (e.g. divination's
 > `_llmGetUnknownLayoutShape`), per-chat ChatSettings, schema-builder DSL,
 > pydantic adapters.
 
-## 1. Context & Goal
+## 1. Context & Goal (HISTORICAL BACKGROUND)
+
+**Original plan text below — preserved for posterity. This feature is now implemented.**
 
 `lib/ai` today exposes two LLM operations: text generation
 ([`AbstractModel.generateText`](../../lib/ai/abstract.py:127)) and image

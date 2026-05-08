@@ -713,7 +713,7 @@ db.chatSettings.getChatSetting(
 db.chatSettings.getChatSettings(
     chatId: int,
     dataSource: Optional[str] = None
-) -> Dict[str, str]
+) -> Dict[str, tuple[str, int]]  # Returns tuple: (value, updated_by)
 ```
 
 **Set Chat Setting**
@@ -721,7 +721,8 @@ db.chatSettings.getChatSettings(
 db.chatSettings.setChatSetting(
     chatId: int,
     key: str,
-    value: str
+    value: str,
+    updatedBy: int  # REQUIRED keyword-only argument - user ID who changed the setting
 ) -> bool
 ```
 
@@ -994,20 +995,22 @@ db.delayedTasks.markDelayedTaskDone(
 [database]
 default = "default"
 
-[database.sources.default]
-path = "data/bot.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "data/bot.db"
+readOnly = false
 timeout = 30
+useWal = true
 
-[database.sources.archive]
-path = "data/archive.db"
-readonly = true
-pool-size = 3
+[database.providers.archive]
+provider = "sqlite3"
+
+[database.providers.archive.parameters]
+dbPath = "data/archive.db"
+readOnly = true
 timeout = 10
-
-[database.chatMapping]
--1001234567890 = "archive"
 ```
 
 ### Usage Examples
@@ -1049,8 +1052,10 @@ thread_messages = db.chatMessages.getChatMessagesByRootId(
 ### Get Chat Configuration
 ```python
 settings = db.chatSettings.getChatSettings(chatId=chat_id)
-model = settings.get('chat-model', 'default-model')
-use_tools = settings.get('use-tools', 'false') == 'true'
+# Returns Dict[str, tuple[str, int]] where tuple is (value, updated_by)
+model = settings.get('chat-model', ('gpt-4', 0))[0]  # Index [0] for value
+updatedBy = settings.get('chat-model', ('gpt-4', 0))[1]  # Index [1] for updated_by
+use_tools = settings.get('use-tools', ('false', 0))[0] == 'true'
 ```
 
 ### Cache API Response

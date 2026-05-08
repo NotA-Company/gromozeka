@@ -1,5 +1,16 @@
 # CacheService Design Proposal (Simplified v2)
 
+**Status:** ❌ Historical/Superseded — This is a design/proposal document.
+
+**Current Implementation:**
+- See `internal/services/cache/` for the actual CacheService implementation
+- The implemented system differs from this proposal — see current code for actual patterns
+- Active documentation: `docs/llm/services.md` §1 CacheService
+
+**Note:** This design document was an early proposal. The actual implementation follows different patterns using LRU caches, namespace-based organization, and database integration. Refer to the source code and active documentation for current usage, not this proposal.
+
+---
+
 ## Overview
 
 A simplified, bot-specific `CacheService` that replaces the current TypedDict-based cache implementation with automatic persistence management and LRU eviction.

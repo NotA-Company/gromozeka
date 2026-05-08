@@ -42,6 +42,7 @@ START
 **Reference docs:**
 - [`handlers.md`](handlers.md) — full handler creation guide
 - [`services.md`](services.md) — service usage patterns
+- **Custom handlers:** See [`custom-modules-design.md`](../../custom-modules-design.md) for loading handlers via TOML configuration without code changes
 
 ---
 

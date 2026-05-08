@@ -1,4 +1,8 @@
 # PostgreSQL Database Configuration Example
+# ⚠️  NOTE: PostgreSQL provider exists in codebase but is NOT YET SELECTABLE
+# Currently only sqlite3 and sqlink providers are registered for use.
+# This example shows the intended PostgreSQL configuration for future use.
+#
 # This example demonstrates how to configure Gromozeka to use PostgreSQL as the database backend
 
 [database]
@@ -6,10 +10,11 @@
 default = "postgres_primary"
 
 # ============================================================================
-# DATA SOURCES
+# DATA SOURCES (Future - Not Yet Selectable)
 # ============================================================================
 
 # Primary PostgreSQL database - main active bot database
+# NOTE: Requires provider registration in internal/database/providers/__init__.py
 [database.sources.postgres_primary]
 type = "postgresql"
 host = "localhost"
@@ -133,12 +138,19 @@ keepConnection = false  # Connect on demand (default for PostgreSQL)
 # database = "${POSTGRES_DATABASE}"
 
 # ============================================================================
-# REQUIREMENTS
+# REQUIREMENTS & LIMITATIONS
 # ============================================================================
 
-# To use PostgreSQL provider, install the required dependency:
-# pip install asyncpg
+# ⚠️  CURRENT LIMITATION: PostgreSQL provider is NOT YET SELECTABLE
+# While the PostgreSQL provider code exists in internal/database/providers/postgresql.py,
+# it is not yet registered in the provider factory (internal/database/providers/__init__.py)
+# Only sqlite3 and sqlink providers are currently selectable.
+
+# To enable PostgreSQL in the future:
+# 1. Ensure asyncpg is installed: pip install asyncpg
+# 2. Register PostgreSQL provider in internal/database/providers/__init__.py
+# 3. Update configuration schema documentation to mark PostgreSQL as selectable
 
 # For more information, see:
 # - SQL Portability Guide: ../sql-portability-guide.md
-# - PostgreSQL Provider: ../../internal/database/providers/postgresql.py
+# - PostgreSQL Provider (not registered): ../../internal/database/providers/postgresql.py

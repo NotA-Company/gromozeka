@@ -58,27 +58,29 @@
 
 | Key | Type | Purpose |
 |---|---|---|
-| `default` | str | Default source name |
-| `sources.<name>.path` | str | Database file path |
-| `sources.<name>.readonly` | bool | Read-only flag |
-| `sources.<name>.pool-size` | int | Connection pool size |
-| `sources.<name>.timeout` | int | Connection timeout (seconds) |
-| `sources.<name>.parameters.keepConnection` | bool\|null | Connect immediately (true), on demand (false), or auto-detect (null) |
-| `chatMapping.<chatId>` | str | Map chat ID to source name |
+| `default` | str | Default provider name |
+| `providers.<name>.provider` | str | Provider type: `"sqlite3"` or `"sqlink"` (selectable); `"mysql"` and `"postgresql"` exist but are not yet selectable |
+| `providers.<name>.parameters.dbPath` | str | Database file path (SQLite providers) |
+| `providers.<name>.parameters.readOnly` | bool | Read-only flag |
+| `providers.<name>.parameters.timeout` | int | Connection timeout (seconds) |
+| `providers.<name>.parameters.useWal` | bool | Enable WAL mode (SQLite providers) |
+| `providers.<name>.parameters.keepConnection` | bool\|null | Connect immediately (true), on demand (false) |
+| `chatMapping.<chatId>` | str | Map chat ID to provider name |
 
 **Example:**
 ```toml
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot_data.db"
-readonly = false
-pool-size = 5
-timeout = 30
+[database.providers.default]
+provider = "sqlite3"
 
-[database.sources.default.parameters]
-keepConnection = false  # Connect on demand (default for file-based DBs)
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
+timeout = 30
+useWal = true
+keepConnection = true  # Connect on creation and keep connection open
 
 [database.chatMapping]
 -1001234567890 = "default"
@@ -89,23 +91,23 @@ keepConnection = false  # Connect on demand (default for file-based DBs)
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "bot.db"
+readOnly = false
 timeout = 30
+useWal = true
+keepConnection = true
 
-[database.sources.default.parameters]
-keepConnection = false  # Connect on demand
+[database.providers.readonly]
+provider = "sqlink"
 
-[database.sources.readonly]
-path = "archive.db"
-readonly = true
-pool-size = 10
+[database.providers.readonly.parameters]
+dbPath = "archive.db"
+readOnly = true
 timeout = 10
-
-[database.sources.readonly.parameters]
-keepConnection = true  # Connect immediately (good for readonly replicas)
 
 [database.chatMapping]
 -1001234567890 = "readonly"  # Old inactive chat
@@ -115,10 +117,9 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 **`keepConnection` parameter details:**
 - `true` — Connect immediately when provider is created (good for readonly replicas, in-memory DBs)
 - `false` — Connect on first query (default for file-based DBs, saves resources)
-- `null` — Auto-detect: `true` for in-memory SQLite3, `false` otherwise
 - **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
 
-**Note:** Database configuration uses `sources` (not `providers`) for multi-source routing with repository pattern. See [`database.md`](database.md) for details on multi-source routing and repository usage.
+**Note:** Database configuration uses `providers` (not `sources`) for provider abstraction with `provider = "sqlite3"` or `"sqlink"`. MySQL and PostgreSQL providers exist in the codebase but are not selectable yet. See [`database.md`](database.md) for details on multi-source routing and repository usage.
 
 ### `[models]`
 

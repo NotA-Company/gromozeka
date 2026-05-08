@@ -1,9 +1,16 @@
-# Task 4.5 & Phase 5 Completion Report: DatabaseWrapper TODOs Fix and Configuration Documentation
+# Task 4.5 & Phase 5 Completion Report: DatabaseWrapper TODOs Fix and Configuration Documentation (HISTORICAL)
 
-**Category:** Code Quality & Documentation
+> **Status:** HISTORICAL REPORT — describes work on `DatabaseWrapper` which no longer exists
+> **Resolution:** The database architecture has been refactored to Repository pattern. See [`internal/database/database.py`](../../internal/database/database.py) and [`internal/database/repositories/`](../../internal/database/repositories/) for current implementation.
+
+---
+
+**Category:** Code Quality & Documentation (historical)
 **Complexity:** Complex
 **Report Date:** 2025-11-30
 **Report Author:** Code Assistant (Prinny Mode)
+
+**Warning:** This report references `internal/database/wrapper.py` which has been deleted. The DatabaseWrapper monolith was replaced with a clean `Database` façade class and 11 domain repositories. Multi-source database configuration is now documented in [`docs/plans/database-multi-source-configuration.md`](../../plans/database-multi-source-configuration.md).
 
 ## Summary
 

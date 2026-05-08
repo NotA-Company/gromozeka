@@ -85,9 +85,10 @@ class MyService:
 9. `HelpHandler` — PARALLEL — help command
 10. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
 11. (Telegram only) `TopicManagerHandler` — PARALLEL
-12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler` — PARALLEL
-13. (custom handlers) — PARALLEL
-14. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
+12. (if enabled) `DivinationHandler` — PARALLEL — tarot/runes divination
+13. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler` — PARALLEL
+14. (custom handlers via CustomHandlerLoader) — PARALLEL
+15. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
 **Return values:** Handlers return [`HandlerResultStatus`](../../internal/bot/common/handlers/base.py:82):
 - `FINAL` — stop chain, success
@@ -121,21 +122,26 @@ class MyService:
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
 - **SQL Portability**: All SQL is provider-agnostic, supporting SQLite3, PostgreSQL, MySQL, and SQLink
 
-**Config:** `[database.sources.*]` in TOML, routing via `dataSource` parameter on read methods:
+**Config:** `[database.providers.*]` in TOML, routing via `chatMapping` for specific chats:
 ```toml
 [database]
 default = "default"
 
-[database.sources.default]
-path = "bot_data.db"
-readonly = false
-pool-size = 5
-timeout = 30
+[database.providers.default]
+provider = "sqlite3"
 
-[database.sources.readonly]
-path = "bot_data.db"
-readonly = true
-pool-size = 10
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
+timeout = 30
+useWal = true
+
+[database.providers.readonly]
+provider = "sqlink"
+
+[database.providers.readonly.parameters]
+dbPath = "archive.db"
+readOnly = true
 timeout = 10
 ```
 

@@ -1,4 +1,11 @@
-# Phase 3: Migration Cursor Parameter Refactoring - Completion Report
+# Phase 3: Migration Cursor Parameter Refactoring (HISTORICAL)
+
+> **Status:** HISTORICAL REPORT — describes work on `DatabaseWrapper` which no longer exists
+> **Resolution:** The database architecture has been refactored to Repository pattern with provider abstraction. See current implementation in [`internal/database/`](../../internal/database/).
+
+---
+
+**Warning:** This report references `internal/database/wrapper.py` which has been deleted. Database access now goes through the `Database` façade and domain repositories with provider abstraction. - Completion Report
 
 **Category:** Database Migration System Refactoring
 **Complexity:** Moderate

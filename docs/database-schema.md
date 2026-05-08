@@ -73,22 +73,24 @@ Multi-source configuration is defined in the bot's config file:
 
 ```toml
 [database]
-default = "default"  # Default source name
+default = "default"  # Default provider name
 
-[database.sources.default]
-path = "data/bot.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "data/bot.db"
+readOnly = false
 timeout = 30
+useWal = true
 
-[database.sources.archive]
-path = "data/archive.db"
-readonly = true
-pool-size = 3
+[database.providers.archive]
+provider = "sqlite3"
+
+[database.providers.archive.parameters]
+dbPath = "data/archive.db"
+readOnly = true
 timeout = 10
-
-[database.chatMapping]
--1001234567890 = "archive"  # Route specific chat to archive source
 ```
 
 ### Routing Logic
@@ -350,10 +352,16 @@ Stores per-chat configuration settings.
 ```python
 # Get chat settings
 settings = db.chatSettings.getChatSettings(chatId=-1001234567890)
-chatModel = settings.get('chat-model', 'default-model')
+# Returns Dict[str, tuple[str, int]] where tuple is (value, updated_by)
+chatModel = settings.get('chat-model', ('gpt-4', 0))[0]  # Index [0] for value
 
-# Set a setting
-db.chatSettings.setChatSetting(chatId=-1001234567890, key='parse-images', value='true')
+# Set a setting (updatedBy is REQUIRED)
+db.chatSettings.setChatSetting(
+    chatId=-1001234567890,
+    key='parse-images',
+    value='true',
+    updatedBy=userId  # Required keyword-only argument
+)
 ```
 
 ---

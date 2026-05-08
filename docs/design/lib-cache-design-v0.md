@@ -1,8 +1,30 @@
 # lib.cache - Generic Cache Library Design v0
 
-**Status:** Draft  
-**Created:** 2025-11-13  
-**Author:** SourceCraft Code Assistant (Prinny Mode)  
+**Status:** ✅ Implemented — see `lib/cache/` for current implementation
+
+**Current Implementation Note:** The implemented system includes these current APIs not documented in the original design:
+- `ValueConverter` protocol — for converting values to/from strings
+- `StringValueConverter` — pass-through string conversion
+- `JsonValueConverter` — JSON string/value conversion
+- `DictCache` constructor accepts `valueConverter` parameter
+
+**Current Usage:**
+```python
+from lib.cache import DictCache, StringKeyGenerator, JsonValueConverter
+
+cache = DictCache[str, dict](
+    keyGenerator=StringKeyGenerator(),
+    defaultTtl=3600,
+    maxSize=1000,
+    valueConverter=JsonValueConverter()  # Optional value conversion
+)
+```
+
+**Current Export Locations:**
+- `lib/cache/__init__.py` — exports all public APIs
+- Active docs: `docs/llm/libraries.md` §2 lib/cache
+
+---
 
 ## Overview
 

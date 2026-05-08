@@ -1,12 +1,24 @@
 # Rate Limiter Library Design Document
 
-**Task**: Design and implement a reusable rate limiter library for the Gromozeka project  
-**Location**: `lib/rate_limiter/`  
-**Author**: SourceCraft Code Assistant (Prinny Mode)  
-**Date**: 2025-11-12  
-**Status**: Design Phase - Updated with Feedback
+**Task**: Design and implement a reusable rate limiter library for the Gromozeka project
+**Location**: `lib/rate_limiter/`
+**Author**: SourceCraft Code Assistant (Prinny Mode)
+**Date:** 2025-11-12
+**Status:** ✅ Implemented — see `lib/rate_limiter/` for current implementation
+
+**Current API Note:** The implemented API differs from this design document. The current manager uses:
+- `loadConfig(config: RateLimiterManagerConfig)` — load configuration from TOML
+- `applyLimit(queue: str)` — apply rate limit for a queue
+- `getStats(queue: str)` — get statistics
+
+**Document Purpose:** This is a historical design document. For current usage, see:
+- Implementation: `lib/rate_limiter/manager.py`
+- Active docs: `docs/llm/services.md` §5 RateLimiterManager
+- Configuration: `configs/00-defaults/ratelimiter.toml`
 
 ---
+
+## 1. Overview
 
 ## 1. Overview
  

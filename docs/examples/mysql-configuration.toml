@@ -1,4 +1,8 @@
 # MySQL Database Configuration Example
+# ⚠️  NOTE: MySQL provider exists in codebase but is NOT YET SELECTABLE
+# Currently only sqlite3 and sqlink providers are registered for use.
+# This example shows the intended MySQL configuration for future use.
+#
 # This example demonstrates how to configure Gromozeka to use MySQL as the database backend
 
 [database]
@@ -6,10 +10,11 @@
 default = "mysql_primary"
 
 # ============================================================================
-# DATA SOURCES
+# DATA SOURCES (Future - Not Yet Selectable)
 # ============================================================================
 
 # Primary MySQL database - main active bot database
+# NOTE: Requires provider registration in internal/database/providers/__init__.py
 [database.sources.mysql_primary]
 type = "mysql"
 host = "localhost"
@@ -117,12 +122,19 @@ keepConnection = false  # Connect on demand (default for MySQL)
 # database = "${MYSQL_DATABASE}"
 
 # ============================================================================
-# REQUIREMENTS
+# REQUIREMENTS & LIMITATIONS
 # ============================================================================
 
-# To use MySQL provider, install the required dependency:
-# pip install aiomysql
+# ⚠️  CURRENT LIMITATION: MySQL provider is NOT YET SELECTABLE
+# While the MySQL provider code exists in internal/database/providers/mysql.py,
+# it is not yet registered in the provider factory (internal/database/providers/__init__.py)
+# Only sqlite3 and sqlink providers are currently selectable.
+
+# To enable MySQL in the future:
+# 1. Ensure aiomysql is installed: pip install aiomysql
+# 2. Register MySQL provider in internal/database/providers/__init__.py
+# 3. Update configuration schema documentation to mark MySQL as selectable
 
 # For more information, see:
 # - SQL Portability Guide: ../sql-portability-guide.md
-# - MySQL Provider: ../../internal/database/providers/mysql.py
+# - MySQL Provider (not registered): ../../internal/database/providers/mysql.py

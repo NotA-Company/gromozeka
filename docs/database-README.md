@@ -555,13 +555,15 @@ messages = db.chatMessages.getChatMessages(chatId=456)  # Routes to default sour
 ```python
 # Get all settings for a chat
 settings = db.chatSettings.getChatSettings(chatId=-1001234567890)
-model = settings.get('chat-model', 'default-model')
+# Returns Dict[str, tuple[str, int]] where tuple is (value, updated_by)
+model = settings.get('chat-model', ('gpt-4', 0))[0]  # Index [0] for value
 
 # Set a specific setting
 db.chatSettings.setChatSetting(
     chatId=-1001234567890,
     key='parse-images',
-    value='true'
+    value='true',
+    updatedBy=userId  # REQUIRED keyword-only argument
 )
 
 # Get a specific setting value
@@ -715,7 +717,7 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Cache Tables**: 7+ (dynamic based on CacheType enum)
 - **Spam Detection Tables**: 4 (spam, ham, tokens, classes)
 - **Statistics Tables**: 2 (chat stats, user stats)
-- **Current Migration Version**: 13
+- **Current Migration Version**: 15
 - **Total Repositories**: 12 specialized repositories
 
 ## 🤝 Contributing
@@ -737,5 +739,5 @@ This documentation is part of the Gromozeka bot project.
 ---
 
 **Last Updated**: 2026-05-02
-**Database Version**: 13
-**Documentation Version**: 2.1
+**Database Version**: 15
+**Documentation Version**: 2.2

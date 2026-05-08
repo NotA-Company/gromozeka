@@ -188,7 +188,8 @@ from lib.ai import ModelStructuredResult
 **Import:**
 ```python
 from lib.cache import CacheInterface, DictCache
-from lib.cache.key_generator import StringKeyGenerator
+from lib.cache import StringKeyGenerator, HashKeyGenerator, JsonKeyGenerator
+from lib.cache import ValueConverter, JsonValueConverter, StringValueConverter
 ```
 
 **Key classes:**
@@ -198,6 +199,11 @@ from lib.cache.key_generator import StringKeyGenerator
 | [`CacheInterface[K,V]`](../../lib/cache/interface.py:15) | `lib/cache/interface.py` | Generic ABC for any cache |
 | `DictCache[K,V]` | `lib/cache/dict_cache.py` | In-memory dict implementation |
 | `StringKeyGenerator` | `lib/cache/key_generator.py` | Simple string key gen |
+| `HashKeyGenerator` | `lib/cache/key_generator.py` | SHA512 hash key gen |
+| `JsonKeyGenerator` | `lib/cache/key_generator.py` | JSON serialization + hash |
+| `ValueConverter` | `lib/cache/types.py` | Protocol for value conversion |
+| `StringValueConverter` | `lib/cache/value_converter.py` | Pass-through string converter |
+| `JsonValueConverter` | `lib/cache/value_converter.py` | JSON string/value converter |
 
 **Interface methods:**
 ```python
@@ -205,6 +211,17 @@ await cache.get(key: K, ttl: Optional[int] = None) -> Optional[V]
 await cache.set(key: K, value: V) -> bool
 await cache.clear() -> None
 cache.getStats() -> Dict[str, Any]
+```
+
+**DictCache constructor:**
+```python
+cache = DictCache[K, V](
+    keyGenerator: KeyGenerator[K],  # Required: strategy for converting keys
+    defaultTtl: int = 3600,         # Optional: default TTL in seconds
+    maxSize: Optional[int] = 1000,  # Optional: max entries before eviction
+    threadSafe: bool = True,        # Optional: enable thread safety with RLock
+    valueConverter: ValueConverter = None  # Optional: value conversion strategy
+)
 ```
 
 **NOTE:** For bot cache operations (chat settings, user data, admin cache), use [`CacheService`](services.md) instead of `lib/cache` directly

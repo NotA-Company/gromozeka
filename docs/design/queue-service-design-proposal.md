@@ -1,5 +1,16 @@
 # Queue Service Design Proposal
 
+**Status:** ❌ Historical/Superseded — This is a design/proposal document.
+
+**Current Implementation:**
+- See `internal/services/queue_service/` for the actual QueueService implementation
+- The implemented system differs from this proposal — see current code for actual patterns
+- Active documentation: `docs/llm/services.md` §2 QueueService
+
+**Note:** This design document was an early proposal for extracting queue management. The actual implementation uses different patterns with singleton service, DelayedTask types, and TaskOrchestrator. Refer to the source code and active documentation for current usage, not this proposal.
+
+---
+
 ## Executive Summary
 
 Extract the queue management functionality from `internal/bot/handlers/main.py` into a standalone, reusable service that handles both async task queuing and delayed task scheduling with persistence support.

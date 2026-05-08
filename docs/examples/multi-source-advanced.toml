@@ -1,125 +1,117 @@
 # Multi-Source Database Configuration - Advanced Example
-# This example demonstrates a complex multi-source setup with multiple databases,
-# custom pool sizes, and sophisticated chat mappings
+# This example demonstrates a complex multi-source setup with multiple database providers,
+# custom settings, and sophisticated chat mappings
+#
+# NOTE: MySQL and PostgreSQL providers exist in codebase but are NOT YET SELECTABLE.
+# Only sqlite3 and sqlink providers are currently registered for use.
 
 [database]
 # Default source for operations without explicit routing
 default = "primary"
 
 # ============================================================================
-# DATA SOURCES
+# DATA PROVIDERS
 # ============================================================================
 
 # Primary database - main active bot database
-[database.sources.primary]
-path = "bot.db"
-readonly = false
-pool-size = 10  # High traffic, many concurrent operations
-timeout = 30.0
+[database.providers.primary]
+provider = "sqlite3"
 
-[database.sources.primary.parameters]
-keepConnection = false  # Connect on demand (default for file-based DBs)
+[database.providers.primary.parameters]
+dbPath = "bot.db"
+readOnly = false
+timeout = 30
+useWal = true
+keepConnection = true  # Connect on creation and keep connection open
 
 # Archive database - old/inactive chats from 2023 and earlier
-[database.sources.archive_2023]
-path = "archive_2023.db"
-readonly = true  # Readonly for data integrity
-pool-size = 3    # Lower traffic, occasional queries
-timeout = 30.0
+[database.providers.archive_2023]
+provider = "sqlink"
 
-[database.sources.archive_2023.parameters]
+[database.providers.archive_2023.parameters]
+dbPath = "archive_2023.db"
+readOnly = true  # Readonly for data integrity
+timeout = 10
 keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # Archive database - old/inactive chats from 2024
-[database.sources.archive_2024]
-path = "archive_2024.db"
-readonly = true
-pool-size = 3
-timeout = 30.0
+[database.providers.archive_2024]
+provider = "sqlink"
 
-[database.sources.archive_2024.parameters]
+[database.providers.archive_2024.parameters]
+dbPath = "archive_2024.db"
+readOnly = true
+timeout = 10
 keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # External bot database - read from another bot instance
-[database.sources.other_bot]
-path = "/shared/other_bot.db"
-readonly = true  # Never write to external bot's database
-pool-size = 2    # Minimal pool for occasional cross-bot queries
-timeout = 10.0   # Shorter timeout for external database
+[database.providers.other_bot]
+provider = "sqlite3"
 
-[database.sources.other_bot.parameters]
+[database.providers.other_bot.parameters]
+dbPath = "/shared/other_bot.db"
+readOnly = true  # Never write to external bot's database
+timeout = 10  # Shorter timeout for external database
 keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # Test database - for development and testing
-[database.sources.test]
-path = "test.db"
-readonly = false
-pool-size = 5
-timeout = 30.0
+[database.providers.test]
+provider = "sqlite3"
 
-[database.sources.test.parameters]
-keepConnection = false  # Connect on demand (default for file-based DBs)
+[database.providers.test.parameters]
+dbPath = "test.db"
+readOnly = false
+timeout = 30
+useWal = true
+keepConnection = true  # Connect on creation and keep connection open
 
 # Backup database - for disaster recovery queries
-[database.sources.backup]
-path = "/backups/bot_backup.db"
-readonly = true  # Never modify backups
-pool-size = 1    # Minimal pool, rarely used
-timeout = 60.0   # Longer timeout for potentially slow backup storage
+[database.providers.backup]
+provider = "sqlite3"
 
-[database.sources.backup.parameters]
+[database.providers.backup.parameters]
+dbPath = "/backups/bot_backup.db"
+readOnly = true  # Never modify backups
+timeout = 60  # Longer timeout for potentially slow backup storage
 keepConnection = true  # Connect immediately (good for readonly replicas)
+
+# ============================================================================
+# FUTURE CONFIGURATION (Not Yet Selectable)
+# ============================================================================
 
 # MySQL database - production deployment with high concurrency
-[database.sources.mysql_production]
-type = "mysql"
-host = "mysql.example.com"
-port = 3306
-user = "gromozeka"
-password = "mysql_secure_password"
-database = "gromozeka_prod"
-readonly = false
-pool-size = 20  # High concurrency production database
-timeout = 30.0
-
-[database.sources.mysql_production.parameters]
-keepConnection = false  # Connect on demand (default for MySQL)
+# NOTE: mysql provider exists but is NOT YET SELECTABLE
+# [database.providers.mysql_production]
+# provider = "mysql"
+#
+# [database.providers.mysql_production.parameters]
+# host = "mysql.example.com"
+# port = 3306
+# user = "gromozeka"
+# password = "mysql_secure_password"
+# database = "gromozeka_prod"
+# readOnly = false
+# keepConnection = false  # Connect on demand (default for MySQL)
 
 # PostgreSQL database - production deployment with complex queries
-[database.sources.postgres_production]
-type = "postgresql"
-host = "postgres.example.com"
-port = 5432
-user = "gromozeka"
-password = "postgres_secure_password"
-database = "gromozeka_prod"
-readonly = false
-pool-size = 15  # Production database with complex queries
-timeout = 30.0
-
-[database.sources.postgres_production.parameters]
-keepConnection = false  # Connect on demand (default for PostgreSQL)
-
-# PostgreSQL read replica - for read-heavy workloads
-[database.sources.postgres_replica]
-type = "postgresql"
-host = "postgres-replica.example.com"
-port = 5432
-user = "gromozeka_readonly"
-password = "readonly_password"
-database = "gromozeka_prod"
-readonly = true  # Read-only replica
-pool-size = 10   # Read replica for analytics and reporting
-timeout = 30.0
-
-[database.sources.postgres_replica.parameters]
-keepConnection = true  # Connect immediately (good for readonly replicas)
+# NOTE: postgresql provider exists but is NOT YET SELECTABLE
+# [database.providers.postgres_production]
+# provider = "postgresql"
+#
+# [database.providers.postgres_production.parameters]
+# host = "postgres.example.com"
+# port = 5432
+# user = "gromozeka"
+# password = "postgres_secure_password"
+# database = "gromozeka_prod"
+# readOnly = false
+# keepConnection = false  # Connect on demand (default for PostgreSQL)
 
 # ============================================================================
 # CHAT MAPPINGS
 # ============================================================================
-# Map specific chats to specific data sources
-# Format: chatId = "sourceName"
+# Map specific chats to specific providers
+# Format: chatId = "providerName"
 
 [database.chatMapping]
 
@@ -141,20 +133,20 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 -1004222222222 = "primary"
 -1004333333333 = "primary"
 
-# Note: Chats not listed here will use the default source ("primary")
+# Note: Chats not listed here will use the default provider ("primary")
 
 # ============================================================================
 # USAGE EXAMPLES
 # ============================================================================
 
-# Example 1: Query specific source explicitly
+# Example 1: Query specific provider explicitly
 # messages = db.getChatMessages(chatId=-1001111111111, dataSource="archive_2023")
 
 # Example 2: Use chat mapping (automatic routing)
 # messages = db.getChatMessages(chatId=-1001111111111)  # Routes to archive_2023
 
-# Example 3: Cross-source aggregation
-# all_chats = db.getAllGroupChats()  # Queries all sources, deduplicates
+# Example 3: Cross-provider aggregation
+# all_chats = db.getAllGroupChats()  # Queries all providers, deduplicates
 
 # Example 4: Query external bot
 # other_messages = db.getChatMessages(chatId=123, dataSource="other_bot")
@@ -162,33 +154,19 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 # Example 5: Backup verification
 # backup_data = db.getChatInfo(chatId=123, dataSource="backup")
 
-# Example 6: Query MySQL production database
-# messages = db.chatMessages.getChatMessages(chatId=-1005000000000, dataSource="mysql_production")
-
-# Example 7: Query PostgreSQL production database
-# messages = db.chatMessages.getChatMessages(chatId=-1006000000000, dataSource="postgres_production")
-
-# Example 8: Query PostgreSQL read replica (read-only operations)
-# messages = db.chatMessages.getChatMessagesSince(chatId=-1006000000000, dataSource="postgres_replica")
-
 # ============================================================================
 # PERFORMANCE NOTES
 # ============================================================================
 
-# Pool Size Guidelines:
-# - primary: 10 connections (high traffic, many concurrent operations)
-# - archives: 3 connections (medium traffic, occasional queries)
-# - other_bot: 2 connections (low traffic, cross-bot queries)
-# - test: 5 connections (moderate traffic during development)
-# - backup: 1 connection (minimal traffic, disaster recovery only)
-# - mysql_production: 20 connections (high concurrency production database)
-# - postgres_production: 15 connections (production database with complex queries)
-# - postgres_replica: 10 connections (read replica for analytics and reporting)
-
 # Timeout Guidelines:
-# - Local databases: 30.0 seconds (standard)
-# - External databases: 10.0 seconds (faster failure for unavailable sources)
-# - Backup storage: 60.0 seconds (may be on slower storage)
+# - Local databases (primary, archives, test): 30 seconds (standard)
+# - External databases (other_bot): 10 seconds (faster failure for unavailable sources)
+# - Backup storage: 60 seconds (may be on slower storage)
+
+# Configuration Notes:
+# - useWal (Write-Ahead Logging): Improves concurrency for SQLite databases
+# - keepConnection: Use true for readonly sources, false for write-heavy sources
+# - Provider selection: Currently only "sqlite3" and "sqlink" are selectable
 
 # ============================================================================
 # SECURITY NOTES
