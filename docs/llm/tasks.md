@@ -94,26 +94,23 @@ START
 │         Implement: up(cursor), down(cursor)
 │         Set: version = NNN (next sequential number)
 │
-├── Step 3: Register migration
-│         In internal/database migrations registry or __init__.py
-│
-├── Step 4: Add DatabaseWrapper methods
-│         In internal/database/wrapper.py
+├── Step 3: Add Database methods
+│         In internal/database/database.py
 │         Follow existing patterns with self._getConnection()
 │
-├── Step 5: Update models if needed
+├── Step 4: Update models if needed
 │         In internal/database/models.py
 │         Add new TypedDict or enum values
 │
-├── Step 6: Update cache if needed
+├── Step 5: Update cache if needed
 │         If frequently accessed data: add cache layer in CacheService
 │
-├── Step 7: Update documentation (CRITICAL)
+├── Step 6: Update documentation (CRITICAL)
 │         Update docs/database-schema.md AND docs/database-schema-llm.md
 │         Add migration entry with description
 │         Update affected table schemas
 │
-└── Step 8: Tests
+└── Step 7: Tests
           - tests/test_db_wrapper.py
           - internal/database/migrations/test_migrations.py
           - Run: make format lint && make test

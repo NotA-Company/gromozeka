@@ -1606,7 +1606,7 @@ await sqlProvider.execute(
 # Use helper function for consistent timestamps
 from internal.database.utils import getCurrentTimestamp
 
-current_time = getCurrentTimestamp(provider_type="sqlite")
+current_time = getCurrentTimestamp()
 await sqlProvider.execute(
     "SELECT :currentTime as current_time",
     {"currentTime": current_time}
@@ -1749,7 +1749,7 @@ await sqlProvider.execute("UPDATE users ...")
 **✅ Prefer**:
 ```python
 # Use transaction
-async with sqlProvider.transaction():
+async with sqlProvider:
     await sqlProvider.execute("INSERT INTO orders ...")
     await sqlProvider.execute("UPDATE inventory ...")
     await sqlProvider.execute("UPDATE users ...")

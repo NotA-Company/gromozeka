@@ -128,10 +128,34 @@ Task: [X.Y.Z]
   - **Issues Resolved:** [Any issues found and resolved]
   - **Approval Status:** ✅ Approved / ⚠️ Approved with Conditions / ❌ Rejected
 
+- [ ] **Gromozeka Quality Gates:**
+  - [ ] `make format lint` executed and passes clean before and after edits
+  - [ ] `make test` executed and all tests pass (or explicitly documents failed tests with justification)
+  - [ ] Python invoked via `./venv/bin/python3` in all commands
+  - [ ] No pydantic usage - using raw dicts + TypedDict + hand-rolled typed classes
+
 - [ ] **Coding Standards:** [Compliance with project coding standards]
   - **Linting Results:** [Linter output summary]
   - **Style Guide Compliance:** [Adherence to style guide]
   - **Documentation Standards:** [Code documentation quality]
+
+### Gromozeka Coding Standards
+- [ ] **Naming Conventions:**
+  - [ ] camelCase for variables/args/fields/functions/methods
+  - [ ] PascalCase for classes
+  - [ ] UPPER_CASE for constants
+
+- [ ] **Architecture Patterns:**
+  - [ ] Singletons accessed via `getInstance()` only (LLMService, CacheService, QueueService, StorageService, RateLimiterManager)
+  - [ ] Imports at top of file (inside-function imports only for genuine cycles)
+
+- [ ] **Documentation:**
+  - [ ] Docstrings with `Args:` and `Returns:` on all modules/classes/methods/functions
+  - [ ] Type hints present on all function/method parameters and returns
+
+### Handler Integration Verification (conditional - only if handler changes made)
+- [ ] LLMMessageHandler ordering verified as last entry in handler list
+- [ ] Handler registration order checked in `internal/bot/common/handlers/manager.py`
 
 ### Functional Quality
 - [ ] **Requirements Compliance:** [All requirements met]
@@ -149,6 +173,13 @@ Task: [X.Y.Z]
 - [ ] **User Documentation:** [User-facing documentation updated]
 - [ ] **Technical Documentation:** [Technical specs updated]
 - [ ] **README Updates:** [README files updated if applicable]
+
+### Documentation Sync
+- [ ] **Project Documentation:** Updated via `update-project-docs` skill if behavior/schema/config/handlers/services/libraries changed
+  - [ ] `docs/llm/` files updated (architecture, handlers, database, services, libraries, configuration, testing, tasks)
+  - [ ] `docs/database-schema*.md` updated (if schema changed)
+  - [ ] `AGENTS.md` updated (if conventions or hard rules changed)
+  - [ ] Configuration files documented (if config changed)
 
 ## Traceability
 

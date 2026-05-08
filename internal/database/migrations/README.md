@@ -359,9 +359,11 @@ def getMigration() -> type[BaseMigration]:
 async def up(self, sqlProvider: "BaseSQLProvider") -> None:
     await sqlProvider.execute("""
         CREATE TABLE IF NOT EXISTS new_table (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            preference_key TEXT NOT NULL,
             name TEXT NOT NULL,
-            created_at TIMESTAMP
+            created_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (user_id, preference_key)
         )
     """)
 
@@ -409,24 +411,26 @@ async def up(self, sqlProvider: "BaseSQLProvider") -> None:
     # Create new table with desired schema
     await sqlProvider.execute("""
         CREATE TABLE IF NOT EXISTS table_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
             new_column TEXT,
-            created_at TIMESTAMP,
-            updated_at TIMESTAMP
+            created_at TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (chat_id, user_id)
         )
     """)
-    
+
     # Copy data from old table
     await sqlProvider.execute("""
-        INSERT INTO table_new (id, name, created_at, updated_at)
-        SELECT id, name, created_at, updated_at
+        INSERT INTO table_new (chat_id, user_id, name, created_at, updated_at)
+        SELECT chat_id, user_id, name, created_at, updated_at
         FROM table_old
     """)
-    
+
     # Drop old table
     await sqlProvider.execute("DROP TABLE IF EXISTS table_old")
-    
+
     # Rename new table
     await sqlProvider.execute("ALTER TABLE table_new RENAME TO table")
 
@@ -434,19 +438,21 @@ async def down(self, sqlProvider: "BaseSQLProvider") -> None:
     # Reverse the process
     await sqlProvider.execute("""
         CREATE TABLE IF NOT EXISTS table_old (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            created_at TIMESTAMP,
-            updated_at TIMESTAMP
+            created_at TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (chat_id, user_id)
         )
     """)
-    
+
     await sqlProvider.execute("""
-        INSERT INTO table_old (id, name, created_at, updated_at)
-        SELECT id, name, created_at, updated_at
+        INSERT INTO table_old (chat_id, user_id, name, created_at, updated_at)
+        SELECT chat_id, user_id, name, created_at, updated_at
         FROM table
     """)
-    
+
     await sqlProvider.execute("DROP TABLE IF EXISTS table")
     await sqlProvider.execute("ALTER TABLE table_old RENAME TO table")
 ```

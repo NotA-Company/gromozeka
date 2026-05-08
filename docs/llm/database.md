@@ -76,25 +76,6 @@ self.db.chatSettings.unsetChatSetting(chatId=chatId, key=ChatSettingsKey.CHAT_MO
 
 **IMPORTANT:** `getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]` where each value is a `(value, updated_by)` tuple. Always index `[0]` to get the value. The `updated_by` field is the user ID who last changed the setting (0 for system changes).
 
-```python
-# Get settings ( from cache, falls back to DB)
-chatSettings: ChatSettingsDict = self.db.chatSettings.getChatSettings(chatId)
-
-# Access individual setting value (index [0] for the value)
-value = chatSettings.get('chat-model', ('gpt-4', 0))[0]
-
-# Set a setting (updatedBy is REQUIRED keyword-only arg)
-self.db.chatSettings.setChatSetting(
-    chatId=chatId,
-    key=ChatSettingsKey.CHAT_MODEL,
-    value=ChatSettingsValue("gpt-4"),
-    updatedBy=messageSender.id,
-)
-
-# Remove a setting (revert to default)
-self.db.chatSettings.unsetChatSetting(chatId=chatId, key=ChatSettingsKey.CHAT_MODEL)
-```
-
 ---
 
 ## 3. Multi-Source Database Routing
@@ -190,6 +171,115 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
 - [ ] Updated `internal/database/models.py` if new types needed
 - [ ] Updated documentation files
 - [ ] Tests pass: `make format lint && make test`
+
+---
+
+## 4. Adding a Database Migration
+
+**File location:** [`internal/database/migrations/versions/`](../../internal/database/migrations/versions/)
+
+**Quick start:** Use the migration generator script:
+
+```bash
+# Create a new migration (auto-detects next version number)
+./venv/bin/python3 internal/database/migrations/create_migration.py "add user preferences table"
+```
+
+**Manual creation steps:**
+
+1. **Find the next version number:**
+   ```bash
+   ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1
+   ```
+   If the last is `migration_015_*.py`, the next is `016`.
+
+2. **Create the migration file** with the pattern `migration_{version:03d}_{description}.py`
+
+3. **Implement the migration class:**
+
+```python
+"""Add user preferences table."""
+
+from typing import Type
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
+from ..base import BaseMigration
+
+
+class Migration016AddUserPreferences(BaseMigration):
+    """Add user preferences table.
+
+    Attributes:
+        version: Migration version number (16).
+        description: Human-readable description.
+    """
+
+    version: int = 16
+    description: str = "Add user preferences table"
+
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        """Create user_preferences table, dood.
+
+        Args:
+            sqlProvider: SQL provider abstraction; do NOT use raw sqlite3.
+
+        Returns:
+            None
+        """
+        await sqlProvider.batchExecute(
+            [
+                ParametrizedQuery("""
+                    CREATE TABLE IF NOT EXISTS user_preferences (
+                        user_id INTEGER NOT NULL,
+                        preference_key TEXT NOT NULL,
+                        preference_value TEXT,
+                        created_at TIMESTAMP NOT NULL,
+                        updated_at TIMESTAMP NOT NULL,
+                        PRIMARY KEY (user_id, preference_key)
+                    )
+                """),
+            ]
+        )
+
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        """Drop user_preferences table, dood.
+
+        Args:
+            sqlProvider: SQL provider abstraction.
+
+        Returns:
+            None
+        """
+        await sqlProvider.execute("DROP TABLE IF EXISTS user_preferences")
+
+
+def getMigration() -> Type[BaseMigration]:
+    """Return the migration class for auto-discovery, dood.
+
+    Returns:
+        Type[BaseMigration]: The migration class for this module.
+    """
+    return Migration016AddUserPreferences
+```
+
+**Migration pattern requirements:**
+
+1. **Use `async def up(self, sqlProvider: BaseSQLProvider)`** — not sync, not cursor-based
+2. **No `AUTOINCREMENT`** — use composite natural keys or app-generated IDs (see AGENTS.md)
+3. **No `DEFAULT CURRENT_TIMESTAMP`** — application sets timestamps explicitly
+4. **Use `ParametrizedQuery`** for DDL and `batchExecute` for multiple statements
+5. **Provide `getMigration()` function** for auto-discovery
+6. **Always implement both `up()` and `down()`** for rollback support
+
+**Primary key strategies (ordered by preference):**
+
+1. **Composite natural key** — `PRIMARY KEY (user_id, preference_key)`
+2. **Single natural key** — `file_unique_id TEXT PRIMARY KEY`
+3. **App-generated IDs** — `id TEXT PRIMARY KEY NOT NULL` (generate UUID/ULID in Python)
+
+**See also:**
+- [`internal/database/migrations/README.md`](../../internal/database/migrations/README.md) — Full migration guide with patterns
+- [`docs/sql-portability-guide.md`](../../sql-portability-guide.md) — SQL portability rules
 
 ---
 

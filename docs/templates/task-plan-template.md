@@ -182,11 +182,41 @@
 - [ ] Deployment procedures have been tested (if applicable)
 - [ ] Rollback procedures are documented (if applicable)
 
+### Gromozeka Project Convention Requirements
+- [ ] Python 3.12 only (pyright/black target = py312)
+- [ ] All code uses camelCase for variables/args/fields/functions, PascalCase for classes, UPPER_CASE for constants
+- [ ] Run `make format lint` before and after all edits
+- [ ] Run `make test` to verify all tests pass (or document failures with justification)
+- [ ] Python invoked via `./venv/bin/python3` (not `python` or `python3`)
+- [ ] Docstrings with `Args:` and `Returns:` on all modules/classes/methods/functions
+- [ ] Type hints present on all function/method parameters and returns
+- [ ] No pydantic usage - using raw dicts + TypedDict + hand-rolled typed classes
+- [ ] All imports at top of file (inside-function imports only for genuine cycles)
+
+### Gromozeka Testing Standards
+- [ ] Tests collocated in `lib/` and `internal/` (not just `tests/`)
+- [ ] Shared fixtures from `tests/conftest.py` reused where appropriate
+- [ ] Run via `make test` (full suite), `make test-failed`, or `./venv/bin/pytest path::Class::test -v`
+- [ ] Async tests use `async def test_…` without decorator (asyncio_mode = "auto")
+- [ ] Singletons reset with `_instance = None` in fixtures as needed
+
+### Database Schema Changes (conditional - only if DB changes made)
+- [ ] Migration uses next sequential number from `ls internal/database/migrations/versions/`
+- [ ] SQL is portable via provider abstraction (BaseSQLProvider)
+- [ ] No AUTOINCREMENT - use composite keys or app-generated UUIDs
+- [ ] No `DEFAULT CURRENT_TIMESTAMP` - set timestamps in application code
+- [ ] Updated `docs/database-schema.md` and `docs/database-schema-llm.md` as needed
+
+### Handler Integration (conditional - only if handler changes made)
+- [ ] LLMMessageHandler ordering verified as last entry in handler list
+- [ ] Handler registration order checked in `internal/bot/common/handlers/manager.py`
+
 ### Administrative
 - [ ] Task status has been updated in project management system
 - [ ] Time tracking has been completed and recorded
 - [ ] Lessons learned have been documented
 - [ ] Next steps or follow-up tasks have been identified
+- [ ] Documentation updated via `update-project-docs` skill if behavior/schema/config/handlers/services/libraries changed
 
 ---
 

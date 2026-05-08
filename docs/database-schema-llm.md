@@ -41,8 +41,8 @@ CREATE TABLE chat_messages (
 )
 ```
 
-**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:67)
-**Relationships**: References [`chat_users`](#chat_users), [`media_attachments`](#media_attachments), [`media_group`](#media_group)
+**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:108)
+**Relationships**: References [`chat_users`](#chat_users), [`media_attachments`](#media_attachments), [`media_groups`](#media_groups)
 
 **Note**: The `media_group_id` column links messages that are part of a media group (album of photos/videos sent together).
 
@@ -67,7 +67,7 @@ CREATE TABLE chat_users (
 )
 ```
 
-**TypedDict**: [`ChatUserDict`](../internal/database/models.py:104)
+**TypedDict**: [`ChatUserDict`](../internal/database/models.py:155)
 
 ---
 
@@ -87,7 +87,7 @@ CREATE TABLE chat_info (
 )
 ```
 
-**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:118)
+**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:181)
 
 ---
 
@@ -109,7 +109,7 @@ CREATE TABLE chat_topics (
 )
 ```
 
-**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:128)
+**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:200)
 
 ---
 
@@ -175,7 +175,7 @@ CREATE TABLE media_attachments (
 )
 ```
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:140)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:221)
 
 ---
 
@@ -216,7 +216,7 @@ CREATE TABLE spam_messages (
 )
 ```
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:165)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:269)
 
 ---
 
@@ -335,7 +335,7 @@ CREATE TABLE chat_summarization_cache (
 )
 ```
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:176)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:292)
 **Indexes**: `chat_summarization_cache_ctfl_index`
 
 ---
@@ -356,24 +356,6 @@ CREATE TABLE cache_storage (
 ```
 
 **TypedDict**: [`CacheStorageDict`](../internal/database/models.py:199)
-
----
-
-### Dynamic Cache Tables
-**Purpose**: API response caching
-**Pattern**: `cache_{type}` where type is from [`CacheType`](#cachetype)
-
-```sql
-CREATE TABLE cache_{type} (
-    key TEXT PRIMARY KEY,
-    data TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL
-)
-```
-
-**Tables**: `cache_weather`, `cache_geocoding`, `cache_yandex_search`, `cache_geocode_maps_search`, `cache_geocode_maps_reverse`, `cache_geocode_maps_lookup`
-**TypedDict**: [`CacheDict`](../internal/database/models.py:190)
 
 ---
 
@@ -494,6 +476,8 @@ BOT_SUMMARY = "bot-summary"
 BOT_RESENDED = "bot-resended"
 BOT_SPAM_NOTIFICATION = "bot-spam-notification"
 USER_SPAM = "user-spam"
+DELETED = "deleted"
+USER_CONFIG_ANSWER = "user-config-answer"
 ```
 
 ---
@@ -532,6 +516,8 @@ YANDEX_SEARCH = "yandex_search"
 GM_SEARCH = "geocode_maps_search"
 GM_REVERSE = "geocode_maps_reverse"
 GM_LOOKUP = "geocode_maps_lookup"
+URL_CONTENT = "url_content"
+URL_CONTENT_CONDENSED = "url_content_condensed"
 ```
 
 ---
@@ -1090,7 +1076,7 @@ if cached:
 | `DelayedTaskDict` | `delayed_tasks` | None |
 | `SpamMessageDict` | `spam_messages` | None |
 | `ChatSummarizationCacheDict` | `chat_summarization_cache` | None |
-| `CacheDict` | `cache_{type}` | None |
+| `CacheDict` | `cache` | None |
 | `CacheStorageDict` | `cache_storage` | None |
 
 ---

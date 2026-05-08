@@ -147,7 +147,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 5 | [`migration_005_add_yandex_cache.py`](../internal/database/migrations/versions/migration_005_add_yandex_cache.py:1) | Adds Yandex Search cache table |
 | 6 | [`migration_006_new_cache_tables.py`](../internal/database/migrations/versions/migration_006_new_cache_tables.py:1) | Adds Geocode Maps cache tables |
 | 7 | [`migration_007_messages_metadata.py`](../internal/database/migrations/versions/migration_007_messages_metadata.py:1) | Adds `markup` and `metadata` columns to [`chat_messages`](#chat_messages) |
-| 8 | [`migration_008_add_media_group_support.py`](../internal/database/migrations/versions/migration_008_add_media_group_support.py:1) | Adds `media_group_id` column to [`chat_messages`](#chat_messages) and creates [`media_group`](#media_group) table |
+| 8 | [`migration_008_add_media_group_support.py`](../internal/database/migrations/versions/migration_008_add_media_group_support.py:1) | Adds `media_group_id` column to [`chat_messages`](#chat_messages) and creates [`media_groups`](#media_groups) table |
 | 9 | [`migration_009_remove_is_spammer_from_chat_users.py`](../internal/database/migrations/versions/migration_009_remove_is_spammer_from_chat_users.py:1) | Removes `is_spammer` column from [`chat_users`](#chat_users) |
 | 10 | [`migration_010_add_updated_by_to_chat_settings.py`](../internal/database/migrations/versions/migration_010_add_updated_by_to_chat_settings.py:1) | Adds `updated_by` column to [`chat_settings`](#chat_settings) |
 | 11 | [`migration_011_add_confidence_to_spam_messages.py`](../internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py:1) | Adds `confidence` column to [`spam_messages`](#spam_messages) and [`ham_messages`](#ham_messages) |
@@ -168,21 +168,22 @@ To create a new migration:
 Example:
 ```python
 from typing import Type
-import sqlite3
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 class Migration008AddNewColumn(BaseMigration):
     version = 8
     description = "Add new_column to some_table"
-    
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute("""
+
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        await sqlProvider.execute("""
             ALTER TABLE some_table
             ADD COLUMN new_column TEXT
         """)
-    
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute("""
+
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        await sqlProvider.execute("""
             ALTER TABLE some_table
             DROP COLUMN new_column
         """)
@@ -223,7 +224,7 @@ Stores all chat messages with detailed metadata.
 **Relationships**:
 - References [`chat_users`](#chat_users) via `(chat_id, user_id)`
 - References [`media_attachments`](#media_attachments) via `media_id`
-- References [`media_group`](#media_group) via `media_group_id`
+- References [`media_groups`](#media_groups) via `media_group_id`
 - Self-references via `reply_id` and `root_message_id`
 
 **TypedDict**: [`ChatMessageDict`](../internal/database/models.py:67)
@@ -407,7 +408,7 @@ Aggregated daily statistics per user per chat.
 
 ## Media Tables
 
-### media_group
+### media_groups
 
 Stores media group relationships for messages with multiple media items sent together.
 
@@ -887,19 +888,18 @@ The database uses a repository pattern with 12 specialized repositories, each ha
 
 | Repository | File | Purpose |
 |---|---|---|
-| `chatMessages` | [`chat_messages.py`](../internal/database/repositories/chat_messages.py) | Chat message operations |
-| `chatUsers` | [`chat_users.py`](../internal/database/repositories/chat_users.py) | User information and statistics |
-| `chatInfo` | [`chat_info.py`](../internal/database/repositories/chat_info.py) | Chat metadata |
-| `chatTopics` | [`chat_topics.py`](../internal/database/repositories/chat_topics.py) | Forum topic management |
-| `chatSettings` | [`chat_settings.py`](../internal/database/repositories/chat_settings.py) | Per-chat configuration |
-| `chatStats` | [`chat_stats.py`](../internal/database/repositories/chat_stats.py) | Chat statistics |
-| `mediaAttachments` | [`media_attachments.py`](../internal/database/repositories/media_attachments.py) | Media attachment management |
-| `userData` | [`user_data.py`](../internal/database/repositories/user_data.py) | User key-value data |
-| `spamMessages` | [`spam_messages.py`](../internal/database/repositories/spam_messages.py) | Spam detection data |
-| `bayesTokens` | [`bayes_tokens.py`](../internal/database/repositories/bayes_tokens.py) | Bayesian spam filtering tokens |
 | `cache` | [`cache.py`](../internal/database/repositories/cache.py) | Unified cache operations |
+| `chatInfo` | [`chat_info.py`](../internal/database/repositories/chat_info.py) | Chat metadata |
+| `chatMessages` | [`chat_messages.py`](../internal/database/repositories/chat_messages.py) | Chat message operations |
+| `chatSettings` | [`chat_settings.py`](../internal/database/repositories/chat_settings.py) | Per-chat configuration |
+| `chatSummarization` | [`chat_summarization.py`](../internal/database/repositories/chat_summarization.py) | Chat summarization |
+| `chatUsers` | [`chat_users.py`](../internal/database/repositories/chat_users.py) | User information and statistics |
+| `common` | [`common.py`](../internal/database/repositories/common.py) | Common database operations |
 | `delayedTasks` | [`delayed_tasks.py`](../internal/database/repositories/delayed_tasks.py) | Task scheduling |
 | `divinations` | [`divinations.py`](../internal/database/repositories/divinations.py) | Tarot/runes readings and layout discovery |
+| `mediaAttachments` | [`media_attachments.py`](../internal/database/repositories/media_attachments.py) | Media attachment management |
+| `spam` | [`spam.py`](../internal/database/repositories/spam.py) | Spam detection and ham classification |
+| `userData` | [`user_data.py`](../internal/database/repositories/user_data.py) | User key-value data |
 
 ### Accessing Repositories
 

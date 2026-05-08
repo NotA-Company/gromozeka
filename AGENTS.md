@@ -21,7 +21,7 @@ captures only what an agent would likely get wrong without help.
 ```bash
 make install            # creates ./venv and installs requirements.txt
 make format lint        # ALWAYS before AND after edits
-make test               # full suite, wrapped in `timeout 5m`; pass V=1 for -v
+make test               # MANDATORY after any change (wrapped in `timeout 5m`; pass V=1 for -v)
 make test-failed        # re-run pytest --last-failed
 ./venv/bin/pytest path/to/test_x.py::TestClass::testFn -v   # single test
 ```
@@ -57,6 +57,9 @@ black/isort manually so those subpackages get formatted too.
 
 `pyright` is `typeCheckingMode = "basic"` and **excludes `ext/`**. The `venv`
 must exist at `./venv` for pyright to resolve imports.
+
+**Final verification**: Always run `make test` after any changes to ensure code examples work and
+nothing is broken. This is mandatory - see docs/llm/index.md §3.5.
 
 ## Tests
 
@@ -180,6 +183,11 @@ TOML, hierarchical, merged recursively. Loaded by
 - Singleton init uses a `hasattr(self, 'initialized')` guard — don't
   re-implement that pattern, just call `getInstance()`.
 
+## Documentation Maintenance
+
+See [`docs/documentation-review-process.md`](docs/documentation-review-process.md) for the systematic
+process of reviewing and maintaining documentation.
+
 ## Existing instruction sources (do not duplicate, prefer linking)
 
 - [`docs/llm/index.md`](docs/llm/index.md) — canonical agent guide and index
@@ -188,4 +196,6 @@ TOML, hierarchical, merged recursively. Loaded by
 - [`docs/database-schema.md`](docs/database-schema.md) and
   [`docs/database-schema-llm.md`](docs/database-schema-llm.md) — keep both in
   sync when changing schema
+- [`.agents/skills/update-project-docs/SKILL.md`](.agents/skills/update-project-docs/SKILL.md) —
+  Post-change documentation workflow with decision matrix (load after behavior/schema/config changes)
 - [`README.md`](README.md), [`README_BOT.md`](README_BOT.md) — user docs

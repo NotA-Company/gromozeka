@@ -278,17 +278,6 @@ textType = provider.getTextType()
 # Returns: 'TEXT' for PostgreSQL
 ```
 
-#### `getAutoIncrementType()`
-Get the auto-increment column type for the provider.
-
-```python
-# Schema migrations
-autoIncrementType = provider.getAutoIncrementType()
-# Returns: 'INTEGER PRIMARY KEY AUTOINCREMENT' for SQLite
-# Returns: 'INT AUTO_INCREMENT' for MySQL
-# Returns: 'SERIAL' for PostgreSQL
-```
-
 ### The `ExcludedValue` Class
 
 The `ExcludedValue` class is a special marker that allows provider-specific translation of upsert update expressions:

@@ -8,6 +8,7 @@ not provided, and ``created_at`` is populated with a recent UTC timestamp.
 
 import datetime
 import json
+from collections.abc import Sequence
 from typing import Any, AsyncGenerator, Dict
 
 import pytest
@@ -459,3 +460,44 @@ async def test_layoutCacheConsistency(divinationsDb: Database) -> None:
     negative = await divinationsDb.divinations.getLayout(systemId="tarot", layoutName=canonical_id + "_nonexistent")
     assert negative is not None
     assert divinationsDb.divinations.isNegativeCacheEntry(negative) is True
+
+
+async def test_insertReadingWithDrawsAsSequence(divinationsDb: Database) -> None:
+    """Verify Sequence[dict] drawsJson is serialized to JSON, dood.
+
+    The insertReading() method accepts drawsJson as either a pre-serialized
+    JSON string or a Sequence[dict] that should be explicitly serialized.
+    This test verifies the Sequence[dict] path works correctly.
+
+    Args:
+        divinationsDb: In-memory Database fixture with migrations applied.
+
+    Returns:
+        None
+    """
+    rawDraws: Sequence[dict] = [
+        {"symbolId": "major_00_fool", "reversed": False, "position": "Past", "positionIndex": 0},
+        {"symbolId": "major_01_magician", "reversed": True, "position": "Present", "positionIndex": 1},
+    ]
+
+    # Insert with raw Sequence[dict]
+    payload = _buildSamplePayload(chatId=300, messageId="seq-msg")
+    payload["drawsJson"] = rawDraws  # Pass raw Sequence, not JSON string
+
+    ok: bool = await divinationsDb.divinations.insertReading(**payload)
+    assert ok is True
+
+    # Verify it was serialized correctly in the database
+    sqlProvider = await divinationsDb.manager.getProvider(readonly=True)
+    row = await sqlProvider.executeFetchOne(
+        "SELECT draws_json FROM divinations WHERE chat_id = :chatId AND message_id = :messageId",
+        {"chatId": 300, "messageId": "seq-msg"},
+    )
+    assert row is not None
+
+    # Deserialize and verify structure matches original rawDraws
+    parsed = json.loads(row["draws_json"])
+    assert parsed == rawDraws
+
+    # Verify it's actually a JSON string in the database (not a list)
+    assert isinstance(row["draws_json"], str)
