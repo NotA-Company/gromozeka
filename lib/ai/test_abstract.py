@@ -6,8 +6,8 @@ Covers:
   NotImplementedError from the default _generateStructured implementation.
 - generateStructured honours the contextSize * 2 budget guard.
 - getInfo() includes support_structured_output with the configured value.
-- generateStructuredWithFallBack invokes fallback on error status.
-- generateStructuredWithFallBack sets isFallback=True on the fallback result.
+- generateStructured with fallbackModels invokes fallback on error status.
+- generateStructured with fallbackModels sets isFallback=True on the fallback result.
 """
 
 from collections.abc import Sequence
@@ -80,7 +80,7 @@ class _NoStructuredModel(AbstractModel):
         """
         return ModelRunResult(rawResult=None, status=ModelResultStatus.FINAL)
 
-    async def generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
+    async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
         """Return a placeholder image result.
 
         Args:
@@ -249,76 +249,154 @@ def testGetInfoIncludesSupportStructuredOutputTrue() -> None:
     assert info["support_structured_output"] is True
 
 
-# ============================================================================
-# Tests: generateStructuredWithFallBack
-# ============================================================================
+# Tests: _runWithFallback helper
 
 
-async def testGenerateStructuredWithFallBackUsesMainOnSuccess() -> None:
-    """Verify generateStructuredWithFallBack returns primary result on success.
+async def testRunWithFallbackEmptyListRaisesValueError() -> None:
+    """Verify _runWithFallback raises ValueError when models list is empty.
 
     Returns:
         None
     """
     model = _makeStructuredModel()
-    fallback = _makeStructuredModel()
 
-    expectedResult = ModelStructuredResult(rawResult=None, status=ModelResultStatus.FINAL, data={"ok": True})
-    model.generateStructured = AsyncMock(return_value=expectedResult)  # type: ignore[method-assign]
-    fallback.generateStructured = AsyncMock()  # type: ignore[method-assign]
+    with pytest.raises(ValueError, match="models list cannot be empty"):
+        await model._runWithFallback("generateText", models=[], messages=[])
 
-    schema: Dict[str, Any] = {"type": "object"}
+
+async def testRunWithFallbackDuplicateModelInvokedTwice() -> None:
+    """Verify _runWithFallback invokes the same model twice when it appears twice in the list.
+
+    Returns:
+        None
+    """
+    model = _makeStructuredModel()
+    errorResult = ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR)
+    model.generateText = AsyncMock(return_value=errorResult)  # type: ignore[method-assign]
+
     messages = [ModelMessage(role="user", content="hi")]
 
-    result = await model.generateStructuredWithFallBack(messages, fallback, schema)
+    await model._runWithFallback("generateText", models=[model, model], messages=messages)
 
-    assert result is expectedResult
+    assert model.generateText.call_count == 2
+
+
+# ============================================================================
+# Tests: generateText with fallbackModels parameter
+# ============================================================================
+
+
+async def testGenerateTextWithFallbackModelsUsesPrimaryOnSuccess() -> None:
+    """Verify generateText with fallbackModels uses primary on success.
+
+    Returns:
+        None
+    """
+    primary = _makeStructuredModel()
+    fallback = _makeStructuredModel()
+
+    messages = [ModelMessage(role="user", content="hi")]
+
+    result = await primary.generateText(messages, fallbackModels=[fallback])
+
+    assert result.status is ModelResultStatus.FINAL
+    assert result.isFallback is False
+
+
+# ============================================================================
+# Tests: generateImage with fallbackModels parameter
+# ============================================================================
+
+
+async def testGenerateImageWithFallbackModelsUsesPrimaryOnSuccess() -> None:
+    """Verify generateImage with fallbackModels uses primary on success.
+
+    Returns:
+        None
+    """
+    primary = _makeStructuredModel()
+    fallback = _makeStructuredModel()
+
+    messages = [ModelMessage(role="user", content="draw a cat")]
+
+    result = await primary.generateImage(messages, fallbackModels=[fallback])
+
+    assert result.status is ModelResultStatus.FINAL
+    assert result.isFallback is False
+
+
+# ============================================================================
+# Tests: generateStructured with fallbackModels parameter
+# ============================================================================
+
+
+async def testGenerateStructuredWithFallbackModelsUsesPrimaryOnSuccess() -> None:
+    """Verify generateStructured with fallbackModels uses primary on success.
+
+    Returns:
+        None
+    """
+    primary = _makeStructuredModel()
+    fallback = _makeStructuredModel()
+
+    primaryResult = ModelStructuredResult(rawResult=None, status=ModelResultStatus.FINAL, data={"primary": True})
+    primary.generateStructured = AsyncMock(return_value=primaryResult)  # type: ignore[method-assign]
+    fallback.generateStructured = AsyncMock()  # type: ignore[method-assign]
+
+    schema = {"type": "object"}
+    messages = [ModelMessage(role="user", content="hi")]
+
+    result = await primary.generateStructured(messages, schema, fallbackModels=[fallback])
+
+    assert result is primaryResult
     assert result.isFallback is False
     fallback.generateStructured.assert_not_called()
 
 
-async def testGenerateStructuredWithFallBackTriggersOnErrorStatus() -> None:
-    """Verify generateStructuredWithFallBack falls back on ERROR status.
+async def testGenerateStructuredWithFallbackModelsFallsBackOnErrorStatus() -> None:
+    """Verify generateStructured with fallbackModels falls back on ERROR status.
 
     Returns:
         None
     """
-    model = _makeStructuredModel()
+    primary = _makeStructuredModel()
     fallback = _makeStructuredModel()
 
     errorResult = ModelStructuredResult(rawResult=None, status=ModelResultStatus.ERROR)
     fallbackResult = ModelStructuredResult(rawResult=None, status=ModelResultStatus.FINAL, data={"fallback": True})
 
-    model.generateStructured = AsyncMock(return_value=errorResult)  # type: ignore[method-assign]
-    fallback.generateStructured = AsyncMock(return_value=fallbackResult)  # type: ignore[method-assign]
+    primary._generateStructured = AsyncMock(return_value=errorResult)  # type: ignore[method-assign]
+    fallback._generateStructured = AsyncMock(return_value=fallbackResult)  # type: ignore[method-assign]
 
-    schema: Dict[str, Any] = {"type": "object"}
+    schema = {"type": "object"}
     messages = [ModelMessage(role="user", content="hi")]
 
-    result = await model.generateStructuredWithFallBack(messages, fallback, schema)
+    result = await primary.generateStructured(messages, schema, fallbackModels=[fallback])
 
-    assert result is fallbackResult
+    assert result.status is ModelResultStatus.FINAL
     assert result.isFallback is True
+    assert result.data == {"fallback": True}
 
 
-async def testGenerateStructuredWithFallBackSetsFallbackFlag() -> None:
-    """Verify generateStructuredWithFallBack sets isFallback=True on fallback result.
+async def testGenerateStructuredWithFallbackModelsReturnsLastOnTotalFailure() -> None:
+    """Verify generateStructured with fallbackModels returns last result when all models fail.
 
     Returns:
         None
     """
-    model = _makeStructuredModel()
+    primary = _makeStructuredModel()
     fallback = _makeStructuredModel()
 
-    # Primary raises an exception
-    model.generateStructured = AsyncMock(side_effect=RuntimeError("api down"))  # type: ignore[method-assign]
-    fallbackResult = ModelStructuredResult(rawResult=None, status=ModelResultStatus.FINAL, data={"y": 2})
-    fallback.generateStructured = AsyncMock(return_value=fallbackResult)  # type: ignore[method-assign]
+    primaryError = ModelStructuredResult(rawResult=None, status=ModelResultStatus.ERROR)
+    fallbackError = ModelStructuredResult(rawResult=None, status=ModelResultStatus.ERROR)
 
-    schema: Dict[str, Any] = {"type": "object"}
+    primary._generateStructured = AsyncMock(return_value=primaryError)  # type: ignore[method-assign]
+    fallback._generateStructured = AsyncMock(return_value=fallbackError)  # type: ignore[method-assign]
+
+    schema = {"type": "object"}
     messages = [ModelMessage(role="user", content="hi")]
 
-    result = await model.generateStructuredWithFallBack(messages, fallback, schema)
+    result = await primary.generateStructured(messages, schema, fallbackModels=[fallback])
 
+    assert result.status is ModelResultStatus.ERROR
     assert result.isFallback is True
-    assert result.data == {"y": 2}

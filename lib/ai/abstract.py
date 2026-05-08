@@ -26,7 +26,14 @@ from typing import Any, Dict, List, Optional
 
 from lib import utils
 
-from .models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
+from .models import (
+    ERROR_STATUSES,
+    LLMAbstractTool,
+    ModelMessage,
+    ModelResultStatus,
+    ModelRunResult,
+    ModelStructuredResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,18 +133,28 @@ class AbstractModel(ABC):
         raise NotImplementedError
 
     async def generateText(
-        self, messages: Sequence[ModelMessage], tools: Optional[Sequence[LLMAbstractTool]] = None
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Optional[Sequence[LLMAbstractTool]] = None,
+        *,
+        fallbackModels: Optional[List["AbstractModel"]] = None,
     ) -> ModelRunResult:
-        """Generate text using the model with optional tools.
+        """Generate text using the model with optional tools and fallback models.
 
         This is the public method for text generation. It performs token count
         estimation, context size validation, calls the internal _generateText
-        method, and optionally logs the request/response in JSON format.
+        method, and optionally logs the request/response in JSON format. When
+        fallback models are provided, it delegates to _runWithFallback for
+        automatic fallback logic.
 
         Args:
             messages: Sequence of message objects containing role and content.
             tools: Optional sequence of tools available to the model for function
                 calling.
+            fallbackModels: Optional list of alternative models to try if the
+                primary model fails. The first model in the list is the primary,
+                subsequent models are fallbacks. When provided, this method
+                delegates to _runWithFallback for automatic fallback logic.
 
         Returns:
             ModelRunResult containing the generated text, status, and metadata.
@@ -145,8 +162,19 @@ class AbstractModel(ABC):
 
         Raises:
             Exception: If the model returns an error status (UNSPECIFIED,
-                CONTENT_FILTER, UNKNOWN, or ERROR).
+                CONTENT_FILTER, UNKNOWN, or ERROR) and no fallback models are provided,
+                or if all models (primary + fallbacks) fail.
         """
+        if fallbackModels:
+            # Use fallback mechanism when fallback models are provided
+            return await self._runWithFallback(
+                primaryMethod="generateText",
+                models=[self, *fallbackModels],
+                messages=messages,
+                tools=tools,
+            )
+
+        # Original logic when no fallbacks
         tokensCount = self.getEstimateTokensCount(messages)
         logger.debug(
             f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
@@ -170,11 +198,12 @@ class AbstractModel(ABC):
         return ret
 
     @abstractmethod
-    async def generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
-        """Generate an image using the model.
+    async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
+        """Generate an image using the model implementation.
 
-        This method must be implemented by concrete model classes that support
-        image generation.
+        This is the internal method that must be implemented by concrete model
+        classes that support image generation. It handles the actual API call
+        to the LLM provider.
 
         Args:
             messages: Sequence of message objects containing the image generation
@@ -190,99 +219,144 @@ class AbstractModel(ABC):
         """
         raise NotImplementedError
 
-    async def generateTextWithFallBack(
-        self,
-        messages: Sequence[ModelMessage],
-        fallbackModel: "AbstractModel",
-        tools: Optional[Sequence[LLMAbstractTool]] = None,
+    async def generateImage(
+        self, messages: Sequence[ModelMessage], *, fallbackModels: Optional[List["AbstractModel"]] = None
     ) -> ModelRunResult:
-        """Generate text with automatic fallback to another model.
+        """Generate an image using the model with optional fallback models.
 
-        This method attempts to generate text using the current model. If the
-        generation fails or returns an error status, it automatically retries
-        using the fallback model.
-
-        Args:
-            messages: Sequence of message objects containing role and content.
-            fallbackModel: Alternative model to use if the primary model fails.
-            tools: Optional sequence of tools available to the model for function
-                calling.
-
-        Returns:
-            ModelRunResult containing the generated text, status, and metadata.
-            The result will have fallback flag set to True if the fallback model
-            was used.
-
-        Raises:
-            Exception: If both the primary and fallback models fail.
-        """
-        try:
-            ret = await self.generateText(messages, tools)
-            if ret.status in [
-                ModelResultStatus.UNSPECIFIED,
-                ModelResultStatus.CONTENT_FILTER,
-                ModelResultStatus.UNKNOWN,
-                ModelResultStatus.ERROR,
-            ]:
-                logger.debug(f"Model {self.modelId} returned {ret}")
-                error_msg = f"Model {self.modelId} returned status {ret.status.name}"
-                if ret.error:
-                    error_msg += f": {ret.error}"
-                    # Preserve the underlying exception as cause
-                    raise Exception(error_msg) from ret.error
-                raise Exception(error_msg)
-            return ret
-        except Exception as e:
-            logger.error(f"Error running model {self.modelId}: {e}")
-            ret = await fallbackModel.generateText(messages, tools)
-            ret.setFallback(True)
-            return ret
-
-    async def generateImageWithFallBack(
-        self,
-        messages: Sequence[ModelMessage],
-        fallbackModel: "AbstractModel",
-    ) -> ModelRunResult:
-        """Generate an image with automatic fallback to another model.
-
-        This method attempts to generate an image using the current model. If the
-        generation fails or returns an error status, it automatically retries
-        using the fallback model.
+        This is the public method for image generation. It supports automatic
+        fallback to alternative models when the primary model fails. No token
+        count estimation is performed for image generation (unlike text
+        generation).
 
         Args:
             messages: Sequence of message objects containing the image generation
                 prompt and context.
-            fallbackModel: Alternative model to use if the primary model fails.
+            fallbackModels: Optional list of alternative models to try if the
+                primary model fails. The first model in the list is the primary,
+                subsequent models are fallbacks. When provided, this method
+                delegates to _runWithFallback for automatic fallback logic.
 
         Returns:
             ModelRunResult containing the generated image URL or data, status,
-            and metadata. The result will have fallback flag set to True if the
-            fallback model was used.
+            and metadata.
 
         Raises:
-            Exception: If both the primary and fallback models fail.
+            Exception: If the model returns an error status and no fallback models
+                are provided, or if all models (primary + fallbacks) fail.
+
+        Note:
+            Unlike generateText, this method does NOT perform token count
+            estimation or context size validation before calling the provider.
+            This preserves existing behavior for image generation.
         """
-        try:
-            ret = await self.generateImage(messages)
-            if ret.status in [
-                ModelResultStatus.UNSPECIFIED,
-                ModelResultStatus.CONTENT_FILTER,
-                ModelResultStatus.UNKNOWN,
-                ModelResultStatus.ERROR,
-            ]:
-                logger.debug(f"Model {self.modelId} returned {ret}")
-                error_msg = f"Model {self.modelId} returned status {ret.status.name}"
-                if ret.error:
-                    error_msg += f": {ret.error}"
-                    # Preserve the underlying exception as cause
-                    raise Exception(error_msg) from ret.error
-                raise Exception(error_msg)
-            return ret
-        except Exception as e:
-            logger.error(f"Error running model {self.modelId}: {e}")
-            ret = await fallbackModel.generateImage(messages)
-            ret.setFallback(True)
-            return ret
+        if fallbackModels:
+            return await self._runWithFallback(
+                primaryMethod="generateImage",
+                models=[self, *fallbackModels],
+                messages=messages,
+            )
+
+        # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
+        ret = await self._generateImage(messages=messages)
+
+        if self.enableJSONLog:
+            self.printJSONLog(messages, ret)
+        return ret
+
+    async def _runWithFallback(self, primaryMethod: str, models: List["AbstractModel"], **kwargs: Any) -> Any:
+        """Run a generation method with automatic fallback through a list of models.
+
+        This helper attempts to execute the specified method on each model in
+        sequence until one succeeds (returns a non-error status) or all models fail.
+        The first model in the list is treated as the primary; subsequent models
+        are fallbacks.
+
+        Args:
+            primaryMethod: The name of the generation method to call (e.g., "generateText",
+                "generateImage", "generateStructured").
+            models: List of models to try in order. Must contain at least one model.
+                The first model is the primary, subsequent models are fallbacks.
+            **kwargs: Keyword arguments to pass to the generation method.
+
+        Returns:
+            ModelRunResult or ModelStructuredResult from the first model that returns a
+            non-error status, or the result from the last model if all models fail.
+
+        Raises:
+            ValueError: If models list is empty.
+
+        Note:
+            - The method always calls the public generation methods with
+              fallbackModels=None to prevent recursion.
+            - Results from fallback models (models[1:]) have isFallback=True set.
+            - A model is considered successful if its status is NOT in ERROR_STATUSES.
+        """
+        if not models:
+            raise ValueError("models list cannot be empty")
+
+        lastResult: Optional[Any] = None
+
+        for i, model in enumerate(models):
+            try:
+                # Call the public method with fallbackModels=None to prevent recursion
+                messagesVal: Sequence[ModelMessage] = kwargs.get("messages") or []
+                if primaryMethod == "generateText":
+                    result = await model.generateText(messages=messagesVal, tools=kwargs.get("tools"))
+                elif primaryMethod == "generateImage":
+                    result = await model.generateImage(messages=messagesVal)
+                elif primaryMethod == "generateStructured":
+                    result = await model.generateStructured(
+                        messages=messagesVal,
+                        schema=kwargs.get("schema") or {},
+                        schemaName=kwargs.get("schemaName", "response"),
+                        strict=kwargs.get("strict", True),
+                    )
+                else:
+                    raise ValueError(f"Unsupported method: {primaryMethod}")
+
+                lastResult = result
+
+                # Mark as fallback if this is not the primary model
+                if i > 0:
+                    result.setFallback(True)
+
+                # Check if this model succeeded
+                if result.status not in ERROR_STATUSES:
+                    logger.debug(f"Model {model.modelId} succeeded on attempt {i + 1}")
+                    return result
+
+                # Model returned error status - log and continue to next
+                logger.debug(f"Model {model.modelId} returned error status {result.status.name}")
+
+            except Exception as e:
+                logger.error(f"Error running model {model.modelId}: {e}")
+                # Create an error result to continue the loop
+                if primaryMethod == "generateStructured":
+                    lastResult = ModelStructuredResult(
+                        rawResult=None,
+                        status=ModelResultStatus.ERROR,
+                        error=e,
+                    )
+                else:
+                    lastResult = ModelRunResult(
+                        rawResult=None,
+                        status=ModelResultStatus.ERROR,
+                        error=e,
+                    )
+                if i > 0:
+                    lastResult.setFallback(True)
+
+        # All models failed - return the last result
+        if lastResult is None:
+            # Should never happen if models is non-empty, but handle defensively
+            lastResult = ModelRunResult(
+                rawResult=None,
+                status=ModelResultStatus.ERROR,
+                error=RuntimeError("No result from any model"),
+            )
+
+        return lastResult
 
     async def _generateStructured(
         self,
@@ -330,44 +404,29 @@ class AbstractModel(ABC):
         *,
         schemaName: str = "response",
         strict: bool = True,
+        fallbackModels: Optional[List["AbstractModel"]] = None,
     ) -> ModelStructuredResult:
-        """Public structured-output entry point.
+        """Generate structured output with automatic fallback to another model.
 
-        Mirrors generateText: checks the capability flag, estimates tokens,
-        enforces the context budget, then calls _generateStructured. Honours
-        JSON-logging just like the text path.
-
-        NOTE for callers: most LLMs perform better when the SYSTEM message
-        explicitly says something like "respond with a JSON object matching
-        the provided schema." This wrapper does NOT inject that hint — pass
-        it in the messages yourself.
-
-        SCHEMA REQUIREMENTS (strict mode): Many provider implementations
-        forward your schema to the OpenAI ``json_schema`` mode with
-        ``strict: true``. To be portable across all providers, your schema
-        should:
-
-        * List EVERY property under ``properties`` in the ``required`` array
-          (no optional fields allowed in strict mode).
-        * Set ``"additionalProperties": false`` at every object level.
-        * Avoid ``oneOf`` / ``anyOf`` at the root; if you need a union, nest
-          it inside a single property.
-
-        Some providers tolerate violations of these rules silently; others
-        (notably YC OpenAI's native models — yandexgpt, aliceai-llm,
-        deepseek-v32) return HTTP 400 with ``"Invalid JSON Schema: all
-        fields must be required"``.
-
-        Reference: https://platform.openai.com/docs/guides/structured-outputs
+        Attempts to generate structured output using the current model. If the
+        generation fails or returns an error status (UNSPECIFIED, CONTENT_FILTER,
+        UNKNOWN, or ERROR), it automatically retries using the next fallback model
+        in the list.
 
         Args:
             messages: Conversation history.
             schema: JSON Schema dict describing the desired response shape.
             schemaName: Schema identifier (provider-dependent).
             strict: Strict-mode flag (provider-dependent).
+            fallbackModels: Optional list of alternative models to try if the
+                primary model fails. The first model in the list is the primary,
+                subsequent models are fallbacks. When provided, this method
+                delegates to _runWithFallback for automatic fallback logic.
 
         Returns:
             ModelStructuredResult with status, parsed data, token usage, etc.
+            The result will have ``isFallback`` set to True if a fallback model
+            was used.
 
         Raises:
             NotImplementedError: If this model does not support structured
@@ -376,6 +435,18 @@ class AbstractModel(ABC):
         if not self._config.get("support_structured_output", False):
             raise NotImplementedError(f"Structured output isn't supported by {self.modelId}, dood!")
 
+        # If fallback models provided, use the fallback mechanism
+        if fallbackModels:
+            return await self._runWithFallback(
+                primaryMethod="generateStructured",
+                models=[self, *fallbackModels],
+                messages=messages,
+                schema=schema,
+                schemaName=schemaName,
+                strict=strict,
+            )
+
+        # Original logic when no fallbacks
         tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
         logger.debug(
             f"generateStructured(messages={len(messages)}, schema_keys={list(schema.keys())}), "
@@ -396,61 +467,6 @@ class AbstractModel(ABC):
         if self.enableJSONLog:
             self.printJSONLog(messages, ret)
         return ret
-
-    async def generateStructuredWithFallBack(
-        self,
-        messages: Sequence[ModelMessage],
-        fallbackModel: "AbstractModel",
-        schema: Dict[str, Any],
-        *,
-        schemaName: str = "response",
-        strict: bool = True,
-    ) -> ModelStructuredResult:
-        """Generate structured output with automatic fallback to another model.
-
-        Mirrors generateTextWithFallBack: attempts to generate structured output
-        using the current model. If the generation fails or returns an error
-        status (UNSPECIFIED, CONTENT_FILTER, UNKNOWN, or ERROR), it automatically
-        retries using the fallback model.
-
-        Args:
-            messages: Conversation history.
-            fallbackModel: Alternative model to use if the primary model fails.
-                Must also support structured output (``support_structured_output``
-                capability flag must be True).
-            schema: JSON Schema dict describing the desired response shape.
-            schemaName: Schema identifier (provider-dependent).
-            strict: Strict-mode flag (provider-dependent).
-
-        Returns:
-            ModelStructuredResult with status, parsed data, token usage, etc.
-            The result will have ``isFallback`` set to True if the fallback model
-            was used.
-
-        Raises:
-            Exception: If both the primary and fallback models fail.
-        """
-        try:
-            ret = await self.generateStructured(messages, schema, schemaName=schemaName, strict=strict)
-            if ret.status in [
-                ModelResultStatus.UNSPECIFIED,
-                ModelResultStatus.CONTENT_FILTER,
-                ModelResultStatus.UNKNOWN,
-                ModelResultStatus.ERROR,
-            ]:
-                logger.debug(f"Model {self.modelId} returned {ret}")
-                error_msg = f"Model {self.modelId} returned status {ret.status.name}"
-                if ret.error:
-                    error_msg += f": {ret.error}"
-                    # Preserve the underlying exception as cause
-                    raise Exception(error_msg) from ret.error
-                raise Exception(error_msg)
-            return ret
-        except Exception as e:
-            logger.error(f"Error running model {self.modelId}: {e}")
-            ret = await fallbackModel.generateStructured(messages, schema, schemaName=schemaName, strict=strict)
-            ret.isFallback = True
-            return ret
 
     def getEstimateTokensCount(self, data: Any) -> int:
         """Get estimated number of tokens in given data.

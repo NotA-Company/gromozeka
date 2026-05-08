@@ -481,7 +481,7 @@ class BasicOpenAIModel(AbstractModel):
             totalTokens=outcome.totalTokens,
         )
 
-    async def generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
+    async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
         """Generate an image using the OpenAI-compatible model.
 
         This method sends a chat completion request to the OpenAI API

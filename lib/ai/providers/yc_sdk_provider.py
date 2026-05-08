@@ -226,7 +226,7 @@ class YcAIModel(AbstractModel):
             logger.error(f"Error running YC SDK model {self.modelId}: {e}")
             raise
 
-    async def generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
+    async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
         """Generate an image using the YC SDK model.
 
         Args:
