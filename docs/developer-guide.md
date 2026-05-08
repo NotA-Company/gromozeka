@@ -153,8 +153,7 @@ gromozeka/
 │   │   ├── 00-config.toml          # Core settings (bot, db, rate limiter, APIs)
 │   │   └── bot-defaults.toml       # Per-chat-type and global bot defaults
 │   └── common/                     # Common overrides
-│       └── 00-config.toml          # Additional shared settings
-│
+
 ├── internal/                       # Application-specific internal code
 │   ├── bot/                        # Bot layer
 │   │   ├── common/                 # Shared bot logic
@@ -564,6 +563,7 @@ The database layer uses a repository pattern with 12 specialized repositories Ea
 | [`ChatUsersRepository`](internal/database/repositories/chat_users.py) | `chat_users.py` | Per-chat user metadata operations |
 | [`CommonRepository`](internal/database/repositories/common.py) | `common.py` | Common database operations |
 | [`DelayedTasksRepository`](internal/database/repositories/delayed_tasks.py) | `delayed_tasks.py` | Background task queue operations |
+| [`DivinationRepository`](internal/database/repositories/divinations.py) | `divinations.py` | Tarot/runes readings and layout discovery operations |
 | [`MediaAttachmentsRepository`](internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
 | [`SpamRepository`](internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
 | [`UserDataRepository`](internal/database/repositories/user_data.py) | `user_data.py` | User data operations |
@@ -640,24 +640,23 @@ Each migration inherits from [`BaseMigration`](internal/database/migrations/base
 
 ```python
 from internal.database.migrations.base import BaseMigration
-import sqlite3
+from internal.database.providers import BaseSQLProvider
 
 class Migration(BaseMigration):
     version = 13          # Must be unique sequential integer!
     description = "Add my_new_table"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute("""
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        await sqlProvider.execute("""
             CREATE TABLE IF NOT EXISTS my_new_table (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER NOT NULL,
+                chat_id INTEGER PRIMARY KEY NOT NULL,
                 value TEXT,
                 created_at TIMESTAMP NOT NULL
             )
         """)
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute("DROP TABLE IF EXISTS my_new_table")
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        await sqlProvider.execute("DROP TABLE IF EXISTS my_new_table")
 ```
 
 Migrations are applied automatically on [`Database`](internal/database/database.py) initialization The schema version is tracked in a `schema_migrations` table.
@@ -2331,27 +2330,27 @@ class Migration(BaseMigration):
     version: int = 13
     description: str = "Add my_column to chats table"
 
-    def up(self, cursor: sqlite3.Cursor) -> None:
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
         """Apply migration: add my_column
 
         Args:
-            cursor: SQLite cursor for executing SQL
+            sqlProvider: SQL provider for executing SQL
         """
-        cursor.execute("""
+        await sqlProvider.execute("""
             ALTER TABLE chats
             ADD COLUMN my_column TEXT DEFAULT NULL
         """)
 
-    def down(self, cursor: sqlite3.Cursor) -> None:
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
         """Rollback migration
 
         Note: SQLite before 3.35 does not support DROP COLUMN.
         Consider a table-rebuild approach for older SQLite versions.
 
         Args:
-            cursor: SQLite cursor for executing SQL
+            sqlProvider: SQL provider for executing SQL
         """
-        # SQLite 3.35+: cursor.execute("ALTER TABLE chats DROP COLUMN my_column")
+        # SQLite 3.35+: await sqlProvider.execute("ALTER TABLE chats DROP COLUMN my_column")
         pass
 ```
 

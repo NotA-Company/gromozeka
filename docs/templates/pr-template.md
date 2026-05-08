@@ -224,6 +224,23 @@ internal/services/cache/test_cache_service.py ..................................
 **Review Guidelines for Reviewers:**
 
 When reviewing this PR, please check:
+
+### Core Quality Gates
+- [ ] `make format lint` passes clean before and after edits
+- [ ] `make test` passes all tests (or explicitly documents any failures with justification)
+- [ ] All code uses camelCase for variables/args/fields/functions, PascalCase for classes, UPPER_CASE for constants
+- [ ] Docstrings present on all modules/classes/methods/functions with `Args:` and `Returns:` sections
+- [ ] Type hints present on all function/method parameters and returns
+- [ ] Python invoked via `./venv/bin/python3` (not `python` or `python3`)
+- [ ] No pydantic usage - using raw dicts + TypedDict + hand-rolled typed classes
+- [ ] Singletons accessed via `getInstance()` only (LLMService, CacheService, QueueService, StorageService, RateLimiterManager)
+
+### Database & Handler Specifics (if applicable)
+- [ ] SQL changes are portable across SQLite/PostgreSQL/MySQL (see `docs/sql-portability-guide.md`)
+- [ ] Database migrations use composite/natural keys or app-generated UUIDs (no AUTOINCREMENT)
+- [ ] LLMMessageHandler is last entry in handler registration list
+
+### General Standards
 - [ ] Code quality and adherence to project standards
 - [ ] Test coverage is adequate
 - [ ] Documentation is clear and complete
@@ -245,7 +262,7 @@ When reviewing this PR, please check:
 5. **Complete the checklist** before requesting review
 6. **Link all files** using relative paths for easy navigation
 7. **Follow commit message format** using conventional commits
-8. **Delete all `How to fill this section` sections** after. Those sections are present to help filling template, they shouldn't be in repulting document
+ 8. Delete all `How to fill this section` sections after. Those sections are present to help filling template, they shouldn't be in reporting document
 9. **Ensure no \[placeholders\] left** - ALL placeholders should be filled with actual content or deleted if no content needed
 
 **Git Commands Reference:**

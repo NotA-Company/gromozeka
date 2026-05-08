@@ -309,10 +309,13 @@ async def myCommandMethod(
 
 | Value | Purpose |
 |---|---|
-| `TOOLS` | Utility/tool commands |
-| `AI` | AI/LLM commands |
-| `ADMIN` | Admin management |
-| `INFO` | Information commands |
+| `UNSPECIFIED` | Default category for commands without specific categorization |
+| `PRIVATE` | Commands for private chats only |
+| `ADMIN` | Admin/configuration commands |
+| `TOOLS` | Utility/tool commands (Web search, draw, weather, etc.) |
+| `SPAM` | SPAM-related commands |
+| `SPAM_ADMIN` | SPAM-related commands for admins |
+| `TECHNICAL` | Technical/debug commands |
 
 ### `CommandHandlerOrder` values
 

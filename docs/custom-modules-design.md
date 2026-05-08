@@ -42,7 +42,7 @@ enabled = true
 
 # Directory for local handler modules (relative to application root-dir)
 # Files in this directory are auto-discovered if they are listed below
-modules-dir = "custom_handlers"
+modules-dir = "modules"
 
 # Each handler is defined as [[custom-handlers.handlers]]
 [[custom-handlers.handlers]]
@@ -76,7 +76,7 @@ enabled = true
 ```toml
 [custom-handlers]
 enabled = true
-modules-dir = "custom_handlers"
+modules-dir = "modules"
 
 [[custom-handlers.handlers]]
 id = "greeting-handler"
@@ -107,7 +107,7 @@ A new defaults file is created at `configs/00-defaults/custom-handlers.toml`:
 ```toml
 [custom-handlers]
 enabled = false
-modules-dir = "custom_handlers"
+modules-dir = "modules"
 ```
 
 ---
@@ -206,10 +206,10 @@ Constructor signature validation uses `inspect.signature()` to verify the class 
 
 ```
 storage/                    # application root-dir
-├── custom_handlers/        # modules-dir (configurable)
-│   ├── __init__.py         # optional, not required
-│   ├── greeting_handler.py # contains GreetingHandler class
-│   └── audit_handler.py    # contains AuditLogHandler class
+├── modules/                    # modules-dir (configurable)
+│   ├── __init__.py             # optional, not required
+│   ├── greeting_handler.py     # contains GreetingHandler class
+│   └── audit_handler.py        # contains AuditHandlerClass
 ├── bot_data.db
 └── ...
 ```
@@ -339,7 +339,7 @@ Add a new import to [`manager.py`](internal/bot/common/handlers/manager.py) — 
 
 ## 8. Example Custom Module
 
-File: `custom_handlers/greeting_handler.py`
+File: `modules/greeting_handler.py`
 
 ```python
 """
