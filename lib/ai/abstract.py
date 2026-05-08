@@ -22,7 +22,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Type, TypeVar
 
 from lib import utils
 
@@ -36,6 +36,8 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_R = TypeVar("_R", ModelRunResult, ModelStructuredResult)
 
 
 class AbstractModel(ABC):
@@ -137,7 +139,7 @@ class AbstractModel(ABC):
         messages: Sequence[ModelMessage],
         tools: Optional[Sequence[LLMAbstractTool]] = None,
         *,
-        fallbackModels: Optional[List["AbstractModel"]] = None,
+        fallbackModels: Optional[Sequence["AbstractModel"]] = None,
     ) -> ModelRunResult:
         """Generate text using the model with optional tools and fallback models.
 
@@ -168,10 +170,9 @@ class AbstractModel(ABC):
         if fallbackModels:
             # Use fallback mechanism when fallback models are provided
             return await self._runWithFallback(
-                primaryMethod="generateText",
-                models=[self, *fallbackModels],
-                messages=messages,
-                tools=tools,
+                [self, *fallbackModels],
+                lambda model: model.generateText(messages=messages, tools=tools, fallbackModels=None),
+                ModelRunResult,
             )
 
         # Original logic when no fallbacks
@@ -220,7 +221,7 @@ class AbstractModel(ABC):
         raise NotImplementedError
 
     async def generateImage(
-        self, messages: Sequence[ModelMessage], *, fallbackModels: Optional[List["AbstractModel"]] = None
+        self, messages: Sequence[ModelMessage], *, fallbackModels: Optional[Sequence["AbstractModel"]] = None
     ) -> ModelRunResult:
         """Generate an image using the model with optional fallback models.
 
@@ -252,9 +253,9 @@ class AbstractModel(ABC):
         """
         if fallbackModels:
             return await self._runWithFallback(
-                primaryMethod="generateImage",
-                models=[self, *fallbackModels],
-                messages=messages,
+                [self, *fallbackModels],
+                lambda model: model.generateImage(messages=messages, fallbackModels=None),
+                ModelRunResult,
             )
 
         # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
@@ -263,100 +264,6 @@ class AbstractModel(ABC):
         if self.enableJSONLog:
             self.printJSONLog(messages, ret)
         return ret
-
-    async def _runWithFallback(self, primaryMethod: str, models: List["AbstractModel"], **kwargs: Any) -> Any:
-        """Run a generation method with automatic fallback through a list of models.
-
-        This helper attempts to execute the specified method on each model in
-        sequence until one succeeds (returns a non-error status) or all models fail.
-        The first model in the list is treated as the primary; subsequent models
-        are fallbacks.
-
-        Args:
-            primaryMethod: The name of the generation method to call (e.g., "generateText",
-                "generateImage", "generateStructured").
-            models: List of models to try in order. Must contain at least one model.
-                The first model is the primary, subsequent models are fallbacks.
-            **kwargs: Keyword arguments to pass to the generation method.
-
-        Returns:
-            ModelRunResult or ModelStructuredResult from the first model that returns a
-            non-error status, or the result from the last model if all models fail.
-
-        Raises:
-            ValueError: If models list is empty.
-
-        Note:
-            - The method always calls the public generation methods with
-              fallbackModels=None to prevent recursion.
-            - Results from fallback models (models[1:]) have isFallback=True set.
-            - A model is considered successful if its status is NOT in ERROR_STATUSES.
-        """
-        if not models:
-            raise ValueError("models list cannot be empty")
-
-        lastResult: Optional[Any] = None
-
-        for i, model in enumerate(models):
-            try:
-                # Call the public method with fallbackModels=None to prevent recursion
-                messagesVal: Sequence[ModelMessage] = kwargs.get("messages") or []
-                if primaryMethod == "generateText":
-                    result = await model.generateText(messages=messagesVal, tools=kwargs.get("tools"))
-                elif primaryMethod == "generateImage":
-                    result = await model.generateImage(messages=messagesVal)
-                elif primaryMethod == "generateStructured":
-                    result = await model.generateStructured(
-                        messages=messagesVal,
-                        schema=kwargs.get("schema") or {},
-                        schemaName=kwargs.get("schemaName", "response"),
-                        strict=kwargs.get("strict", True),
-                    )
-                else:
-                    raise ValueError(f"Unsupported method: {primaryMethod}")
-
-                lastResult = result
-
-                # Mark as fallback if this is not the primary model
-                if i > 0:
-                    result.setFallback(True)
-
-                # Check if this model succeeded
-                if result.status not in ERROR_STATUSES:
-                    logger.debug(f"Model {model.modelId} succeeded on attempt {i + 1}")
-                    return result
-
-                # Model returned error status - log and continue to next
-                logger.debug(f"Model {model.modelId} returned error status {result.status.name}")
-
-            except Exception as e:
-                logger.error(f"Error running model {model.modelId}: {e}")
-                # Create an error result to continue the loop
-                if primaryMethod == "generateStructured":
-                    lastResult = ModelStructuredResult(
-                        rawResult=None,
-                        status=ModelResultStatus.ERROR,
-                        error=e,
-                    )
-                else:
-                    lastResult = ModelRunResult(
-                        rawResult=None,
-                        status=ModelResultStatus.ERROR,
-                        error=e,
-                    )
-                if i > 0:
-                    lastResult.setFallback(True)
-
-        # All models failed - return the last result
-        if lastResult is None:
-            # Should never happen if models is non-empty, but handle defensively
-            lastResult = ModelRunResult(
-                rawResult=None,
-                status=ModelResultStatus.ERROR,
-                error=RuntimeError("No result from any model"),
-            )
-
-        return lastResult
 
     async def _generateStructured(
         self,
@@ -404,7 +311,7 @@ class AbstractModel(ABC):
         *,
         schemaName: str = "response",
         strict: bool = True,
-        fallbackModels: Optional[List["AbstractModel"]] = None,
+        fallbackModels: Optional[Sequence["AbstractModel"]] = None,
     ) -> ModelStructuredResult:
         """Generate structured output with automatic fallback to another model.
 
@@ -438,12 +345,15 @@ class AbstractModel(ABC):
         # If fallback models provided, use the fallback mechanism
         if fallbackModels:
             return await self._runWithFallback(
-                primaryMethod="generateStructured",
-                models=[self, *fallbackModels],
-                messages=messages,
-                schema=schema,
-                schemaName=schemaName,
-                strict=strict,
+                [self, *fallbackModels],
+                lambda model: model.generateStructured(
+                    messages=messages,
+                    schema=schema,
+                    schemaName=schemaName,
+                    strict=strict,
+                    fallbackModels=None,
+                ),
+                ModelStructuredResult,
             )
 
         # Original logic when no fallbacks
@@ -467,6 +377,77 @@ class AbstractModel(ABC):
         if self.enableJSONLog:
             self.printJSONLog(messages, ret)
         return ret
+
+    async def _runWithFallback(
+        self,
+        models: Sequence["AbstractModel"],
+        call: Callable[["AbstractModel"], Awaitable[_R]],
+        retType: Type[_R],
+    ) -> _R:
+        """Run `call(model)` over `models` until one succeeds.
+
+        Iterates the list in order. For each model, invokes the callable and
+        inspects the result's status. A result whose status is in ERROR_STATUSES
+        (or a raised exception) is treated as failure and the next model is tried.
+
+        If all models fail, the last attempted model's result is returned —
+        matching the pre-refactor generate*WithFallBack behavior.
+
+        isFallback is set to True on the returned result iff it came from any
+        model other than models[0].
+
+        Args:
+            models: Non-empty ordered list. models[0] is the primary, the rest
+                are fallbacks in preference order.
+            call: Callable that takes a model and returns an awaitable result
+                (ModelRunResult or ModelStructuredResult). Must invoke the
+                PUBLIC generate* method with fallbackModels=None so each attempt
+                gets the full pipeline (context check + JSON log) without
+                recursing into this helper.
+
+        Returns:
+            The result of the first successful model, or the last attempted
+            model's result on total failure.
+
+        Raises:
+            ValueError: If models is empty.
+        """
+        if not models:
+            raise ValueError("models list cannot be empty")
+
+        # Track the last result from each model attempt
+        lastResult: _R = retType(rawResult=None, status=ModelResultStatus.UNSPECIFIED)
+
+        for i, model in enumerate(models):
+            result: _R
+            try:
+                result = await call(model)
+            except Exception as e:
+                # Exception from model is treated as failure - create error result
+                logger.error(f"Exception from model {model.modelId}: {e}")
+                result = retType(
+                    rawResult=None,
+                    status=ModelResultStatus.ERROR,
+                    error=e,
+                )
+            lastResult = result
+
+            # Mark as fallback if this is not the primary model
+            if i > 0:
+                result.setFallback(True)
+
+            # Check if this model succeeded
+            if result.status not in ERROR_STATUSES:
+                logger.debug(f"Model {model.modelId} succeeded on attempt {i + 1}")
+                return result
+
+            # Model failed - log and continue to next
+            logger.debug(f"Model {model.modelId} returned error status {result.status.name}")
+
+        # All models failed - return the last result
+        # This is safe because models is guaranteed to be non-empty,
+        # so lastResult is definitely assigned by this point
+        return lastResult
 
     def getEstimateTokensCount(self, data: Any) -> int:
         """Get estimated number of tokens in given data.

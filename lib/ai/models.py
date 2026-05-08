@@ -780,12 +780,12 @@ class ModelResultStatus(Enum):
 #: Collection of error statuses that indicate a model run should be considered failed.
 #: These statuses trigger fallback mechanisms when enabled.
 ERROR_STATUSES: frozenset[ModelResultStatus] = frozenset(
-    [
+    (
         ModelResultStatus.UNSPECIFIED,
         ModelResultStatus.CONTENT_FILTER,
         ModelResultStatus.UNKNOWN,
         ModelResultStatus.ERROR,
-    ]
+    )
 )
 
 

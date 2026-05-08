@@ -253,13 +253,12 @@ Per agreed design: `generateStructured` does **not** accept a `tools=`
 parameter. There is no path to combine them in v1. If callers need both,
 they orchestrate two calls.
 
-### 3.4 Fallback variant — `generateStructuredWithFallBack`
+### 3.4 Fallback variant — `generateStructured` with `fallbackModels`
 
-Mirrors [`generateTextWithFallBack`](../../lib/ai/abstract.py:192). Same
-status-codes-trigger-fallback rule. Fallback model also runs through
-`generateStructured`, so it must also have `support_structured_output =
-True`. If neither claims support, `LLMService` should resolve that at the
-service layer (§3.7).
+Mirrors `generateText` with `fallbackModels` parameter. Same status-codes-trigger-fallback
+rule. Fallback model also runs through `generateStructured`, so it must also have
+`support_structured_output = True`. If neither claims support, `LLMService` should
+resolve that at the service layer (§3.7).
 
 ### 3.5 OpenAI-compatible provider implementation
 
@@ -410,9 +409,12 @@ async def generateStructured(
     if not primarySupports and fallbackSupports:
         llmModel, fallbackModel = fallbackModel, llmModel
 
-    ret = await llmModel.generateStructuredWithFallBack(
-        prompt, fallbackModel, schema=schema,
-        schemaName=schemaName, strict=strict,
+    ret = await llmModel.generateStructured(
+        prompt,
+        schema=schema,
+        schemaName=schemaName,
+        strict=strict,
+        fallbackModels=[fallbackModel],
     )
 
     if doDebugLogging:
@@ -420,9 +422,9 @@ async def generateStructured(
     return ret
 ```
 
-`generateStructuredWithFallBack` lives on `AbstractModel`; if the fallback
-model lacks the capability, fallback raises `NotImplementedError` and the
-primary's error/status is what the caller sees. (We log this case loudly.)
+`generateStructured` with the `fallbackModels` parameter lives on `AbstractModel`;
+if the fallback model lacks the capability, fallback raises `NotImplementedError`
+and the primary's error/status is what the caller sees. (We log this case loudly.)
 
 ### 3.8 Capability flags & config
 
@@ -505,7 +507,7 @@ Files:
 
 - [`lib/ai/models.py`](../../lib/ai/models.py) — add `ModelStructuredResult`.
 - [`lib/ai/abstract.py`](../../lib/ai/abstract.py) — add `_generateStructured`
-  (default-raise), `generateStructured`, `generateStructuredWithFallBack`.
+  (default-raise), `generateStructured` with `fallbackModels` parameter.
   Update `getInfo()` to include `support_structured_output`.
 - [`lib/ai/__init__.py`](../../lib/ai/__init__.py) — export
   `ModelStructuredResult`.
@@ -585,7 +587,7 @@ Files:
 - [`tests/test_llm_service.py`](../../tests/test_llm_service.py) — new
   cases:
   - Both models support → forwards to
-    `model.generateStructuredWithFallBack` with the right kwargs.
+    `model.generateStructured` with the right kwargs and `fallbackModels=[fallback]`.
   - Primary doesn't support, fallback does → swap happens; fallback gets
     the call.
   - Neither supports → `NotImplementedError` raised before any model call.

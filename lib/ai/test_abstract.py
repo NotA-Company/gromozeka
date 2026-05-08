@@ -261,7 +261,11 @@ async def testRunWithFallbackEmptyListRaisesValueError() -> None:
     model = _makeStructuredModel()
 
     with pytest.raises(ValueError, match="models list cannot be empty"):
-        await model._runWithFallback("generateText", models=[], messages=[])
+        await model._runWithFallback(
+            models=[],
+            call=lambda m: m.generateText(messages=[], tools=None),  # type: ignore[arg-type]
+            retType=ModelRunResult,
+        )
 
 
 async def testRunWithFallbackDuplicateModelInvokedTwice() -> None:
@@ -276,7 +280,11 @@ async def testRunWithFallbackDuplicateModelInvokedTwice() -> None:
 
     messages = [ModelMessage(role="user", content="hi")]
 
-    await model._runWithFallback("generateText", models=[model, model], messages=messages)
+    await model._runWithFallback(
+        models=[model, model],
+        call=lambda m: m.generateText(messages=messages, tools=None),
+        retType=ModelRunResult,
+    )
 
     assert model.generateText.call_count == 2
 
@@ -303,6 +311,119 @@ async def testGenerateTextWithFallbackModelsUsesPrimaryOnSuccess() -> None:
     assert result.isFallback is False
 
 
+async def testGenerateTextWithFallbackModelsFallsBackOnException() -> None:
+    """Verify generateText with fallbackModels falls back when primary raises exception.
+
+    Returns:
+        None
+    """
+    primary = _makeStructuredModel()
+    fallback = _makeStructuredModel()
+
+    primary._generateText = AsyncMock(side_effect=RuntimeError("network error"))
+    fallbackResult = ModelRunResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        resultText="fallback success",
+    )
+    fallback._generateText = AsyncMock(return_value=fallbackResult)
+
+    messages = [ModelMessage(role="user", content="hi")]
+
+    result = await primary.generateText(messages, fallbackModels=[fallback])
+
+    assert result.status is ModelResultStatus.FINAL
+    assert result.isFallback is True
+    assert result.resultText == "fallback success"
+
+
+async def testGenerateTextWithFallbackModelsFallsBackOnErrorStatus() -> None:
+    """Verify generateText with fallbackModels falls back when primary returns ERROR status.
+
+    Returns:
+        None
+    """
+    primary = _makeStructuredModel()
+    fallback = _makeStructuredModel()
+
+    errorResult = ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR)
+    fallbackResult = ModelRunResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        resultText="fallback success",
+    )
+
+    primary._generateText = AsyncMock(return_value=errorResult)
+    fallback._generateText = AsyncMock(return_value=fallbackResult)
+
+    messages = [ModelMessage(role="user", content="hi")]
+
+    result = await primary.generateText(messages, fallbackModels=[fallback])
+
+    assert result.status is ModelResultStatus.FINAL
+    assert result.isFallback is True
+    assert result.resultText == "fallback success"
+
+
+async def testGenerateTextWithFallbackModelsChainExhaustedReturnsLastResult() -> None:
+    """Verify generateText with fallbackModels returns last result when all models fail.
+
+    Returns:
+        None
+    """
+    primary = _makeStructuredModel()
+    fallback = _makeStructuredModel()
+
+    primaryError = ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR)
+    fallbackError = ModelRunResult(
+        rawResult=None,
+        status=ModelResultStatus.UNSPECIFIED,
+        resultText="fallback failed",
+    )
+
+    primary._generateText = AsyncMock(return_value=primaryError)
+    fallback._generateText = AsyncMock(return_value=fallbackError)
+
+    messages = [ModelMessage(role="user", content="hi")]
+
+    result = await primary.generateText(messages, fallbackModels=[fallback])
+
+    assert result.status is ModelResultStatus.UNSPECIFIED
+    assert result.isFallback is True
+    assert result.resultText == "fallback failed"
+
+
+async def testGenerateTextWithFallbackModelsMultipleFallbacks() -> None:
+    """Verify generateText with fallbackModels works with multiple fallback models.
+
+    Returns:
+        None
+    """
+    primary = _makeStructuredModel()
+    fallback1 = _makeStructuredModel()
+    fallback2 = _makeStructuredModel()
+
+    primaryError = ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR)
+    fallback1Error = ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR)
+    fallback2Result = ModelRunResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        resultText="third time's charm",
+    )
+
+    primary._generateText = AsyncMock(return_value=primaryError)
+    fallback1._generateText = AsyncMock(return_value=fallback1Error)
+    fallback2._generateText = AsyncMock(return_value=fallback2Result)
+
+    messages = [ModelMessage(role="user", content="hi")]
+
+    result = await primary.generateText(messages, fallbackModels=[fallback1, fallback2])
+
+    assert result.status is ModelResultStatus.FINAL
+    assert result.isFallback is True
+    assert result.resultText == "third time's charm"
+
+
 # ============================================================================
 # Tests: generateImage with fallbackModels parameter
 # ============================================================================
@@ -323,6 +444,34 @@ async def testGenerateImageWithFallbackModelsUsesPrimaryOnSuccess() -> None:
 
     assert result.status is ModelResultStatus.FINAL
     assert result.isFallback is False
+
+
+async def testGenerateImageWithFallbackModelsFallsBackOnErrorStatus() -> None:
+    """Verify generateImage with fallbackModels falls back when primary returns ERROR status.
+
+    Returns:
+        None
+    """
+    primary = _makeStructuredModel()
+    fallback = _makeStructuredModel()
+
+    errorResult = ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR)
+    fallbackResult = ModelRunResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        resultText="https://example.com/fallback.png",
+    )
+
+    primary._generateImage = AsyncMock(return_value=errorResult)
+    fallback._generateImage = AsyncMock(return_value=fallbackResult)
+
+    messages = [ModelMessage(role="user", content="draw a cat")]
+
+    result = await primary.generateImage(messages, fallbackModels=[fallback])
+
+    assert result.status is ModelResultStatus.FINAL
+    assert result.isFallback is True
+    assert result.resultText == "https://example.com/fallback.png"
 
 
 # ============================================================================
