@@ -1,6 +1,12 @@
-# lib/stat — Statistics Collection Library
+# lib/stats — Statistics Collection Library (v2)
 
 > **Status:** Draft plan — pending review
+>
+> **Changes from v1:**
+> - Library renamed from `lib/stat` to `lib/stats`
+> - Aggregation flow reversed: claim-first (UPDATE with LIMIT), then SELECT claimed data
+> - Orphan reclaim merged into the claim step (no separate cleanup pass)
+> - The `WHERE` clause on claim includes rows with stale `claimed_at` — they get reclaimed during claiming, not in a prior step
 
 ## Problem Statement
 
@@ -14,46 +20,46 @@ Gromozeka currently has no systematic statistics collection. We want to track:
 Stats must be aggregateable across time windows: **hourly**, **daily**, **monthly**, and **global** (all-time).
 Stats must be sliceable by **consumer** (usually `chatId`) and **globally**.
 
-The library should live in `lib/stat/` (no `internal/` dependencies), with the DB-backed implementation
-in `internal/database/stat_storage.py` following the same pattern as `GenericDatabaseCache` in
+The library should live in `lib/stats/` (no `internal/` dependencies), with the DB-backed implementation
+in `internal/database/stats_storage.py` following the same pattern as `GenericDatabaseCache` in
 `internal/database/generic_cache.py`.
 
 ## Architecture Overview
 
 ```
-                        ┌──────────────────────┐
+                        ┌───────────────────────┐
                         │      main.py          │
                         │  GromozekBot.__init__ │
-                        └──────┬───────┬───────┘
+                        └──────┬───────┬────────┘
                                │       │
                     creates    │       │  creates
                                ▼       ▼
-              ┌────────────────┐   ┌─────────────────────┐
-              │  LLMManager    │   │ StatStorage          │
+              ┌────────────────┐   ┌──────────────────────┐
+              │  LLMManager    │   │ StatsStorage         │
               │  (lib/ai)      │◄──│ (internal/database/  │
-              │                │   │  stat_storage.py)    │
-              │ .statStorage ──┼──►│                      │
+              │                │   │  stats_storage.py)   │
+              │ .statsStorage ─┼──►│                      │
               └───────┬────────┘   │ - logDataSource      │
                       │            │ - aggDataSource      │
                       │ propagate  │ - db: Database       │
                       ▼            └──────────┬───────────┘
-              ┌────────────────┐              │
-              │ AbstractModel  │              │ getProvider()
-              │ (lib/ai)       │              ▼
-              │                │   ┌──────────────────────┐
-              │ .statStorage   │   │   DatabaseManager    │
+              ┌─────────────────┐             │
+              │ AbstractModel   │             │ getProvider()
+              │ (lib/ai)        │             ▼
+              │                 │   ┌──────────────────────┐
+              │ .statsStorage   │   │   DatabaseManager    │
               │ _runWithFallback│──►│                      │
-              └────────────────┘   │ stats_log  provider  │
-                                   │ stats_agg  provider  │
-                                   └──────────┬───────────┘
+              └─────────────────┘   │ stats_log  provider  │
+                                    │ stats_agg  provider  │
+                                    └──────────┬───────────┘
                                               │
                           ┌───────────────────┼───────────────────┐
                           ▼                   ▼                   │
-                   ┌─────────────┐    ┌─────────────┐            │
+                   ┌─────────────┐    ┌───────────────┐           │
                    │ stat_events │    │stat_aggregates│           │
                    │ (append-only│    │ (materialized │           │
                    │  log)       │    │  views)       │           │
-                   └─────────────┘    └─────────────┘            │
+                   └─────────────┘    └───────────────┘           │
                           │                   ▲                   │
                           │    aggregate()    │                   │
                           └───────────────────┘                   │
@@ -63,30 +69,36 @@ in `internal/database/stat_storage.py` following the same pattern as `GenericDat
               │  or separate files (independent backup/retention)
 ```
 
-### Data Flow
+### Data Flow (v2)
 
 ```mermaid
 sequenceDiagram
     participant LLMService
     participant AbstractModel
-    participant StatStorage
+    participant StatsStorage
     participant stat_events
-    participant Aggregate
+    participant stat_aggregates
 
     LLMService->>AbstractModel: generateText(consumerId=str(chatId), ...)
     AbstractModel->>AbstractModel: _runWithFallback(...)
     loop Each model attempt
-        AbstractModel->>StatStorage: record(consumerId, stats)
-        StatStorage->>stat_events: INSERT (processed=0)
+        AbstractModel->>StatsStorage: record(consumerId, stats)
+        StatsStorage->>stat_events: INSERT (processed=0)
     end
 
-    Note over Aggregate: Periodic or on-demand
-    Aggregate->>stat_events: UPDATE SET processed_id=:uuid (claim batch)
-    Aggregate->>stat_events: SELECT WHERE processed_id=:uuid
-    Aggregate->>Aggregate: Compute hourly/daily/monthly sums
-    Aggregate->>StatStorage: upsert into stat_aggregates
-    StatStorage->>stat_events: UPDATE SET processed=1
+    Note over StatsStorage: Periodic or on-demand
+
+    StatsStorage->>stat_events: UPDATE SET processed_id=:batchId, claimed_at=now<br/>WHERE processed=0 AND (processed_id IS NULL OR claimed_at < :orphanTimeout)<br/>LIMIT :limit   ← claim + reclaim in one go
+    StatsStorage->>stat_events: SELECT data WHERE processed_id=:batchId
+    StatsStorage->>StatsStorage: Compute hourly/daily/monthly sums
+    StatsStorage->>stat_aggregates: upsert into stat_aggregates
+    StatsStorage->>stat_events: UPDATE SET processed=1 WHERE processed_id=:batchId
 ```
+
+**Key differences from v1:**
+1. No separate "SELECT event_id" before claiming — the UPDATE claims directly with a LIMIT.
+2. No separate "reclaim orphans" step — stale claims (`claimed_at < :orphanTimeout`) are picked up by the claim UPDATE's WHERE clause and reclaimed in-place.
+3. Fewer round-trips: 4 DB calls instead of 6.
 
 ## 1. Database Migration (016)
 
@@ -105,7 +117,7 @@ CREATE TABLE stat_events (
     data         TEXT NOT NULL,           -- JSON: {"metric_key": numeric_value, ...}
     processed    INTEGER NOT NULL DEFAULT 0,   -- 0 = pending, 1 = aggregated
     processed_id TEXT DEFAULT NULL,            -- batch UUID for claim tracking
-    claimed_at   TIMESTAMP DEFAULT NULL,       -- for orphan reclaim
+    claimed_at   TIMESTAMP DEFAULT NULL,       -- for orphan reclaim (v2: reclaimed during claim, no separate cleanup)
     created_at   TIMESTAMP NOT NULL,
     PRIMARY KEY (event_id)
 );
@@ -129,6 +141,8 @@ CREATE TABLE stat_aggregates (
     PRIMARY KEY (event_type, consumer_id, period_start, period_type, metric_key)
 );
 ```
+
+Schema is **unchanged** from v1 — the v2 changes affect only the `aggregate()` algorithm, not the table structure.
 
 ### Migration implementation
 
@@ -230,23 +244,23 @@ def getMigration() -> Type[BaseMigration]:
 - [x] Composite PKs: `(event_id)` on log, `(event_type, consumer_id, period_start, period_type, metric_key)` on aggregates
 - [x] Named `:param` placeholders
 
-## 2. `lib/stat/stat_storage.py` — ABC + Null Implementation
+## 2. `lib/stats/stats_storage.py` — ABC + Null Implementation
 
-**File:** `lib/stat/stat_storage.py`
+**File:** `lib/stats/stats_storage.py`
 
 ```python
-"""Abstract stat storage interface with null implementation."""
+"""Abstract stats storage interface with null implementation."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
 
-class StatStorage(ABC):
+class StatsStorage(ABC):
     """Abstract storage for time-series statistics with batch aggregation.
 
     Implementations may be backed by a database, file system, or nothing
-    (NullStatStorage). The interface separates raw event recording from
+    (NullStatsStorage). The interface separates raw event recording from
     batch aggregation, allowing callers to write events at high frequency
     and aggregate periodically.
     """
@@ -268,13 +282,20 @@ class StatStorage(ABC):
         ...
 
     @abstractmethod
-    async def aggregate(self, *, limit: int = 1000) -> int:
-        """Claim up to ``limit`` unprocessed events, aggregate into
+    async def aggregate(self, *, limit: int = 1000, orphanTimeoutSeconds: int = 3600) -> int:
+        """Claim up to ``limit`` unprocessed (or orphaned) events, aggregate into
         hourly/daily/monthly buckets, upsert into the aggregation table,
         and mark events as processed.
 
+        The claim step uses a single UPDATE that picks rows where
+        ``processed = 0 AND (processed_id IS NULL OR claimed_at < :orphanTimeout)``,
+        so stale claims from a crashed prior aggregation are reclaimed in-place
+        without a separate cleanup pass.
+
         Args:
             limit: Maximum number of unprocessed events to claim in one batch.
+            orphanTimeoutSeconds: Age in seconds after which a claimed-but-unprocessed
+                row is considered orphaned and eligible for reclaim. Default 3600 (1 hour).
 
         Returns:
             Number of events processed (0 if nothing to do).
@@ -282,7 +303,7 @@ class StatStorage(ABC):
         ...
 
 
-class NullStatStorage(StatStorage):
+class NullStatsStorage(StatsStorage):
     """No-op storage — discards all events, ``aggregate()`` is a no-op.
 
     Use when statistics collection is disabled in configuration.
@@ -303,11 +324,12 @@ class NullStatStorage(StatStorage):
         """
         pass
 
-    async def aggregate(self, *, limit: int = 1000) -> int:
+    async def aggregate(self, *, limit: int = 1000, orphanTimeoutSeconds: int = 3600) -> int:
         """No-op — returns 0.
 
         Args:
             limit: Ignored.
+            orphanTimeoutSeconds: Ignored.
 
         Returns:
             0
@@ -315,7 +337,7 @@ class NullStatStorage(StatStorage):
         return 0
 ```
 
-**File:** `lib/stat/__init__.py`
+**File:** `lib/stats/__init__.py`
 
 ```python
 """Statistics collection library for Gromozeka.
@@ -324,17 +346,17 @@ Provides a generic, storage-agnostic interface for recording time-series
 statistics events and aggregating them into periodic buckets.
 
     Example:
-        >>> from lib.stat import StatStorage, NullStatStorage
-        >>> storage = NullStatStorage()
+        >>> from lib.stats import StatsStorage, NullStatsStorage
+        >>> storage = NullStatsStorage()
         >>> await storage.record("chat_123", {"messages": 1})
 """
 
-from .stat_storage import NullStatStorage, StatStorage
+from .stats_storage import NullStatsStorage, StatsStorage
 ```
 
-## 3. `internal/database/stat_storage.py` — DB-Backed Implementation
+## 3. `internal/database/stats_storage.py` — DB-Backed Implementation
 
-**File:** `internal/database/stat_storage.py`
+**File:** `internal/database/stats_storage.py`
 
 Follows the exact pattern of `internal/database/generic_cache.py`:
 - Implements the ABC from `lib/` directly.
@@ -343,10 +365,12 @@ Follows the exact pattern of `internal/database/generic_cache.py`:
 - Uses `self.db.manager.getProvider(dataSource=..., readonly=False)` for all DB access.
 - Has `__slots__`.
 
-```python
-"""Database-backed stat storage implementation.
+The `aggregate()` method differs from v1: claim-first, reclaim-in-place.
 
-Provides a database-backed implementation of StatStorage that uses the
+```python
+"""Database-backed stats storage implementation.
+
+Provides a database-backed implementation of StatsStorage that uses the
 Database manager to store raw stat events and materialized aggregates.
 Supports separate data sources for the event log and aggregate tables,
 enabling independent backup and retention strategies.
@@ -358,7 +382,7 @@ import logging
 import uuid
 from typing import Any, Optional
 
-from lib.stat.stat_storage import StatStorage
+from lib.stats.stats_storage import StatsStorage
 from lib import utils as libUtils
 
 from .database import Database
@@ -367,13 +391,13 @@ from .providers.base import ExcludedValue
 logger = logging.getLogger(__name__)
 
 
-class StatStorage(StatStorage):
-    """Database-backed stat storage with separate log and aggregate data sources.
+class StatsStorage(StatsStorage):
+    """Database-backed stats storage with separate log and aggregate data sources.
 
     Raw events are appended to the ``stat_events`` table in the log data source.
-    The ``aggregate()`` method claims batches of unprocessed events, computes
-    hourly/daily/monthly buckets, and upserts into the ``stat_aggregates`` table
-    in the aggregate data source.
+    The ``aggregate()`` method claims batches of unprocessed events (including
+    orphaned ones from crashed prior runs) via a single UPDATE, then computes
+    hourly/daily/monthly buckets and upserts into ``stat_aggregates``.
 
     Both sources can point to the same database file (simplest setup) or to
     different files (e.g. rotating the log file independently).
@@ -390,7 +414,7 @@ class StatStorage(StatStorage):
     def __init__(
         self, db: Database, eventType: str, *, logDataSource: str, aggDataSource: str
     ) -> None:
-        """Initialize database-backed stat storage.
+        """Initialize database-backed stats storage.
 
         Args:
             db: Database instance from internal.database.database.
@@ -449,80 +473,84 @@ class StatStorage(StatStorage):
             },
         )
 
-    async def aggregate(self, *, limit: int = 1000) -> int:
+    async def aggregate(self, *, limit: int = 1000, orphanTimeoutSeconds: int = 3600) -> int:
         """Claim and aggregate a batch of unprocessed events.
 
-        Implements a poor-man's transaction using ``processed_id`` to claim
-        rows without relying on BEGIN/COMMIT (portable across SQLink, SQLite,
-        MySQL, PostgreSQL).
+        **v2 flow — claim-first, reclaim-in-place:**
 
-        Processing steps:
-            0. Reclaim orphaned events (crashed mid-aggregation, older than 5 min).
-            1. SELECT up to ``limit`` unprocessed event IDs.
-            2. UPDATE those rows with a batch UUID (claim).
-            3. SELECT the claimed rows' data.
-            4. Compute hourly/daily/monthly aggregates in Python.
-            5. Upsert into ``stat_aggregates`` via the agg data source.
-            6. Mark claimed rows as ``processed = 1``.
+            1. UPDATE claim: claims up to ``limit`` rows with ``processed = 0``
+               whose ``processed_id IS NULL`` (never claimed) OR whose
+               ``claimed_at`` is older than the orphan timeout (stale claim
+               from a crashed previous run). Sets ``processed_id = batchId``
+               and ``claimed_at = now``.
+            2. SELECT claimed rows' data by ``processed_id = batchId``.
+            3. Compute hourly/daily/monthly aggregates in Python.
+            4. Upsert into ``stat_aggregates`` via the agg data source.
+            5. Mark claimed rows as ``processed = 1``.
+
+        No separate orphan-reclaim pass — stale rows are reclaimed as part
+        of the claim UPDATE itself.
 
         Args:
             limit: Maximum number of unprocessed events to claim.
+            orphanTimeoutSeconds: Age in seconds after which a claimed-but-
+                unprocessed row is considered orphaned. Default 3600 (1 hour).
 
         Returns:
             Number of events processed (0 if nothing to aggregate).
         """
         batchId = str(uuid.uuid4())
         now = datetime.datetime.now(datetime.UTC)
-        orphanTimeout = now - datetime.timedelta(minutes=60)
+        orphanTimeout = now - datetime.timedelta(seconds=orphanTimeoutSeconds)
 
-        # --- Step 0: reclaim orphans ---
         logProvider = await self.db.manager.getProvider(
             dataSource=self.logDataSource, readonly=False
         )
-        await logProvider.execute(
+
+        # --- Step 1: claim batch (includes orphan reclaim) ---
+        #
+        # Claims rows where:
+        #   processed = 0              — not yet aggregated
+        #   processed_id IS NULL       — never claimed before
+        #      OR
+        #   claimed_at < :orphanTimeout — claimed too long ago (crashed mid-aggregation)
+        #
+        # The UPDATE uses a subquery to apply LIMIT portably.
+        # SQLite / PostgreSQL: subquery with LIMIT works directly.
+        # MySQL: the provider may need to wrap in an extra derived table
+        #   (SELECT ... FROM (SELECT ... LIMIT n) AS _t) due to MySQL's
+        #   restriction on updating a table also used in a subquery.
+        #
+        claimResult = await logProvider.execute(
             """UPDATE stat_events
-               SET processed_id = NULL, claimed_at = NULL
-               WHERE processed = 0
-                 AND processed_id IS NOT NULL
-                 AND claimed_at < :timeout""",
-            {"timeout": orphanTimeout},
+               SET processed_id = :batchId, claimed_at = :now
+               WHERE event_id IN (
+                   SELECT event_id FROM stat_events
+                   WHERE processed = 0
+                     AND (processed_id IS NULL OR claimed_at < :orphanTimeout)
+                   ORDER BY event_time
+                   LIMIT :limit
+               )""",
+            {
+                "batchId": batchId,
+                "now": now,
+                "orphanTimeout": orphanTimeout,
+                "limit": limit,
+            },
         )
 
-        # --- Step 1: select unprocessed event IDs ---
-        rows = await logProvider.executeFetchAll(
-            """SELECT event_id FROM stat_events
-               WHERE processed = 0 AND processed_id IS NULL
-               ORDER BY event_time
-               LIMIT :limit""",
-            {"limit": limit},
-        )
-        if not rows:
-            return 0
-
-        eventIds = [r["event_id"] for r in rows]
-        nClaimed = len(eventIds)
-
-        # Build IN clause placeholders
-        inPlaceholders = {f"id{i}": eventIds[i] for i in range(nClaimed)}
-        inClause = ", ".join(f":id{i}" for i in range(nClaimed))
-
-        # --- Step 2: claim the batch ---
-        await logProvider.execute(
-            f"""UPDATE stat_events
-                SET processed_id = :batchId, claimed_at = :now
-                WHERE event_id IN ({inClause})""",
-            {"batchId": batchId, "now": now, **inPlaceholders},
-        )
-
-        # --- Step 3: read claimed events ---
+        # --- Step 2: read claimed events ---
         events = await logProvider.executeFetchAll(
             """SELECT consumer_id, event_time, data
                FROM stat_events
                WHERE processed_id = :batchId""",
             {"batchId": batchId},
         )
+        nClaimed = len(events)
+        if nClaimed == 0:
+            return 0
 
-        # --- Step 4: aggregate in Python ---
+        # --- Step 3: aggregate in Python ---
         # Key: (consumerId, periodStart, periodType, metricKey) -> sum
         aggregates: dict[tuple[str, str, str, str], float] = {}
         for event in events:
@@ -535,7 +563,7 @@ class StatStorage(StatStorage):
                     key = (consumerId, truncated, periodType, metricKey)
                     aggregates[key] = aggregates.get(key, 0.0) + float(metricValue)
 
-        # --- Step 5: upsert into aggregate table ---
+        # --- Step 4: upsert into aggregate table ---
         aggProvider = await self.db.manager.getProvider(
             dataSource=self.aggDataSource, readonly=False
         )
@@ -561,7 +589,7 @@ class StatStorage(StatStorage):
                 },
             )
 
-        # --- Step 6: mark processed ---
+        # --- Step 5: mark processed ---
         await logProvider.execute(
             """UPDATE stat_events
                SET processed = 1
@@ -615,6 +643,10 @@ def _parseJson(raw: str) -> dict[str, float | int]:
         return {}
 ```
 
+### `UPDATE ... LIMIT` portability note
+
+The claim UPDATE uses a subquery with `LIMIT` inside `WHERE event_id IN (...)`. This is directly portable to SQLite and PostgreSQL. MySQL requires a double-nested subquery (`SELECT ... FROM (SELECT ... LIMIT n) AS _t`) because MySQL forbids updating a table that also appears in a direct subquery. Since the MySQL provider is not yet wired in production, this is a deferred concern. When MySQL support is activated, the claim query can be wrapped or a provider method (`applyUpdateLimit`) can be added to `BaseSQLProvider`.
+
 ### Why `period_start` as ISO string
 
 Storing `period_start` as an ISO 8601 string (`"2026-05-09T14:00:00"`) rather than a native
@@ -659,7 +691,7 @@ dbPath = "stats_agg.db"       # kept forever
 ```toml
 [stats]
 enabled = true
-# Future: aggregation schedule, retention TTL, etc.
+# Future: aggregation schedule, retention TTL, orphan timeout override, etc.
 ```
 
 ## 5. Integration with `lib/ai`
@@ -668,19 +700,19 @@ enabled = true
 
 #### 5.1 `LLMManager` (`lib/ai/manager.py`)
 
-- Add `statStorage: Optional[StatStorage] = None` parameter to `__init__`.
-- Store as `self.statStorage`.
-- In `_initModels()`, after model creation, set `model.statStorage = self.statStorage`.
+- Add `statsStorage: Optional[StatsStorage] = None` parameter to `__init__`.
+- Store as `self.statsStorage`.
+- In `_initModels()`, after model creation, set `model.statsStorage = self.statsStorage`.
 
 ```python
 # lib/ai/manager.py — LLMManager
 
-from lib.stat.stat_storage import StatStorage
+from lib.stats.stats_storage import StatsStorage
 
 class LLMManager:
-    def __init__(self, config: Dict[str, Any], *, statStorage: Optional[StatStorage] = None) -> None:
+    def __init__(self, config: Dict[str, Any], *, statsStorage: Optional[StatsStorage] = None) -> None:
         ...
-        self.statStorage = statStorage
+        self.statsStorage = statsStorage
         self._initModels()
 
     def _initModels(self) -> None:
@@ -688,18 +720,18 @@ class LLMManager:
         for modelName, modelConfig in modelsConfig.items():
             ...
             model = provider.addModel(...)  # existing code
-            if self.statStorage is not None:
-                model.statStorage = self.statStorage
+            if self.statsStorage is not None:
+                model.statsStorage = self.statsStorage
 ```
 
 #### 5.2 `AbstractModel` (`lib/ai/abstract.py`)
 
-- Add `statStorage: Optional[StatStorage] = None` attribute in `__init__`.
+- Add `statsStorage: Optional[StatsStorage] = None` attribute in `__init__`.
 - Add `consumerId: Optional[str] = None` keyword argument to `generateText()`,
   `generateStructured()`, and `generateImage()`.
 - Pass `consumerId` through to `_runWithFallback()`.
 - In `_runWithFallback()`, after each model attempt, call
-  `self.statStorage.record()` if set.
+  `self.statsStorage.record()` if set.
 - In each public method's non-fallback path, call `self._recordStats()` after
   the model call.
 
@@ -709,7 +741,7 @@ class LLMManager:
 class AbstractModel:
     def __init__(self, ...):
         ...
-        self.statStorage: Optional[StatStorage] = None
+        self.statsStorage: Optional[StatsStorage] = None
 
     async def generateText(
         self, messages, tools=None, *, fallbackModels=None, consumerId=None
@@ -752,8 +784,8 @@ class AbstractModel:
                 result.setFallback(True)
 
             # --- Stats recording ---
-            if self.statStorage is not None:
-                await self.statStorage.record(
+            if self.statsStorage is not None:
+                await self.statsStorage.record(
                     consumerId=consumerId or "global",
                     stats={
                         f"generation_{generationType}": 1,
@@ -774,9 +806,9 @@ class AbstractModel:
         self, consumerId: Optional[str], result: ModelRunResult, generationType: str
     ) -> None:
         """Record stats for a non-fallback (direct) model call."""
-        if self.statStorage is None:
+        if self.statsStorage is None:
             return
-        await self.statStorage.record(
+        await self.statsStorage.record(
             consumerId=consumerId or "global",
             stats={
                 f"generation_{generationType}": 1,
@@ -838,11 +870,11 @@ In `GromozekBot.__init__()`, after `self.database` is initialized:
 ```python
 # main.py — GromozekBot.__init__
 
-from internal.database.stat_storage import StatStorage
+from internal.database.stats_storage import StatsStorage
 
 # ... after self.database is ready ...
 
-llmStatStorage = StatStorage(
+llmStatsStorage = StatsStorage(
     db=self.database,
     eventType="llm_request",
     logDataSource="stats_log",
@@ -851,63 +883,63 @@ llmStatStorage = StatStorage(
 
 self.llmManager = LLMManager(
     self.configManager.getModelsConfig(),
-    statStorage=llmStatStorage,
+    statsStorage=llmStatsStorage,
 )
 ```
 
-If stats are disabled in config, use `NullStatStorage` instead:
+If stats are disabled in config, use `NullStatsStorage` instead:
 
 ```python
-from lib.stat import NullStatStorage
+from lib.stats import NullStatsStorage
 
 if self.configManager.getStatsConfig().get("enabled", True):
-    llmStatStorage = StatStorage(...)
+    llmStatsStorage = StatsStorage(...)
 else:
-    llmStatStorage = NullStatStorage()
+    llmStatsStorage = NullStatsStorage()
 ```
 
 ## 8. Tests
 
-### 8.1 `lib/stat/test/test_null_storage.py`
+### 8.1 `lib/stats/test/test_null_storage.py`
 
 ```python
-"""Unit tests for NullStatStorage."""
+"""Unit tests for NullStatsStorage."""
 import pytest
 
-from lib.stat import NullStatStorage
+from lib.stats import NullStatsStorage
 
 
 async def testNullRecordDoesNotRaise():
-    storage = NullStatStorage()
+    storage = NullStatsStorage()
     await storage.record("test", {"foo": 1})  # should not raise
 
 async def testNullAggregateReturnsZero():
-    storage = NullStatStorage()
+    storage = NullStatsStorage()
     result = await storage.aggregate()
     assert result == 0
 
 async def testNullAggregateWithLimit():
-    storage = NullStatStorage()
+    storage = NullStatsStorage()
     result = await storage.aggregate(limit=500)
     assert result == 0
 ```
 
-### 8.2 `lib/stat/test/test_sql_storage.py`
+### 8.2 `lib/stats/test/test_sql_storage.py`
 
 Integration tests using an in-memory SQLite provider. Test cases:
 
 ```python
-"""Integration tests for StatStorage (DB-backed)."""
+"""Integration tests for StatsStorage (DB-backed)."""
 import datetime
 import pytest
 
-from internal.database.stat_storage import StatStorage
+from internal.database.stats_storage import StatsStorage
 # Use testDatabase fixture from tests/conftest.py
 
 
 @pytest.mark.asyncio
 async def testRecordAndAggregateSingleEvent(testDatabase):
-    storage = StatStorage(
+    storage = StatsStorage(
         db=testDatabase,
         eventType="test_event",
         logDataSource="default",
@@ -925,14 +957,14 @@ async def testRecordAndAggregateSingleEvent(testDatabase):
 
 @pytest.mark.asyncio
 async def testAggregateEmptyReturnsZero(testDatabase):
-    storage = StatStorage(...)
+    storage = StatsStorage(...)
     result = await storage.aggregate()
     assert result == 0
 
 
 @pytest.mark.asyncio
 async def testAggregateRespectsLimit(testDatabase):
-    storage = StatStorage(...)
+    storage = StatsStorage(...)
     for i in range(50):
         await storage.record("c", {"x": 1})
     result = await storage.aggregate(limit=10)
@@ -945,8 +977,25 @@ async def testAggregateRespectsLimit(testDatabase):
 
 @pytest.mark.asyncio
 async def testOrphanReclaim(testDatabase):
-    """Simulate crash: claim rows but don't mark processed."""
+    """Simulate crash: manually set processed_id/claimed_at on some rows
+    with old timestamps, then verify aggregate() reclaims and processes them.
+
+    v2 behavior: no separate cleanup pass — orphans are reclaimed as part
+    of the claim UPDATE when claimed_at < orphanTimeout."""
     ...
+
+
+@pytest.mark.asyncio
+async def testOrphanNotReclaimedWhenFresh(testDatabase):
+    """Verify that rows with a recent claimed_at are NOT reclaimed
+    (the WHERE clause requires claimed_at < orphanTimeout)."""
+    storage = StatsStorage(...)
+    # Insert a row and simulate a "recent claim" by setting processed_id
+    # to a batch UUID and claimed_at to now
+    ...
+    # aggregate() should not touch it
+    result = await storage.aggregate()  # no old orphans
+    assert result == 0  # the fresh claim is left alone
 
 
 @pytest.mark.asyncio
@@ -967,11 +1016,11 @@ Test that `AbstractModel` records stats through the chain:
 
 ```python
 @pytest.mark.asyncio
-async def testGenerateTextRecordsStats(mockModel, mockStatStorage):
-    model.statStorage = mockStatStorage
+async def testGenerateTextRecordsStats(mockModel, mockStatsStorage):
+    model.statsStorage = mockStatsStorage
     result = await model.generateText(messages, consumerId="chat_42")
-    
-    mockStatStorage.record.assert_called_with(
+
+    mockStatsStorage.record.assert_called_with(
         consumerId="chat_42",
         stats=pytest.approx({"generation_text": 1, "request_count": 1, ...}),
     )
@@ -982,9 +1031,9 @@ async def testGenerateTextRecordsStats(mockModel, mockStatStorage):
 | # | Task | File(s) | Skill to Dispatch | Depends On |
 |---|---|---|---|---|
 | 1 | Migration 016 | `migrations/versions/migration_016_add_stat_tables.py` | `add-database-migration` | — |
-| 2 | `lib/stat/` — ABC + Null | `lib/stat/__init__.py`, `lib/stat/stat_storage.py` | `software-developer` | — |
-| 3 | DB-backed storage | `internal/database/stat_storage.py` | `software-developer` | 1, 2 |
-| 4 | Tests for `lib/stat` | `lib/stat/test/test_null_storage.py`, `lib/stat/test/test_sql_storage.py` | `software-developer` | 2, 3 |
+| 2 | `lib/stats/` — ABC + Null | `lib/stats/__init__.py`, `lib/stats/stats_storage.py` | `software-developer` | — |
+| 3 | DB-backed storage (v2 flow) | `internal/database/stats_storage.py` | `software-developer` | 1, 2 |
+| 4 | Tests for `lib/stats` | `lib/stats/test/test_null_storage.py`, `lib/stats/test/test_sql_storage.py` | `software-developer` | 2, 3 |
 | 5 | Quality gates | `make format lint && make test` | `run-quality-gates` | 4 |
 | 6 | LLMManager integration | `lib/ai/manager.py` | `software-developer` | 2 |
 | 7 | AbstractModel integration | `lib/ai/abstract.py` | `software-developer` | 2, 6 |
@@ -1000,23 +1049,23 @@ async def testGenerateTextRecordsStats(mockModel, mockStatStorage):
   Design is known (call `aggregate()` on a timer) but the scheduling mechanism
   needs further thought. Deferred to a follow-up plan.
 - **Message stats** (extending existing `chat_stats` with hourly/monthly or
-  creating a separate `StatStorage` instance for `eventType="message"`).
-  The library supports it trivially: create another `StatStorage` with
+  creating a separate `StatsStorage` instance for `eventType="message"`).
+  The library supports it trivially: create another `StatsStorage` with
   `eventType="message_received"` and call `record()` from
   `chatMessages.saveChatMessage()`.
 - **Query API** (methods to read from `stat_aggregates` with time range +
   consumer filters). The raw SQL queries are straightforward; a query API
-  on `StatStorage` can be added later without schema changes.
+  on `StatsStorage` can be added later without schema changes.
 
 ## 10. Documentation Impact
 
 | Document | Change |
 |---|---|
-| `docs/llm/libraries.md` | Add `lib/stat` section — API overview, StatStorage, NullStatStorage |
+| `docs/llm/libraries.md` | Add `lib/stats` section — API overview, StatsStorage, NullStatsStorage |
 | `docs/llm/database.md` | Add migration 016 to migration list, `stat_events` + `stat_aggregates` to tables |
 | `docs/database-schema.md` | Add `stat_events` and `stat_aggregates` tables with column descriptions |
 | `docs/database-schema-llm.md` | Same, LLM format |
-| `docs/llm/index.md` | Add `lib/stat/` to `lib/` directory map |
+| `docs/llm/index.md` | Add `lib/stats/` to `lib/` directory map |
 | `docs/llm/architecture.md` | Stats data flow section (Mermaid diagram from this plan) |
 | `AGENTS.md` | No changes needed (no new conventions) |
 
@@ -1024,15 +1073,24 @@ async def testGenerateTextRecordsStats(mockModel, mockStatStorage):
 
 | Risk | Mitigation |
 |---|---|
-| **TOCTOU in aggregate step 1–2** (SELECT then UPDATE by IDs). | Single-process bot — no concurrent aggregators. If multi-process ever happens, orphan reclaim handles collisions; or switch to `SELECT ... FOR UPDATE SKIP LOCKED`. |
-| **SQLink LIMIT compatibility**. | Only `SELECT ... LIMIT` is used (no LIMIT in UPDATE). SQLink supports this. |
+| **TOCTOU in claim step** (UPDATE subquery vs concurrent claim). | Single-process bot — no concurrent aggregators. If multi-process ever happens, the subquery's LIMIT ensures each aggregator picks distinct rows; orphan timeout handles collisions. |
+| **`UPDATE ... LIMIT` portability** — `LIMIT` inside a subquery in `WHERE ... IN (...)` | Works directly on SQLite and PostgreSQL. MySQL needs a double-nested subquery (`SELECT ... FROM (SELECT ... LIMIT n) AS _t`). The MySQL provider (not yet wired) can handle this wrapping, or a new `applyUpdateLimit` method can be added to `BaseSQLProvider`. |
 | **`consumerId` type mismatch** (Telegram int vs Max string). | Stored as TEXT everywhere — both platforms work. |
-| **Crash between claim and mark-processed**. | `claimed_at` timeout + orphan reclaim on next `aggregate()` run. Events older than 5 min with `processed=0, processed_id!=NULL` are re-claimed. |
+| **Crash between claim and mark-processed**. | v2 reclaim: the next `aggregate()` call's claim UPDATE picks up rows with `processed_id IS NOT NULL AND claimed_at < :orphanTimeout` and overwrites them with the new batchId. No separate cleanup step needed. |
+| **Crash after claim, before data read** (batchId exists but no SELECT happened). | Same as above — next `aggregate()` reclaims them. The old batch UUID is overwritten. The orphan timeout (default 1 hour) prevents reclaiming rows from a still-running aggregator. |
 | **JSON `data` column parsing failure**. | `_parseJson()` returns empty dict on failure + logs error. Event is still counted as processed (no retry). |
 | **`period_start` as ISO string** — ordering/comparison across RDBMS. | ISO 8601 strings sort lexicographically in the same order as timestamps. No RDBMS timestamp functions needed. |
-| **`__slots__` conflict with `StatStorage` ABC**. | `StatStorage` (ABC) does not define `__slots__`. `internal/database/stat_storage.StatStorage` defines only its own slots. No conflict. |
+| **`__slots__` conflict with `StatsStorage` ABC**. | `StatsStorage` (ABC) does not define `__slots__`. `internal/database/stats_storage.StatsStorage` defines only its own slots. No conflict. |
 
 ## 12. Alternative Designs Considered
+
+### v1 flow: SELECT-before-UPDATE + separate orphan cleanup
+
+**Replaced in v2.** The v1 flow had 6 DB round-trips (clean orphans → SELECT IDs → UPDATE claim → SELECT data → upsert → mark processed). v2 reduces this to 4 round-trips (UPDATE claim → SELECT data → upsert → mark processed) by:
+- Merging orphan reclaim into the claim WHERE clause.
+- Claiming via UPDATE with `LIMIT` (subquery) instead of SELECT-then-UPDATE-by-IDs.
+
+The v1 TOCTOU window between SELECT and UPDATE is eliminated — the claim is atomic in a single UPDATE.
 
 ### Separate tables per metric domain (like existing `chat_stats`)
 
@@ -1040,10 +1098,10 @@ async def testGenerateTextRecordsStats(mockModel, mockStatStorage):
 (raw events + EAV aggregates) approach supports arbitrary metric keys without
 schema changes.
 
-### Singleton StatService
+### Singleton StatsService
 
 **Rejected** — user explicitly requested non-singleton, configurable instances.
-Different `StatStorage` instances serve different `eventType`s with different
+Different `StatsStorage` instances serve different `eventType`s with different
 data sources. The caller controls lifecycle.
 
 ### Background aggregation thread
