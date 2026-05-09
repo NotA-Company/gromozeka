@@ -509,27 +509,31 @@ class StatsStorage(StatsStorage):
 
         # --- Step 1: claim batch (includes orphan reclaim) ---
         #
-        # Claims rows where:
+        # Claims up to ``limit`` rows where:
         #   processed = 0              — not yet aggregated
         #   processed_id IS NULL       — never claimed before
         #      OR
         #   claimed_at < :orphanTimeout — claimed too long ago (crashed mid-aggregation)
         #
-        # The UPDATE uses a subquery to apply LIMIT portably.
-        # SQLite / PostgreSQL: subquery with LIMIT works directly.
-        # MySQL: the provider may need to wrap in an extra derived table
-        #   (SELECT ... FROM (SELECT ... LIMIT n) AS _t) due to MySQL's
-        #   restriction on updating a table also used in a subquery.
+        # Portability: uses a double-nested subquery because:
+        #   - PostgreSQL does not support LIMIT in UPDATE.
+        #   - MySQL forbids updating a table that also appears in a direct
+        #     subquery (ERROR 1093). The double nesting materializes the inner
+        #     result, bypassing MySQL's restriction.
+        #   - SQLite and PostgreSQL handle double-nested subqueries natively.
+        # Result: one form works across SQLite, PostgreSQL, and MySQL.
         #
         claimResult = await logProvider.execute(
             """UPDATE stat_events
                SET processed_id = :batchId, claimed_at = :now
                WHERE event_id IN (
-                   SELECT event_id FROM stat_events
-                   WHERE processed = 0
-                     AND (processed_id IS NULL OR claimed_at < :orphanTimeout)
-                   ORDER BY event_time
-                   LIMIT :limit
+                   SELECT event_id FROM (
+                       SELECT event_id FROM stat_events
+                       WHERE processed = 0
+                         AND (processed_id IS NULL OR claimed_at < :orphanTimeout)
+                       ORDER BY event_time
+                       LIMIT :limit
+                   ) AS _claim
                )""",
             {
                 "batchId": batchId,
@@ -645,7 +649,26 @@ def _parseJson(raw: str) -> dict[str, float | int]:
 
 ### `UPDATE ... LIMIT` portability note
 
-The claim UPDATE uses a subquery with `LIMIT` inside `WHERE event_id IN (...)`. This is directly portable to SQLite and PostgreSQL. MySQL requires a double-nested subquery (`SELECT ... FROM (SELECT ... LIMIT n) AS _t`) because MySQL forbids updating a table that also appears in a direct subquery. Since the MySQL provider is not yet wired in production, this is a deferred concern. When MySQL support is activated, the claim query can be wrapped or a provider method (`applyUpdateLimit`) can be added to `BaseSQLProvider`.
+The claim UPDATE uses a double-nested subquery to apply `LIMIT` portably across all three
+target RDBMS:
+
+```sql
+UPDATE stat_events SET processed_id = :batchId, claimed_at = :now
+WHERE event_id IN (
+    SELECT event_id FROM (
+        SELECT event_id FROM stat_events
+        WHERE processed = 0 AND (processed_id IS NULL OR claimed_at < :orphanTimeout)
+        ORDER BY event_time
+        LIMIT :limit
+    ) AS _claim
+)
+```
+
+- **SQLite**: native support for nested subqueries — works.
+- **PostgreSQL**: native support for nested subqueries, no `LIMIT` in `UPDATE` — works because the `LIMIT` is inside the inner `SELECT`.
+- **MySQL**: forbids referencing the updated table in a direct subquery (`ERROR 1093`). The double nesting (`SELECT ... FROM (SELECT ...) AS _claim`) materializes the inner result, bypassing this restriction.
+
+This is the single portable form that works across all three RDBMS without provider-specific branching.
 
 ### Why `period_start` as ISO string
 
@@ -1074,7 +1097,7 @@ async def testGenerateTextRecordsStats(mockModel, mockStatsStorage):
 | Risk | Mitigation |
 |---|---|
 | **TOCTOU in claim step** (UPDATE subquery vs concurrent claim). | Single-process bot — no concurrent aggregators. If multi-process ever happens, the subquery's LIMIT ensures each aggregator picks distinct rows; orphan timeout handles collisions. |
-| **`UPDATE ... LIMIT` portability** — `LIMIT` inside a subquery in `WHERE ... IN (...)` | Works directly on SQLite and PostgreSQL. MySQL needs a double-nested subquery (`SELECT ... FROM (SELECT ... LIMIT n) AS _t`). The MySQL provider (not yet wired) can handle this wrapping, or a new `applyUpdateLimit` method can be added to `BaseSQLProvider`. |
+| **`UPDATE ... LIMIT` portability** — PostgreSQL lacks `LIMIT` in `UPDATE`; MySQL forbids target table in direct subqueries. | Double-nested subquery (`SELECT ... FROM (SELECT ... LIMIT n) AS _claim`) works across SQLite, PostgreSQL, and MySQL. One form, no provider branching. |
 | **`consumerId` type mismatch** (Telegram int vs Max string). | Stored as TEXT everywhere — both platforms work. |
 | **Crash between claim and mark-processed**. | v2 reclaim: the next `aggregate()` call's claim UPDATE picks up rows with `processed_id IS NOT NULL AND claimed_at < :orphanTimeout` and overwrites them with the new batchId. No separate cleanup step needed. |
 | **Crash after claim, before data read** (batchId exists but no SELECT happened). | Same as above — next `aggregate()` reclaims them. The old batch UUID is overwritten. The orphan timeout (default 1 hour) prevents reclaiming rows from a still-running aggregator. |
