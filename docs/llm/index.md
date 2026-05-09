@@ -242,6 +242,7 @@ make test
 | [`lib/openweathermap/client.py`](../../lib/openweathermap/client.py) | OpenWeatherMap API client |
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
+| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`) |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
 | [`lib/logging_utils.py`](../../lib/logging_utils.py) | `initLogging()` helper |
@@ -262,4 +263,4 @@ make test
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*  
-*Last updated: 2026-05-06*
+*Last updated: 2026-05-09*

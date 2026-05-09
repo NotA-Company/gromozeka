@@ -29,6 +29,8 @@ import openai
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
+from lib.stats import StatsStorage
+
 from ..abstract import AbstractLLMProvider, AbstractModel
 from ..models import (
     LLMAbstractTool,
@@ -137,11 +139,13 @@ class BasicOpenAIModel(AbstractModel):
         self,
         provider: "BasicOpenAIProvider",
         modelId: str,
+        *,
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        openAiClient: openai.AsyncOpenAI,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        openAiClient: openai.AsyncOpenAI,
     ) -> None:
         """Initialize a basic OpenAI model instance.
 
@@ -157,7 +161,15 @@ class BasicOpenAIModel(AbstractModel):
         Raises:
             ValueError: If required configuration is missing.
         """
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
+        super().__init__(
+            provider,
+            modelId,
+            modelVersion=modelVersion,
+            temperature=temperature,
+            contextSize=contextSize,
+            statsStorage=statsStorage,
+            extraConfig=extraConfig,
+        )
         self._client = openAiClient
         self._supportTools = self._config.get("support_tools", False)
 
@@ -720,10 +732,12 @@ class BasicOpenAIProvider(AbstractLLMProvider):
     def _createModelInstance(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Create a model instance.
@@ -750,10 +764,12 @@ class BasicOpenAIProvider(AbstractLLMProvider):
     def addModel(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Add an OpenAI-compatible model to the provider.
@@ -789,7 +805,15 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             raise RuntimeError("OpenAI client not initialized, dood!")
 
         try:
-            model = self._createModelInstance(name, modelId, modelVersion, temperature, contextSize, extraConfig)
+            model = self._createModelInstance(
+                name,
+                modelId=modelId,
+                modelVersion=modelVersion,
+                temperature=temperature,
+                contextSize=contextSize,
+                statsStorage=statsStorage,
+                extraConfig=extraConfig,
+            )
 
             self.models[name] = model
             logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), dood!")

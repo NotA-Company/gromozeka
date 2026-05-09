@@ -369,6 +369,66 @@ db.chatSettings.setChatSetting(
 
 ## Statistics Tables
 
+### stat_events
+
+Append-only event log for raw statistics events. Used by the statistics collection system to record events before aggregation.
+
+**Primary Key**: `event_id` (app-generated UUID)
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `event_id` | TEXT | No | - | App-generated UUID primary key |
+| `event_type` | TEXT | No | - | Type of statistics event (e.g., 'llm_request', 'message_received') |
+| `event_time` | TIMESTAMP | No | - | Timestamp when the event occurred |
+| `data` | TEXT | No | - | JSON-encoded event payload (metric key -> value) |
+| `labels` | TEXT | No | - | JSON-encoded dimension key-value pairs (e.g., consumer, model, provider) |
+| `processed` | INTEGER | No | 0 | Boolean flag (0=unprocessed, 1=processed) |
+| `processed_id` | TEXT | Yes | NULL | ID of the aggregate record that claimed this event |
+| `claimed_at` | TIMESTAMP | Yes | NULL | Timestamp when event was claimed for processing |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp |
+
+**Indexes:**
+- `idx_stat_events_unprocessed` on `(processed, processed_id, claimed_at)` — for fast lookup of unprocessed/orphaned events
+- `idx_stat_events_lookup` on `(event_type, event_time)` — for event lookup by type and time
+
+**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for `DatabaseStatsStorage` implementation.
+
+---
+
+### stat_aggregates
+
+Pre-computed period buckets for aggregated statistics metrics. Produced by aggregating raw events from `stat_events`.
+
+**Primary Key**: `(event_type, period_start, period_type, labels_hash, metric_key)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `event_type` | TEXT | No | - | Type of statistics event |
+| `period_start` | TEXT | No | - | Start of the aggregation period (ISO-8601 formatted string) |
+| `period_type` | TEXT | No | - | Period length ('hour', 'day', 'month', 'total') |
+| `labels_hash` | TEXT | No | - | MD5 hex digest from labels |
+| `labels` | TEXT | No | - | JSON-encoded dimension key-value pairs |
+| `metric_key` | TEXT | No | - | Name of the metric (e.g., 'request_count', 'input_tokens') |
+| `metric_value` | REAL | No | - | Numeric value of the metric (sum or count) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp |
+
+**Period types:**
+- `hour` — Hourly aggregation (period_start rounded to hour)
+- `day` — Daily aggregation (period_start rounded to day)
+- `month` — Monthly aggregation (period_start rounded to month)
+- `total` — All-time aggregation (period_start = epoch)
+
+**Labels include:**
+- `consumer` — Consumer identifier (chat ID or `"__global__"` for rollup)
+- `modelName` — LLM model name
+- `modelId` — LLM model ID
+- `provider` — LLM provider name
+- `generationType` — Type of generation ('text', 'structured', 'image')
+
+**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Automatically updated when `DatabaseStatsStorage.aggregate()` is called. See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for implementation details.
+
+---
+
 ### chat_stats
 
 Aggregated daily statistics per chat.

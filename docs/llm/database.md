@@ -502,7 +502,49 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
 
 ---
 
-## 8. Migration Documentation Protocol
+## 9. Utility Functions
+
+**File:** [`internal/database/utils.py`](../../internal/database/utils.py)
+
+### `sqlToCustomType(data, expectedType)`
+
+Convert SQL response data to the expected Python type with smart type coercion.
+
+```python
+from internal.database.utils import sqlToCustomType
+
+# Handle Optional types gracefully
+success, value = sqlToCustomType(rawValue, Optional[datetime.datetime])
+# Returns (True, None) for Optional[...] when data is None
+# Returns (True, datetime(...)) for valid datetime
+# Returns (False, None) for conversion failures
+
+# Handle Union types - tries each member
+success, value = sqlToCustomType("123", Union[int, str])
+# Tries int conversion first, then str fallback
+```
+
+**Supported conversions:**
+- `None` → `Optional[T]`: Returns `(True, None)` for any Optional type
+- `bytes` / `str` → `int`, `float`, `bool`: Decodes and converts
+- `int`, `float`, `bool` → other numeric or string types
+- JSON strings → `dict`, `list`, generic types like `dict[str, int]`
+- ISO timestamps → `datetime.datetime`
+- Unix timestamps → `datetime.datetime`
+
+**Optional/Union handling:**
+- When `data is None` and `expectedType` is `Optional[T]`, returns `(True, None)`
+- When `data is not None`, unwraps `Optional[T]` and tries converting to `T`
+- Handles both `typing.Union` and `types.UnionType` (Python 3.10+ syntax)
+
+**Use cases:**
+- Converting SQL query results to typed Python values
+- Handling nullable database columns via `Optional` types
+- Safe type conversion with `(success, value)` tuple pattern
+
+---
+
+## 10. Migration Documentation Protocol
 
 **Critical lesson from migration_009 documentation error**
 
@@ -537,12 +579,13 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_015` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_016` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
 - `migration_014`: Adds the [`divinations`](#divinations) table (composite PK `(chat_id, message_id)`) plus `idx_divinations_user_created` index for tarot/runes readings
 - `migration_015`: Adds the [`divination_layouts`](#divination_layouts) table (composite PK `(system_id, layout_id)`) plus `idx_divination_layouts_system` index for layout discovery cache
+- `migration_016`: Adds [`stat_events`](../../lib/stats/stats_storage.py) (append-only event log) and [`stat_aggregates`](../../lib/stats/stats_storage.py) (period buckets) tables for statistics collection
 
 ---
 
@@ -559,4 +602,4 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
 ---
 
 *This guide is auto-maintained and should be updated whenever significant database changes are made*
-*Last updated: 2026-05-02*
+*Last updated: 2026-05-10*

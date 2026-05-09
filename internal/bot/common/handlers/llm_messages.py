@@ -167,7 +167,6 @@ class LLMMessageHandler(BaseBotHandler):
             messages,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
             modelKey=ChatSettingsKey.CHAT_MODEL,
             fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
             useTools=useTools,
@@ -310,7 +309,6 @@ class LLMMessageHandler(BaseBotHandler):
                 imagePrompt,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
             )
             logger.debug(
                 f"Generated image Data: {imgMLRet} for mcID: "
@@ -760,7 +758,6 @@ class LLMMessageHandler(BaseBotHandler):
                         contextMessages,
                         chatId=ensuredMessage.recipient.id,
                         chatSettings=chatSettings,
-                        llmManager=self.llmManager,
                         modelKey=ChatSettingsKey.CHAT_MODEL,
                         fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
                     )
@@ -858,7 +855,6 @@ class LLMMessageHandler(BaseBotHandler):
             mReq,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
             modelKey=ChatSettingsKey.CHAT_MODEL,
             fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
             useTools=True,

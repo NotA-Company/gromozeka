@@ -43,10 +43,13 @@ class DatabaseManager:
     lifecycle management including initialization and cleanup.
     """
 
-    __slots__ = ("config", "_providers", "_initializationHooks")
+    __slots__ = ("config", "_providers", "_initializationHooks", "default")
 
     config: DatabaseManagerConfig
     """Database configuration containing providers, default source, and chat mappings."""
+
+    default: str
+    """Name of the default data source provider."""
 
     _providers: Dict[str, BaseSQLProvider]
     """Cache of initialized SQL provider instances keyed by provider name."""
@@ -80,6 +83,7 @@ class DatabaseManager:
             # Just thewat it as empty dict
             self.config["chatMapping"] = {}
 
+        self.default = self.config["default"]
         self._providers: Dict[str, BaseSQLProvider] = {}
         self._initializationHooks: List[SQLProviderInitializationHook] = []
         logger.info(f"Database initialized: {self.config}")
@@ -127,9 +131,9 @@ class DatabaseManager:
             if dataSource not in self.config["providers"]:
                 logger.warning(
                     f"Explicit dataSource '{dataSource}' not found in configuration, "
-                    f"falling back to default source '{self.config["default"]}', dood!"
+                    f"falling back to default source '{self.default}', dood!"
                 )
-                providerName = self.config["default"]
+                providerName = self.default
             else:
                 # logger.debug(f"Using explicit dataSource '{dataSource}'")
                 providerName = dataSource
@@ -142,9 +146,9 @@ class DatabaseManager:
                 if mappedSource not in self.config["providers"]:
                     logger.warning(
                         f"Chat {chatId} mapped to non-existent source '{mappedSource}', "
-                        f"falling back to default source '{self.config["default"]}', dood!"
+                        f"falling back to default source '{self.default}', dood!"
                     )
-                    providerName = self.config["default"]
+                    providerName = self.default
                 else:
                     # logger.debug(f"Using chatId {chatId} mapping to source '{mappedSource}'")
                     providerName = mappedSource
@@ -153,7 +157,7 @@ class DatabaseManager:
                 #     f"Chat {chatId} not in mapping, using default source "
                 #     f"'{self._defaultSource}'"
                 # )
-                providerName = self.config["default"]
+                providerName = self.default
 
         # Default source fallback
         else:
@@ -161,7 +165,7 @@ class DatabaseManager:
             #     "No routing parameters provided, using default source "
             #     f"'{self._defaultSource}'"
             # )
-            providerName = self.config["default"]
+            providerName = self.default
 
         if providerName not in self._providers:
             logger.debug(f"Initializing provider '{providerName}'...")

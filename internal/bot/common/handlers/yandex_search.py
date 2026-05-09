@@ -434,7 +434,6 @@ class YandexSearchHandler(BaseBotHandler):
                     prompt=prompt,
                     chatId=ensuredMessage.recipient.id,
                     chatSettings=chatSettings,
-                    llmManager=self.llmManager,
                     modelKey=ChatSettingsKey.CHAT_MODEL,
                     fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
                 )

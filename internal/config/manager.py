@@ -478,3 +478,19 @@ class ConfigManager:
             }
         """
         return self.get("storage", {})
+
+    def getStatsConfig(self) -> Dict[str, Any]:
+        """Get stats-specific configuration.
+
+        Returns:
+            A dictionary containing stats configuration settings including
+            enabled flag and future scheduling/retention parameters.
+            Returns an empty dict if not configured.
+
+        Example:
+            >>> config_manager = ConfigManager()
+            >>> stats_config = config_manager.getStatsConfig()
+            >>> print(stats_config.get("enabled"))
+            False
+        """
+        return self.get("stats", {})

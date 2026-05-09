@@ -42,6 +42,8 @@ Example:
 import logging
 from typing import Any, Dict
 
+from lib.stats import StatsStorage
+
 from ..abstract import AbstractModel
 from .basic_openai_provider import BasicOpenAIModel, BasicOpenAIProvider
 
@@ -141,10 +143,12 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
     def _createModelInstance(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Create a custom OpenAI model instance.
@@ -190,6 +194,7 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
             modelVersion=modelVersion,
             temperature=temperature,
             contextSize=contextSize,
-            openAiClient=self._client,
+            statsStorage=statsStorage,
             extraConfig=extraConfig,
+            openAiClient=self._client,
         )

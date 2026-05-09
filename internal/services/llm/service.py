@@ -97,6 +97,7 @@ class LLMService:
         if not hasattr(self, "initialized"):
             self.toolsHandlers: Dict[str, LLMToolFunction] = {}
             self.rateLimiterManager = RateLimiterManager()
+            self.llmManager: Optional[LLMManager] = None
 
             self.initialized = True
             logger.info("LLMService initialized")
@@ -109,6 +110,17 @@ class LLMService:
             The singleton LLMService instance
         """
         return cls()
+
+    def injectLLMManager(self, llmManager: LLMManager) -> None:
+        """Inject an LLMManager instance into the LLMService.
+
+        Args:
+            llmManager: The LLMManager instance to inject
+
+        Returns:
+            None
+        """
+        self.llmManager = llmManager
 
     def registerTool(
         self, name: str, description: str, parameters: Sequence[LLMFunctionParameter], handler: LLMToolHandler
@@ -143,7 +155,6 @@ class LLMService:
         *,
         chatId: Optional[int],
         chatSettings: ChatSettingsDict,
-        llmManager: LLMManager,
         modelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
         fallbackModelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
         useTools: bool = False,
@@ -172,7 +183,6 @@ class LLMService:
             messages: List of conversation messages to send to the LLM
             chatId: The Telegram/Max chat identifier used for rate-limiting
             chatSettings: Chat-level settings dict used to resolve models and the rate limiter name
-            llmManager: The LLM manager used to look up model instances by key
             modelKey: Primary model selector - an AbstractModel instance, a ChatSettingsKey,
                 or None to fall back to ChatSettingsKey.CHAT_MODEL
             fallbackModelKey: Fallback model selector - same semantics as modelKey,
@@ -192,25 +202,26 @@ class LLMService:
             ModelRunResult containing the final LLM response, with toolsUsed flag set
             if any tools were executed during the conversation
         """
+        assert (
+            self.llmManager is not None
+        ), "LLMManager not initialized, call llmService.getInstance().injectLLMManager(...)"
+
         if callId is None:
             callId = str(uuid.uuid4())
 
         model = self.resolveModel(
             modelKey,
             chatSettings=chatSettings,
-            llmManager=llmManager,
             defaultKey=ChatSettingsKey.CHAT_MODEL,
         )
         fallbackModel = self.resolveModel(
             fallbackModelKey,
             chatSettings=chatSettings,
-            llmManager=llmManager,
             defaultKey=ChatSettingsKey.FALLBACK_MODEL,
         )
         condensingModel = self.resolveModel(
             condensingModelKey,
             chatSettings=chatSettings,
-            llmManager=llmManager,
             defaultKey=ChatSettingsKey.CONDENSING_MODEL,
         )
         condensingPrompt = None
@@ -246,7 +257,6 @@ class LLMService:
                 _messages,
                 chatId=chatId,
                 chatSettings=chatSettings,
-                llmManager=llmManager,
                 modelKey=model,
                 fallbackKey=fallbackModel,
                 tools=tools,
@@ -500,7 +510,6 @@ class LLMService:
         *,
         chatId: Optional[int],
         chatSettings: ChatSettingsDict,
-        llmManager: LLMManager,
         modelKey: Union[ChatSettingsKey, AbstractModel, None],
         fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
         tools: Optional[Sequence[LLMAbstractTool]] = None,
@@ -518,7 +527,6 @@ class LLMService:
                 to skip rate-limiting (e.g. internal/background calls)
             chatSettings: Chat-level settings dict used to resolve models and the rate
                 limiter name
-            llmManager: The LLM manager used to look up model instances by key
             modelKey: Primary model selector - an AbstractModel instance, a
                 ChatSettingsKey pointing to a chat setting that resolves to a model, or
                 None to fall back to ChatSettingsKey.CHAT_MODEL
@@ -532,11 +540,9 @@ class LLMService:
             ModelRunResult containing the generated text response, status, and any tool
             calls made during generation
         """
-        llmModel = self.resolveModel(
-            modelKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.CHAT_MODEL
-        )
+        llmModel = self.resolveModel(modelKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL)
         fallbackModel = self.resolveModel(
-            fallbackKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.FALLBACK_MODEL
+            fallbackKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
         )
 
         if chatId is not None:
@@ -555,6 +561,7 @@ class LLMService:
             prompt,
             tools=tools,
             fallbackModels=[fallbackModel],
+            consumerId=str(chatId) if chatId is not None else None,
         )
 
         if doDebugLogging:
@@ -568,7 +575,6 @@ class LLMService:
         *,
         chatId: Optional[int],
         chatSettings: ChatSettingsDict,
-        llmManager: LLMManager,
         modelKey: Union[ChatSettingsKey, AbstractModel, None],
         fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
         schemaName: str = "response",
@@ -595,7 +601,6 @@ class LLMService:
                 to skip rate-limiting (e.g. internal/background calls)
             chatSettings: Chat-level settings dict used to resolve models and the rate
                 limiter name
-            llmManager: The LLM manager used to look up model instances by key
             modelKey: Primary model selector - an AbstractModel instance, a
                 ChatSettingsKey pointing to a chat setting that resolves to a model, or
                 None to fall back to ChatSettingsKey.CHAT_MODEL
@@ -617,11 +622,9 @@ class LLMService:
                 model has support_structured_output=True. No model call is made in
                 this case
         """
-        llmModel = self.resolveModel(
-            modelKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.CHAT_MODEL
-        )
+        llmModel = self.resolveModel(modelKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL)
         fallbackModel = self.resolveModel(
-            fallbackKey, chatSettings=chatSettings, llmManager=llmManager, defaultKey=ChatSettingsKey.FALLBACK_MODEL
+            fallbackKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
         )
 
         primarySupports: bool = llmModel.getInfo().get("support_structured_output", False)
@@ -653,6 +656,7 @@ class LLMService:
             schemaName=schemaName,
             strict=strict,
             fallbackModels=[fallbackModel],
+            consumerId=str(chatId) if chatId is not None else None,
         )
 
         if doDebugLogging:
@@ -665,7 +669,6 @@ class LLMService:
         *,
         chatId: Optional[int],
         chatSettings: ChatSettingsDict,
-        llmManager: LLMManager,
     ) -> ModelRunResult:
         """Generate image with given prompt and chat settings.
 
@@ -678,19 +681,27 @@ class LLMService:
             chatId: The Telegram/Max chat identifier used for rate-limiting
             chatSettings: Chat-level settings dict containing the image generation model
                 configuration
-            llmManager: The LLM manager used to look up image generation model instances
 
         Returns:
             ModelRunResult containing the generated image response and metadata
         """
-        imageGenerationModel = chatSettings[ChatSettingsKey.IMAGE_GENERATION_MODEL].toModel(llmManager)
-        fallbackImageLLM = chatSettings[ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL].toModel(llmManager)
+        imageGenerationModel = self.resolveModel(
+            ChatSettingsKey.IMAGE_GENERATION_MODEL,
+            chatSettings=chatSettings,
+            defaultKey=ChatSettingsKey.IMAGE_GENERATION_MODEL,
+        )
+        fallbackImageLLM = self.resolveModel(
+            ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL,
+            chatSettings=chatSettings,
+            defaultKey=ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL,
+        )
 
         if chatId is not None:
             await self.rateLimit(chatId, chatSettings)
         return await imageGenerationModel.generateImage(
             [ModelMessage(content=prompt)],
             fallbackModels=[fallbackImageLLM],
+            consumerId=str(chatId) if chatId is not None else None,
         )
 
     async def rateLimit(self, chatId: int, chatSettings: ChatSettingsDict) -> None:
@@ -729,7 +740,6 @@ class LLMService:
         modelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
         *,
         chatSettings: ChatSettingsDict,
-        llmManager: LLMManager,
         defaultKey: ChatSettingsKey,
     ) -> AbstractModel:
         """Resolve a model key to an actual AbstractModel instance.
@@ -743,16 +753,19 @@ class LLMService:
             modelKey: The model to resolve - an AbstractModel instance, a ChatSettingsKey,
                 or None to fall back to defaultKey
             chatSettings: Chat-level settings dict used to resolve model keys to instances
-            llmManager: The LLM manager used to get model instances
             defaultKey: The fallback ChatSettingsKey to use if modelKey is None
 
         Returns:
             The resolved AbstractModel instance
         """
+        assert (
+            self.llmManager is not None
+        ), "LLMManager not initialized, call llmService.getInstance().injectLLMManager(...)"
+
         if isinstance(modelKey, AbstractModel):
             return modelKey
 
         if isinstance(modelKey, ChatSettingsKey):
-            return chatSettings[modelKey].toModel(llmManager)
+            return chatSettings[modelKey].toModel(self.llmManager)
 
-        return chatSettings[defaultKey].toModel(llmManager)
+        return chatSettings[defaultKey].toModel(self.llmManager)

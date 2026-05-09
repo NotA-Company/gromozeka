@@ -43,6 +43,7 @@ from lib.ai.providers.basic_openai_provider import (
     BasicOpenAIModel,
     BasicOpenAIProvider,
 )
+from lib.stats import NullStatsStorage, StatsStorage
 
 # ============================================================================
 # Test Provider Implementation
@@ -73,10 +74,12 @@ class MockOpenAIProvider(BasicOpenAIProvider):
     def _createModelInstance(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> BasicOpenAIModel:
         """Create a new model instance for this provider.
@@ -87,6 +90,7 @@ class MockOpenAIProvider(BasicOpenAIProvider):
             modelVersion: The version of the model.
             temperature: The sampling temperature for generation.
             contextSize: The maximum context window size in tokens.
+            statsStorage: StatsStorage instance for recording LLM usage statistics.
             extraConfig: Additional configuration options for the model.
 
         Returns:
@@ -98,6 +102,7 @@ class MockOpenAIProvider(BasicOpenAIProvider):
             modelVersion=modelVersion,
             temperature=temperature,
             contextSize=contextSize,
+            statsStorage=statsStorage,
             openAiClient=self._client,  # type: ignore[arg-type]
             extraConfig=extraConfig,
         )
@@ -172,6 +177,7 @@ def testModel(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> BasicO
         modelVersion="1.0",
         temperature=0.7,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
         extraConfig={"support_tools": True, "support_structured_output": True},
     )
@@ -298,7 +304,14 @@ def testProviderCreateModelInstanceNotImplemented() -> None:
     provider.config = {"api_key": "test"}
 
     with pytest.raises(NotImplementedError, match="must implement _create_model_instance"):
-        provider._createModelInstance("test", "model-id", "1.0", 0.7, 4096)
+        provider._createModelInstance(
+            name="test",
+            modelId="model-id",
+            modelVersion="1.0",
+            temperature=0.7,
+            contextSize=4096,
+            statsStorage=NullStatsStorage(),
+        )
 
 
 # ============================================================================
@@ -324,6 +337,7 @@ def testAddModelSuccess(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock)
         modelVersion="1.0",
         temperature=0.7,
         contextSize=8192,
+        statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": True},
     )
 
@@ -347,8 +361,22 @@ def testAddModelDuplicate(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Moc
     """
     testProvider._client = mockAsyncOpenAI
 
-    model1 = testProvider.addModel("test-model", "gpt-4", "1.0", 0.7, 4096)
-    model2 = testProvider.addModel("test-model", "gpt-3.5", "1.0", 0.5, 2048)
+    model1 = testProvider.addModel(
+        name="test-model",
+        modelId="gpt-4",
+        modelVersion="1.0",
+        temperature=0.7,
+        contextSize=4096,
+        statsStorage=NullStatsStorage(),
+    )
+    model2 = testProvider.addModel(
+        name="test-model",
+        modelId="gpt-3.5",
+        modelVersion="1.0",
+        temperature=0.5,
+        contextSize=2048,
+        statsStorage=NullStatsStorage(),
+    )
 
     assert model1 is model2
     assert len(testProvider.models) == 1
@@ -366,7 +394,14 @@ def testAddModelWithoutClient() -> None:
     provider._client = None
 
     with pytest.raises(RuntimeError, match="OpenAI client not initialized"):
-        provider.addModel("test", "model", "1.0", 0.7, 4096)
+        provider.addModel(
+            name="test",
+            modelId="model",
+            modelVersion="1.0",
+            temperature=0.7,
+            contextSize=4096,
+            statsStorage=NullStatsStorage(),
+        )
 
 
 def testAddModelWithExtraConfig(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> None:
@@ -393,6 +428,7 @@ def testAddModelWithExtraConfig(testProvider: MockOpenAIProvider, mockAsyncOpenA
         modelVersion="1.0",
         temperature=0.8,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
         extraConfig=extraConfig,
     )
 
@@ -421,6 +457,7 @@ def testModelInitialization(testProvider: MockOpenAIProvider, mockAsyncOpenAI: M
         modelVersion="1.0",
         temperature=0.7,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
         extraConfig={"support_tools": True},
     )
@@ -1166,6 +1203,7 @@ async def testFullWorkflowAddModelAndGenerate(testProvider: MockOpenAIProvider, 
         modelVersion="1.0",
         temperature=0.7,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
     )
 
     # Setup mock response
@@ -1207,8 +1245,22 @@ def testProviderModelManagement(testProvider: MockOpenAIProvider, mockAsyncOpenA
     testProvider._client = mockAsyncOpenAI
 
     # Add models
-    testProvider.addModel("model1", "gpt-4", "1.0", 0.7, 4096)
-    testProvider.addModel("model2", "gpt-3.5", "1.0", 0.5, 2048)
+    testProvider.addModel(
+        name="model1",
+        modelId="gpt-4",
+        modelVersion="1.0",
+        temperature=0.7,
+        contextSize=4096,
+        statsStorage=NullStatsStorage(),
+    )
+    testProvider.addModel(
+        name="model2",
+        modelId="gpt-3.5",
+        modelVersion="1.0",
+        temperature=0.5,
+        contextSize=2048,
+        statsStorage=NullStatsStorage(),
+    )
 
     # Test listModels
     models = testProvider.listModels()

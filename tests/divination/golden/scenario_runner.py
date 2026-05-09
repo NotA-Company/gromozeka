@@ -44,6 +44,7 @@ from lib.divination import (
     drawSymbols,
 )
 from lib.divination.layouts import Layout
+from lib.stats import NullStatsStorage
 
 # Path to the shipped default templates. Resolved relative to the repo root,
 # which is reliable because the collector inserts the repo root onto
@@ -273,6 +274,7 @@ class DivinationScenarioRunner:
             modelVersion=modelVersion,
             temperature=temperature,
             contextSize=contextSize,
+            statsStorage=NullStatsStorage(),
             extraConfig=dict(extraConfig) if extraConfig is not None else {},
         )
         self.templates: Dict[str, str] = getDefaultTemplates()

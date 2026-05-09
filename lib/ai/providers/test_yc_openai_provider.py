@@ -26,6 +26,7 @@ from openai.types.completion_usage import CompletionUsage
 
 from lib.ai.models import ModelMessage, ModelResultStatus, ModelStructuredResult
 from lib.ai.providers.yc_openai_provider import YcOpenaiModel, YcOpenaiProvider
+from lib.stats import NullStatsStorage
 
 # ============================================================================
 # Fixtures
@@ -105,6 +106,7 @@ def ycOpenaiModel(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mock) -> 
         modelVersion="latest",
         temperature=0.6,
         contextSize=8192,
+        statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
         folderId="b1g2abc3def4ghi5jklm",
         extraConfig={"support_tools": False, "support_structured_output": True},
@@ -285,6 +287,7 @@ def testAddYcOpenaiModel(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mo
         modelVersion="latest",
         temperature=0.6,
         contextSize=8192,
+        statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": False},
     )
 
@@ -318,6 +321,7 @@ def testAddMultipleYcOpenaiModels(ycOpenaiProvider: YcOpenaiProvider, mockAsyncO
         modelVersion="latest",
         temperature=0.6,
         contextSize=8192,
+        statsStorage=NullStatsStorage(),
     )
 
     model2 = ycOpenaiProvider.addModel(
@@ -326,6 +330,7 @@ def testAddMultipleYcOpenaiModels(ycOpenaiProvider: YcOpenaiProvider, mockAsyncO
         modelVersion="latest",
         temperature=0.7,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
     )
 
     assert len(ycOpenaiProvider.models) == 2
@@ -351,7 +356,14 @@ def testAddYcOpenaiModelWithoutClient() -> None:
     provider._folderId = "test"
 
     with pytest.raises(RuntimeError, match="OpenAI client not initialized"):
-        provider.addModel("test", "model", "1.0", 0.7, 4096)
+        provider.addModel(
+            "test",
+            modelId="model",
+            modelVersion="1.0",
+            temperature=0.7,
+            contextSize=4096,
+            statsStorage=NullStatsStorage(),
+        )
 
 
 def testCreateModelInstance(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI: Mock) -> None:
@@ -375,6 +387,7 @@ def testCreateModelInstance(ycOpenaiProvider: YcOpenaiProvider, mockAsyncOpenAI:
         modelVersion="rc",
         temperature=0.8,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": False},
     )
 
@@ -408,6 +421,7 @@ def testYcOpenaiModelInitialization(ycOpenaiProvider: YcOpenaiProvider, mockAsyn
         modelVersion="latest",
         temperature=0.6,
         contextSize=8192,
+        statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
         folderId="b1g2abc3def4ghi5jklm",
         extraConfig={"support_tools": False},
@@ -458,6 +472,7 @@ def testYcOpenaiModelGetModelIdFormat() -> None:
             modelVersion="v1",
             temperature=0.7,
             contextSize=4096,
+            statsStorage=NullStatsStorage(),
             openAiClient=Mock(spec=AsyncOpenAI),
             folderId="test-folder-123",
         )
@@ -488,6 +503,7 @@ def testYcOpenaiModelGetModelIdWithoutFolderId() -> None:
             modelVersion="latest",
             temperature=0.6,
             contextSize=8192,
+            statsStorage=NullStatsStorage(),
             openAiClient=Mock(spec=AsyncOpenAI),
             folderId="",
         )
@@ -695,6 +711,7 @@ async def testYcOpenaiGenerateTextWithDifferentVersions(
         modelVersion="latest",
         temperature=0.6,
         contextSize=8192,
+        statsStorage=NullStatsStorage(),
     )
 
     # Test with rc version
@@ -704,6 +721,7 @@ async def testYcOpenaiGenerateTextWithDifferentVersions(
         modelVersion="rc",
         temperature=0.6,
         contextSize=8192,
+        statsStorage=NullStatsStorage(),
     )
 
     mockResponse: Mock = Mock(spec=ChatCompletion)
@@ -849,6 +867,7 @@ async def testYcOpenaiFullWorkflow(ycOpenaiProvider: YcOpenaiProvider, mockAsync
         modelVersion="latest",
         temperature=0.6,
         contextSize=8192,
+        statsStorage=NullStatsStorage(),
     )
 
     # Setup mock response
@@ -902,8 +921,22 @@ def testYcOpenaiProviderModelManagement(ycOpenaiProvider: YcOpenaiProvider, mock
     ycOpenaiProvider._client = mockAsyncOpenAI
 
     # Add models
-    ycOpenaiProvider.addModel("yandexgpt", "yandexgpt", "latest", 0.6, 8192)
-    ycOpenaiProvider.addModel("yandexgpt-lite", "yandexgpt-lite", "latest", 0.7, 4096)
+    ycOpenaiProvider.addModel(
+        "yandexgpt",
+        modelId="yandexgpt",
+        modelVersion="latest",
+        temperature=0.6,
+        contextSize=8192,
+        statsStorage=NullStatsStorage(),
+    )
+    ycOpenaiProvider.addModel(
+        "yandexgpt-lite",
+        modelId="yandexgpt-lite",
+        modelVersion="latest",
+        temperature=0.7,
+        contextSize=4096,
+        statsStorage=NullStatsStorage(),
+    )
 
     # Test listModels
     models: list[str] = ycOpenaiProvider.listModels()
@@ -987,6 +1020,7 @@ def testYcOpenaiModelWithCustomExtraConfig(ycOpenaiProvider: YcOpenaiProvider, m
         modelVersion="latest",
         temperature=0.8,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
         extraConfig=extraConfig,
     )
 
@@ -1139,6 +1173,7 @@ def testYcOpenaiModelIdWithDifferentFolderIds() -> None:
                 modelVersion="latest",
                 temperature=0.6,
                 contextSize=8192,
+                statsStorage=NullStatsStorage(),
                 openAiClient=Mock(spec=AsyncOpenAI),
                 folderId=folderId,
             )

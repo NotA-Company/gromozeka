@@ -26,6 +26,7 @@ from openai.types.completion_usage import CompletionUsage
 
 from lib.ai.models import ModelMessage, ModelResultStatus, ModelStructuredResult
 from lib.ai.providers.openrouter_provider import OpenrouterModel, OpenrouterProvider
+from lib.stats import NullStatsStorage
 
 # ============================================================================
 # Fixtures
@@ -92,6 +93,7 @@ def openrouterModel(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Moc
         modelVersion="latest",
         temperature=0.7,
         contextSize=200000,
+        statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
         extraConfig={"support_tools": True, "support_structured_output": True},
     )
@@ -204,6 +206,7 @@ def testAddOpenrouterModel(openrouterProvider: OpenrouterProvider, mockAsyncOpen
         modelVersion="latest",
         temperature=0.7,
         contextSize=200000,
+        statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": True},
     )
 
@@ -233,6 +236,7 @@ def testAddMultipleOpenrouterModels(openrouterProvider: OpenrouterProvider, mock
         modelVersion="latest",
         temperature=0.7,
         contextSize=200000,
+        statsStorage=NullStatsStorage(),
     )
 
     model2 = openrouterProvider.addModel(
@@ -241,6 +245,7 @@ def testAddMultipleOpenrouterModels(openrouterProvider: OpenrouterProvider, mock
         modelVersion="latest",
         temperature=0.5,
         contextSize=128000,
+        statsStorage=NullStatsStorage(),
     )
 
     assert len(openrouterProvider.models) == 2
@@ -262,7 +267,14 @@ def testAddOpenrouterModelWithoutClient() -> None:
     provider._client = None
 
     with pytest.raises(RuntimeError, match="OpenAI client not initialized"):
-        provider.addModel("test", "model", "1.0", 0.7, 4096)
+        provider.addModel(
+            "test",
+            modelId="model",
+            modelVersion="1.0",
+            temperature=0.7,
+            contextSize=4096,
+            statsStorage=NullStatsStorage(),
+        )
 
 
 def testCreateModelInstance(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Mock) -> None:
@@ -283,6 +295,7 @@ def testCreateModelInstance(openrouterProvider: OpenrouterProvider, mockAsyncOpe
         modelVersion="1.0",
         temperature=0.8,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": False},
     )
 
@@ -311,6 +324,7 @@ def testOpenrouterModelInitialization(openrouterProvider: OpenrouterProvider, mo
         modelVersion="latest",
         temperature=0.7,
         contextSize=200000,
+        statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
         extraConfig={"support_tools": True},
     )
@@ -533,6 +547,7 @@ async def testOpenrouterGenerateTextWithDifferentModels(
         modelVersion="latest",
         temperature=0.7,
         contextSize=200000,
+        statsStorage=NullStatsStorage(),
     )
 
     # Test with GPT-4
@@ -542,6 +557,7 @@ async def testOpenrouterGenerateTextWithDifferentModels(
         modelVersion="latest",
         temperature=0.5,
         contextSize=128000,
+        statsStorage=NullStatsStorage(),
     )
 
     mockResponse = Mock(spec=ChatCompletion)
@@ -737,6 +753,7 @@ async def testOpenrouterFullWorkflow(openrouterProvider: OpenrouterProvider, moc
         modelVersion="latest",
         temperature=0.7,
         contextSize=200000,
+        statsStorage=NullStatsStorage(),
     )
 
     # Setup mock response
@@ -782,8 +799,22 @@ def testOpenrouterProviderModelManagement(openrouterProvider: OpenrouterProvider
     openrouterProvider._client = mockAsyncOpenAI
 
     # Add models
-    openrouterProvider.addModel("claude", "anthropic/claude-3-opus", "latest", 0.7, 200000)
-    openrouterProvider.addModel("gpt4", "openai/gpt-4-turbo", "latest", 0.5, 128000)
+    openrouterProvider.addModel(
+        name="claude",
+        modelId="anthropic/claude-3-opus",
+        modelVersion="latest",
+        temperature=0.7,
+        contextSize=200000,
+        statsStorage=NullStatsStorage(),
+    )
+    openrouterProvider.addModel(
+        name="gpt4",
+        modelId="openai/gpt-4-turbo",
+        modelVersion="latest",
+        temperature=0.5,
+        contextSize=128000,
+        statsStorage=NullStatsStorage(),
+    )
 
     # Test listModels
     models = openrouterProvider.listModels()
@@ -859,6 +890,7 @@ def testOpenrouterModelWithCustomExtraConfig(openrouterProvider: OpenrouterProvi
         modelVersion="1.0",
         temperature=0.8,
         contextSize=4096,
+        statsStorage=NullStatsStorage(),
         extraConfig=extraConfig,
     )
 

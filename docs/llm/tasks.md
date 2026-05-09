@@ -176,6 +176,11 @@ START
 
 ### 1.5 "I need to fix a bug in a handler"
 
+> **Rule:** For any bug fix — production code, test code, config, or docs — write a
+> regression test that FAILS before the fix and PASSES after. Include edge-case
+> tests that the bug touched (Optional/Union conversions, None handling, schema
+> mismatches, etc.). Never rely on existing coverage alone.
+
 ```
 START
 ├── Step 1: Identify the handler
@@ -196,9 +201,9 @@ START
 │         Apply minimal change
 │         Test should now PASS
 │
-├── Step 5: Verify no regressions
-│         Run: make format lint && make test
-│         DONE
+└── Step 5: Verify no regressions
+          Run: make format lint && make test
+          DONE
 ```
 
 **Reference docs:**
@@ -417,7 +422,8 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | Layout discovery negative cache | Failed discoveries stored as `name_en=''`, `n_symbols=0` in `divination_layouts` table | Prevents repeated failed attempts, check with `isNegativeCacheEntry()` |
 | `getLikeComparison()` for fuzzy search | Provider method for case-insensitive LIKE pattern matching | Use in `divinationLayouts.getLayout()` for fuzzy layout name search |
 | `getCaseInsensitiveComparison()` for exact matches | Provider method for case-insensitive exact match | Use for username/email lookups, chat settings keys |
-| Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.5 for complete rules and example
+| Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.5 for complete rules and example |
+| `sqlToCustomType()` handles `Optional[T]` | Returns `(True, None)` for `Optional[...]` when data is `None` | Properly unwraps Union types and handles `None` values for nullable columns |
 
 ---
 
@@ -833,4 +839,4 @@ Before deploying a new schema, you can test it locally:
 ---
 
 *This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered*
-*Last updated: 2026-05-07*
+*Last updated: 2026-05-10*

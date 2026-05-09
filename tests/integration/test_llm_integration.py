@@ -60,12 +60,13 @@ def mockFallbackModel():
 
 
 @pytest.fixture
-def llmService():
+def llmService(mockLlmManager):
     """Create fresh LLM service instance, dood!"""
     # Reset singleton for testing
     LLMService._instance = None
     service = LLMService.getInstance()
     service.toolsHandlers.clear()
+    service.injectLLMManager(mockLlmManager)
     return service
 
 
@@ -139,7 +140,6 @@ class TestLlmServiceIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
@@ -201,7 +201,6 @@ class TestLlmServiceIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
@@ -272,7 +271,6 @@ class TestLlmServiceIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
@@ -330,7 +328,6 @@ class TestLlmServiceIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
@@ -378,7 +375,6 @@ class TestLlmServiceIntegration:
                 messages=messages,
                 chatId=None,
                 chatSettings=mockChatSettings,
-                llmManager=mockLlmManager,
                 modelKey=mockModel,
                 fallbackModelKey=mockFallbackModel,
                 useTools=True,
@@ -551,7 +547,6 @@ class TestLlmHandlerIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
@@ -608,7 +603,6 @@ class TestLlmHandlerIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
@@ -658,7 +652,6 @@ class TestCompleteLlmWorkflows:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
@@ -706,7 +699,6 @@ class TestCompleteLlmWorkflows:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
@@ -790,7 +782,6 @@ class TestCompleteLlmWorkflows:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
@@ -826,7 +817,6 @@ class TestCompleteLlmWorkflows:
                 messages=messages,
                 chatId=None,
                 chatSettings=mockChatSettings,
-                llmManager=mockLlmManager,
                 modelKey=mockModel,
                 fallbackModelKey=mockFallbackModel,
                 useTools=False,
@@ -888,7 +878,6 @@ class TestCompleteLlmWorkflows:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,

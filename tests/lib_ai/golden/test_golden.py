@@ -19,6 +19,7 @@ from lib.ai.providers.openrouter_provider import OpenrouterProvider
 from lib.ai.providers.yc_openai_provider import YcOpenaiProvider
 from lib.aurumentation import baseGoldenDataProvider
 from lib.aurumentation.replayer import GoldenDataReplayer
+from lib.stats import NullStatsStorage
 
 from . import GOLDEN_DATA_PATH
 from .openai_patcher import OpenAIReplayerPatcher
@@ -66,6 +67,7 @@ async def test_yc_openai_basic(goldenDataProvider):
             temperature=0.7,
             contextSize=8192,
             extraConfig={},
+            statsStorage=NullStatsStorage(),
         )
 
         # Get model
@@ -125,6 +127,7 @@ async def test_openrouter_basic(goldenDataProvider):
                 "support_tools": True,
                 "support_images": False,
             },
+            statsStorage=NullStatsStorage(),
         )
 
         # Get model
@@ -200,6 +203,7 @@ async def test_openrouter_structured(goldenDataProvider: Any) -> None:
                 "support_images": False,
                 "support_structured_output": True,
             },
+            statsStorage=NullStatsStorage(),
         )
 
         model = provider.getModel("qwen/qwen-turbo")
@@ -258,6 +262,7 @@ async def test_yc_openai_structured(goldenDataProvider: Any) -> None:
             extraConfig={
                 "support_structured_output": True,
             },
+            statsStorage=NullStatsStorage(),
         )
 
         model = provider.getModel("yandexgpt")

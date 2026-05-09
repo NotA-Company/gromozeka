@@ -9,6 +9,8 @@
 - [ ] Add command for condensing context of given discussion
 - [ ] Add test\dev decorator support
 - [ ] Log used tokens count
+- [x] `dbUtils.sqlToTypedDict(_event, StatsEventDict)` will it work for optional fields?
+- [ ] `lib/ai/providers/basic_openai_provider.py` _generateImage need to use _executeChatCompletion (like _generateText and _generateStructured)
 - [ ] Fix:
 
 2025-12-27 15:26:52,074 - lib.ai.providers.basic_openai_provider:155 - ERROR - Error running OpenAI-compatible model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}

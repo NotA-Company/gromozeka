@@ -280,7 +280,6 @@ class SummarizationHandler(BaseBotHandler):
                         ModelMessage.fromDictList(reqMessages),
                         chatId=chatId,
                         chatSettings=chatSettings,
-                        llmManager=self.llmManager,
                         modelKey=llmModel,
                         fallbackKey=ChatSettingsKey.SUMMARY_FALLBACK_MODEL,
                     )

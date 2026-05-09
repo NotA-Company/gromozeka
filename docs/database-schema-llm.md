@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 15 (up to `migration_015`)
+**Migrations**: 16 (up to `migration_016`)
 
 ---
 
@@ -419,6 +419,61 @@ CREATE TABLE divination_layouts (
 - Saved via `DivinationLayoutsRepository.saveLayout()`
 
 **Note**: Only populated when `[divination] enabled = true`. Negative cache pattern stores failed discoveries with empty `name_en` and `n_symbols=0`.
+
+---
+
+### stat_events
+**Purpose**: Append-only event log for raw statistics events
+**Primary Key**: `event_id` (app-generated UUID)
+
+```sql
+CREATE TABLE stat_events (
+    event_id     TEXT      NOT NULL,
+    event_type   TEXT      NOT NULL,
+    event_time   TIMESTAMP NOT NULL,
+    data         TEXT      NOT NULL,
+    labels       TEXT      NOT NULL,
+    processed    INTEGER   NOT NULL DEFAULT 0,
+    processed_id TEXT      DEFAULT NULL,
+    claimed_at   TIMESTAMP DEFAULT NULL,
+    created_at   TIMESTAMP NOT NULL,
+    PRIMARY KEY (event_id)
+)
+```
+
+**Indexes**: `idx_stat_events_unprocessed`, `idx_stat_events_lookup`
+
+**Repository**: `DatabaseStatsStorage.record()` in `internal/database/stats_storage.py`
+
+**Note**: Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Used to record LLM events (tokens, errors, fallbacks) and other metrics before aggregation into `stat_aggregates`.
+
+---
+
+### stat_aggregates
+**Purpose**: Pre-computed period buckets for aggregated statistics metrics
+**Primary Key**: `(event_type, period_start, period_type, labels_hash, metric_key)`
+
+```sql
+CREATE TABLE stat_aggregates (
+    event_type   TEXT      NOT NULL,
+    period_start TEXT      NOT NULL,
+    period_type  TEXT      NOT NULL,
+    labels_hash  TEXT      NOT NULL,
+    labels       TEXT      NOT NULL,
+    metric_key   TEXT      NOT NULL,
+    metric_value REAL      NOT NULL,
+    updated_at   TIMESTAMP NOT NULL,
+    PRIMARY KEY (event_type, period_start, period_type, labels_hash, metric_key)
+)
+```
+
+**Repository**: `DatabaseStatsStorage.aggregate()` in `internal/database/stats_storage.py`
+
+**Period types**: `hour`, `day`, `month`, `total`
+
+**Labels**: consumer, modelName, modelId, provider, generationType (for LLM events)
+
+**Note**: Created by `migration_016`. Automatically updated when `DatabaseStatsStorage.aggregate()` is called. Provides efficient querying of pre-aggregated metrics for dashboards and analytics.
 
 ---
 

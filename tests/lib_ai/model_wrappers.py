@@ -14,6 +14,7 @@ from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.providers.openrouter_provider import OpenrouterProvider
 from lib.ai.providers.yc_openai_provider import YcOpenaiProvider
 from lib.ai.providers.yc_sdk_provider import YcAIProvider
+from lib.stats import NullStatsStorage
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ class AbstractModelWrapper:
                 modelVersion=modelVersion,
                 temperature=float(modelArgs.get("temperature", 0.5)),
                 contextSize=int(modelArgs.get("context_size", 8192)),
+                statsStorage=NullStatsStorage(),
                 extraConfig=modelArgs,
             )
             return model

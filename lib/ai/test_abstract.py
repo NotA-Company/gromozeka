@@ -18,6 +18,7 @@ import pytest
 
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.models import ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
+from lib.stats import NullStatsStorage
 
 # ============================================================================
 # Minimal concrete subclasses for testing
@@ -128,6 +129,7 @@ def _makeNoStructuredModel(contextSize: int = 4096) -> _NoStructuredModel:
         modelVersion="1.0",
         temperature=0.5,
         contextSize=contextSize,
+        statsStorage=NullStatsStorage(),
         extraConfig={"support_structured_output": False},
     )
 
@@ -147,6 +149,7 @@ def _makeStructuredModel(contextSize: int = 4096) -> _StructuredSupportedModel:
         modelVersion="1.0",
         temperature=0.5,
         contextSize=contextSize,
+        statsStorage=NullStatsStorage(),
         extraConfig={"support_structured_output": True},
     )
 

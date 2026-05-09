@@ -94,6 +94,8 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
         >>> sqlToCustomType(b'{"key": "value"}', dict)
         (True, {'key': 'value'})
     """
+
+    # If no conversion needed, just return the data as-is
     if _checkType(data, expectedType):
         # Little trick fo forcing timezone
         if expectedType is datetime.datetime and isinstance(data, datetime.datetime):
@@ -102,6 +104,17 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
                 data = data.replace(tzinfo=FORCE_SQL_TIMEZONE)
             # logger.debug(f"Converted datetime: {repr(data)}")
         return True, data  # pyright: ignore[reportReturnType]
+
+    # Unwrap Optional/Union types to get the inner type for conversion
+    if get_origin(expectedType) is Union or isinstance(expectedType, types.UnionType):
+        unionArgs = get_args(expectedType)
+        # Try each union member type
+        for arg in unionArgs:
+            ok, value = sqlToCustomType(data, arg)
+            if ok:
+                return ok, value  # pyright: ignore[reportReturnType]
+        # If none of the union members worked, return failure
+        return False, None
 
     if isinstance(data, bytes):
         data = data.decode(encoding="utf-8", errors="ignore")
