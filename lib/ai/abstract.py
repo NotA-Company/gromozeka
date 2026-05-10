@@ -676,26 +676,30 @@ class AbstractModel(ABC):
             result: The model result with tokens and status.
             generationType: 'text', 'structured', or 'image'.
         """
-        info = self.getInfo()
-        await self.statsStorage.record(
-            stats={
-                f"generation_{generationType}": 1,
-                "request_count": 1,
-                "input_tokens": result.inputTokens or 0,
-                "output_tokens": result.outputTokens or 0,
-                "total_tokens": result.totalTokens or 0,
-                "is_error": 1 if result.status in ERROR_STATUSES else 0,
-                f"status_{result.status.name}": 1,
-            },
-            consumerId=consumerId,
-            labels={
-                "modelName": info.get("model_id", "unknown"),
-                "modelId": info.get("model_id", "unknown"),
-                "provider": info.get("provider", "unknown"),
-                "generationType": generationType,
-                "status": result.status.name,
-            },
-        )
+        try:
+            info = self.getInfo()
+            await self.statsStorage.record(
+                stats={
+                    f"generation_{generationType}": 1,
+                    "request_count": 1,
+                    "input_tokens": result.inputTokens or 0,
+                    "output_tokens": result.outputTokens or 0,
+                    "total_tokens": result.totalTokens or 0,
+                    "is_error": 1 if result.status in ERROR_STATUSES else 0,
+                    f"status_{result.status.name}": 1,
+                },
+                consumerId=consumerId,
+                labels={
+                    "modelName": info.get("model_id", "unknown"),
+                    "modelId": info.get("model_id", "unknown"),
+                    "provider": info.get("provider", "unknown"),
+                    "generationType": generationType,
+                    "status": result.status.name,
+                },
+            )
+        except Exception as e:
+            logger.error("Failed to record attempt stats")
+            logger.exception(e)
 
 
 class AbstractLLMProvider(ABC):

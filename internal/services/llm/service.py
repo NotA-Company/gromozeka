@@ -202,10 +202,6 @@ class LLMService:
             ModelRunResult containing the final LLM response, with toolsUsed flag set
             if any tools were executed during the conversation
         """
-        assert (
-            self.llmManager is not None
-        ), "LLMManager not initialized, call llmService.getInstance().injectLLMManager(...)"
-
         if callId is None:
             callId = str(uuid.uuid4())
 
@@ -758,9 +754,8 @@ class LLMService:
         Returns:
             The resolved AbstractModel instance
         """
-        assert (
-            self.llmManager is not None
-        ), "LLMManager not initialized, call llmService.getInstance().injectLLMManager(...)"
+        if self.llmManager is None:
+            raise RuntimeError("LLMManager not initialized, call llmService.getInstance().injectLLMManager(...)")
 
         if isinstance(modelKey, AbstractModel):
             return modelKey
