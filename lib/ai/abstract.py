@@ -219,7 +219,7 @@ class AbstractModel(ABC):
         await self._recordAttemptStats(consumerId, ret, "text")
 
         if self.enableJSONLog:
-            self.printJSONLog(messages, ret)
+            self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     @abstractmethod
@@ -305,7 +305,7 @@ class AbstractModel(ABC):
         await self._recordAttemptStats(consumerId, ret, "image")
 
         if self.enableJSONLog:
-            self.printJSONLog(messages, ret)
+            self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     async def _generateStructured(
@@ -436,7 +436,7 @@ class AbstractModel(ABC):
         await self._recordAttemptStats(consumerId, ret, "structured")
 
         if self.enableJSONLog:
-            self.printJSONLog(messages, ret)
+            self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     async def _runWithFallback(
@@ -622,7 +622,13 @@ class AbstractModel(ABC):
         self.jsonLogFile = file
         self.jsonLogAddDateSuffix = addDateSuffix
 
-    def printJSONLog(self, messages: Sequence[ModelMessage], result: ModelRunResult) -> None:
+    def printJSONLog(
+        self,
+        messages: Sequence[ModelMessage],
+        result: ModelRunResult,
+        *,
+        consumerId: Optional[str] = None,
+    ) -> None:
         """Write a request-response pair to the JSON log file.
 
         This method writes the conversation history (messages) and model response
@@ -632,6 +638,7 @@ class AbstractModel(ABC):
         Args:
             messages: List of message objects that were sent to the model.
             result: The model's response result containing status, text, and metadata.
+            consumerId: Optional consumer identifier (e.g. chat ID).
 
         Raises:
             IOError: If unable to write to the log file.
@@ -659,6 +666,7 @@ class AbstractModel(ABC):
             "model": self.modelId,
             "provider": type(self.provider).__name__,
             "raw": str(result.result),
+            "consumer": consumerId,
         }
         with open(filename, "a") as f:
             f.write(utils.jsonDumps(data) + "\n")

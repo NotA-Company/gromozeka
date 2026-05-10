@@ -334,12 +334,26 @@ class LLMService:
                 newMessages = [ret.toModelMessage()]
 
                 for toolCall in ret.toolCalls:
+                    toolRet = ""
+                    # Check if tool is available
+                    if toolCall.name in self.toolsHandlers:
+                        toolRet = await self.toolsHandlers[toolCall.name].call(extraData, **toolCall.parameters)
+                    else:
+                        # If wrong tool called, return error about it
+                        toolRet = {
+                            "done": False,
+                            "error": f"Tool {toolCall.name} not found, available tools are {list(self.toolsHandlers.keys())}",
+                        }
+                    
+                    # Content of ModelMessage should be string, so if tool result is not string,
+                    # convert it to string via utils.jsonDumps()
+                    if not isinstance(toolRet, str):
+                        toolRet = utils.jsonDumps(toolRet)
+
                     newMessages.append(
                         ModelMessage(
                             role="tool",
-                            content=utils.jsonDumps(
-                                await self.toolsHandlers[toolCall.name].call(extraData, **toolCall.parameters),
-                            ),
+                            content=toolRet,
                             toolCallId=toolCall.id,
                         )
                     )
