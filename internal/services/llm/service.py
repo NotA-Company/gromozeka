@@ -342,9 +342,10 @@ class LLMService:
                         # If wrong tool called, return error about it
                         toolRet = {
                             "done": False,
-                            "error": f"Tool {toolCall.name} not found, available tools are {list(self.toolsHandlers.keys())}",
+                            "error": f"Tool {toolCall.name} not found, available tools are "
+                            + str(list(self.toolsHandlers.keys())),
                         }
-                    
+
                     # Content of ModelMessage should be string, so if tool result is not string,
                     # convert it to string via utils.jsonDumps()
                     if not isinstance(toolRet, str):
