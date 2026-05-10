@@ -699,7 +699,6 @@ class DivinationHandler(BaseBotHandler):
             messages,
             chatId=chatId,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
             modelKey=ChatSettingsKey.CHAT_MODEL,
             fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
         )
@@ -744,7 +743,6 @@ class DivinationHandler(BaseBotHandler):
                     imagePrompt,
                     chatId=chatId,
                     chatSettings=chatSettings,
-                    llmManager=self.llmManager,
                 )
             except Exception as e:
                 logger.error(f"Image generation raised: {e}")
@@ -1041,7 +1039,6 @@ class DivinationHandler(BaseBotHandler):
                 messages=infoMessages,
                 chatId=chatId,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
                 modelKey=ChatSettingsKey.CHAT_MODEL,
                 fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
                 useTools=True,  # Enable tools for web search
@@ -1151,7 +1148,6 @@ class DivinationHandler(BaseBotHandler):
                 },
                 chatId=chatId,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
                 modelKey=ChatSettingsKey.CHAT_MODEL,
                 fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
             )

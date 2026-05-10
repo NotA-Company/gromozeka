@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type, TypeVar
 
 from lib import utils
+from lib.stats import StatsStorage
 
 from .models import (
     ERROR_STATUSES,
@@ -75,9 +76,11 @@ class AbstractModel(ABC):
         self,
         provider: "AbstractLLMProvider",
         modelId: str,
+        *,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ):
         """Initialize model with provider and configuration.
@@ -89,6 +92,7 @@ class AbstractModel(ABC):
             temperature: Temperature setting for generation (0.0 = deterministic,
                 2.0 = very creative).
             contextSize: Maximum context size in tokens.
+            statsStorage: StatsStorage instance for recording LLM usage statistics.
             extraConfig: Additional configuration options for the model.
 
         Raises:
@@ -110,6 +114,9 @@ class AbstractModel(ABC):
         self.enableJSONLog = False
         self.jsonLogFile = ""
         self.jsonLogAddDateSuffix = True
+
+        # Stats storage for recording LLM usage statistics
+        self.statsStorage: StatsStorage = statsStorage
 
     @abstractmethod
     async def _generateText(
@@ -140,6 +147,7 @@ class AbstractModel(ABC):
         tools: Optional[Sequence[LLMAbstractTool]] = None,
         *,
         fallbackModels: Optional[Sequence["AbstractModel"]] = None,
+        consumerId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate text using the model with optional tools and fallback models.
 
@@ -157,6 +165,7 @@ class AbstractModel(ABC):
                 primary model fails. The first model in the list is the primary,
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
+            consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
 
         Returns:
             ModelRunResult containing the generated text, status, and metadata.
@@ -171,7 +180,12 @@ class AbstractModel(ABC):
             # Use fallback mechanism when fallback models are provided
             return await self._runWithFallback(
                 [self, *fallbackModels],
-                lambda model: model.generateText(messages=messages, tools=tools, fallbackModels=None),
+                lambda model: model.generateText(
+                    messages=messages,
+                    tools=tools,
+                    fallbackModels=None,
+                    consumerId=consumerId,
+                ),
                 ModelRunResult,
             )
 
@@ -192,7 +206,17 @@ class AbstractModel(ABC):
                 ),
             )
 
-        ret = await self._generateText(messages=messages, tools=tools)
+        try:
+            ret = await self._generateText(messages=messages, tools=tools)
+        except Exception as e:
+            await self._recordAttemptStats(
+                consumerId,
+                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                "text",
+            )
+            raise
+
+        await self._recordAttemptStats(consumerId, ret, "text")
 
         if self.enableJSONLog:
             self.printJSONLog(messages, ret)
@@ -221,7 +245,11 @@ class AbstractModel(ABC):
         raise NotImplementedError
 
     async def generateImage(
-        self, messages: Sequence[ModelMessage], *, fallbackModels: Optional[Sequence["AbstractModel"]] = None
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        fallbackModels: Optional[Sequence["AbstractModel"]] = None,
+        consumerId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate an image using the model with optional fallback models.
 
@@ -237,6 +265,7 @@ class AbstractModel(ABC):
                 primary model fails. The first model in the list is the primary,
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
+            consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
 
         Returns:
             ModelRunResult containing the generated image URL or data, status,
@@ -254,12 +283,26 @@ class AbstractModel(ABC):
         if fallbackModels:
             return await self._runWithFallback(
                 [self, *fallbackModels],
-                lambda model: model.generateImage(messages=messages, fallbackModels=None),
+                lambda model: model.generateImage(
+                    messages=messages,
+                    fallbackModels=None,
+                    consumerId=consumerId,
+                ),
                 ModelRunResult,
             )
 
         # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
-        ret = await self._generateImage(messages=messages)
+        try:
+            ret = await self._generateImage(messages=messages)
+        except Exception as e:
+            await self._recordAttemptStats(
+                consumerId,
+                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                "image",
+            )
+            raise
+
+        await self._recordAttemptStats(consumerId, ret, "image")
 
         if self.enableJSONLog:
             self.printJSONLog(messages, ret)
@@ -312,6 +355,7 @@ class AbstractModel(ABC):
         schemaName: str = "response",
         strict: bool = True,
         fallbackModels: Optional[Sequence["AbstractModel"]] = None,
+        consumerId: Optional[str] = None,
     ) -> ModelStructuredResult:
         """Generate structured output with automatic fallback to another model.
 
@@ -329,6 +373,7 @@ class AbstractModel(ABC):
                 primary model fails. The first model in the list is the primary,
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
+            consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
 
         Returns:
             ModelStructuredResult with status, parsed data, token usage, etc.
@@ -352,6 +397,7 @@ class AbstractModel(ABC):
                     schemaName=schemaName,
                     strict=strict,
                     fallbackModels=None,
+                    consumerId=consumerId,
                 ),
                 ModelStructuredResult,
             )
@@ -372,7 +418,22 @@ class AbstractModel(ABC):
                 ),
             )
 
-        ret = await self._generateStructured(messages=messages, schema=schema, schemaName=schemaName, strict=strict)
+        try:
+            ret = await self._generateStructured(
+                messages=messages,
+                schema=schema,
+                schemaName=schemaName,
+                strict=strict,
+            )
+        except Exception as e:
+            await self._recordAttemptStats(
+                consumerId,
+                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                "structured",
+            )
+            raise
+
+        await self._recordAttemptStats(consumerId, ret, "structured")
 
         if self.enableJSONLog:
             self.printJSONLog(messages, ret)
@@ -396,14 +457,17 @@ class AbstractModel(ABC):
         isFallback is set to True on the returned result iff it came from any
         model other than models[0].
 
+        Each model's generate* method records stats when invoked (the lambda
+        passes fallbackModels=None, hitting the no-fallback path).
+
         Args:
             models: Non-empty ordered list. models[0] is the primary, the rest
                 are fallbacks in preference order.
             call: Callable that takes a model and returns an awaitable result
                 (ModelRunResult or ModelStructuredResult). Must invoke the
                 PUBLIC generate* method with fallbackModels=None so each attempt
-                gets the full pipeline (context check + JSON log) without
-                recursing into this helper.
+                gets the full pipeline (context check + JSON log + stats recording)
+                without recursing into this helper.
 
         Returns:
             The result of the first successful model, or the last attempted
@@ -599,6 +663,44 @@ class AbstractModel(ABC):
         with open(filename, "a") as f:
             f.write(utils.jsonDumps(data) + "\n")
 
+    async def _recordAttemptStats(
+        self,
+        consumerId: Optional[str],
+        result: ModelRunResult,
+        generationType: str,
+    ) -> None:
+        """Record stats for a single model attempt. Best-effort — never raises.
+
+        Args:
+            consumerId: Consumer identifier (e.g. chat ID).
+            result: The model result with tokens and status.
+            generationType: 'text', 'structured', or 'image'.
+        """
+        try:
+            info = self.getInfo()
+            await self.statsStorage.record(
+                stats={
+                    f"generation_{generationType}": 1,
+                    "request_count": 1,
+                    "input_tokens": result.inputTokens or 0,
+                    "output_tokens": result.outputTokens or 0,
+                    "total_tokens": result.totalTokens or 0,
+                    "is_error": 1 if result.status in ERROR_STATUSES else 0,
+                    f"status_{result.status.name}": 1,
+                },
+                consumerId=consumerId,
+                labels={
+                    "modelName": info.get("model_id", "unknown"),
+                    "modelId": info.get("model_id", "unknown"),
+                    "provider": info.get("provider", "unknown"),
+                    "generationType": generationType,
+                    "status": result.status.name,
+                },
+            )
+        except Exception as e:
+            logger.error("Failed to record attempt stats")
+            logger.exception(e)
+
 
 class AbstractLLMProvider(ABC):
     """Abstract base class for all LLM provider implementations.
@@ -640,10 +742,12 @@ class AbstractLLMProvider(ABC):
     def addModel(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Add a model to this provider.
@@ -657,6 +761,7 @@ class AbstractLLMProvider(ABC):
             modelVersion: Version string for the model (e.g., "latest", "v1").
             temperature: Temperature setting for generation (0.0 to 2.0).
             contextSize: Maximum context size in tokens.
+            statsStorage: StatsStorage instance for recording LLM usage statistics.
             extraConfig: Additional configuration options for the model.
 
         Returns:

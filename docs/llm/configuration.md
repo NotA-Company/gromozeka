@@ -284,6 +284,17 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 
 ---
 
+### `[stats]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch for statistics collection |
+| `llm-stats-data-source` | str | `"default"` | Database data source for LLM stats storage |
+
+**Note:** Disabled by default until aggregation trigger and query API are implemented. When enabled, `DatabaseStatsStorage` is initialized in `main.py` and passed to `LLMManager` for recording LLM usage metrics. Statistics are stored in the data source specified by `llm-stats-data-source` (default: "default") with `stat_events` (append-only log) and `stat_aggregates` (period buckets) tables created by `migration_016`.
+
+---
+
 ## 3. ConfigManager Methods
 
 **File:** [`internal/config/manager.py:59`](../../internal/config/manager.py:59)
@@ -301,6 +312,7 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 | `getYandexSearchConfig()` | `Dict[str, Any]` | `[yandex-search]` section |
 | `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section |
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
+| `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
 
 ---
 
@@ -361,4 +373,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-05-02*
+*Last updated: 2026-05-09*

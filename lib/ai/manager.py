@@ -34,6 +34,8 @@ Example:
 import logging
 from typing import Any, Dict, List, Optional
 
+from lib.stats import NullStatsStorage, StatsStorage
+
 from .abstract import AbstractLLMProvider, AbstractModel
 from .providers.custom_openai_provider import CustomOpenAIProvider
 from .providers.openrouter_provider import OpenrouterProvider
@@ -62,7 +64,7 @@ class LLMManager:
             response = model.generate("Hello, world!")
     """
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: Dict[str, Any], *, statsStorage: Optional[StatsStorage] = None) -> None:
         """Initialize the LLM manager with configuration.
 
         Args:
@@ -70,11 +72,14 @@ class LLMManager:
                 - providers: Dict of provider configurations
                 - models: Dict of model configurations
                 - json-logging: Optional JSON logging settings
+            statsStorage: Optional stats storage for recording LLM usage statistics.
+                When provided, will be set on every model via model.statsStorage.
 
         Raises:
             ValueError: If provider configuration is invalid.
         """
         self.config: Dict[str, Any] = config
+        self.statsStorage: StatsStorage = statsStorage if statsStorage is not None else NullStatsStorage()
         self.providers: Dict[str, AbstractLLMProvider] = {}
         self.modelRegistry: Dict[str, str] = {}  # model_name -> provider_name
 
@@ -168,6 +173,7 @@ class LLMManager:
                     modelVersion=modelVersion,
                     temperature=temperature,
                     contextSize=contextSize,
+                    statsStorage=self.statsStorage,
                     extraConfig=modelConfig,
                 )
 

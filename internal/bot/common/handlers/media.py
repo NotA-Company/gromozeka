@@ -180,7 +180,6 @@ class MediaHandler(BaseBotHandler):
             image_prompt,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
         )
         logger.debug(
             f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
@@ -540,7 +539,6 @@ class MediaHandler(BaseBotHandler):
                 reqMessages,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
                 modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
                 fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
             )
@@ -669,7 +667,6 @@ class MediaHandler(BaseBotHandler):
                 latestMessages,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
                 modelKey=ChatSettingsKey.CHAT_MODEL,
                 fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
             )
@@ -702,7 +699,6 @@ class MediaHandler(BaseBotHandler):
             prompt,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
         )
         logger.debug(
             f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"

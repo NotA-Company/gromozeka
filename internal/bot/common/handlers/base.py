@@ -1252,7 +1252,6 @@ class BaseBotHandler(CommandHandlerMixin):
                 messages,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
                 modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
                 fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
             )

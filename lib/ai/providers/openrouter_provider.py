@@ -49,6 +49,8 @@ from typing import Any, Dict
 
 from openai import AsyncOpenAI
 
+from lib.stats import StatsStorage
+
 from ..abstract import AbstractModel
 from .basic_openai_provider import BasicOpenAIModel, BasicOpenAIProvider
 
@@ -111,11 +113,13 @@ class OpenrouterModel(BasicOpenAIModel):
         self,
         provider: "OpenrouterProvider",
         modelId: str,
+        *,
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        openAiClient: AsyncOpenAI,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        openAiClient: AsyncOpenAI,
     ) -> None:
         """Initialize an OpenRouter model instance.
 
@@ -134,11 +138,12 @@ class OpenrouterModel(BasicOpenAIModel):
         super().__init__(
             provider,
             modelId,
-            modelVersion,
-            temperature,
-            contextSize,
-            openAiClient,
-            extraConfig,
+            modelVersion=modelVersion,
+            temperature=temperature,
+            contextSize=contextSize,
+            statsStorage=statsStorage,
+            extraConfig=extraConfig,
+            openAiClient=openAiClient,
         )
 
     def _getExtraParams(self) -> Dict[str, Any]:
@@ -261,10 +266,12 @@ class OpenrouterProvider(BasicOpenAIProvider):
     def _createModelInstance(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Create an OpenRouter model instance.
@@ -313,6 +320,7 @@ class OpenrouterProvider(BasicOpenAIProvider):
             modelVersion=modelVersion,
             temperature=temperature,
             contextSize=contextSize,
-            openAiClient=self._client,
+            statsStorage=statsStorage,
             extraConfig=extraConfig,
+            openAiClient=self._client,
         )

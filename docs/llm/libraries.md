@@ -16,7 +16,8 @@
 6. [lib/bayes_filter — Spam Filter](#6-libbayes_filter--spam-filter)
 7. [lib/openweathermap — Weather Client](#7-libopenweathermap--weather-client)
 8. [lib/geocode_maps — Geocoding](#8-libgeocode_maps--geocoding)
-9. [lib/divination — Tarot & Runes Logic](#9-libdivination--tarot--runes-logic)
+9. [lib/stats — Statistics Collection](#9-libstats--statistics-collection)
+10. [lib/divination — Tarot & Runes Logic](#10-libdivination--tarot--runes-logic)
 
 ---
 
@@ -105,6 +106,12 @@ result = await primaryModel.generateText(
 if result.isFallback:
     print("Used fallback model!")
 ```
+
+**Statistics recording:**
+`AbstractModel` automatically records generation statistics to the stats storage backend:
+- Records metrics: generation count, input/output/total tokens, error status, fallback status
+- Tracked labels: modelName, modelId, provider, generationType, status
+- Integration: `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances
 
 **Key methods on `LLMManager`:**
 ```python
@@ -397,7 +404,66 @@ result = await client.reverseGeocode(lat=55.75, lon=37.62)
 
 ---
 
-## 9. `lib/divination` — Tarot & Runes Logic
+## 9. `lib/stats` — Statistics Collection
+
+Generic, storage-agnostic interface for recording time-series statistics events and aggregating them into periodic buckets.
+
+**Import:**
+```python
+from lib.stats import StatsStorage, NullStatsStorage, GLOBAL_CONSUMER_ID
+```
+
+**Key constants:**
+- `GLOBAL_CONSUMER_ID` — Sentinel value `"__global__"` for global (all-consumer) aggregation
+
+**Key classes:**
+
+| Class | File | Purpose |
+|---|---|---|
+| [`StatsStorage`](../../lib/stats/stats_storage.py:11) | `lib/stats/stats_storage.py` | ABC for statistics storage backends |
+| [`NullStatsStorage`](../../lib/stats/stats_storage.py:81) | `lib/stats/stats_storage.py` | No-op implementation (discards all events) |
+
+**Interface methods on `StatsStorage`:**
+```python
+await statsStorage.record(
+    stats: dict[str, float | int],
+    *,
+    consumerId: Optional[str] = None,
+    labels: Optional[dict[str, str]] = None,
+    eventTime: Optional[datetime] = None,
+) -> None
+
+await statsStorage.aggregate(
+    *,
+    limit: int = 1000,
+    orphanTimeoutSeconds: int = 3600,
+) -> int
+```
+
+**Usage example:**
+```python
+from lib.stats import NullStatsStorage
+
+storage = NullStatsStorage()
+await storage.record(
+    {"tokens": 150, "request_count": 1},
+    consumerId="chat_123",
+    labels={"model": "gpt-4o", "provider": "openrouter"},
+)
+```
+
+**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:1) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Created in `main.py` when `stats.enabled = true`.
+
+**Integration points:**
+- `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances
+- `AbstractModel` records generation stats (tokens, errors, status) via `_recordAttemptStats()`
+- `LLMService` passes `consumerId=str(chatId)` to LLM generation methods
+
+**Best-effort design:** `record()` implementations must never raise — log and return silently on error.
+
+---
+
+## 10. `lib/divination` — Tarot & Runes Logic
 
 Pure-logic library for tarot and rune divination. Depends ONLY on `lib/ai` (no bot, no DB)
 
@@ -446,4 +512,4 @@ reading = drawSymbols(system, layout, question="What about my career?")
 ---
 
 *This guide is auto-maintained and should be updated whenever library APIs change*  
-*Last updated: 2026-05-06*
+*Last updated: 2026-05-10*

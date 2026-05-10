@@ -34,6 +34,8 @@ from typing import Any, Dict
 
 from openai import AsyncOpenAI
 
+from lib.stats import StatsStorage
+
 from ..abstract import AbstractModel
 from .basic_openai_provider import BasicOpenAIModel, BasicOpenAIProvider
 
@@ -85,12 +87,14 @@ class YcOpenaiModel(BasicOpenAIModel):
         self,
         provider: "YcOpenaiProvider",
         modelId: str,
+        *,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
+        extraConfig: Dict[str, Any] = {},
         openAiClient: AsyncOpenAI,
         folderId: str,
-        extraConfig: Dict[str, Any] = {},
     ) -> None:
         """Initialize a Yandex Cloud OpenAI model instance.
 
@@ -110,11 +114,12 @@ class YcOpenaiModel(BasicOpenAIModel):
         super().__init__(
             provider,
             modelId,
-            modelVersion,
-            temperature,
-            contextSize,
-            openAiClient,
-            extraConfig,
+            modelVersion=modelVersion,
+            temperature=temperature,
+            contextSize=contextSize,
+            statsStorage=statsStorage,
+            extraConfig=extraConfig,
+            openAiClient=openAiClient,
         )
         self._folderId = folderId
 
@@ -243,10 +248,12 @@ class YcOpenaiProvider(BasicOpenAIProvider):
     def _createModelInstance(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Create a Yandex Cloud OpenAI model instance.
@@ -290,7 +297,8 @@ class YcOpenaiProvider(BasicOpenAIProvider):
             modelVersion=modelVersion,
             temperature=temperature,
             contextSize=contextSize,
-            openAiClient=self._client,
             folderId=self._folderId,
+            statsStorage=statsStorage,
             extraConfig=extraConfig,
+            openAiClient=self._client,
         )

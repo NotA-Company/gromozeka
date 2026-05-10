@@ -35,6 +35,7 @@ import pytest
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.manager import LLMManager
 from lib.ai.models import ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
+from lib.stats.stats_storage import NullStatsStorage, StatsStorage
 
 # ============================================================================
 # Mock Provider and Model Classes
@@ -130,10 +131,12 @@ class MockProvider(AbstractLLMProvider):
     def addModel(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Add a mock model to the provider.
@@ -144,6 +147,7 @@ class MockProvider(AbstractLLMProvider):
             modelVersion: The model version string
             temperature: The temperature parameter for generation
             contextSize: The maximum context window size
+            statsStorage: Stats storage instance
             extraConfig: Additional configuration parameters (default: {})
 
         Returns:
@@ -159,6 +163,7 @@ class MockProvider(AbstractLLMProvider):
             temperature=temperature,
             contextSize=contextSize,
             extraConfig=extraConfig,
+            statsStorage=statsStorage,
         )
         self.models[name] = model
         return model
@@ -1181,6 +1186,7 @@ async def testMockModelGenerateStructuredHappyPath() -> None:
         temperature=0.5,
         contextSize=4096,
         extraConfig={"support_structured_output": True},
+        statsStorage=NullStatsStorage(),
     )
 
     schema: Dict[str, Any] = {"type": "object", "properties": {"answer": {"type": "string"}}}
@@ -1211,6 +1217,7 @@ async def testMockModelGenerateStructuredFlagFalse() -> None:
         temperature=0.5,
         contextSize=4096,
         extraConfig={},
+        statsStorage=NullStatsStorage(),
     )
 
     schema: Dict[str, Any] = {"type": "object"}

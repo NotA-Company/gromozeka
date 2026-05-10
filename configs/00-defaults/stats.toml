@@ -1,0 +1,4 @@
+[stats]
+enabled = false
+
+llm-stats-data-source = "default"

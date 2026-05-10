@@ -11,15 +11,19 @@ import json
 import logging
 import os
 import sys
+from typing import Optional
 
 from internal.bot.max.application import MaxBotApplication
 from internal.bot.models.enums import BotProvider
 from internal.bot.telegram.application import TelegramBotApplication
 from internal.config.manager import ConfigManager
 from internal.database import Database
+from internal.database.stats_storage import DatabaseStatsStorage
+from internal.services.llm import LLMService
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
 from lib.rate_limiter import RateLimiterManager
+from lib.stats import StatsStorage
 
 # Configure basic logging first
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -42,8 +46,22 @@ class GromozekBot:
         # Initialize database
         self.database = Database(self.configManager.getDatabaseConfig())  # pyright: ignore[reportArgumentType]
 
+        # Initialize stats storage for LLM usage tracking
+        llmStatsStorage: Optional[StatsStorage] = None
+        statsConfig = self.configManager.getStatsConfig()
+        if statsConfig.get("enabled", False):
+            llmStatsStorage = DatabaseStatsStorage(
+                db=self.database,
+                eventType="llm_request",
+                dataSource=statsConfig.get("llm-stats-data-source", self.database.manager.default),
+            )
+
         # Initialize LLM Manager
-        self.llmManager = LLMManager(self.configManager.getModelsConfig())
+        self.llmManager = LLMManager(
+            self.configManager.getModelsConfig(),
+            statsStorage=llmStatsStorage,
+        )
+        LLMService.getInstance().injectLLMManager(self.llmManager)
 
         # Initialize rate limiter manager
         self.rateLimiterManager = RateLimiterManager.getInstance()

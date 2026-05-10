@@ -351,6 +351,82 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ---
 
+### ADR-012: Statistics Collection with Best-Effort Recording
+
+**Decision:** Statistics collection uses a two-table schema (`stat_events` append-only log, `stat_aggregates` period buckets) with best-effort recording that never blocks LLM requests.
+
+**Why:** Track LLM usage (tokens, errors, fallbacks), enable analytics, and support future metrics without impacting bot responsiveness.
+
+**Architecture:**
+
+```
+                        ┌───────────────────────┐
+                        │      main.py          │
+                        │  GromozekBot.__init__ │
+                        └──────┬───────┬────────┘
+                               │       │
+                     creates    │       │  creates
+                               ▼       ▼
+               ┌────────────────┐   ┌──────────────────────┐
+               │  LLMManager    │   │ DatabaseStatsStorage │
+               │  (lib/ai)      │◄──│ (internal/database/  │
+               │                │   │  stats_storage.py)   │
+               │ .statsStorage ─┼──►│                      │
+               └───────┬────────┘   │ - record()           │
+                       │            │ - aggregate()        │
+                       │ propagate  │ - db: Database       │
+                       ▼            │ - dataSource: "stats"│
+               ┌─────────────────┐  └──────────┬───────────┘
+               │ AbstractModel   │             │
+               │ (lib/ai)        │             │ single provider
+               │                 │             ▼
+               │ .statsStorage   │  ┌──────────────────────┐
+               │ _runWithFallback│  │   DatabaseManager    │
+               └─────────────────┘  │                      │
+                                    │ "stats" provider     │
+                                    └──────────┬───────────┘
+                                               │
+                           ┌───────────────────┼───────────────────┐
+                           ▼                   ▼
+                    ┌─────────────┐    ┌───────────────┐
+                    │ stat_events │    │stat_aggregates│
+                    │ (append-only│    │ (materialized │
+                    │  log)       │    │  views)       │
+                    └─────────────┘    └───────────────┘
+                           │                   ▲
+                           │    aggregate()    │
+                           └───────────────────┘
+```
+
+**Data flow:**
+
+1. **Recording:** `AbstractModel._recordAttemptStats()` calls `statsStorage.record()` after each LLM attempt
+2. **Best-effort:** `record()` catches all exceptions, logs, and returns — never propagates to LLM caller
+3. **Labels:** Events are tagged with `consumer`, `modelName`, `modelId`, `provider`, `generationType`
+4. **Global rollup:** Aggregation produces both per-consumer and `__global__` (all-chat) stats
+5. **Periods:** Aggregates computed for `hour`, `day`, `month`, and `total` periods
+6. **Claim-aggregate-commit:** `aggregate()` claims unprocessed events, computes sums, upserts to `stat_aggregates`, marks events processed
+
+**Configuration:**
+- `[stats] enabled = false` (default) — disabled until aggregation trigger and query API are implemented
+- When enabled: `DatabaseStatsStorage` created in `main.py`, passed to `LLMManager`, propagated to all models
+
+**Stats recorded for LLM events:**
+- `generation_text`, `generation_structured`, `generation_image` — 0/1 flags per generation type
+- `request_count` — always 1 per attempt
+- `input_tokens`, `output_tokens`, `total_tokens` — token counts (0 if unavailable)
+- `is_error` — 1 if status in ERROR_STATUSES
+- `status_{name}` — 1 for the actual status (e.g., `status_FINAL`, `status_ERROR`, etc.)
+
+**Integration points:**
+- `LLMManager.__init__(statsStorage=...)` — receives storage, propagates to models
+- `AbstractModel.statsStorage` — holds reference, used in `_recordAttemptStats()`
+- `LLMService` — passes `consumerId=str(chatId)` to generation methods
+
+**Schema:** Created by `migration_016` — `stat_events` (append-only log) and `stat_aggregates` (period buckets) in the default data source.
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph
@@ -538,4 +614,4 @@ When creating or modifying database migrations, ALWAYS:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-05-02*
+*Last updated: 2026-05-09*

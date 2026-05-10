@@ -46,6 +46,11 @@ These come from [`docs/llm/index.md`](docs/llm/index.md):
   run `make format` to properly organize them.
 - **No pydantic.** The repo deliberately avoids it. Use raw dicts +
   hand-rolled type-hinted classes of TypedDict.
+- **Regression tests on every bug fix.** When fixing a bug — whether in production
+  code, test code, or config — write a regression test that FAILS before the fix
+  and PASSES after it. Include tests for edge cases that the bug touched (e.g.,
+  Optional/Union conversion, None handling, schema column mismatches). Do not
+  rely solely on existing test coverage to catch regressions.
 
 ## Lint/format pipeline
 

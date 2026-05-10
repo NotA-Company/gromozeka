@@ -46,6 +46,8 @@ from yandex_ai_studio_sdk._types.operation import AsyncOperation
 from yandex_ai_studio_sdk.auth import YandexCloudCLIAuth
 from yandex_ai_studio_sdk.exceptions import AioRpcError
 
+from lib.stats import StatsStorage
+
 from ..abstract import AbstractLLMProvider, AbstractModel
 from ..models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
 
@@ -70,11 +72,13 @@ class YcAIModel(AbstractModel):
         self,
         provider: "YcAIProvider",
         modelId: str,
+        *,
         modelVersion: str,
         temperature: float,
         contextSize: int,
-        ycSDK: AsyncAIStudio,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        ycSDK: AsyncAIStudio,
     ):
         """Initialize YC SDK model.
 
@@ -96,7 +100,15 @@ class YcAIModel(AbstractModel):
             ValueError: If both support_text and support_images are True or both are False.
             Exception: If model initialization fails.
         """
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
+        super().__init__(
+            provider,
+            modelId,
+            modelVersion=modelVersion,
+            temperature=temperature,
+            contextSize=contextSize,
+            statsStorage=statsStorage,
+            extraConfig=extraConfig,
+        )
         self._ycModel: Optional[AsyncImageGenerationModel | AsyncGPTModel] = None
         self.ycSDK = ycSDK
 
@@ -437,10 +449,12 @@ class YcAIProvider(AbstractLLMProvider):
     def addModel(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
         temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
     ) -> AbstractModel:
         """Add a YC SDK model to the provider.
@@ -479,8 +493,9 @@ class YcAIProvider(AbstractLLMProvider):
                 modelVersion=modelVersion,
                 temperature=temperature,
                 contextSize=contextSize,
-                ycSDK=self._ycAISDK,
+                statsStorage=statsStorage,
                 extraConfig=extraConfig,
+                ycSDK=self._ycAISDK,
             )
 
             self.models[name] = model
