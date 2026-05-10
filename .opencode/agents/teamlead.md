@@ -72,7 +72,7 @@ description: >-
 
   </example>
 mode: all
-model: smartest
+model: orchestrator
 color: "#87CEEB"
 permission:
   bash: deny
