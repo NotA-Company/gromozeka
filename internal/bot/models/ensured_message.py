@@ -1180,7 +1180,7 @@ class EnsuredMessage:
         ret: List[ModelMessage] = []
         randomContext = self.metadata.get("randomContext", None)
         if randomContext:
-            ret.append(ModelMessage(role="system", content=randomContext))
+            ret.append(ModelMessage(role="user", content=randomContext))
 
         toolsHistory = self.metadata.get("usedTools", None)
         if toolsHistory:

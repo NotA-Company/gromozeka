@@ -697,7 +697,6 @@ class BaseBotHandler(CommandHandlerMixin):
             case BotProvider.MAX:
                 outputFormat = OutputFormat.MARKDOWN_MAX
 
-        # TODO: Think, should we add system prompt or not? Dunno
         ret: List[ModelMessage] = [
             ModelMessage(
                 role="system",
@@ -756,7 +755,7 @@ class BaseBotHandler(CommandHandlerMixin):
             for condensedMessage in condenseCache:
                 # If we'll decide to condenseContext, skip summary message from condensing
                 keepFirstN += 1
-                cacheEntry = ModelMessage(role="system", content=condensedMessage["text"])
+                cacheEntry = ModelMessage(role="user", content=condensedMessage["text"])
                 ret.append(cacheEntry)
                 condenseCacheMessages.append(cacheEntry)
                 lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"], datetime.timezone.utc)

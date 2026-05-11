@@ -539,7 +539,6 @@ class LLMService:
                 continue
 
             respText = mlRet.resultText
-            # TODO: Should role be "user" or "assistant" or anything else?
             newBody.append(ModelMessage(role="user", content=respText))
             startPos += currentBatchLen
 
