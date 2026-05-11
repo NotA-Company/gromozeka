@@ -165,6 +165,7 @@ class LLMService:
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,
         condensingPromptKey: Optional[Union[str, ChatSettingsKey]] = None,
+        condensingSystemPromptKey: Optional[Union[str, ChatSettingsKey]] = None,
         condensingModelKey: Optional[Union[AbstractModel, ChatSettingsKey]] = None,
     ) -> ModelRunResult:
         """Generate text using an LLM with automatic tool execution support.
@@ -196,6 +197,7 @@ class LLMService:
             keepLastN: Number of messages to keep from the end when condensing context
             maxTokensCoeff: Multiplier for context size token limit (0.8 = 80% of context size)
             condensingPromptKey: Optional key for the condensing prompt text
+            condensingSystemPromptKey: Optional key for the condensing system prompt
             condensingModelKey: Optional model to use for summarizing messages
 
         Returns:
@@ -228,6 +230,14 @@ class LLMService:
         else:
             condensingPrompt = chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr()
 
+        condensingSystemPrompt = None
+        if isinstance(condensingSystemPromptKey, ChatSettingsKey):
+            condensingSystemPrompt = chatSettings[condensingSystemPromptKey].toStr()
+        elif isinstance(condensingSystemPromptKey, str):
+            condensingSystemPrompt = condensingSystemPromptKey
+        else:
+            condensingSystemPrompt = chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr()
+
         ret: Optional[ModelRunResult] = None
         toolsUsed = False
         tools: Sequence[LLMToolFunction] = list(self.toolsHandlers.values()) if useTools else []
@@ -247,6 +257,7 @@ class LLMService:
                 maxTokens=maxTokens,
                 condensingModel=condensingModel,
                 condensingPrompt=condensingPrompt,
+                condensingSystemPrompt=condensingSystemPrompt,
             )
 
             ret = await self.generateText(
@@ -384,7 +395,9 @@ class LLMService:
         keepLastN: int = 1,
         condensingModel: Optional[AbstractModel] = None,
         condensingPrompt: Optional[str] = None,
+        condensingSystemPrompt: Optional[str] = None,
         maxTokens: Optional[int] = None,
+        force: bool = False,
     ) -> Sequence[ModelMessage]:
         """Condense a sequence of messages to fit within a token limit.
 
@@ -402,7 +415,10 @@ class LLMService:
             keepLastN: Number of messages to keep from the end
             condensingModel: Optional model to use for summarizing messages
             condensingPrompt: Optional custom prompt for the condensing model
+            condensingSystemPrompt: Optional system prompt defining the condensing model's identity.
+                When provided, replaces the chat personality system prompt during condensing.
             maxTokens: Maximum number of tokens allowed in the condensed result
+            force: Whether to force condensing even if the result would fit within the token limit
 
         Returns:
             A new sequence of messages condensed to fit within the token limit
@@ -419,15 +435,20 @@ class LLMService:
             keepFirstN += 1
             systemPrompt = messages[0]
 
-        retHead = messages[:keepFirstN]
-        retTail = messages[-keepLastN:]
-        body = messages[keepFirstN:-keepLastN]
+        # We can't use messages[:keepFirstN] here as messages not always list,
+        # but sometimes other sequences, which does not support slice as index.
+        # So we have to make slice manualy
+        messagesCount = len(messages)
+
+        retHead = [messages[i] for i in range(0, keepFirstN)]
+        retTail = [messages[i] for i in range(messagesCount - keepLastN, messagesCount)]
+        body = [messages[i] for i in range(keepFirstN, messagesCount - keepLastN)]
 
         retHTokens = model.getEstimateTokensCount([v.toDict() for v in retHead])
         retTTokens = model.getEstimateTokensCount([v.toDict() for v in retTail])
         bodyTokens = model.getEstimateTokensCount([v.toDict() for v in body])
 
-        if retHTokens + retTTokens + bodyTokens < maxTokens:
+        if not force and (retHTokens + retTTokens + bodyTokens < maxTokens):
             return messages
 
         logger.debug(
@@ -462,7 +483,21 @@ class LLMService:
         summaryMaxTokens = condensingModel.contextSize
         logger.debug(f"Condensing model: {condensingModel}, prompt: {condensingPrompt}")
 
-        systemMessage = ModelMessage(role="system", content=condensingPrompt) if systemPrompt is None else systemPrompt
+        # Prefer the dedicated condensing system prompt over the chat persona.
+        if condensingSystemPrompt is not None:
+            systemMessage = ModelMessage(role="system", content=condensingSystemPrompt)
+        elif systemPrompt is not None:
+            systemMessage = systemPrompt
+        else:
+            systemMessage = ModelMessage(
+                role="system",
+                content=(
+                    "You condense conversation history for another LLM context."
+                    " Preserve maximum facts: topics, numbers, dates, names,"
+                    " decisions, attribution, open questions."
+                    " Write in the language of the conversation."
+                ),
+            )
         condensingMessage = ModelMessage(role="user", content=condensingPrompt)
 
         # -256 or *0.85 to ensure everything will be ok
@@ -478,7 +513,7 @@ class LLMService:
             reqMessages = [systemMessage]
             reqMessages.extend(tryMessages)
             reqMessages.append(condensingMessage)
-            tokensCount = model.getEstimateTokensCount([v.toDict() for v in reqMessages])
+            tokensCount = condensingModel.getEstimateTokensCount([v.toDict() for v in reqMessages])
             if tokensCount > summaryMaxTokens:
                 if currentBatchLen == 1:
                     logger.error(f"Error while running LLM for message {body[startPos]}")

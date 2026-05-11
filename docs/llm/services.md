@@ -123,6 +123,7 @@ condensed = await llmService.condenseContext(
     maxTokens=maxTokens,
     condensingModel=condensingModel,
     condensingPrompt=condensingPrompt,
+    condensingSystemPrompt=condensingSystemPrompt,
 )
 
 # Register LLM tool

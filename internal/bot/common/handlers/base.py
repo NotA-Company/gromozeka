@@ -799,6 +799,7 @@ class BaseBotHandler(CommandHandlerMixin):
             maxTokens=maxTokens,
             condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
             condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+            condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
         )
 
         # -1 is last element, so -keepLastN to skip skipped elements to get last condensed message
@@ -823,6 +824,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 maxTokens=maxTokens,
                 condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
                 condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+                condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
             )
             # We'll need to rewrite cache, so empty it here
             condenseCache = []

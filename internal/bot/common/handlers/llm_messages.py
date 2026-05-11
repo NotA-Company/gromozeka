@@ -718,7 +718,7 @@ class LLMMessageHandler(BaseBotHandler):
                     limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
                     # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
                 ):
-                    if storedMsg["message_id"] == ensuredMessage.messageId:
+                    if storedMsg["message_id"] == str(ensuredMessage.messageId):
                         # Skip current message from context
                         continue
                     eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
@@ -726,7 +726,7 @@ class LLMMessageHandler(BaseBotHandler):
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list
-                    # Which will automatically reverse the list. So we need to reverse it again
+                    # Which will automatically reverse the list. So we do not need to reverse it again
                     # (using appendleft in for cycle will require reversing the list as well)
                     contextMessages.extendleft(
                         reversed(
@@ -748,25 +748,23 @@ class LLMMessageHandler(BaseBotHandler):
                     # We need to use at least 3 here as 1 for `randomContext``
                     # + 1 for message, randomContext is attached to
                     # + 1 answer from bot
-                    contextMessages.appendleft(
-                        ModelMessage(
-                            role="system",
-                            content=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
-                        )
-                    )
-                    mlRet = await self.llmService.generateText(
+                    condensedMessages = await self.llmService.condenseContext(
                         contextMessages,
-                        chatId=ensuredMessage.recipient.id,
-                        chatSettings=chatSettings,
-                        modelKey=ChatSettingsKey.CHAT_MODEL,
-                        fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                        chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager),
+                        keepFirstN=0,
+                        keepLastN=0,
+                        condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
+                        condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+                        condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+                        force=True,
                     )
-                    if mlRet.status != ModelResultStatus.FINAL:
-                        logger.error(f"Wrong LLM Reply Status: {mlRet.status} Error: {mlRet.error}")
+                    if not condensedMessages:
+                        logger.error("Messages condensing failed")
                     else:
                         # No need to add to context as it will be added later
                         # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
-                        ensuredMessage.metadata["randomContext"] = mlRet.resultText
+                        condensedText = "\n".join([message.content for message in condensedMessages])
+                        ensuredMessage.metadata["randomContext"] = condensedText
                         await self.db.chatMessages.updateChatMessageMetadata(
                             chatId=ensuredMessage.recipient.id,
                             messageId=ensuredMessage.messageId,

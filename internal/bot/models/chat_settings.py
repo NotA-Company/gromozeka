@@ -289,8 +289,10 @@ class ChatSettingsKey(StrEnum):
     """Main system prompt defining bot personality."""
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
     """Additional suffix appended to chat system prompt."""
+    CONDENSING_SYSTEM_PROMPT = "condensing-system-prompt"
+    """System prompt defining the condensing model's identity and rules."""
     CONDENSING_PROMPT = "condensing-prompt"
-    """System prompt for context condensing."""
+    """Per-call trigger prompt for context condensing."""
     DOCUMENT_CONDENSING_PROMPT = "document-condensing-prompt"
     """System prompt for condensing long documents like web pages."""
     # Divination prompts (tarot & runes readings)
@@ -636,6 +638,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Суффикс системного промпт для чата",
         "long": "Не стоит это изменять кроме как для тестовых целей.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.CONDENSING_SYSTEM_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный промпт для сжатия контекста",
+        "long": "Системный промпт, задающий роль и правила модели при сжатии контекста. "
+        "Заменяет персональный промпт чата на время компактинга.",
+        "page": ChatSettingsPage.LLM_BASE,
     },
     ChatSettingsKey.CONDENSING_PROMPT: {
         "type": ChatSettingsType.STRING,

@@ -343,11 +343,13 @@ async def main() -> int:
         chatSettings.get(ChatSettingsKey.LLM_MESSAGE_FORMAT, ChatSettingsValue("smart")).toStr()
     )
     condensingPrompt = chatSettings.get(ChatSettingsKey.CONDENSING_PROMPT, ChatSettingsValue("")).toStr()
+    condensingSystemPrompt = chatSettings.get(ChatSettingsKey.CONDENSING_SYSTEM_PROMPT, ChatSettingsValue("")).toStr()
     condensingModel = chatSettings.get(ChatSettingsKey.CONDENSING_MODEL, ChatSettingsValue("")).toStr()
 
     print(f"Chat type: {chatType.value}")
     print(f"LLM message format: {llmMessageFormat.value}")
     print(f"Condensing prompt: {condensingPrompt[:80]}{'...' if len(condensingPrompt) > 80 else ''}")
+    print(f"Condensing system prompt: {condensingSystemPrompt[:80]}{'...' if len(condensingSystemPrompt) > 80 else ''}")
     print(f"Condensing model: {condensingModel or '(not set)'}")
     print()
 
@@ -399,11 +401,17 @@ async def main() -> int:
         # if eMsg.metadata.get("randomContext", None) is not None:
         #     break
 
-    # If > MAX_RANDOM_CONTEXT_MESSAGES, prepend CONDENSING_PROMPT (lines 745-756)
+    # If > MAX_RANDOM_CONTEXT_MESSAGES, prepend CONDENSING_SYSTEM_PROMPT (lines 745-756)
     if len(contextMessages) > constants.MAX_RANDOM_CONTEXT_MESSAGES:
         contextMessages.appendleft(
             ModelMessage(
                 role="system",
+                content=condensingSystemPrompt,
+            )
+        )
+        contextMessages.append(
+            ModelMessage(
+                role="user",
                 content=condensingPrompt,
             )
         )
