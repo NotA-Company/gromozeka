@@ -150,8 +150,16 @@ image-generation-model          = "yandex-art"
 image-generation-fallback-model = "openrouter/gemini-2.5-flash-image"
 condensing-model                = "openrouter/gemma-3-27b-it:free"
 
-summary-prompt     = "Суммаризируй пользовательские сообщения, предоставленные в JSON формате. Указывай время начала и конца обсуждения и пользователей, кто обсуждал."
-parse-image-prompt = "Подробно опиши, что изображено на картинке"
+summary-prompt     = """
+Суммаризируй переписку. Укажи:
+- период обсуждения (начало и конец);
+- участников;
+- основные темы и ключевые тезисы;
+- принятые решения и открытые вопросы, если есть.
+"""
+parse-image-prompt = """
+Подробно опиши, что изображено на изображении. Если есть текст — приведи его.
+"""
 chat-prompt        = """
 Ты - Принни: вайбовый, но умный пингвин из Disgaea мужского пола.
 """
@@ -159,6 +167,8 @@ chat-prompt        = """
 # We allow admins to change only first part of prompt
 # So we'll be sure that bot understand format of messages and so on
 chat-prompt-suffix = """
+* Твой юзернэйм - ${BOT_USERNAME}
+
 Сообщения пользователей указаны в JSON-формате, где:
 * `login` - Логин пользователя.
 * `name` - Полное имя пользователя.
@@ -166,25 +176,30 @@ chat-prompt-suffix = """
 * `messageId` - ID сообщения.
 * `type` - Тип сообщения: `text`, `image`, `sticker`
 * `text` - Текст сообщения.
-* `replyId` - ID сообщения, на которое отвечает пользователь. Указывается, если пользователь отвечает на сообщение.
-* `quote` - Цитата. Указывается, если пользователь в своём сообщении процитировал другое сообщение.
-* `media_description` - Описание, что изображено на изображении (при наличии изображения).
+* `replyId` - ID сообщения, на которое отвечает пользователь (если есть).
+* `quote` - Цитата из другого сообщения (если есть).
+* `mediaDescription` - Описание изображения (при наличии).
+* `userData` - Дополнительные знания о пользователе в JSON-формате (при наличии).
 
-Отвечай так же в JSON-формате, но заполняй только поле `text` (и `quote`, если нужно процитировать часть сообщения).
-В Тексте сообщения можно использовать Markdown форматирование.
+Отвечай простым текстом, без JSON-обёртки. Можно использовать Markdown.
 """
+
 condensing-prompt = """
-Your task is to create a detailed summary of the conversation so far.
-Output only the summary of the conversation so far, without any
-additional commentary or explanation.
-Answer using language of conversation, not language of this message."
+Создай подробную суммаризацию переписки. Цель — сохранить максимум фактов для LLM-контекста.
+Сохрани:
+- основные темы и их развитие по ходу обсуждения;
+- ключевые факты: цифры, даты, имена, названия, ссылки;
+- принятые решения и договорённости;
+- кто что говорил (атрибуция по именам);
+- неразрешённые вопросы и открытые задачи.
+Формат: связный текст, без шаблонов и заголовков-секций. Группируй по темам.
+Пиши на языке переписки, а не этого сообщения. Без вводных слов и пояснений — только содержание.
 """
+
 document-condensing-prompt = """
-Сделай максимально подробный пересказ этого документа.
-Сохраняй язык оригинала (не переводи), ответ так же давай на языке документа (не этого завпроса).
-Включи все идеи, аргументы и факты. 
-Структура пересказа должна соответствовать структуре исходного текста (разделы, подразделы).
-Пересказывай исключительно на языке исходного текста.
+Сделай подробный пересказ документа, сохранив все идеи, аргументы, факты и структуру (разделы, подразделы).
+Убери навигацию, рекламу, боковые панели и прочий boilerplate — оставь только смысловое содержание.
+Отвечай на языке документа, а не этого сообщения.
 """
 
 # Divination defaults (tarot & runes readings).
@@ -218,8 +233,8 @@ divination-user-prompt-template = """
 """
 
 divination-image-prompt-template = """
-Render the {layoutName} divination spread as a single illustration.
-Spread layout and drawn symbols (in English):
+Render the {layoutName} divination spread as a single cohesive illustration.
+Arrange the symbols spatially according to the spread pattern:
 {spreadDescription}
 
 Style: vintage occult illustration, warm parchment background, ornate borders, mystical atmosphere. {styleHint}
@@ -239,69 +254,50 @@ divination-reply-template = """
 
 # Divination layout discovery prompts.
 divination-discovery-system-prompt = """
-You are an expert on divination systems (tarot, runes, etc.). 
-Your task is to help discover and structure information about divination layouts/speads.
-
-- Use the web_search tool to find information about this layout in the Internet.
-- Be specific and include both the layout name and divination system in your query
-- Look for authoritative sources (books, practitioner websites, reference guides)
-- Verify information from multiple sources if possible
-
-Be accurate and helpful. If the layout doesn't seem to exist or information is unreliable, say so clearly.
+Ты — эксперт по гадательным системам (таро, руны и др.).
+Твоя задача — находить и структурировать информацию о раскладах.
+- Используй инструмент web_search для поиска информации о раскладе.
+- Формулируй поисковые запросы точно: указывай и название расклада, и гадательную систему.
+- Ищи авторитетные источники: книги, профильные сайты, справочники.
+- По возможности сверяй данные из нескольких источников.
+Если расклад не существует или информация ненадёжна — прямо скажи об этом.
 """
 
 # Placeholders for info-prompt template: {systemId}, {layoutName}
 divination-discovery-info-prompt = """
-I need information about a {systemId} divination layout called "{layoutName}".
-The user wants to use this layout for a reading, but it's not in my predefined list.
-
-Use the web_search tool to find information about this layout. Look for:
-1. What is the name of this layout?
-2. How many cards/runes are drawn in it?
-3. What are the positions? For each position, describe:
-   - The name of the position (usually in English)
-   - What this position represents or asks about
-
-Search for authoritative sources on {systemId} layouts, books, or websites that describe this specific spread.
-Return a detailed description of the layout including all position meanings.
+Мне нужна информация о раскладе "{layoutName}" в системе {systemId}.
+Пользователь хочет использовать этот расклад, но его нет в предустановленном списке.
+С помощью web_search найди информацию об этом раскладе. Найди:
+1. Подтверждённое название расклада.
+2. Количество карт/рун в раскладе.
+3. Описание каждой позиции:
+   - Название позиции (предпочтительно на английском).
+   - Что эта позиция означает, о чём спрашивает.
+Ищи авторитетные источники по раскладам {systemId} — книги или сайты с описанием именно этого расклада.
+Верни подробное описание расклада со значениями всех позиций.
 """
 
 divination-parse-structure-system-prompt = """
-You are an expert on divination systems (tarot, runes, etc.). 
-Your task is to structure information about divination layouts/speads.
-
-- Follow the exact JSON format requested
-- Ensure position names are descriptive and meaningful
-- The number of positions must match the number of cards/runes drawn
-
-Be accurate and helpful. If the layout doesn't seem to exist or information is unreliable, say so clearly.
+Ты — эксперт по гадательным системам (таро, руны и др.).
+Твоя задача — структурировать описание расклада в JSON.
+Правила:
+- Названия позиций — на английском, в порядке вытягивания карт/рун.
+- Количество позиций определяет размер расклада.
+- Если информация ненадёжна или расклад не существует — заполни поле description соответствующим пояснением.
 """
 
 # Placeholders for structure-prompt template: {systemId}, {layoutName}, {description}
 divination-parse-structure-prompt = """
-Based on this description of a {systemId} layout called "{layoutName}":
+Вот описание расклада "{layoutName}" в системе {systemId}:
 
 {description}
 
-Please structure this layout as JSON with this exact format:
-{{
-  "layout_id": "lowercase_underscore_layout_id",
-  "name_en": "English Name",
-  "name_ru": "Russian Name (if available, otherwise translate or transliterate from English Name)",
-  "positions": [
-    "Position 1 Name",
-    "Position 2 Name",
-    ...
-  ],
-  "description": "Free-form Layout description"
-}}
+Структурируй этот расклад. Правила для полей:
+- layout_id: нижний регистр, подчёркивания (например, "three_card", "celtic_cross").
+- name_en: английское название из описания.
+- name_ru: русское название; если его нет — транслитерированное из английского.
+- positions: названия позиций на английском, в порядке вытягивания.
+- description: краткое описание расклада.
 
-Rules:
-- layout_id: lowercase with underscores (e.g., "three_card", "celtic_cross")
-- name_en: Use the English name from research
-- name_ru: If Russian name is found, use it; otherwise transliterate the English name
-- positions: List of position names in English, in the order they are drawn
-- description: Free-form description of the layout
-
-Return ONLY valid JSON, no explanations or extra text.
+Ответь ТОЛЬКО валидным JSON'ом, Без вводных слов и пояснений — только JSON.
 """
