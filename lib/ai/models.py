@@ -625,13 +625,28 @@ class ModelMessage:
         """
         return f"{type(self).__name__}({str(self)})"
 
-    def toLogMessage(self) -> str:
+    def toLogMessage(self, contentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
         """Return a string representation of the message for logging.
+
+        Args:
+            contentLengthLimit: The maximum length of the content to log.
+            _selfDict: Optional dictionary to use for logging, used only by subclasses.
 
         Returns:
             str: String representation of the message.
         """
-        return repr(self)
+        selfDict = _selfDict if _selfDict is not None else self.toDict()
+        if "content" in selfDict:
+            contentStr = (
+                utils.jsonDumps(selfDict["content"])
+                if not isinstance(selfDict["content"], str)
+                else selfDict["content"]
+            )
+            if len(contentStr) > contentLengthLimit:
+                contentStr = contentStr[:contentLengthLimit] + f"... ({len(contentStr)} bytes)"
+            selfDict["content"] = contentStr
+
+        return f"{type(self).__name__}({utils.jsonDumps(selfDict)})"
 
 
 class ModelImageMessage(ModelMessage):
@@ -723,13 +738,17 @@ class ModelImageMessage(ModelMessage):
 
         return super().toDict(contentKey, content=content, skipRole=skipRole)
 
-    def toLogMessage(self) -> str:
+    def toLogMessage(self, conttentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
         """Return a string representation of the message for logging.
+
+        Args:
+            conttentLengthLimit: The maximum length of the content to include in the log message.
+            _selfDict: Optional dictionary representation of the message. To be used by subclasses only.
 
         Returns:
             str: String representation of the message.
         """
-        selfDict = self.toDict()
+        selfDict = _selfDict if _selfDict is not None else self.toDict()
         if "content" in selfDict and isinstance(selfDict["content"], list):
             newContent = []
             for item in selfDict["content"]:
@@ -743,8 +762,7 @@ class ModelImageMessage(ModelMessage):
                     continue
                 newContent.append(item)
             selfDict["content"] = newContent
-
-        return f"{type(self).__name__}({utils.jsonDumps(selfDict)})"
+        return super().toLogMessage(conttentLengthLimit, selfDict)
 
 
 class ModelResultStatus(Enum):
