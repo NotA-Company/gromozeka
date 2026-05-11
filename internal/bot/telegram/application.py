@@ -25,7 +25,6 @@ from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.services.queue_service.service import QueueService
 from lib import utils
-from lib.ai import LLMManager
 from lib.rate_limiter import RateLimiterManager
 
 logger = logging.getLogger(__name__)
@@ -64,10 +63,10 @@ class TelegramBotApplication:
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         botToken: str,
         database: Database,
-        llmManager: LLMManager,
     ):
         """Initialize Telegram bot application.
 
@@ -80,9 +79,10 @@ class TelegramBotApplication:
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
-        self.llmManager = llmManager
         self.application = None
-        self.handlerManager = HandlersManager(configManager, database, llmManager, BotProvider.TELEGRAM)
+        self.handlerManager = HandlersManager(
+            configManager=configManager, database=database, botProvider=BotProvider.TELEGRAM
+        )
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
 

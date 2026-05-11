@@ -32,7 +32,6 @@ from internal.services.cache import UserActiveActionEnum
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
-    LLMManager,
     LLMParameterType,
 )
 
@@ -49,20 +48,17 @@ class UserDataHandler(BaseBotHandler):
         llmService (LLMService): Service for LLM tool registration and management.
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """
         Initialize handler and register 'add_user_data' LLM tool.
 
         Args:
             configManager (ConfigManager): Configuration manager instance.
             database (Database): Database object for data persistence.
-            llmManager (LLMManager): LLM manager for AI model interactions.
             botProvider (BotProvider): Bot provider instance.
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 

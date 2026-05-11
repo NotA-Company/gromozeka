@@ -164,7 +164,6 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database import Database
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -177,15 +176,14 @@ class MyNewHandler(BaseBotHandler):
     Attributes:
         configManager: Configuration manager instance
         database: Database wrapper for persistence
-        llmManager: LLM manager for AI features
         botProvider: Bot provider type
     """
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ):
         """Initialize handler
@@ -193,13 +191,11 @@ class MyNewHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager
             database: Database wrapper
-            llmManager: LLM manager
             botProvider: Bot provider type
         """
         super().__init__(
             configManager=configManager,
             database=database,
-            llmManager=llmManager,
             botProvider=botProvider,
         )
 
@@ -255,7 +251,7 @@ class MyNewHandler(BaseBotHandler):
 
 **Required patterns:**
 - Inherit from `BaseBotHandler`
-- Call `super().__init__()` with all four args
+- Call `super().__init__()` with all three args
 - Use `self.sendMessage()` (NOT direct bot API)
 - Return `HandlerResultStatus` from `newMessageHandler()`
 - Use `@commandHandlerV2` decorator for commands
@@ -338,9 +334,9 @@ from .my_handler import MyNewHandler
 # In HandlersManager.__init__(), add to self.handlers list:
 self.handlers: List[HandlerTuple] = [
     # ... existing handlers ...
-    (MyNewHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
+    (MyNewHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.PARALLEL),
     # LLMMessageHandler MUST stay last!
-    (LLMMessageHandler(configManager, database, llmManager, botProvider), HandlerParallelism.SEQUENTIAL),
+    (LLMMessageHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.SEQUENTIAL),
 ]
 ```
 
@@ -350,7 +346,7 @@ self.handlers: List[HandlerTuple] = [
 # CORRECT — conditional registration
 if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
     self.handlers.append(
-        (WeatherHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
+        (WeatherHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.PARALLEL)
     )
 ```
 

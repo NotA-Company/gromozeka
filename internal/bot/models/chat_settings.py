@@ -6,12 +6,38 @@ including chat tiers, settings pages, settings keys, and settings values.
 
 import logging
 from enum import IntEnum, StrEnum, auto
-from typing import Any, Dict, List, Optional, Self, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Self, TypedDict
 
 from lib.ai.abstract import AbstractModel
-from lib.ai.manager import LLMManager
+
+if TYPE_CHECKING:
+    from lib.ai import LLMManager
+
 
 logger = logging.getLogger(__name__)
+
+_llmManager: Optional["LLMManager"] = None
+
+
+def getLLMManager() -> "LLMManager":
+    """
+    Get LLMManager
+
+    We can't just import LLMService here as it will create cyclic dependency.
+    Also I do not want to add import into toModel() method to not waste time on import each time
+    So this function does the trick:
+    it saves LLMManager instance into global variable and return it if it is already initialized
+
+    Return: LLMManager
+    """
+    global _llmManager
+
+    if _llmManager is None:
+        from internal.services.llm import LLMService
+
+        _llmManager = LLMService.getInstance().getLLMManager()
+
+    return _llmManager
 
 
 class ChatTier(StrEnum):
@@ -519,7 +545,7 @@ class ChatSettingsValue:
         """
         return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]
 
-    def toModel(self, modelManager: LLMManager) -> AbstractModel:
+    def toModel(self) -> AbstractModel:
         """Convert value to an LLM model instance.
 
         Args:
@@ -531,7 +557,8 @@ class ChatSettingsValue:
         Raises:
             ValueError: If the model is not found in the manager.
         """
-        ret = modelManager.getModel(self.value)
+
+        ret = getLLMManager().getModel(self.value)
         if ret is None:
             logger.error(f"Model {self.value} not found")
             raise ValueError(f"Model {self.value} not found")

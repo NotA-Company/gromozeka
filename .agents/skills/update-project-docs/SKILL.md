@@ -70,7 +70,7 @@ A single change may match multiple rows. Apply all that match.
 - **New service** entry in `services.md`: location, `getInstance()` call, key public methods (with signatures), initialization side effects, thread-safety notes.
 - **New library** row in `libraries.md` §overview table: path, one-line purpose.
 
-Do **not** write `self.services.<name>` — that attribute does not exist. Handlers access services via direct attributes set in [`BaseBotHandler.__init__`](../../../internal/bot/common/handlers/base.py) (`self.db`, `self.cache`, `self.queueService`, `self.storage`, `self.llmService`, `self.llmManager`, `self.configManager`), all populated via `Service.getInstance()`.
+Do **not** write `self.services.<name>` — that attribute does not exist. Handlers access services via direct attributes set in [`BaseBotHandler.__init__`](../../../internal/bot/common/handlers/base.py) (`self.db`, `self.cache`, `self.queueService`, `self.storage`, `self.llmService`, `self.configManager`), all populated via `Service.getInstance()`. For `LLMManager`, access it via `self.llmService.getLLMManager()` — it is not a direct attribute.
 
 ## Step 3 — Update root `AGENTS.md` when hard rules or load-bearing gotchas change
 

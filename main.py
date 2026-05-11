@@ -77,14 +77,12 @@ class GromozekBot:
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
-                    llmManager=self.llmManager,
                 )
             case BotProvider.MAX:
                 self.botApp = MaxBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
-                    llmManager=self.llmManager,
                 )
             case _:
                 raise ValueError(f"Unknown bot mode: {self.botMode}")

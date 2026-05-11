@@ -191,11 +191,9 @@ def _makeHandler(
     """
     cm = configManager if configManager is not None else _makeConfigManager()
     db = _makeDatabase()
-    llmManager = MagicMock()
     handler = DivinationHandler(
         configManager=cm,
         database=db,
-        llmManager=llmManager,
         botProvider=BotProvider.TELEGRAM,
     )
 
@@ -517,7 +515,6 @@ async def test_handlerDisabledRaisesAtInit() -> None:
         DivinationHandler(
             configManager=cm,
             database=db,
-            llmManager=MagicMock(),
             botProvider=BotProvider.TELEGRAM,
         )
 

@@ -24,13 +24,11 @@ Example:
     >>> from internal.bot.handlers import HandlersManager
     >>> from internal.config.manager import ConfigManager
     >>> from internal.database import Database
-    >>> from lib.ai.manager import LLMManager
     >>>
     >>> configManager = ConfigManager()
     >>> database = Database(configManager.getDatabaseConfig())
-    >>> llmManager = LLMManager(configManager)
     >>>
-    >>> manager = HandlersManager(configManager, database, llmManager)
+    >>> manager = HandlersManager(configManager=configManager, database=database)
     >>> manager.injectBot(bot)
     >>>
     >>> # Use manager methods to handle updates

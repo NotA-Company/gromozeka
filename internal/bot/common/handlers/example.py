@@ -33,7 +33,7 @@ from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.services.llm import LLMService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
-from lib.ai import LLMFunctionParameter, LLMManager, LLMParameterType
+from lib.ai import LLMFunctionParameter, LLMParameterType
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -54,9 +54,9 @@ class ExampleHandler(BaseBotHandler):
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> None:
         """Initialize example handler with database and LLM model.
@@ -67,7 +67,6 @@ class ExampleHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager for bot settings.
             database: Database object for persistent storage.
-            llmManager: LLM manager for AI-powered features.
             botProvider: Bot provider instance for platform-specific operations.
 
         Note:
@@ -76,7 +75,7 @@ class ExampleHandler(BaseBotHandler):
             - LLM tool registration for example text processing
             - Example command handling capabilities
         """
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.queueService: QueueService = QueueService.getInstance()
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)

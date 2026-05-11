@@ -41,7 +41,6 @@ from internal.database.models import MessageCategory
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
-    LLMManager,
     LLMParameterType,
     ModelImageMessage,
     ModelMessage,
@@ -74,9 +73,7 @@ class MediaHandler(BaseBotHandler):
                        chat settings, and database operations
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """
         Initialize the MediaHandler with required dependencies.
 
@@ -87,7 +84,6 @@ class MediaHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager for accessing bot settings
             database: Database wrapper for storing and retrieving messages
-            llmManager: LLM manager for accessing AI models
             botProvider: Bot provider (Telegram or Max)
 
         Side Effects:
@@ -95,7 +91,7 @@ class MediaHandler(BaseBotHandler):
             - Initializes base handler functionality
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 

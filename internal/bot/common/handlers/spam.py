@@ -48,7 +48,6 @@ from internal.database.models import (
 from internal.models import MessageIdType
 from internal.services.cache import HCSpamWarningMessageInfo
 from internal.services.queue_service import DelayedTaskFunction
-from lib.ai import LLMManager
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -78,9 +77,7 @@ class SpamHandler(BaseBotHandler):
         - User unbanning with automatic ham learning
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """
         Initialize spam handlers with database and LLM model.
 
@@ -90,7 +87,6 @@ class SpamHandler(BaseBotHandler):
         Args:
             configManager (ConfigManager): Configuration manager for bot settings.
             database (Database): Database object for persistent storage.
-            llmManager (LLMManager): LLM manager for AI-powered features.
             botProvider (BotProvider): Bot platform provider (Telegram or Max).
 
         Note:
@@ -102,7 +98,7 @@ class SpamHandler(BaseBotHandler):
             - Trigram tokenization enabled
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.spamButtonSalt = self.config.get("spam-button-salt", str(time.time()))
         # self.config = configManager.getBotConfig()

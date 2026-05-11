@@ -52,7 +52,6 @@ from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import BotProvider, EnsuredMessage, MessageCategory
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from lib.ai import LLMManager
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +62,13 @@ class MyHandler(BaseBotHandler):
     Attributes:
         configManager: Inherited from BaseBotHandler.
         db: Inherited from BaseBotHandler.
-        llmManager: Inherited from BaseBotHandler.
     """
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ):
         """Initialize the handler.
@@ -78,10 +76,9 @@ class MyHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager.
             database: Database wrapper.
-            llmManager: LLM manager.
             botProvider: Which bot platform this handler runs on.
         """
-        super().__init__(configManager, database, llmManager, botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
         # handler-specific state goes here
 
     async def newMessageHandler(
@@ -119,7 +116,6 @@ class MyHandler(BaseBotHandler):
 | `self.configManager` | `ConfigManager` | constructor arg |
 | `self.config` | `dict` | `configManager.getBotConfig()` |
 | `self.db` | `Database` | constructor arg |
-| `self.llmManager` | `LLMManager` | constructor arg |
 | `self.botProvider` | `BotProvider` | constructor arg |
 | `self.cache` | `CacheService` | `CacheService.getInstance()` |
 | `self.queueService` | `QueueService` | `QueueService.getInstance()` |
@@ -174,7 +170,7 @@ Two invariants:
 ```python
 if self.configManager.get("my_feature", {}).get("enabled", False):
     self.handlers.append(
-        (MyHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
+        (MyHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.PARALLEL)
     )
 ```
 
@@ -217,7 +213,7 @@ make test
 ## Checklist
 
 - [ ] Handler file at `internal/bot/common/handlers/<name>.py`.
-- [ ] Class extends `BaseBotHandler`, constructor forwards the four standard args to `super().__init__(...)`.
+- [ ] Class extends `BaseBotHandler`, constructor forwards the three standard keyword args to `super().__init__(...)`.
 - [ ] Module, class, and every method/function have docstrings with `Args:` / `Returns:`.
 - [ ] All params and returns have type hints.
 - [ ] camelCase for variables/functions/methods, PascalCase for the class, UPPER_CASE for constants.

@@ -34,7 +34,6 @@ from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.services.llm import LLMService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler
 
@@ -54,9 +53,7 @@ class CommonHandler(BaseBotHandler):
         llmService: LLM service instance for tool registration and management.
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider):
         """Initialize the CommonHandler with required services.
 
         Sets up the handler by:
@@ -67,11 +64,10 @@ class CommonHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager instance for accessing bot settings.
             database: Database wrapper instance for data persistence.
-            llmManager: LLM manager instance for AI model interactions.
             botProvider: Bot provider instance for platform-specific operations.
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 

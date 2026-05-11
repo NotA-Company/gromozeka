@@ -20,7 +20,7 @@ The manager implements a sophisticated queuing system that:
     - Provides cleanup of stale chat states and old data
 
 Example:
-    manager = HandlersManager(configManager, database, llmManager, BotProvider.TELEGRAM)
+    manager = HandlersManager(configManager, database, BotProvider.TELEGRAM)
     await manager.initialize(bot)
     await manager.handleNewMessage(ensuredMessage, updateObj)
     await manager.shutdown()
@@ -63,7 +63,6 @@ from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from internal.services.storage import StorageService
 from lib import utils
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
 from .common import CommonHandler
@@ -347,7 +346,6 @@ class HandlersManager(CommandHandlerGetterInterface):
     Attributes:
         configManager: Configuration manager instance for accessing bot settings
         db: Database wrapper for data persistence operations
-        llmManager: LLM manager for AI model operations
         botProvider: Bot provider type (TELEGRAM or MAX)
         handlerTimeout: Default timeout for handler execution in seconds
         _commands: Cached dictionary mapping command names to handler info
@@ -363,9 +361,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         _shutdownEvent: Event set when the manager is shutting down
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """Initialize the handlers manager with required services.
 
         Initializes all core services, sets up default chat settings, configures
@@ -375,12 +371,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         Args:
             configManager: Configuration manager instance
             database: Database wrapper for data persistence
-            llmManager: LLM manager for AI model operations
             botProvider: Bot provider type (TELEGRAM or MAX)
         """
         self.configManager = configManager
         self.db = database
-        self.llmManager = llmManager
         self.botProvider: BotProvider = botProvider
         self.handlerTimeout = 60 * 30
 
@@ -433,39 +427,62 @@ class HandlersManager(CommandHandlerGetterInterface):
             # # Should be first to save message to history + process media.
             # Should be before other handlers to ensure message saving + media processing
             (
-                MessagePreprocessorHandler(configManager, database, llmManager, botProvider),
+                MessagePreprocessorHandler(configManager=configManager, database=database, botProvider=botProvider),
                 HandlerParallelism.SEQUENTIAL,
             ),
             # Should be first (but after Preprocessor) to check for spam before other handlers
             # and do not allow SPAM to be processed by other handlers
-            (SpamHandler(configManager, database, llmManager, botProvider), HandlerParallelism.SEQUENTIAL),
+            (
+                SpamHandler(configManager=configManager, database=database, botProvider=botProvider),
+                HandlerParallelism.SEQUENTIAL,
+            ),
             # # Next - Handlers, which uses `newMessageHandler` for setting settings
             # Should be before MessagePreprocessorHandler to not save configuration answers
-            (ConfigureCommandHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
-            (SummarizationHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
-            (UserDataHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
+            (
+                ConfigureCommandHandler(configManager=configManager, database=database, botProvider=botProvider),
+                HandlerParallelism.PARALLEL,
+            ),
+            (
+                SummarizationHandler(configManager=configManager, database=database, botProvider=botProvider),
+                HandlerParallelism.PARALLEL,
+            ),
+            (
+                UserDataHandler(configManager=configManager, database=database, botProvider=botProvider),
+                HandlerParallelism.PARALLEL,
+            ),
             # # Fourth - all other handlers
-            (DevCommandsHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
-            (MediaHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
-            (CommonHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
+            (
+                DevCommandsHandler(configManager=configManager, database=database, botProvider=botProvider),
+                HandlerParallelism.PARALLEL,
+            ),
+            (
+                MediaHandler(configManager=configManager, database=database, botProvider=botProvider),
+                HandlerParallelism.PARALLEL,
+            ),
+            (
+                CommonHandler(configManager=configManager, database=database, botProvider=botProvider),
+                HandlerParallelism.PARALLEL,
+            ),
             # Special case - help command require all command handlers information
-            (HelpHandler(configManager, database, llmManager, botProvider, self), HandlerParallelism.PARALLEL),
+            (
+                HelpHandler(
+                    configManager=configManager, database=database, botProvider=botProvider, commandsGetter=self
+                ),
+                HandlerParallelism.PARALLEL,
+            ),
         ]
 
         if self.botProvider == BotProvider.TELEGRAM:
             self.handlers.extend(
                 [
                     (
-                        ReactOnUserMessageHandler(configManager, database, llmManager, botProvider),
+                        ReactOnUserMessageHandler(
+                            configManager=configManager, database=database, botProvider=botProvider
+                        ),
                         HandlerParallelism.PARALLEL,
                     ),
                     (
-                        TopicManagerHandler(
-                            configManager=configManager,
-                            database=database,
-                            llmManager=llmManager,
-                            botProvider=botProvider,
-                        ),
+                        TopicManagerHandler(configManager=configManager, database=database, botProvider=botProvider),
                         HandlerParallelism.PARALLEL,
                     ),
                 ]
@@ -474,26 +491,38 @@ class HandlersManager(CommandHandlerGetterInterface):
         # Add WeatherHandler only if OpenWeatherMap integration is enabled
         if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
             self.handlers.append(
-                (WeatherHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
+                (
+                    WeatherHandler(configManager=configManager, database=database, botProvider=botProvider),
+                    HandlerParallelism.PARALLEL,
+                )
             )
         if self.configManager.getYandexSearchConfig().get("enabled", False):
             self.handlers.append(
-                (YandexSearchHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
+                (
+                    YandexSearchHandler(configManager=configManager, database=database, botProvider=botProvider),
+                    HandlerParallelism.PARALLEL,
+                )
             )
         if self.configManager.get("resender", {}).get("enabled", False):
             self.handlers.append(
-                (ResenderHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
+                (
+                    ResenderHandler(configManager=configManager, database=database, botProvider=botProvider),
+                    HandlerParallelism.PARALLEL,
+                )
             )
         if self.configManager.get("divination", {}).get("enabled", False):
             self.handlers.append(
-                (DivinationHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
+                (
+                    DivinationHandler(configManager=configManager, database=database, botProvider=botProvider),
+                    HandlerParallelism.PARALLEL,
+                )
             )
 
         # Load custom handlers from config
         # We have to import module_loader here to avoid circular imports
         from .module_loader import CustomHandlerLoader
 
-        customLoader = CustomHandlerLoader(configManager, database, llmManager, botProvider)
+        customLoader = CustomHandlerLoader(configManager=configManager, database=database, botProvider=botProvider)
         customHandlers = customLoader.loadAll()
         if customHandlers:
             logger.info(f"Loaded {len(customHandlers)} custom handler(s)")
@@ -501,7 +530,10 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         self.handlers.append(
             # Should be last messageHandler as it can handle any message
-            (LLMMessageHandler(configManager, database, llmManager, botProvider), HandlerParallelism.SEQUENTIAL)
+            (
+                LLMMessageHandler(configManager=configManager, database=database, botProvider=botProvider),
+                HandlerParallelism.SEQUENTIAL,
+            )
         )
 
         self.chatStates: Dict[str, ChatProcessingState] = {}

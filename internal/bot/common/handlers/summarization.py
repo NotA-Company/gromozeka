@@ -225,7 +225,7 @@ class SummarizationHandler(BaseBotHandler):
 
         reqMessages = [systemMessage] + parsedMessages
 
-        llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel(self.llmManager)
+        llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel()
         maxTokens = llmModel.contextSize
         tokensCount = llmModel.getEstimateTokensCount(reqMessages)
 

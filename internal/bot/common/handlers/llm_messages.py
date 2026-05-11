@@ -17,7 +17,7 @@ Key Features:
 Example:
     The handler is typically registered with the bot and processes incoming messages::
 
-        handler = LLMMessageHandler(configManager, database, llmManager, botProvider)
+        handler = LLMMessageHandler(configManager, database, botProvider)
         await handler.newMessageHandler(ensuredMessage, updateObj)
 """
 
@@ -53,7 +53,6 @@ from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.services.llm import ExtraDataDict, LLMService
 from lib.ai import (
-    LLMManager,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -76,18 +75,15 @@ class LLMMessageHandler(BaseBotHandler):
         llmService (LLMService): Singleton service for LLM operations.
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """Initialize the LLM message handler.
 
         Args:
             configManager (ConfigManager): Configuration manager for bot settings.
             database (Database): Database object for message storage and retrieval.
-            llmManager (LLMManager): Manager for LLM model instances and operations.
             botProvider (BotProvider): Bot platform provider (Telegram, Max, etc.).
         """
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 
@@ -750,10 +746,10 @@ class LLMMessageHandler(BaseBotHandler):
                     # + 1 answer from bot
                     condensedMessages = await self.llmService.condenseContext(
                         contextMessages,
-                        chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager),
+                        chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(),
                         keepFirstN=0,
                         keepLastN=0,
-                        condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
+                        condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
                         condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
                         condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
                         force=True,

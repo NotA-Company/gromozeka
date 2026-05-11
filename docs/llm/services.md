@@ -106,7 +106,6 @@ result: ModelRunResult = await llmService.generateText(
     messages,                    # List[ModelMessage]
     chatId=chatId,
     chatSettings=chatSettings,
-    llmManager=self.llmManager,
     modelKey=ChatSettingsKey.CHAT_MODEL,
     fallbackKey=ChatSettingsKey.CHAT_FALLBACK_MODEL,
 )
@@ -147,7 +146,6 @@ result: ModelStructuredResult = await llmService.generateStructured(
     schema,                      # Dict[str, Any] — JSON Schema
     chatId=chatId,
     chatSettings=chatSettings,
-    llmManager=self.llmManager,
     modelKey=ChatSettingsKey.CHAT_MODEL,
     fallbackKey=ChatSettingsKey.CHAT_FALLBACK_MODEL,
     schemaName="response",       # optional; identifies schema to provider
@@ -168,7 +166,6 @@ async def generateStructured(
     *,
     chatId: Optional[int],
     chatSettings: ChatSettingsDict,
-    llmManager: LLMManager,
     modelKey: Union[ChatSettingsKey, AbstractModel, None],
     fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
     schemaName: str = "response",

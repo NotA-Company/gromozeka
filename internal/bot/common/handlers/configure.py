@@ -44,7 +44,6 @@ from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.models.types import MessageIdType
 from internal.services.cache.types import UserActiveActionEnum
-from lib.ai.manager import LLMManager
 from lib.markdown import markdownToMarkdownV2
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -72,9 +71,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         selectableModels: List of AI model names available for configuration.
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """Initialize the configuration handler with required dependencies.
 
         Builds a list of selectable AI models that users can choose from during
@@ -83,7 +80,6 @@ class ConfigureCommandHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager instance for accessing bot settings.
             database: Database wrapper for data persistence operations.
-            llmManager: LLM manager for accessing available AI models.
             botProvider: Bot provider instance for Telegram API interactions.
 
         Side Effects:
@@ -91,9 +87,11 @@ class ConfigureCommandHandler(BaseBotHandler):
             - Populates self.selectableModels with choosable model names.
             - Logs the list of selectable models at debug level.
         """
-        super().__init__(configManager, database, llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         selectableModels: List[str] = []
+
+        llmManager = self.llmService.getLLMManager()
 
         for modelName in llmManager.listModels():
             modelInfo = llmManager.getModelInfo(modelName)
@@ -527,8 +525,9 @@ class ConfigureCommandHandler(BaseBotHandler):
                 ]
             )
         elif chatOptions[key]["type"] in [ChatSettingsType.MODEL, ChatSettingsType.IMAGE_MODEL]:
+            llmManager = self.llmService.getLLMManager()
             for modelIdx, modelName in enumerate(self.selectableModels):
-                modelInfo = self.llmManager.getModelInfo(modelName)
+                modelInfo = llmManager.getModelInfo(modelName)
                 if modelInfo is None:
                     logger.error(f"ConfigureKey: modelInfo for {modelName} not found")
                     continue
@@ -719,7 +718,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                         value = currentValue
                     else:
                         value = self.selectableModels[value]
-                        modelInfo = self.llmManager.getModelInfo(value)
+                        modelInfo = self.llmService.getLLMManager().getModelInfo(value)
                         modelTier = ChatTier.fromStr(modelInfo.get("tier", "") if modelInfo is not None else "")
                         if modelTier is None or not chatTier.isBetterOrEqualThan(modelTier):
                             value = currentValue

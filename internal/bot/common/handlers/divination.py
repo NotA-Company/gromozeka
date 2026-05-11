@@ -34,7 +34,6 @@ from internal.database import Database
 from internal.database.models import DivinationLayoutDict, MessageCategory
 from lib.ai import (
     LLMFunctionParameter,
-    LLMManager,
     LLMParameterType,
     ModelMessage,
     ModelResultStatus,
@@ -128,9 +127,9 @@ class DivinationHandler(BaseBotHandler):
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> None:
         """Initialise the divination handler.
@@ -139,7 +138,6 @@ class DivinationHandler(BaseBotHandler):
             configManager: Configuration manager providing the ``divination``
                 section.
             database: Database wrapper used to persist readings.
-            llmManager: LLM manager forwarded to :class:`LLMService` calls.
             botProvider: Bot provider type (Telegram / Max).
 
         Raises:
@@ -150,7 +148,6 @@ class DivinationHandler(BaseBotHandler):
         super().__init__(
             configManager=configManager,
             database=database,
-            llmManager=llmManager,
             botProvider=botProvider,
         )
 

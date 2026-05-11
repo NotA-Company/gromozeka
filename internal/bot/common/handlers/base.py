@@ -68,7 +68,6 @@ from internal.services.llm import LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from internal.services.storage import StorageService
 from lib.ai import (
-    LLMManager,
     ModelImageMessage,
     ModelMessage,
     ModelResultStatus,
@@ -118,7 +117,6 @@ class BaseBotHandler(CommandHandlerMixin):
     The class integrates with:
     - [`ConfigManager`](internal/config/manager.py): For bot configuration
     - [`Database`](internal/database/database.py): For data persistence
-    - [`LLMManager`](lib/ai/manager.py): For AI model interactions
     - [`CacheService`](internal/services/cache/service.py): For performance optimization
     - [`QueueService`](internal/services/queue/service.py): For background task management
 
@@ -126,7 +124,6 @@ class BaseBotHandler(CommandHandlerMixin):
         configManager: Configuration manager instance
         config: Bot configuration dictionary
         db: Database object for data operations
-        llmManager: LLM manager for AI model access
         botOwners: List of bot owner usernames (lowercase)
         chatDefaults: Default settings for all chats
         cache: Cache service instance
@@ -135,9 +132,9 @@ class BaseBotHandler(CommandHandlerMixin):
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ):
         """
@@ -146,7 +143,7 @@ class BaseBotHandler(CommandHandlerMixin):
         Args:
             configManager: Configuration manager providing bot settings
             database: Database wrapper for data persistence
-            llmManager: LLM manager for AI model operations
+            botProvider: Bot provider type
         """
         # Initialize the mixin (discovers handlers)
         super().__init__()
@@ -154,7 +151,6 @@ class BaseBotHandler(CommandHandlerMixin):
         self.configManager = configManager
         self.config = configManager.getBotConfig()
         self.db = database
-        self.llmManager = llmManager
         self.botProvider = botProvider
 
         self.cache = CacheService.getInstance()
@@ -279,6 +275,7 @@ class BaseBotHandler(CommandHandlerMixin):
         # Check if chat settings are available for this chat tier
         # (Settings set by BotOwner are available for any Tier)
         # logger.debug(f"chat#{chatId} settings: {chatSettings}")
+        llmManager = self.llmService.getLLMManager()
         for k, v in chatSettings.items():
             settingTier = settingsInfo[k]["page"].minTier()
             # NOTE: We can't get user's username here, but on initialization
@@ -292,7 +289,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 # logger.debug(f"{k} -> if not chatTier.isBetterOrEqualThan(settingTier) and not isSetByBotOwner:")
                 continue
             if settingsInfo[k]["type"] in (ChatSettingsType.MODEL, ChatSettingsType.IMAGE_MODEL):
-                modelInfo = self.llmManager.getModelInfo(v.toStr())
+                modelInfo = llmManager.getModelInfo(v.toStr())
                 if modelInfo is None:
                     # Wrong model, fallback to default
                     continue
@@ -782,7 +779,7 @@ class BaseBotHandler(CommandHandlerMixin):
             return ret
 
         # Condense thread if needed
-        llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(self.llmManager)
+        llmModel = chatSettings[ChatSettingsKey.CHAT_MODEL].toModel()
         # If we need condencind, assume that we sould use no more than 50% of the context size
         maxTokens = int(llmModel.contextSize * 0.5)
 
@@ -796,7 +793,7 @@ class BaseBotHandler(CommandHandlerMixin):
             keepFirstN=keepFirstN,
             keepLastN=keepLastN,
             maxTokens=maxTokens,
-            condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
+            condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
             condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
             condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
         )
@@ -821,7 +818,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 keepFirstN=keepFirstN,
                 keepLastN=keepLastN,
                 maxTokens=maxTokens,
-                condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(self.llmManager),
+                condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
                 condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
                 condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
             )

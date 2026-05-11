@@ -16,7 +16,6 @@ Example:
     helpHandler = HelpHandler(
         configManager=configManager,
         database=database,
-        llmManager=llmManager,
         botProvider=BotProvider.TELEGRAM,
         commandsGetter=handlersManager
     )
@@ -41,7 +40,6 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler
 
@@ -109,7 +107,6 @@ class HelpHandler(BaseBotHandler):
         helpHandler = HelpHandler(
             configManager=configManager,
             database=database,
-            llmManager=llmManager,
             botProvider=BotProvider.TELEGRAM,
             commandsGetter=handlersManager
         )
@@ -119,9 +116,9 @@ class HelpHandler(BaseBotHandler):
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
         commandsGetter: CommandHandlerGetterInterface,
     ):
@@ -134,7 +131,6 @@ class HelpHandler(BaseBotHandler):
             configManager: Configuration manager instance for accessing bot
                 configuration settings.
             database: Database wrapper for data persistence and message storage.
-            llmManager: LLM manager for AI model operations (used by base class).
             botProvider: Bot provider type (TELEGRAM or MAX) indicating which
                 messaging platform the bot is running on.
             commandsGetter: Interface to get command handlers from manager.
@@ -142,7 +138,7 @@ class HelpHandler(BaseBotHandler):
                 for the help display.
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
         self.commandsGetter = commandsGetter
 
     @commandHandlerV2(

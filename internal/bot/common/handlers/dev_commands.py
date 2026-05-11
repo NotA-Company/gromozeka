@@ -178,8 +178,9 @@ class DevCommandsHandler(BaseBotHandler):
 
         replyText = "**Доступные модели:**\n\n"
 
-        for i, modelName in enumerate(self.llmManager.listModels()):
-            modelData = self.llmManager.getModelInfo(modelName)
+        llmManager = self.llmService.getLLMManager()
+        for i, modelName in enumerate(llmManager.listModels()):
+            modelData = llmManager.getModelInfo(modelName)
             if modelData is None:
                 modelData = {}
             modelKeyI18n = {

@@ -780,6 +780,16 @@ class LLMService:
         """
         return f"chatLLM#{chatId}"
 
+    def getLLMManager(self) -> LLMManager:
+        """Return the LLMManager instance.
+
+        Returns:
+            The LLMManager instance used by the LLMService
+        """
+        if self.llmManager is None:
+            raise RuntimeError("LLMManager not initialized, call llmService.getInstance().injectLLMManager(...)")
+        return self.llmManager
+
     def resolveModel(
         self,
         modelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
@@ -803,13 +813,10 @@ class LLMService:
         Returns:
             The resolved AbstractModel instance
         """
-        if self.llmManager is None:
-            raise RuntimeError("LLMManager not initialized, call llmService.getInstance().injectLLMManager(...)")
-
         if isinstance(modelKey, AbstractModel):
             return modelKey
 
         if isinstance(modelKey, ChatSettingsKey):
-            return chatSettings[modelKey].toModel(self.llmManager)
+            return chatSettings[modelKey].toModel()
 
-        return chatSettings[defaultKey].toModel(self.llmManager)
+        return chatSettings[defaultKey].toModel()
