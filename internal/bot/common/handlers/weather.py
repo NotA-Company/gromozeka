@@ -31,7 +31,6 @@ from internal.database.models import (
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
-    LLMManager,
     LLMParameterType,
 )
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
@@ -54,9 +53,7 @@ class WeatherHandler(BaseBotHandler):
         llmService: LLM tool registration service
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """Initialize weather handler with dependencies.
 
         Sets up OpenWeatherMap client with caching and registers LLM tools.
@@ -64,13 +61,12 @@ class WeatherHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager for OpenWeatherMap settings
             database: Database wrapper for caching
-            llmManager: LLM manager for model interactions
 
         Raises:
             RuntimeError: If OpenWeatherMap integration is disabled
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
         if not openWeatherMapConfig.get("enabled", False):

@@ -766,11 +766,10 @@ class HandlerParallelism(IntEnum):
 All handlers inherit from [`BaseBotHandler`](internal/bot/common/handlers/base.py:110) This base class provides:
 
 - `self.db` — [`Database`](internal/database/database.py) instance
-- `self.llmManager` — [`LLMManager`](lib/ai/manager.py:17) instance
+- `self.llmService` — [`LLMService`](internal/services/llm/service.py) instance (access LLMManager via `self.llmService.getLLMManager()`)
 - `self.cache` — [`CacheService`](internal/services/cache/service.py:88) instance
 - `self.queueService` — [`QueueService`](internal/services/queue_service/service.py) instance
 - `self.storage` — [`StorageService`](internal/services/storage/service.py) instance
-- `self.llmService` — [`LLMService`](internal/services/llm/service.py) instance
 - `self.configManager` — [`ConfigManager`](internal/config/manager.py:59) instance
 - `self.config` — raw bot config dict
 - `self.botProvider` — [`BotProvider`](internal/bot/models/enums.py) enum
@@ -873,7 +872,6 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
 from internal.database import Database
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -885,16 +883,15 @@ class MyNewHandler(BaseBotHandler):
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ):
         """Initialize my handler"""
         super().__init__(
             configManager=configManager,
             database=database,
-            llmManager=llmManager,
             botProvider=botProvider,
         )
 
@@ -946,7 +943,7 @@ class MyNewHandler(BaseBotHandler):
 from .my_handler import MyNewHandler
 
 # Then add to self.handlers list in __init__:
-(MyNewHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
+(MyNewHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.PARALLEL),
 ```
 
 **Alternatively**, use the **custom handler loader** for out-of-tree handlers Configure in TOML:
@@ -1164,6 +1161,7 @@ The AI system provides a provider-agnostic interface for interacting with multip
 ```python
 from lib.ai.manager import LLMManager
 from lib.ai import ModelMessage, ModelResultStatus
+from internal.services.llm import LLMService
 
 llmManager = LLMManager(config={
     "providers": {
@@ -1181,6 +1179,9 @@ llmManager = LLMManager(config={
         }
     }
 })
+
+# After creating LLMManager, inject it into LLMService so handlers can access it:
+LLMService.getInstance().injectLLMManager(llmManager)
 
 model = llmManager.getModel("my-model")
 messages = [
@@ -1572,9 +1573,8 @@ def myHandler():
     configManager = MagicMock()
     configManager.getBotConfig.return_value = {}
     database = MagicMock()
-    llmManager = MagicMock()
     botProvider = MagicMock()
-    return MyNewHandler(configManager, database, llmManager, botProvider)
+    return MyNewHandler(configManager=configManager, database=database, botProvider=botProvider)
 
 
 async def test_skipsIrrelevantMessages(myHandler):
@@ -1756,7 +1756,6 @@ import telegram
 
 # 4. FIRSTPARTY imports (internal/, lib/)
 from internal.config.manager import ConfigManager
-from lib.ai import LLMManager
 
 # 5. LOCALFOLDER (relative imports)
 from .base import BaseBotHandler
@@ -2006,7 +2005,7 @@ api-key = "${OPENROUTER_API_KEY}"
 from .my_handler import MyNewHandler
 
 # In HandlersManager.__init__, add to self.handlers list:
-(MyNewHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL),
+(MyNewHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.PARALLEL),
 ```
 
 3. **Write tests** in `tests/bot/` or alongside the handler file
@@ -2436,9 +2435,10 @@ main()
         ├── LLMManager(modelsConfig)
         │     ├── _initProviders()   ← create provider instances
         │     └── _initModels()      ← register models per provider
+        ├── LLMService.getInstance().injectLLMManager(llmManager)
         ├── RateLimiterManager.getInstance().loadConfig(rateLimiterConfig)
         └── TelegramBotApplication OR MaxBotApplication
-              └── HandlersManager(configManager, database, llmManager, botProvider)
+              └── HandlersManager(configManager, database, botProvider)
                     ├── CacheService.getInstance().injectDatabase(db)
                     ├── StorageService.getInstance().injectConfig(configManager)
                     ├── QueueService.getInstance()

@@ -29,7 +29,6 @@ from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.models import MessageType
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler
 
@@ -203,9 +202,9 @@ class ResenderHandler(BaseBotHandler):
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> None:
         """
@@ -214,13 +213,12 @@ class ResenderHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager providing bot settings
             database: Database wrapper for data persistence
-            llmManager: LLM manager for AI model operations
             botProvider: Bot provider enum indicating which messaging platform to use
 
         Raises:
             ValueError: If resender config is not a dictionary or jobs config is not a list
         """
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         config = configManager.get("resender", {})
 

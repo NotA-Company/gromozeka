@@ -65,7 +65,7 @@ From [`tests/conftest.py`](../../tests/conftest.py):
 | `mockQueueService` | function | `Mock` | Mocked `QueueService` |
 | `mockLlmService` | function | `Mock` | Mocked `LLMService` |
 | `mockCacheService` | function | `Mock` | Mocked `CacheService` |
-| `mockLlmManager` | function | `Mock` | Mocked `LLMManager` |
+| `mockLlmManager` | function | `Mock` | Mocked `LLMManager` (use via `mockLlmService.getLLMManager`) |
 | `resetLlmServiceSingleton` | function (autouse) | `None` | Resets LLMService singleton |
 | `sampleChatSettings` | function | `dict` | Sample chat settings |
 | `sampleUserData` | function | `dict` | Sample user data |
@@ -129,13 +129,13 @@ class TestSomeHandler:
     """Tests for SomeHandler"""
 
     @pytest.fixture
-    def handler(self, mockConfigManager, mockDatabaseWrapper, mockLlmManager):
+    def handler(self, mockConfigManager, mockDatabaseWrapper, mockLlmService):
         """Create handler instance
 
         Args:
             mockConfigManager: Mocked configuration manager
             mockDatabaseWrapper: Mocked database wrapper
-            mockLlmManager: Mocked LLM manager
+            mockLlmService: Mocked LLM service
 
         Returns:
             Configured SomeHandler instance for testing
@@ -143,7 +143,6 @@ class TestSomeHandler:
         handler = SomeHandler(
             configManager=mockConfigManager,
             database=mockDatabaseWrapper,
-            llmManager=mockLlmManager,
             botProvider=BotProvider.TELEGRAM,
         )
         # Inject mock bot
@@ -177,7 +176,7 @@ class TestSomeHandler:
 ```
 
 **Handler test checklist:**
-- [ ] Fixture creates handler with all four constructor args
+- [ ] Fixture creates handler with all three constructor args
 - [ ] Fixture injects mock bot with `AsyncMock` sendMessage
 - [ ] Tests skip cases return `SKIPPED`
 - [ ] Tests processing cases return correct `HandlerResultStatus`

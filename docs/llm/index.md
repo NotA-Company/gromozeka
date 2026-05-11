@@ -71,7 +71,7 @@ make test
 |---|---|---|
 | Variables | camelCase | `chatId`, `messageText` |
 | Arguments | camelCase | `configManager`, `botProvider` |
-| Class fields | camelCase | `self.llmManager`, `self.db` |
+| Class fields | camelCase | `self.llmService`, `self.db` |
 | Functions | camelCase | `getChatSettings()`, `sendMessage()` |
 | Methods | camelCase | `newMessageHandler()`, `getBotId()` |
 | Classes | PascalCase | `BaseBotHandler`, `CacheService` |

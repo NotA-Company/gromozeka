@@ -6,7 +6,7 @@ caching mechanisms, and repository upsert operations.
 """
 
 import datetime as dt
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -125,12 +125,10 @@ def _makeHandler(
     """Construct a DivinationHandler with mocked dependencies."""
     cm = _makeConfigManager(discoveryEnabled=discoveryEnabled)
     db = _makeDatabase()
-    llmManager = MagicMock()
 
     handler = DivinationHandler(
         configManager=cm,
         database=db,
-        llmManager=llmManager,
         botProvider=BotProvider.TELEGRAM,
     )
 
@@ -580,15 +578,11 @@ class TestCacheConsistency:
         # Mock Database with divinations repository
         mockDb = _makeDatabase()
 
-        # Mock LLMManager
-        mockLlmManager = MagicMock()
-
         # Create handler instance (note: this may raise if divination disabled)
         try:
             handler = DivinationHandler(
                 configManager=mockConfigManager,
                 database=mockDb,
-                llmManager=mockLlmManager,
                 botProvider=BotProvider.TELEGRAM,
             )
         except RuntimeError:

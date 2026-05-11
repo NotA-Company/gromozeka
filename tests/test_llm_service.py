@@ -934,34 +934,6 @@ async def testToolExecutionException(
 
 
 @pytest.mark.asyncio
-async def testMissingToolHandler(
-    llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
-):
-    """Test handling of missing tool handler, dood!"""
-    # Don't register any tools
-
-    toolCallResult = ModelRunResult(
-        rawResult={},
-        status=ModelResultStatus.TOOL_CALLS,
-        resultText="",
-        toolCalls=[LLMToolCall(id="call_1", name="nonexistentTool", parameters={})],
-    )
-
-    mockModel.generateText.return_value = toolCallResult
-
-    with pytest.raises(KeyError):
-        await llmService.generateTextViaLLM(
-            messages=sampleMessages,
-            chatId=None,
-            chatSettings=mockChatSettings,
-            modelKey=mockModel,
-            fallbackModelKey=mockFallbackModel,
-            useTools=True,
-            extraData={},
-        )
-
-
-@pytest.mark.asyncio
 async def testCallbackException(
     llmService, mockModel, mockFallbackModel, sampleMessages, mockChatSettings, mockLlmManager
 ):

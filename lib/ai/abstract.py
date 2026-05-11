@@ -20,6 +20,7 @@ customizations.
 import datetime
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type, TypeVar
@@ -206,12 +207,16 @@ class AbstractModel(ABC):
                 ),
             )
 
+        startTime = time.time()
         try:
             ret = await self._generateText(messages=messages, tools=tools)
+            ret.elapsedTime = time.time() - startTime
         except Exception as e:
             await self._recordAttemptStats(
                 consumerId,
-                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                ModelRunResult(
+                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                ),
                 "text",
             )
             raise
@@ -219,7 +224,7 @@ class AbstractModel(ABC):
         await self._recordAttemptStats(consumerId, ret, "text")
 
         if self.enableJSONLog:
-            self.printJSONLog(messages, ret)
+            self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     @abstractmethod
@@ -292,12 +297,16 @@ class AbstractModel(ABC):
             )
 
         # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
+        startTime = time.time()
         try:
             ret = await self._generateImage(messages=messages)
+            ret.elapsedTime = time.time() - startTime
         except Exception as e:
             await self._recordAttemptStats(
                 consumerId,
-                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                ModelRunResult(
+                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                ),
                 "image",
             )
             raise
@@ -305,7 +314,7 @@ class AbstractModel(ABC):
         await self._recordAttemptStats(consumerId, ret, "image")
 
         if self.enableJSONLog:
-            self.printJSONLog(messages, ret)
+            self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     async def _generateStructured(
@@ -418,6 +427,7 @@ class AbstractModel(ABC):
                 ),
             )
 
+        startTime = time.time()
         try:
             ret = await self._generateStructured(
                 messages=messages,
@@ -425,10 +435,13 @@ class AbstractModel(ABC):
                 schemaName=schemaName,
                 strict=strict,
             )
+            ret.elapsedTime = time.time() - startTime
         except Exception as e:
             await self._recordAttemptStats(
                 consumerId,
-                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                ModelRunResult(
+                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                ),
                 "structured",
             )
             raise
@@ -436,7 +449,7 @@ class AbstractModel(ABC):
         await self._recordAttemptStats(consumerId, ret, "structured")
 
         if self.enableJSONLog:
-            self.printJSONLog(messages, ret)
+            self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     async def _runWithFallback(
@@ -622,7 +635,13 @@ class AbstractModel(ABC):
         self.jsonLogFile = file
         self.jsonLogAddDateSuffix = addDateSuffix
 
-    def printJSONLog(self, messages: Sequence[ModelMessage], result: ModelRunResult) -> None:
+    def printJSONLog(
+        self,
+        messages: Sequence[ModelMessage],
+        result: ModelRunResult,
+        *,
+        consumerId: Optional[str] = None,
+    ) -> None:
         """Write a request-response pair to the JSON log file.
 
         This method writes the conversation history (messages) and model response
@@ -632,6 +651,7 @@ class AbstractModel(ABC):
         Args:
             messages: List of message objects that were sent to the model.
             result: The model's response result containing status, text, and metadata.
+            consumerId: Optional consumer identifier (e.g. chat ID).
 
         Raises:
             IOError: If unable to write to the log file.
@@ -659,6 +679,8 @@ class AbstractModel(ABC):
             "model": self.modelId,
             "provider": type(self.provider).__name__,
             "raw": str(result.result),
+            "consumer": consumerId,
+            "elapsed_time": result.elapsedTime,
         }
         with open(filename, "a") as f:
             f.write(utils.jsonDumps(data) + "\n")
@@ -687,6 +709,7 @@ class AbstractModel(ABC):
                     "total_tokens": result.totalTokens or 0,
                     "is_error": 1 if result.status in ERROR_STATUSES else 0,
                     f"status_{result.status.name}": 1,
+                    "elapsed_time": result.elapsedTime or 0,
                 },
                 consumerId=consumerId,
                 labels={

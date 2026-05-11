@@ -6,12 +6,38 @@ including chat tiers, settings pages, settings keys, and settings values.
 
 import logging
 from enum import IntEnum, StrEnum, auto
-from typing import Any, Dict, List, Optional, Self, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Self, TypedDict
 
 from lib.ai.abstract import AbstractModel
-from lib.ai.manager import LLMManager
+
+if TYPE_CHECKING:
+    from lib.ai import LLMManager
+
 
 logger = logging.getLogger(__name__)
+
+_llmManager: Optional["LLMManager"] = None
+
+
+def getLLMManager() -> "LLMManager":
+    """
+    Get LLMManager
+
+    We can't just import LLMService here as it will create cyclic dependency.
+    Also I do not want to add import into toModel() method to not waste time on import each time
+    So this function does the trick:
+    it saves LLMManager instance into global variable and return it if it is already initialized
+
+    Return: LLMManager
+    """
+    global _llmManager
+
+    if _llmManager is None:
+        from internal.services.llm import LLMService
+
+        _llmManager = LLMService.getInstance().getLLMManager()
+
+    return _llmManager
 
 
 class ChatTier(StrEnum):
@@ -289,8 +315,10 @@ class ChatSettingsKey(StrEnum):
     """Main system prompt defining bot personality."""
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
     """Additional suffix appended to chat system prompt."""
+    CONDENSING_SYSTEM_PROMPT = "condensing-system-prompt"
+    """System prompt defining the condensing model's identity and rules."""
     CONDENSING_PROMPT = "condensing-prompt"
-    """System prompt for context condensing."""
+    """Per-call trigger prompt for context condensing."""
     DOCUMENT_CONDENSING_PROMPT = "document-condensing-prompt"
     """System prompt for condensing long documents like web pages."""
     # Divination prompts (tarot & runes readings)
@@ -358,9 +386,9 @@ class ChatSettingsKey(StrEnum):
     """Max messages before user is exempt from spam checking (0 = always check)."""
     ALLOW_MARK_SPAM_OLD_USERS = "allow-mark-spam-old-users"
     """Whether to allow marking established users as spam."""
-    SPAM_BAN_TRESHOLD = "spam-ban-treshold"
+    SPAM_BAN_THRESHOLD = "spam-ban-threshold"
     """Spam confidence threshold (0-100) for banning user."""
-    SPAM_WARN_TRESHOLD = "spam-warn-treshold"
+    SPAM_WARN_THRESHOLD = "spam-warn-threshold"
     """Spam confidence threshold (0-100) for warning user."""
     # Bayes filter settings
     BAYES_ENABLED = "bayes-enabled"
@@ -517,7 +545,7 @@ class ChatSettingsValue:
         """
         return [x.strip() for x in self.value.split(separator) if x.strip() or not dropEmpty]
 
-    def toModel(self, modelManager: LLMManager) -> AbstractModel:
+    def toModel(self) -> AbstractModel:
         """Convert value to an LLM model instance.
 
         Args:
@@ -529,7 +557,8 @@ class ChatSettingsValue:
         Raises:
             ValueError: If the model is not found in the manager.
         """
-        ret = modelManager.getModel(self.value)
+
+        ret = getLLMManager().getModel(self.value)
         if ret is None:
             logger.error(f"Model {self.value} not found")
             raise ValueError(f"Model {self.value} not found")
@@ -636,6 +665,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Суффикс системного промпт для чата",
         "long": "Не стоит это изменять кроме как для тестовых целей.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.CONDENSING_SYSTEM_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный промпт для сжатия контекста",
+        "long": "Системный промпт, задающий роль и правила модели при сжатии контекста. "
+        "Заменяет персональный промпт чата на время компактинга.",
+        "page": ChatSettingsPage.LLM_BASE,
     },
     ChatSettingsKey.CONDENSING_PROMPT: {
         "type": ChatSettingsType.STRING,
@@ -876,13 +912,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         ),
         "page": ChatSettingsPage.SPAM,
     },
-    ChatSettingsKey.SPAM_WARN_TRESHOLD: {
+    ChatSettingsKey.SPAM_WARN_THRESHOLD: {
         "type": ChatSettingsType.FLOAT,
         "short": "SPAM-Порог для предупреждения пользователя",
         "long": ("Порог для предупреждения пользователя при автоматической проверке на спам" "(0-100)"),
         "page": ChatSettingsPage.SPAM,
     },
-    ChatSettingsKey.SPAM_BAN_TRESHOLD: {
+    ChatSettingsKey.SPAM_BAN_THRESHOLD: {
         "type": ChatSettingsType.FLOAT,
         "short": "SPAM-Порог для блокировки пользователя",
         "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),

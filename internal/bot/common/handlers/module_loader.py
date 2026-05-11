@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Tuple
 from internal.bot.models import BotProvider
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler
 from .manager import HandlerParallelism
@@ -61,16 +60,15 @@ class CustomHandlerLoader:
     Attributes:
         configManager: Configuration manager instance
         database: Database wrapper for persistence
-        llmManager: LLM manager for AI features
         botProvider: Bot provider type
         modulesDir: Directory path for local handler modules
     """
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> None:
         """
@@ -79,12 +77,10 @@ class CustomHandlerLoader:
         Args:
             configManager: Configuration manager providing bot settings
             database: Database wrapper for data persistence
-            llmManager: LLM manager for AI model operations
             botProvider: Bot provider type (Telegram/Max)
         """
         self.configManager = configManager
         self.database = database
-        self.llmManager = llmManager
         self.botProvider = botProvider
         self.modulesDir: str = ""
 
@@ -206,10 +202,9 @@ class CustomHandlerLoader:
         # Instantiate the handler
         try:
             handlerInstance = handlerClass(
-                self.configManager,
-                self.database,
-                self.llmManager,
-                self.botProvider,
+                configManager=self.configManager,
+                database=self.database,
+                botProvider=self.botProvider,
             )
         except Exception as e:
             raise CustomHandlerLoadError(handlerId, f"Instantiation failed: {e}")
@@ -320,9 +315,9 @@ class CustomHandlerLoader:
             sig = inspect.signature(handlerClass.__init__)
             params = list(sig.parameters.keys())
 
-            # Should have: self, configManager, database, llmManager, botProvider
-            if len(params) < 5:
-                expectedSig = "(self, configManager, database, llmManager, botProvider)"
+            # Should have: self, configManager, database, botProvider
+            if len(params) < 4:
+                expectedSig = "(self, *, configManager, database, botProvider)"
                 raise CustomHandlerLoadError(
                     handlerId,
                     f"Constructor signature mismatch - expected {expectedSig}, got {params}",

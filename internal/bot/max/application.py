@@ -18,7 +18,6 @@ from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.services.queue_service.service import QueueService
 from lib import utils
-from lib.ai import LLMManager
 
 # from lib import utils
 from lib.rate_limiter import RateLimiterManager
@@ -38,13 +37,11 @@ class MaxBotApplication:
     - QueueService: Manages delayed task scheduling
     - RateLimiterManager: Controls API request rates
     - Database: Persists bot state and user data
-    - LLMManager: Provides language model capabilities
 
     Attributes:
         configManager: Configuration manager instance for accessing bot settings
         botToken: Max bot authentication token
         database: Database instance for data persistence
-        llmManager: LLM manager for language model operations
         handlerManager: Handler manager for routing updates to appropriate handlers
         queueService: Queue service for managing delayed tasks
         _schedulerTask: Async task for the delayed message scheduler
@@ -55,10 +52,10 @@ class MaxBotApplication:
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         botToken: str,
         database: Database,
-        llmManager: LLMManager,
     ):
         """Initialize Max bot application with token, database, and LLM model.
 
@@ -66,14 +63,14 @@ class MaxBotApplication:
             configManager: Configuration manager instance for accessing bot settings
             botToken: Max bot token for authentication with Max Messenger API
             database: Database object for data persistence and state management
-            llmManager: LLM manager for language model operations and AI features
         """
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
-        self.llmManager = llmManager
 
-        self.handlerManager = HandlersManager(configManager, database, llmManager, BotProvider.MAX)
+        self.handlerManager = HandlersManager(
+            configManager=configManager, database=database, botProvider=BotProvider.MAX
+        )
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
         self.maxBot: Optional[libMax.MaxBotClient] = None

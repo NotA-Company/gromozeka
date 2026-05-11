@@ -1,23 +1,9 @@
 #!/bin/sh
 set -x
 
-cd `dirname $0`
-ENV_FILE=".env"
-
-case "$1" in
-    --env=*)
-        env_value=`echo "$1" | cut -d= -f2`
-        ENV_FILE="$ENV_FILE.$env_value"
-        shift
-        ;;
-esac
-
-# Do not show env file content as it can content secrets
-set +x
-. "$ENV_FILE"
+cd "$(dirname "$0")"
+. "scripts/_load_env.sh"
 set -x
-
-[ -z "$CONFIGS" ] && CONFIGS="local"
 [ -z "$COMPRESSOR" ] && COMPRESSOR="xz -9e"
 [ -z "$DO_PIP_UPDATE" ] && DO_PIP_UPDATE="1"
 [ -z "$DO_GIT_PULL" ] && DO_GIT_PULL="0"
@@ -48,11 +34,6 @@ if [ "$USE_PROFILER" = "1" ]; then
     PROFILR_LOG="logs/profile.${NOW}.profile"
     PROFILER=" -m cProfile -o $PROFILR_LOG "
 fi
-
-CONFIG_DIRS=""
-for v in $CONFIGS; do
-    CONFIG_DIRS="$CONFIG_DIRS --config-dir ./configs/$v"
-done
 
 ./venv/bin/python $PROFILER ./main.py --dotenv-file "$ENV_FILE" --config-dir ./configs/00-defaults $CONFIG_DIRS $EXTRA_ARGS $*
 #2>&1 | tee `date '+logs/%Y-%m-%d_%H-%M.log'`

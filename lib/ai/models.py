@@ -625,13 +625,28 @@ class ModelMessage:
         """
         return f"{type(self).__name__}({str(self)})"
 
-    def toLogMessage(self) -> str:
+    def toLogMessage(self, contentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
         """Return a string representation of the message for logging.
+
+        Args:
+            contentLengthLimit: The maximum length of the content to log.
+            _selfDict: Optional dictionary to use for logging, used only by subclasses.
 
         Returns:
             str: String representation of the message.
         """
-        return repr(self)
+        selfDict = _selfDict if _selfDict is not None else self.toDict()
+        if "content" in selfDict:
+            contentStr = (
+                utils.jsonDumps(selfDict["content"])
+                if not isinstance(selfDict["content"], str)
+                else selfDict["content"]
+            )
+            if len(contentStr) > contentLengthLimit:
+                contentStr = contentStr[:contentLengthLimit] + f"... ({len(contentStr)} bytes)"
+            selfDict["content"] = contentStr
+
+        return f"{type(self).__name__}({utils.jsonDumps(selfDict)})"
 
 
 class ModelImageMessage(ModelMessage):
@@ -723,13 +738,17 @@ class ModelImageMessage(ModelMessage):
 
         return super().toDict(contentKey, content=content, skipRole=skipRole)
 
-    def toLogMessage(self) -> str:
+    def toLogMessage(self, contentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
         """Return a string representation of the message for logging.
+
+        Args:
+            contentLengthLimit: The maximum length of the content to include in the log message.
+            _selfDict: Optional dictionary representation of the message. To be used by subclasses only.
 
         Returns:
             str: String representation of the message.
         """
-        selfDict = self.toDict()
+        selfDict = _selfDict if _selfDict is not None else self.toDict()
         if "content" in selfDict and isinstance(selfDict["content"], list):
             newContent = []
             for item in selfDict["content"]:
@@ -739,12 +758,11 @@ class ModelImageMessage(ModelMessage):
                         urlLen = len(item["image_url"]["url"])
                         newItem["image_url"]["url"] = f"{newItem['image_url']['url'][:32]}...({urlLen} bytes)"
 
-                    newContent.append(item)
+                    newContent.append(newItem)
                     continue
                 newContent.append(item)
             selfDict["content"] = newContent
-
-        return f"{type(self).__name__}({utils.jsonDumps(selfDict)})"
+        return super().toLogMessage(contentLengthLimit, selfDict)
 
 
 class ModelResultStatus(Enum):
@@ -823,6 +841,7 @@ class ModelRunResult:
         "inputTokens",
         "outputTokens",
         "totalTokens",
+        "elapsedTime",
     )
 
     #: Per-field rendering overrides for __str__. Maps field name to a callable
@@ -851,6 +870,7 @@ class ModelRunResult:
         inputTokens: Optional[int] = None,
         outputTokens: Optional[int] = None,
         totalTokens: Optional[int] = None,
+        elapsedTime: Optional[float] = None,
     ):
         """Initialize a model run result.
 
@@ -866,6 +886,7 @@ class ModelRunResult:
             inputTokens: Number of input tokens used (default: None).
             outputTokens: Number of output tokens generated (default: None).
             totalTokens: Total number of tokens used (default: None).
+            elapsedTime: Time, elapsed on LLM request (default: None).
 
         Returns:
             None
@@ -885,6 +906,8 @@ class ModelRunResult:
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.totalTokens = totalTokens
+        self.elapsedTime: Optional[float] = elapsedTime
+        """Time, elapsed on LLM request"""
 
     def setFallback(self, isFallback: bool):
         """Set whether this result is from a fallback mechanism.

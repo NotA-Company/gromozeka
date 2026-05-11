@@ -453,7 +453,7 @@ GromozekBot (main.py)
                 ├── StorageService.getInstance()
                 ├── LLMService.getInstance() (internal/services/llm/service.py)
                 ├── Database (via self.db)
-                ├── LLMManager (via self.llmManager)
+                ├── LLMManager (via self.llmService.getLLMManager())
                 ├── ConfigManager (via self.configManager)
                 └── TheBot (internal/bot/common/bot.py) [injected]
                     ├── CacheService.getInstance()
@@ -466,7 +466,7 @@ Services MUST be initialized in this order:
 
 1. `ConfigManager` — first, everything needs config
 2. `DatabaseManager` / `Database` — second, services need DB
-3. `LLMManager` — third, handlers need LLM
+3. `LLMManager` — third, LLMService needs it
 4. `RateLimiterManager.getInstance().loadConfig(...)` — fourth
 5. `BotApplication` init — which triggers:
    - `HandlersManager.__init__()`:

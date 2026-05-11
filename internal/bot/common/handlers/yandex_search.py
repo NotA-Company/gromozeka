@@ -50,7 +50,6 @@ from internal.database.models import (
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
-    LLMManager,
     LLMParameterType,
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
@@ -84,9 +83,7 @@ class YandexSearchHandler(BaseBotHandler):
         llmService (LLMService): Service for LLM tool registration and management
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """
         Initialize the Yandex Search handler with required services and configuration.
 
@@ -97,14 +94,13 @@ class YandexSearchHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager providing bot settings
             database: Database object for data persistence
-            llmManager: LLM manager for AI model operations
             botProvider: Bot provider for messaging operations
 
         Raises:
             RuntimeError: If Yandex Search integration is not enabled in configuration
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         ysConfig = self.configManager.getYandexSearchConfig()
         if not ysConfig.get("enabled", False):

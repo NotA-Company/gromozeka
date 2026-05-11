@@ -13,7 +13,6 @@ import pytest
 from internal.bot.models import BotProvider
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler
 from .manager import HandlerParallelism
@@ -27,7 +26,6 @@ class MockValidHandler(BaseBotHandler):
         self,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> None:
         """
@@ -36,13 +34,11 @@ class MockValidHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager instance
             database: Database wrapper instance
-            llmManager: LLM manager instance
             botProvider: Bot provider type
         """
         # Don't call super().__init__ to avoid service dependencies
         self.configManager = configManager
         self.database = database
-        self.llmManager = llmManager
         self.botProvider = botProvider
 
 
@@ -53,7 +49,6 @@ class MockInvalidHandler:
         self,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> None:
         """
@@ -62,7 +57,6 @@ class MockInvalidHandler:
         Args:
             configManager: Configuration manager instance
             database: Database wrapper instance
-            llmManager: LLM manager instance
             botProvider: Bot provider type
         """
         pass
@@ -75,7 +69,6 @@ class MockBrokenHandler(BaseBotHandler):
         self,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ) -> None:
         """
@@ -84,7 +77,6 @@ class MockBrokenHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager instance
             database: Database wrapper instance
-            llmManager: LLM manager instance
             botProvider: Bot provider type
 
         Raises:
@@ -103,13 +95,11 @@ def mockDependencies() -> dict:
     """
     configManager = MagicMock(spec=ConfigManager)
     database = MagicMock(spec=Database)
-    llmManager = MagicMock(spec=LLMManager)
     botProvider = BotProvider.TELEGRAM
 
     return {
         "configManager": configManager,
         "database": database,
-        "llmManager": llmManager,
         "botProvider": botProvider,
     }
 

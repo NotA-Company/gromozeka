@@ -371,7 +371,7 @@ class WeatherHandler(BaseBotHandler):
 # CORRECT — conditional registration in HandlersManager
 if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
     self.handlers.append(
-        (WeatherHandler(configManager, database, llmManager, botProvider), HandlerParallelism.PARALLEL)
+        (WeatherHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.PARALLEL)
     )
 ```
 
@@ -754,7 +754,6 @@ result = await llmService.generateStructured(
     schema=schema,
     chatId=chatId,
     chatSettings=chatSettings,
-    llmManager=self.llmManager,
     modelKey=ChatSettingsKey.CHAT_MODEL,
     fallbackKey=ChatSettingsKey.CHAT_FALLBACK_MODEL,
 )

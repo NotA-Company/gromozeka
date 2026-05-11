@@ -33,7 +33,6 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -62,7 +61,6 @@ class ExampleCustomHandler(BaseBotHandler):
         configManager: Configuration manager providing bot settings and
             configuration values.
         database: Database wrapper for data persistence and repository access.
-        llmManager: LLM manager for AI model operations and text generation.
         botProvider: Bot provider type (Telegram or Max) indicating the
             messaging platform.
 
@@ -72,8 +70,8 @@ class ExampleCustomHandler(BaseBotHandler):
 
         ```python
         class MyCustomHandler(BaseBotHandler):
-            def __init__(self, configManager, database, llmManager, botProvider):
-                super().__init__(configManager, database, llmManager, botProvider)
+            def __init__(self, configManager, database, botProvider):
+                super().__init__(configManager, database, botProvider)
                 # Your initialization code here
 
             async def newMessageHandler(self, ensuredMessage, updateObj):
@@ -84,9 +82,9 @@ class ExampleCustomHandler(BaseBotHandler):
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         database: Database,
-        llmManager: LLMManager,
         botProvider: BotProvider,
     ):
         """Initialize the example custom handler.
@@ -102,9 +100,6 @@ class ExampleCustomHandler(BaseBotHandler):
             database: Database wrapper for data persistence. Provides access to
                 repositories for storing and retrieving chat data, user information,
                 and other persistent data.
-            llmManager: LLM manager for AI model operations. Enables access to
-                language model capabilities for text generation, analysis, and
-                other AI-powered features.
             botProvider: Bot provider type indicating the messaging platform
                 (Telegram or Max). Used to determine platform-specific behavior
                 and API interactions.
@@ -112,7 +107,6 @@ class ExampleCustomHandler(BaseBotHandler):
         super().__init__(
             configManager=configManager,
             database=database,
-            llmManager=llmManager,
             botProvider=botProvider,
         )
         logger.info("ExampleCustomHandler initialized, dood!")

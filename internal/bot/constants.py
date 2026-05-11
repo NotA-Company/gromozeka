@@ -80,10 +80,10 @@ in order of preference. Currently supports English ('en') and Russian ('ru').
 """
 
 # Max messages in random message context, should be >=3
-MAX_RANDOM_CONTEXT_MESSAGES: int = 6
+MAX_RANDOM_CONTEXT_MESSAGES: int = 8
 """Maximum number of recent messages to include in random answer context.
 
 This constant determines how many recent messages from the conversation
 history are considered when generating contextual responses. The value
-must be at least 3 to provide meaningful context. Default is 6 messages.
+must be at least 3 to provide meaningful context. Default is 8 messages.
 """

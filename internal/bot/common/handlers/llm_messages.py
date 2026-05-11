@@ -17,7 +17,7 @@ Key Features:
 Example:
     The handler is typically registered with the bot and processes incoming messages::
 
-        handler = LLMMessageHandler(configManager, database, llmManager, botProvider)
+        handler = LLMMessageHandler(configManager, database, botProvider)
         await handler.newMessageHandler(ensuredMessage, updateObj)
 """
 
@@ -53,7 +53,6 @@ from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.services.llm import ExtraDataDict, LLMService
 from lib.ai import (
-    LLMManager,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -76,18 +75,15 @@ class LLMMessageHandler(BaseBotHandler):
         llmService (LLMService): Singleton service for LLM operations.
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: Database, llmManager: LLMManager, botProvider: BotProvider
-    ) -> None:
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """Initialize the LLM message handler.
 
         Args:
             configManager (ConfigManager): Configuration manager for bot settings.
             database (Database): Database object for message storage and retrieval.
-            llmManager (LLMManager): Manager for LLM model instances and operations.
             botProvider (BotProvider): Bot platform provider (Telegram, Max, etc.).
         """
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 
@@ -444,8 +440,8 @@ class LLMMessageHandler(BaseBotHandler):
             return False
 
         isReplyToMyMessage = False
-        eRepliedMEssage = ensuredMessage.getEnsuredRepliedToMessage()
-        if eRepliedMEssage is not None and eRepliedMEssage.sender.id == await self.getBotId():
+        eRepliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
+        if eRepliedMessage is not None and eRepliedMessage.sender.id == await self.getBotId():
             isReplyToMyMessage = True
 
         if not isReplyToMyMessage:
@@ -718,7 +714,7 @@ class LLMMessageHandler(BaseBotHandler):
                     limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
                     # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
                 ):
-                    if storedMsg["message_id"] == ensuredMessage.messageId:
+                    if storedMsg["message_id"] == str(ensuredMessage.messageId):
                         # Skip current message from context
                         continue
                     eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
@@ -748,25 +744,23 @@ class LLMMessageHandler(BaseBotHandler):
                     # We need to use at least 3 here as 1 for `randomContext``
                     # + 1 for message, randomContext is attached to
                     # + 1 answer from bot
-                    contextMessages.appendleft(
-                        ModelMessage(
-                            role="system",
-                            content=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
-                        )
-                    )
-                    mlRet = await self.llmService.generateText(
+                    condensedMessages = await self.llmService.condenseContext(
                         contextMessages,
-                        chatId=ensuredMessage.recipient.id,
-                        chatSettings=chatSettings,
-                        modelKey=ChatSettingsKey.CHAT_MODEL,
-                        fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                        chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(),
+                        keepFirstN=0,
+                        keepLastN=0,
+                        condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
+                        condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+                        condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+                        force=True,
                     )
-                    if mlRet.status != ModelResultStatus.FINAL:
-                        logger.error(f"Wrong LLM Reply Status: {mlRet.status} Error: {mlRet.error}")
+                    if not condensedMessages:
+                        logger.error("Messages condensing failed")
                     else:
                         # No need to add to context as it will be added later
                         # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
-                        ensuredMessage.metadata["randomContext"] = mlRet.resultText
+                        condensedText = "\n".join([message.content for message in condensedMessages])
+                        ensuredMessage.metadata["randomContext"] = condensedText
                         await self.db.chatMessages.updateChatMessageMetadata(
                             chatId=ensuredMessage.recipient.id,
                             messageId=ensuredMessage.messageId,
