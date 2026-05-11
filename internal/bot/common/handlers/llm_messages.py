@@ -440,8 +440,8 @@ class LLMMessageHandler(BaseBotHandler):
             return False
 
         isReplyToMyMessage = False
-        eRepliedMEssage = ensuredMessage.getEnsuredRepliedToMessage()
-        if eRepliedMEssage is not None and eRepliedMEssage.sender.id == await self.getBotId():
+        eRepliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
+        if eRepliedMessage is not None and eRepliedMessage.sender.id == await self.getBotId():
             isReplyToMyMessage = True
 
         if not isReplyToMyMessage:
@@ -722,7 +722,7 @@ class LLMMessageHandler(BaseBotHandler):
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list
-                    # Which will automatically reverse the list. So we do not need to reverse it again
+                    # Which will automatically reverse the list. So we need to reverse it again
                     # (using appendleft in for cycle will require reversing the list as well)
                     contextMessages.extendleft(
                         reversed(

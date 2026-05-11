@@ -386,9 +386,9 @@ class ChatSettingsKey(StrEnum):
     """Max messages before user is exempt from spam checking (0 = always check)."""
     ALLOW_MARK_SPAM_OLD_USERS = "allow-mark-spam-old-users"
     """Whether to allow marking established users as spam."""
-    SPAM_BAN_TRESHOLD = "spam-ban-treshold"
+    SPAM_BAN_THRESHOLD = "spam-ban-threshold"
     """Spam confidence threshold (0-100) for banning user."""
-    SPAM_WARN_TRESHOLD = "spam-warn-treshold"
+    SPAM_WARN_THRESHOLD = "spam-warn-threshold"
     """Spam confidence threshold (0-100) for warning user."""
     # Bayes filter settings
     BAYES_ENABLED = "bayes-enabled"
@@ -912,13 +912,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         ),
         "page": ChatSettingsPage.SPAM,
     },
-    ChatSettingsKey.SPAM_WARN_TRESHOLD: {
+    ChatSettingsKey.SPAM_WARN_THRESHOLD: {
         "type": ChatSettingsType.FLOAT,
         "short": "SPAM-Порог для предупреждения пользователя",
         "long": ("Порог для предупреждения пользователя при автоматической проверке на спам" "(0-100)"),
         "page": ChatSettingsPage.SPAM,
     },
-    ChatSettingsKey.SPAM_BAN_TRESHOLD: {
+    ChatSettingsKey.SPAM_BAN_THRESHOLD: {
         "type": ChatSettingsType.FLOAT,
         "short": "SPAM-Порог для блокировки пользователя",
         "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),

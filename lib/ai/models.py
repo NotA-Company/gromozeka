@@ -738,11 +738,11 @@ class ModelImageMessage(ModelMessage):
 
         return super().toDict(contentKey, content=content, skipRole=skipRole)
 
-    def toLogMessage(self, conttentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
+    def toLogMessage(self, contentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
         """Return a string representation of the message for logging.
 
         Args:
-            conttentLengthLimit: The maximum length of the content to include in the log message.
+            contentLengthLimit: The maximum length of the content to include in the log message.
             _selfDict: Optional dictionary representation of the message. To be used by subclasses only.
 
         Returns:
@@ -758,11 +758,11 @@ class ModelImageMessage(ModelMessage):
                         urlLen = len(item["image_url"]["url"])
                         newItem["image_url"]["url"] = f"{newItem['image_url']['url'][:32]}...({urlLen} bytes)"
 
-                    newContent.append(item)
+                    newContent.append(newItem)
                     continue
                 newContent.append(item)
             selfDict["content"] = newContent
-        return super().toLogMessage(conttentLengthLimit, selfDict)
+        return super().toLogMessage(contentLengthLimit, selfDict)
 
 
 class ModelResultStatus(Enum):

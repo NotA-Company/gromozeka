@@ -618,7 +618,8 @@ class DivinationHandler(BaseBotHandler):
             ``None`` for slash-command path; JSON-encoded summary when
             ``isLLMCall`` is ``True``.
         """
-        systemCls = self.systems.get(systemId)
+        # The wrappers guarantee systemCls is present; assert for safety.
+        systemCls: Optional[Type[BaseDivinationSystem]] = self.systems.get(systemId)
         assert systemCls is not None, f"systemCls for '{systemId}' missing — caller must validate!"
 
         layout: Optional[Layout] = await self._getLayout(
@@ -643,10 +644,6 @@ class DivinationHandler(BaseBotHandler):
                 return None
 
         chatId: int = ensuredMessage.recipient.id
-
-        # The wrappers guarantee systemCls is present; assert for safety.
-        systemCls: Optional[Type[BaseDivinationSystem]] = self.systems.get(systemId)
-        assert systemCls is not None, f"systemCls for '{systemId}' missing — caller must validate!"
 
         chatSettings = await self.getChatSettings(chatId=chatId)
 
@@ -929,6 +926,7 @@ class DivinationHandler(BaseBotHandler):
                 positions=positions,
                 aliases=(),  # No aliases for discovered layouts
                 systemId=cachedLayout["system_id"],
+                description=cachedLayout.get("description"),
             )
             logger.debug(
                 f"Cache hit for layout '{layoutName}' "

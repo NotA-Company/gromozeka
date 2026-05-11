@@ -355,8 +355,8 @@ class SpamHandler(BaseBotHandler):
                                 )
         # End of entities parsing
 
-        warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
-        banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
+        warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_THRESHOLD].toFloat()
+        banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_THRESHOLD].toFloat()
 
         # Add Bayes filter classification, if message wasn't been marked as spam already (for performance purposes)
         if spamScore < banTreshold and chatSettings[ChatSettingsKey.BAYES_ENABLED].toBool():

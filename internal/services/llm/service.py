@@ -519,7 +519,7 @@ class LLMService:
                     logger.error(f"Error while running LLM for message {body[startPos]}")
                     startPos += 1
                     continue
-                currentBatchLen = int(currentBatchLen // (tokensCount / maxTokens))
+                currentBatchLen = int(currentBatchLen // (tokensCount / summaryMaxTokens))
                 currentBatchLen -= 2
                 if currentBatchLen < 1:
                     currentBatchLen = 1
