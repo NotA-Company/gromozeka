@@ -856,7 +856,7 @@ class DivinationHandler(BaseBotHandler):
         # Lowercase, normalize separators, remove special chars
         normalized = layoutName.lower().strip()
         normalized = re.sub(r"[\s\-_]+", "_", normalized)  # Various separators → "_"
-        normalized = re.sub(r"[^a-z0-9_]", "", normalized)  # Remove other chars
+        normalized = re.sub(r"[^a-zа-я0-9_]", "", normalized)  # Remove other chars
         return normalized or "unknown"
 
     async def _getLayout(
