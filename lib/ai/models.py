@@ -841,6 +841,7 @@ class ModelRunResult:
         "inputTokens",
         "outputTokens",
         "totalTokens",
+        "elapsedTime",
     )
 
     #: Per-field rendering overrides for __str__. Maps field name to a callable
@@ -869,6 +870,7 @@ class ModelRunResult:
         inputTokens: Optional[int] = None,
         outputTokens: Optional[int] = None,
         totalTokens: Optional[int] = None,
+        elapsedTime: Optional[float] = None,
     ):
         """Initialize a model run result.
 
@@ -884,6 +886,7 @@ class ModelRunResult:
             inputTokens: Number of input tokens used (default: None).
             outputTokens: Number of output tokens generated (default: None).
             totalTokens: Total number of tokens used (default: None).
+            elapsedTime: Time, elapsed on LLM request (default: None).
 
         Returns:
             None
@@ -903,6 +906,8 @@ class ModelRunResult:
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.totalTokens = totalTokens
+        self.elapsedTime: Optional[float] = elapsedTime
+        """Time, elapsed on LLM request"""
 
     def setFallback(self, isFallback: bool):
         """Set whether this result is from a fallback mechanism.

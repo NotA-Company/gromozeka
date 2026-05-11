@@ -20,6 +20,7 @@ customizations.
 import datetime
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type, TypeVar
@@ -206,12 +207,16 @@ class AbstractModel(ABC):
                 ),
             )
 
+        startTime = time.time()
         try:
             ret = await self._generateText(messages=messages, tools=tools)
+            ret.elapsedTime = time.time() - startTime
         except Exception as e:
             await self._recordAttemptStats(
                 consumerId,
-                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                ModelRunResult(
+                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                ),
                 "text",
             )
             raise
@@ -292,12 +297,16 @@ class AbstractModel(ABC):
             )
 
         # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
+        startTime = time.time()
         try:
             ret = await self._generateImage(messages=messages)
+            ret.elapsedTime = time.time() - startTime
         except Exception as e:
             await self._recordAttemptStats(
                 consumerId,
-                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                ModelRunResult(
+                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                ),
                 "image",
             )
             raise
@@ -418,6 +427,7 @@ class AbstractModel(ABC):
                 ),
             )
 
+        startTime = time.time()
         try:
             ret = await self._generateStructured(
                 messages=messages,
@@ -425,10 +435,13 @@ class AbstractModel(ABC):
                 schemaName=schemaName,
                 strict=strict,
             )
+            ret.elapsedTime = time.time() - startTime
         except Exception as e:
             await self._recordAttemptStats(
                 consumerId,
-                ModelRunResult(rawResult=None, status=ModelResultStatus.ERROR, error=e),
+                ModelRunResult(
+                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                ),
                 "structured",
             )
             raise
@@ -667,6 +680,7 @@ class AbstractModel(ABC):
             "provider": type(self.provider).__name__,
             "raw": str(result.result),
             "consumer": consumerId,
+            "elapsed_time": result.elapsedTime,
         }
         with open(filename, "a") as f:
             f.write(utils.jsonDumps(data) + "\n")
@@ -695,6 +709,7 @@ class AbstractModel(ABC):
                     "total_tokens": result.totalTokens or 0,
                     "is_error": 1 if result.status in ERROR_STATUSES else 0,
                     f"status_{result.status.name}": 1,
+                    "elapsed_time": result.elapsedTime or 0,
                 },
                 consumerId=consumerId,
                 labels={
