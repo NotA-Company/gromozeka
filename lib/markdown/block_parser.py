@@ -1,8 +1,28 @@
-"""
-Block Parser for Gromozeka Markdown Parser
+"""Block Parser for Gromozeka Markdown Parser.
 
-This module handles parsing of block-level elements like headers, paragraphs,
-code blocks, lists, block quotes, and horizontal rules.
+This module provides the BlockParser class which handles parsing of block-level
+Markdown elements according to the Gromozeka Markdown Specification. It processes
+a stream of tokens from the tokenizer and builds an Abstract Syntax Tree (AST)
+with nodes representing block elements such as headers, paragraphs, code blocks,
+lists, block quotes, and horizontal rules.
+
+The parser supports:
+- Headers (ATX-style with # markers)
+- Fenced code blocks (with ``` or ~~~ delimiters)
+- Indented code blocks (4+ spaces, configurable)
+- Block quotes (with > markers)
+- Horizontal rules (---, ***, ___)
+- Ordered and unordered lists (with nesting support)
+- Paragraphs with configurable whitespace handling
+
+Example:
+    >>> from lib.markdown.tokenizer import Tokenizer
+    >>> from lib.markdown.block_parser import BlockParser
+    >>> tokenizer = Tokenizer("# Header\\n\\nParagraph text")
+    >>> tokens = tokenizer.tokenize()
+    >>> parser = BlockParser(tokens)
+    >>> document = parser.parse()
+    >>> print(document.children[0].level)  # Header level: 1
 """
 
 import re
@@ -25,30 +45,56 @@ from .tokenizer import Token, TokenType
 
 
 class BlockParser:
-    """
-    Parser for block-level Markdown elements.
+    """Parser for block-level Markdown elements.
 
-    Processes a stream of tokens and builds AST nodes for block elements
-    according to the Gromozeka Markdown Specification.
+    Processes a stream of tokens from the tokenizer and builds an Abstract Syntax
+    Tree (AST) with nodes representing block elements according to the Gromozeka
+    Markdown Specification.
+
+    Attributes:
+        tokens: List of tokens to parse.
+        pos: Current position in the token stream.
+        current_token: The token at the current position.
+        options: Dictionary of parser configuration options.
+        preserve_leading_spaces: If True, preserve leading spaces in paragraphs.
+        preserve_soft_line_breaks: If True, preserve soft line breaks as newlines.
+        ignore_indented_code_blocks: If True, skip indented code block parsing.
+
+    Example:
+        >>> parser = BlockParser(tokens, {"preserve_leading_spaces": True})
+        >>> document = parser.parse()
     """
 
-    def __init__(self, tokens: List[Token], options: Optional[Dict[str, Any]] = None):
-        self.tokens = tokens
-        self.pos = 0
+    def __init__(self, tokens: List[Token], options: Optional[Dict[str, Any]] = None) -> None:
+        """Initialize the BlockParser.
+
+        Args:
+            tokens: List of tokens to parse from the tokenizer.
+            options: Optional dictionary of parser configuration options:
+                - preserve_leading_spaces: Preserve leading spaces in paragraphs (default: False)
+                - preserve_soft_line_breaks: Preserve soft line breaks as newlines (default: False)
+                - ignore_indented_code_blocks: Skip indented code block parsing (default: True)
+        """
+        self.tokens: List[Token] = tokens
+        self.pos: int = 0
         self.current_token: Optional[Token] = self.tokens[0] if tokens else None
-        self.options = options or {}
+        self.options: Dict[str, Any] = options or {}
 
         # Parser options
-        self.preserve_leading_spaces = self.options.get("preserve_leading_spaces", False)
-        self.preserve_soft_line_breaks = self.options.get("preserve_soft_line_breaks", False)
-        self.ignore_indented_code_blocks = self.options.get("ignore_indented_code_blocks", True)
+        self.preserve_leading_spaces: bool = self.options.get("preserve_leading_spaces", False)
+        self.preserve_soft_line_breaks: bool = self.options.get("preserve_soft_line_breaks", False)
+        self.ignore_indented_code_blocks: bool = self.options.get("ignore_indented_code_blocks", True)
 
     def parse(self) -> MDDocument:
-        """
-        Parse tokens into a document AST.
+        """Parse tokens into a document AST.
+
+        Processes the token stream and builds a document node containing all
+        parsed block-level elements. Skips newlines between blocks and handles
+        all block types according to their precedence.
 
         Returns:
-            MDDocument containing all parsed block elements.
+            MDDocument: A document node containing all parsed block elements
+                (headers, paragraphs, code blocks, lists, block quotes, etc.).
         """
         document = MDDocument()
 
@@ -66,7 +112,16 @@ class BlockParser:
         return document
 
     def _parse_block(self) -> Optional[MDNode]:
-        """Parse a single block element."""
+        """Parse a single block element.
+
+        Attempts to parse the current position as various block types in order
+        of precedence: headers, fenced code blocks, indented code blocks,
+        block quotes, horizontal rules, lists, and finally paragraphs.
+
+        Returns:
+            Optional[MDNode]: The parsed block node, or None if no block could
+                be parsed.
+        """
         # Try to parse different block types in order of precedence
 
         # Headers
@@ -97,7 +152,14 @@ class BlockParser:
         return self._parse_paragraph()
 
     def _parse_header(self) -> MDHeader:
-        """Parse a header element."""
+        """Parse a header element.
+
+        Parses ATX-style headers (e.g., # Header, ## Subheader). The header
+        level is determined by the number of # characters in the marker.
+
+        Returns:
+            MDHeader: A header node with the parsed level and text content.
+        """
         marker_token = self.current_token
         level = len(marker_token.content)  # type: ignore
         self._advance()  # consume header marker
@@ -127,7 +189,16 @@ class BlockParser:
         return header
 
     def _parse_fenced_code_block(self) -> MDCodeBlock:
-        """Parse a fenced code block."""
+        """Parse a fenced code block.
+
+        Parses code blocks delimited by ``` or ~~~ fences. Supports optional
+        language specification after the opening fence. Handles malformed
+        fences where the language contains closing backticks.
+
+        Returns:
+            MDCodeBlock: A code block node with the content and optional
+                language specification.
+        """
         fence_token = self.current_token
         fence_content = fence_token.content  # type: ignore
 
@@ -197,7 +268,15 @@ class BlockParser:
         return MDCodeBlock(code_content, language, is_fenced=True)
 
     def _parse_indented_code_block(self) -> MDCodeBlock:
-        """Parse an indented code block."""
+        """Parse an indented code block.
+
+        Parses code blocks that are indented by 4 or more spaces. The
+        indentation is stripped from each line. List markers take precedence
+        over indented code blocks.
+
+        Returns:
+            MDCodeBlock: A code block node with the content (indentation removed).
+        """
         code_lines = []
 
         while not self._is_at_end() and self._is_indented_code_block():
@@ -223,7 +302,15 @@ class BlockParser:
         return MDCodeBlock(code_content, is_fenced=False)
 
     def _parse_block_quote(self) -> MDBlockQuote:
-        """Parse a block quote."""
+        """Parse a block quote.
+
+        Parses block quotes marked with > characters. The quoted content
+        is parsed recursively as blocks, allowing nested structures.
+
+        Returns:
+            MDBlockQuote: A block quote node containing the parsed quoted
+                content as child nodes.
+        """
         block_quote = MDBlockQuote()
 
         while not self._is_at_end() and self._current_token_is(TokenType.BLOCKQUOTE_MARKER):
@@ -256,13 +343,28 @@ class BlockParser:
         return block_quote
 
     def _parse_horizontal_rule(self) -> MDHorizontalRule:
-        """Parse a horizontal rule."""
+        """Parse a horizontal rule.
+
+        Parses horizontal rules created with ---, ***, or ___ patterns.
+
+        Returns:
+            MDHorizontalRule: A horizontal rule node with the original marker
+                content.
+        """
         hr_token = self.current_token
         self._advance()
         return MDHorizontalRule(hr_token.content)  # type: ignore
 
     def _parse_list(self) -> MDList:
-        """Parse a list (ordered or unordered)."""
+        """Parse a list (ordered or unordered).
+
+        Parses ordered lists (1., 2., etc.) and unordered lists (-, *, +).
+        Supports nested lists through indentation. A blank line before a
+        list marker starts a new list.
+
+        Returns:
+            MDList: A list node containing all parsed list items.
+        """
         first_marker = self.current_token.content  # type: ignore
         list_indentation = self._get_current_indentation()
 
@@ -301,7 +403,16 @@ class BlockParser:
         return md_list
 
     def _parse_list_item(self) -> MDListItem:
-        """Parse a single list item."""
+        """Parse a single list item.
+
+        Parses a list item and its content, which may include nested lists.
+        Handles code blocks within list items and properly tracks indentation
+        levels for nested structures.
+
+        Returns:
+            MDListItem: A list item node containing the parsed content as
+                child nodes.
+        """
         current_indentation = self._get_current_indentation()
 
         self._advance()  # consume list marker
@@ -389,7 +500,16 @@ class BlockParser:
         return list_item
 
     def _parse_paragraph(self) -> MDParagraph:
-        """Parse a paragraph."""
+        """Parse a paragraph.
+
+        Parses paragraph text until a blank line or block element is encountered.
+        Soft line breaks are converted to spaces unless preserve_soft_line_breaks
+        is enabled. Leading spaces are stripped unless preserve_leading_spaces
+        is enabled.
+
+        Returns:
+            MDParagraph: A paragraph node containing the parsed text content.
+        """
         paragraph = MDParagraph()
 
         # Collect paragraph content until blank line or block element
@@ -428,20 +548,38 @@ class BlockParser:
     # Helper methods
 
     def _advance(self) -> None:
-        """Move to the next token."""
+        """Move to the next token.
+
+        Advances the position in the token stream and updates current_token.
+        Sets current_token to None if at the end of the stream.
+        """
         self.pos += 1
         self.current_token = self.tokens[self.pos] if self.pos < len(self.tokens) else None
 
     def _is_at_end(self) -> bool:
-        """Check if we're at the end of tokens."""
+        """Check if we're at the end of tokens.
+
+        Returns:
+            bool: True if current_token is None or is an EOF token.
+        """
         return self.current_token is None or self.current_token.type == TokenType.EOF
 
     def _current_token_is(self, token_type: TokenType) -> bool:
-        """Check if current token is of given type."""
+        """Check if current token is of given type.
+
+        Args:
+            token_type: The token type to check against.
+
+        Returns:
+            bool: True if current_token exists and matches the specified type.
+        """
         return self.current_token is not None and self.current_token.type == token_type
 
     def _skip_whitespace_and_newlines(self) -> None:
-        """Skip whitespace and newline tokens."""
+        """Skip whitespace and newline tokens.
+
+        Advances past all consecutive SPACE and NEWLINE tokens.
+        """
         while not self._is_at_end() and self.current_token.type in [  # type: ignore
             TokenType.SPACE,
             TokenType.NEWLINE,
@@ -449,12 +587,23 @@ class BlockParser:
             self._advance()
 
     def _skip_newlines(self) -> None:
-        """Skip only newline tokens, preserving spaces for indented code blocks."""
+        """Skip only newline tokens, preserving spaces for indented code blocks.
+
+        Advances past all consecutive NEWLINE tokens but preserves SPACE tokens,
+        which are needed for detecting indented code blocks.
+        """
         while not self._is_at_end() and self.current_token.type == TokenType.NEWLINE:  # type: ignore
             self._advance()
 
     def _is_indented_code_block(self) -> bool:
-        """Check if current position starts an indented code block."""
+        """Check if current position starts an indented code block.
+
+        An indented code block starts with 4 or more spaces, unless followed
+        by a list marker (which takes precedence).
+
+        Returns:
+            bool: True if the current position starts an indented code block.
+        """
         if not self._current_token_is(TokenType.SPACE):
             return False
 
@@ -476,12 +625,25 @@ class BlockParser:
         return False
 
     def _peek_next_token_is(self, token_type: TokenType) -> bool:
-        """Check if the next token is of the specified type."""
+        """Check if the next token is of the specified type.
+
+        Args:
+            token_type: The token type to check for.
+
+        Returns:
+            bool: True if the next token exists and matches the specified type.
+        """
         next_pos = self.pos + 1
         return next_pos < len(self.tokens) and self.tokens[next_pos].type == token_type
 
     def _has_blank_line_ahead(self) -> bool:
-        """Check if there's a blank line coming up."""
+        """Check if there's a blank line coming up.
+
+        A blank line is defined as two consecutive NEWLINE tokens.
+
+        Returns:
+            bool: True if there are two NEWLINE tokens ahead.
+        """
         temp_pos = self.pos
 
         # Skip current newline if any
@@ -494,7 +656,11 @@ class BlockParser:
     def _has_blank_line_before_current(self) -> bool:
         """Check if there's a blank line before the current position.
 
-        A blank line is defined as two NEWLINE tokens with only optional SPACE tokens between them.
+        A blank line is defined as two NEWLINE tokens with only optional
+        SPACE tokens between them.
+
+        Returns:
+            bool: True if there's a blank line before the current position.
         """
         if self.pos < 2:
             return False
@@ -521,7 +687,13 @@ class BlockParser:
         return temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.NEWLINE
 
     def _has_double_blank_line_ahead(self) -> bool:
-        """Check if there are two consecutive blank lines (double newline) coming up."""
+        """Check if there are two consecutive blank lines coming up.
+
+        A double blank line is defined as three consecutive NEWLINE tokens.
+
+        Returns:
+            bool: True if there are three NEWLINE tokens ahead.
+        """
         temp_pos = self.pos
 
         # Skip current newline if any
@@ -537,13 +709,24 @@ class BlockParser:
         return False
 
     def _is_at_line_start(self) -> bool:
-        """Check if we're at the start of a line."""
+        """Check if we're at the start of a line.
+
+        Returns:
+            bool: True if at position 0 or the previous token is a NEWLINE.
+        """
         if self.pos == 0:
             return True
         return self.tokens[self.pos - 1].type == TokenType.NEWLINE
 
     def _next_is_list_continuation(self) -> bool:
-        """Check if next non-whitespace token continues the list."""
+        """Check if next non-whitespace token continues the list.
+
+        Skips whitespace and newlines to check if the next significant
+        token is a LIST_MARKER.
+
+        Returns:
+            bool: True if the next non-whitespace token is a LIST_MARKER.
+        """
         temp_pos = self.pos
 
         # Skip whitespace and newlines
@@ -556,7 +739,15 @@ class BlockParser:
         return temp_pos < len(self.tokens) and self.tokens[temp_pos].type == TokenType.LIST_MARKER
 
     def _is_block_element_start(self) -> bool:
-        """Check if current position starts a block element."""
+        """Check if current position starts a block element.
+
+        Checks if the current token is a marker for any block-level element
+        (header, code fence, block quote, horizontal rule, list, or indented
+        code block if not ignored).
+
+        Returns:
+            bool: True if the current position starts a block element.
+        """
         if self._is_at_end():
             return False
 
@@ -575,7 +766,16 @@ class BlockParser:
         return is_block_start
 
     def _is_block_element_start_excluding_lists(self) -> bool:
-        """Check if current position starts a block element, excluding markdown syntax inside code blocks."""
+        """Check if current position starts a block element, excluding lists.
+
+        Used within code blocks where only certain block elements should be
+        recognized. Excludes headers, list markers, and block quotes to prevent
+        false positives in code content.
+
+        Returns:
+            bool: True if the current position starts a block element
+                (excluding lists, headers, and block quotes).
+        """
         if self._is_at_end():
             return False
 
@@ -594,7 +794,14 @@ class BlockParser:
         return is_block_start
 
     def _is_nested_list_start(self) -> bool:
-        """Check if current position starts a nested list (indented list marker)."""
+        """Check if current position starts a nested list.
+
+        A nested list starts with a list marker preceded by 1-3 spaces
+        (not 4+ which would be a code block) at the start of a line.
+
+        Returns:
+            bool: True if the current position starts a nested list.
+        """
         if not self._current_token_is(TokenType.SPACE):
             return False
 
@@ -619,7 +826,15 @@ class BlockParser:
         )
 
     def _get_current_indentation(self) -> int:
-        """Get the indentation level at the current position."""
+        """Get the indentation level at the current position.
+
+        Counts the number of spaces before the current token. For list markers,
+        counts spaces immediately before the marker. For other tokens, counts
+        spaces from the start of the line.
+
+        Returns:
+            int: The number of spaces of indentation at the current position.
+        """
         # If we're at a list marker, look backwards to find the spaces before it
         if self._current_token_is(TokenType.LIST_MARKER):
             temp_pos = self.pos - 1
@@ -631,59 +846,6 @@ class BlockParser:
                 temp_pos -= 1
 
             return spaces
-
-        def _is_list_marker_at_line_start(self) -> bool:
-            """Check if current LIST_MARKER token is at the logical start of a line."""
-            if not self._current_token_is(TokenType.LIST_MARKER):
-                return False
-
-            # If we're at position 0, we're at the start
-            if self.pos == 0:
-                return True
-
-            # Look backwards to see if we have only spaces and/or a newline before this marker
-            temp_pos = self.pos - 1
-
-            # Skip any spaces immediately before the marker
-            while temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.SPACE:
-                temp_pos -= 1
-
-            # Check if we've reached the beginning or a newline
-            return temp_pos < 0 or self.tokens[temp_pos].type == TokenType.NEWLINE
-            """Check if current LIST_MARKER token is at the logical start of a line."""
-            if not self._current_token_is(TokenType.LIST_MARKER):
-                return False
-
-            # If we're at position 0, we're at the start
-            if self.pos == 0:
-                return True
-
-            # Look backwards to see if we have only spaces and/or a newline before this marker
-            temp_pos = self.pos - 1
-
-            # Skip any spaces immediately before the marker
-            while temp_pos >= 0 and self.tokens[temp_pos].type == TokenType.SPACE:
-                temp_pos -= 1
-
-            # Check if we've reached the beginning or a newline
-            return temp_pos < 0 or self.tokens[temp_pos].type == TokenType.NEWLINE
-
-        def _token_is_at_line_start(self, token: Token, token_list: List[Token]) -> bool:
-            """Check if a token is at the start of a line within a token list."""
-            token_index = -1
-            for i, t in enumerate(token_list):
-                if t is token:
-                    token_index = i
-                    break
-
-            if token_index == -1:
-                return False
-
-            # Check if this is the first token or if the previous token is a newline
-            if token_index == 0:
-                return True
-
-            return token_list[token_index - 1].type == TokenType.NEWLINE
 
         # For other tokens, check if we're at line start
         if not self._is_at_line_start():
@@ -706,7 +868,13 @@ class BlockParser:
         return spaces
 
     def _is_list_marker_at_line_start(self) -> bool:
-        """Check if current LIST_MARKER token is at the logical start of a line."""
+        """Check if current LIST_MARKER token is at the logical start of a line.
+
+        Returns:
+            bool: True if the current token is a LIST_MARKER and is at the
+                start of a line (position 0 or after a newline, with only
+                optional spaces in between).
+        """
         if not self._current_token_is(TokenType.LIST_MARKER):
             return False
 

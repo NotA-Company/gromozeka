@@ -15,10 +15,9 @@ from internal.bot.common.handlers.manager import HandlersManager
 from internal.bot.models import BotProvider, EnsuredMessage
 from internal.bot.models.ensured_message import ChatType, MessageRecipient, MessageSender
 from internal.config.manager import ConfigManager
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from internal.services.queue_service.service import QueueService
 from lib import utils
-from lib.ai import LLMManager
 
 # from lib import utils
 from lib.rate_limiter import RateLimiterManager
@@ -27,29 +26,51 @@ logger = logging.getLogger(__name__)
 
 
 class MaxBotApplication:
-    """Manages Max Messenger bot application setup and execution."""
+    """Manages Max Messenger bot application setup and execution.
+
+    This class provides the main application logic for the Max Messenger bot integration
+    in the Gromozeka framework. It handles the complete bot lifecycle including initialization,
+    update processing, message handling, and graceful shutdown.
+
+    The application integrates with various services:
+    - HandlersManager: Routes incoming updates to appropriate handlers
+    - QueueService: Manages delayed task scheduling
+    - RateLimiterManager: Controls API request rates
+    - Database: Persists bot state and user data
+
+    Attributes:
+        configManager: Configuration manager instance for accessing bot settings
+        botToken: Max bot authentication token
+        database: Database instance for data persistence
+        handlerManager: Handler manager for routing updates to appropriate handlers
+        queueService: Queue service for managing delayed tasks
+        _schedulerTask: Async task for the delayed message scheduler
+        maxBot: Max bot client instance for API communication
+        _tasks: Set of active async tasks managed by the application
+        maxTasks: Maximum number of concurrent tasks allowed (default: 128)
+    """
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         botToken: str,
-        database: DatabaseWrapper,
-        llmManager: LLMManager,
+        database: Database,
     ):
         """Initialize Max bot application with token, database, and LLM model.
 
         Args:
-            configManager: Configuration manager instance
-            botToken: Max bot token for authentication
-            database: Database wrapper for data persistence
-            llmManager: LLM manager for language model operations
+            configManager: Configuration manager instance for accessing bot settings
+            botToken: Max bot token for authentication with Max Messenger API
+            database: Database object for data persistence and state management
         """
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
-        self.llmManager = llmManager
 
-        self.handlerManager = HandlersManager(configManager, database, llmManager, BotProvider.MAX)
+        self.handlerManager = HandlersManager(
+            configManager=configManager, database=database, botProvider=BotProvider.MAX
+        )
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
         self.maxBot: Optional[libMax.MaxBotClient] = None
@@ -58,26 +79,47 @@ class MaxBotApplication:
         self.maxTasks = 128
 
     async def postInit(self, *args, **kwargs):
-        """Perform post-initialization tasks.
+        """Perform post-initialization tasks after bot client is created.
+
+        This method is called after the Max bot client has been initialized and
+        before the polling loop starts. It sets up the handler manager and starts
+        the delayed message scheduler.
 
         Args:
-            *args: Additional positional arguments
-            **kwargs: Additional keyword arguments
+            *args: Additional positional arguments (unused, for compatibility)
+            **kwargs: Additional keyword arguments (unused, for compatibility)
+
+        Raises:
+            RuntimeError: If the Max bot client has not been initialized
         """
         if self.maxBot is None:
             raise RuntimeError("Client is not initialized")
 
-        self.handlerManager.injectBot(self.maxBot)
+        await self.handlerManager.initialize(self.maxBot)
         self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # TODO: set commands
 
     async def postStop(self, *args, **kwargs) -> None:
-        """Handle application shutdown cleanup.
+        """Handle application shutdown cleanup in a graceful manner.
+
+        This method performs a multi-step shutdown process to ensure all resources
+        are properly released and all pending tasks are completed before the
+        application exits.
+
+        Shutdown steps:
+        1. Wait for all active tasks to complete
+        2. Stop the handler manager
+        3. Stop the delayed tasks scheduler
+        4. Wait for the scheduler task to finish
+        5. Destroy all rate limiters
 
         Args:
-            *args: Additional positional arguments
-            **kwargs: Additional keyword arguments
+            *args: Additional positional arguments (unused, for compatibility)
+            **kwargs: Additional keyword arguments (unused, for compatibility)
+
+        Returns:
+            None
         """
 
         logger.info("Application shutting down...")
@@ -103,7 +145,15 @@ class MaxBotApplication:
         logger.info("Rate limiters destroyed...")
 
     def run(self):
-        """Start the Max Messenger bot application."""
+        """Start the Max Messenger bot application.
+
+        This is the main entry point for running the Max bot. It validates the
+        bot token, initializes the random number generator, and starts the
+        async polling loop.
+
+        Raises:
+            SystemExit: If the bot token is not configured or is invalid
+        """
         if self.botToken in ["", "YOUR_BOT_TOKEN_HERE"]:
             logger.error("Please set your bot token in config.toml!")
             sys.exit(1)
@@ -116,10 +166,26 @@ class MaxBotApplication:
         asyncio.run(self._runPolling())
 
     async def maxHandler(self, update: maxModels.Update) -> None:
-        """Handle incoming Max Messenger updates.
+        """Handle incoming Max Messenger updates and route them to appropriate handlers.
+
+        This method is the main entry point for processing updates from Max Messenger.
+        It determines the type of update and routes it to the appropriate handler method
+        in the handler manager.
+
+        Supported update types:
+        - MessageCreatedUpdate: New messages in chats
+        - UserAddedToChatUpdate: Users added to groups/channels
+        - UserRemovedFromChatUpdate: Users removed from groups/channels
+        - MessageCallbackUpdate: Callback queries from inline keyboards
 
         Args:
-            update: Max Messenger update object
+            update: Max Messenger update object containing the event data
+
+        Raises:
+            RuntimeError: If the Max bot client has not been initialized
+
+        Returns:
+            None
         """
         logger.debug(f"Handling Update#{update.update_type}@{update.timestamp}")
         if self.maxBot is None:
@@ -188,16 +254,38 @@ class MaxBotApplication:
             logger.debug(f"Unsupported Update: {update}, ignoring for now...")
 
     async def maxExceptionHandler(self, exception: Exception) -> None:
-        """Handle exceptions from Max Messenger bot.
+        """Handle exceptions from Max Messenger bot operations.
+
+        This method is called when an exception occurs during bot operation,
+        such as API errors or unexpected events. It logs the exception details
+        for debugging and monitoring purposes.
 
         Args:
             exception: Exception that occurred during bot operation
+
+        Returns:
+            None
         """
         logger.error(f"Unhandled MAX exception {type(exception).__name__}")
         logger.exception(exception)
 
     async def _runPolling(self):
-        """Run the Max Messenger bot polling loop."""
+        """Run the Max Messenger bot polling loop.
+
+        This method initializes the Max bot client, retrieves bot information,
+        performs post-initialization setup, and starts the long polling loop
+        to receive updates from Max Messenger.
+
+        The polling loop runs indefinitely until interrupted, at which point
+        it performs cleanup through the postStop method.
+
+        Raises:
+            Exception: Any exceptions that occur during polling are caught
+                by the maxExceptionHandler
+
+        Returns:
+            None
+        """
 
         self.maxBot = libMax.MaxBotClient(self.botToken)
 

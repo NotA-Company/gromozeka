@@ -40,7 +40,7 @@ def createSampleChatMessage(
 
     Example:
         msg = createSampleChatMessage(text="Hello", chatId=123)
-        db.saveChatMessage(**msg)
+        await db.chatMessages.saveChatMessage(**msg)
     """
     # DatabaseWrapper.saveChatMessage expects camelCase parameters
     return {
@@ -331,7 +331,7 @@ def createBatchChatMessages(
     Example:
         messages = createBatchChatMessages(count=50)
         for msg in messages:
-            db.saveChatMessage(**msg)
+            await db.chatMessages.saveChatMessage(**msg)
     """
     messages = []
     baseTime = int(datetime.now().timestamp())

@@ -3,9 +3,10 @@
 provider = "yc-sdk"
 model_id = "yandex-art"
 model_version = "latest"
-#temparature = 0.3
+#temperature = 0.3
 #context = 256000
 support_tools = false
 support_text = false
 support_images = true
+support_structured_output = false  # yc-sdk: deferred — see docs/plans/lib-ai-structured-output.md §3.6
 tier = "paid"

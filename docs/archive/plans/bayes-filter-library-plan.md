@@ -531,7 +531,7 @@ CREATE INDEX IF NOT EXISTS bayes_classes_chat_idx ON bayes_classes(chat_id);
 from typing import List, Optional
 import logging
 
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 from .storage_interface import BayesStorageInterface, TokenStats, ClassStats
 
 logger = logging.getLogger(__name__)
@@ -721,7 +721,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
 from lib.spam.bayes_filter import NaiveBayesFilter, BayesConfig
 from lib.spam.database_storage import DatabaseBayesStorage
 
-def __init__(self, config: Dict[str, Any], database: DatabaseWrapper, llmManager: LLMManager):
+def __init__(self, config: Dict[str, Any], database: Database, llmManager: LLMManager):
     # ... existing code ...
     
     # Initialize Bayes filter
@@ -944,7 +944,7 @@ await bayes_filter.classify(message_text="...", chat_id=None)
 
 ## 7. Conclusion
 
-This Bayes filter library provides a robust, flexible, and maintainable solution for spam detection in the Gromozeka bot, dood! The interface-based design allows for easy testing and future enhancements, while the per-chat learning capability ensures personalized spam detection for each community, dood!
+This Bayes filter library provides a robust, flexible, and maintainable solution for spam detection in the Gromozeka bot The interface-based design allows for easy testing and future enhancements, while the per-chat learning capability ensures personalized spam detection for each community
 
 **Key Benefits**:
 - ✅ Clean architecture with clear separation of concerns
@@ -957,7 +957,7 @@ This Bayes filter library provides a robust, flexible, and maintainable solution
 - ✅ Configurable parameters for tuning
 
 **Next Steps**:
-1. Review this plan with stakeholders, dood
+1. Review this plan with stakeholders
 2. Get approval for implementation
 3. Begin Phase 1 development
 4. Set up monitoring infrastructure
@@ -971,7 +971,7 @@ This Bayes filter library provides a robust, flexible, and maintainable solution
 
 ### ✅ **What Was Delivered**
 
-All phases of the Bayes filter library have been successfully implemented, dood! Here's what was accomplished:
+All phases of the Bayes filter library have been successfully implemented Here's what was accomplished:
 
 **Core Library Components:**
 - ✅ [`lib/spam/models.py`](../../lib/spam/models.py) - Complete data structures with validation
@@ -1000,11 +1000,11 @@ All phases of the Bayes filter library have been successfully implemented, dood!
 
 ### 🚀 **Ready for Production**
 
-The Bayes filter library is now fully integrated and ready for production deployment. It will significantly improve spam detection accuracy by learning from actual spam patterns in each chat while maintaining backward compatibility with existing rule-based detection, dood!
+The Bayes filter library is now fully integrated and ready for production deployment. It will significantly improve spam detection accuracy by learning from actual spam patterns in each chat while maintaining backward compatibility with existing rule-based detection
 
 ---
 
 **Document Version**: 2.0
 **Last Updated**: 2025-10-14
-**Author**: Architect Mode (Prinny style, dood!)
+**Author**: Architect Mode (Prinny style)
 **Status**: ✅ IMPLEMENTATION COMPLETED

@@ -1,8 +1,24 @@
-"""
-OpenWeatherMap Async Client
+"""OpenWeatherMap Async Client.
 
 This module provides the main OpenWeatherMapClient class for interacting with
-the OpenWeatherMap API with database-backed caching support.
+the OpenWeatherMap API with database-backed caching support. The client supports
+geocoding (converting city names to coordinates) and weather data retrieval
+(current conditions and daily forecasts) with configurable caching and rate limiting.
+
+Example:
+    >>> from lib.openweathermap import OpenWeatherMapClient
+    >>> from lib.cache import NullCache
+    >>>
+    >>> client = OpenWeatherMapClient(
+    ...     apiKey="your_api_key",
+    ...     weatherCache=NullCache(),
+    ...     geocodingCache=NullCache()
+    ... )
+    >>>
+    >>> # Get weather by city
+    >>> result = await client.getWeatherByCity("Moscow", "RU")
+    >>> if result:
+    ...     print(f"Temperature: {result['weather']['current']['temp']}°C")
 """
 
 import json
@@ -20,32 +36,54 @@ logger = logging.getLogger(__name__)
 
 
 class OpenWeatherMapClient:
+    """Async client for OpenWeatherMap API with caching and rate limiting.
+
+    This client provides methods to:
+    - Convert city names to geographic coordinates (geocoding)
+    - Retrieve current weather conditions and daily forecasts
+    - Cache results to reduce API calls
+    - Apply rate limiting to respect API quotas
+
+    The client creates a new HTTP session for each request to support proper
+    concurrent requests without connection reuse issues.
+
+    Attributes:
+        GEOCODING_API: URL endpoint for geocoding API.
+        WEATHER_API: URL endpoint for weather data API.
+        apiKey: OpenWeatherMap API authentication key.
+        weatherCache: Cache instance for weather data storage.
+        geocodingCache: Cache instance for geocoding results storage.
+        geocodingTTL: Time-to-live for geocoding cache entries in seconds.
+        weatherTTL: Time-to-live for weather cache entries in seconds.
+        requestTimeout: HTTP request timeout in seconds.
+        defaultLanguage: Default language code for weather descriptions.
+        rateLimiterQueue: Name of the rate limiter queue to use.
+        _rateLimiter: Rate limiter manager instance.
+
+    Example:
+        >>> from lib.openweathermap import OpenWeatherMapClient
+        >>> from lib.cache import NullCache
+        >>>
+        >>> client = OpenWeatherMapClient(
+        ...     apiKey="your_api_key",
+        ...     weatherCache=NullCache(),
+        ...     geocodingCache=NullCache(),
+        ...     geocodingTTL=2592000,  # 30 days
+        ...     weatherTTL=1800        # 30 minutes
+        ... )
+        >>>
+        >>> # Get coordinates
+        >>> location = await client.getCoordinates("Moscow", "RU")
+        >>>
+        >>> # Get weather
+        >>> weather = await client.getWeather(55.7558, 37.6173)
+        >>>
+        >>> # Combined operation
+        >>> result = await client.getWeatherByCity("Moscow", "RU")
     """
-    Async client for OpenWeatherMap API with caching
 
-    Creates a new HTTP session for each request to support proper concurrent requests.
-
-    Example usage:
-        cache = DatabaseWeatherCache(db_wrapper)
-        client = OpenWeatherMapClient(
-            api_key="your_key",
-            cache=cache,
-            geocoding_ttl=2592000,  # 30 days
-            weather_ttl=1800         # 30 minutes
-        )
-
-        # Get coordinates
-        location = await client.getCoordinates("Moscow", "RU")
-
-        # Get weather
-        weather = await client.getWeather(55.7558, 37.6173)
-
-        # Combined operation
-        result = await client.getWeatherByCity("Moscow", "RU")
-    """
-
-    GEOCODING_API = "http://api.openweathermap.org/geo/1.0/direct"
-    WEATHER_API = "https://api.openweathermap.org/data/3.0/onecall"
+    GEOCODING_API: str = "http://api.openweathermap.org/geo/1.0/direct"
+    WEATHER_API: str = "https://api.openweathermap.org/data/3.0/onecall"
 
     def __init__(
         self,
@@ -57,19 +95,24 @@ class OpenWeatherMapClient:
         requestTimeout: int = 10,
         defaultLanguage: str = "ru",
         rateLimiterQueue: str = "openweathermap",
-    ):
-        """
-        Initialize OpenWeatherMap client
+    ) -> None:
+        """Initialize OpenWeatherMap client.
 
         Args:
-            apiKey: OpenWeatherMap API key
-            weatherCache: Cache for weather data
-            geocodingCache: Cache for geocoding results
-            geocodingTTL: Cache TTL for geocoding results (seconds)
-            weatherTTL: Cache TTL for weather data (seconds)
-            requestTimeout: HTTP request timeout (seconds)
-            defaultLanguage: Default language for location names
-            rateLimiterQueue (str): Name of the rate limiter queue to use. Defaults to "openweathermap".
+            apiKey: OpenWeatherMap API authentication key.
+            weatherCache: Cache instance for storing weather data. If None,
+                uses NullCache (no caching).
+            geocodingCache: Cache instance for storing geocoding results. If None,
+                uses NullCache (no caching).
+            geocodingTTL: Time-to-live for geocoding cache entries in seconds.
+                Defaults to 2592000 (30 days).
+            weatherTTL: Time-to-live for weather cache entries in seconds.
+                Defaults to 1800 (30 minutes).
+            requestTimeout: HTTP request timeout in seconds. Defaults to 10.
+            defaultLanguage: Default language code for weather descriptions and
+                location names. Defaults to "ru" (Russian).
+            rateLimiterQueue: Name of the rate limiter queue to use for API
+                request throttling. Defaults to "openweathermap".
         """
         self.apiKey = apiKey
         self.weatherCache: CacheInterface[str, WeatherData] = (
@@ -88,33 +131,49 @@ class OpenWeatherMapClient:
     async def getCoordinates(
         self, city: str, country: Optional[str] = None, state: Optional[str] = None, limit: int = 1
     ) -> Optional[GeocodingResult]:
-        """
-        Get coordinates by city name
+        """Get geographic coordinates for a city name.
 
-        Uses: http://api.openweathermap.org/geo/1.0/direct
+        Uses the OpenWeatherMap Geocoding API to convert city names to
+        latitude/longitude coordinates. Results are cached to reduce API calls.
+
+        API endpoint: http://api.openweathermap.org/geo/1.0/direct
 
         Args:
-            city: City name (e.g., "Moscow", "London")
-            country: Optional country code (e.g., "RU", "GB")
-            state: Optional state code (for US cities)
-            limit: Max results (default 1, we return first match)
+            city: City name (e.g., "Moscow", "London").
+            country: Optional ISO 3166 country code (e.g., "RU", "GB", "US").
+            state: Optional state or province code (primarily for US cities).
+            limit: Maximum number of results to return. Defaults to 1.
+                Only the first result is returned.
 
         Returns:
-            GeocodingResult with coordinates and names, or None if not found
+            GeocodingResult dictionary containing:
+                - name: City name
+                - local_names: Dictionary of localized city names
+                - lat: Latitude coordinate
+                - lon: Longitude coordinate
+                - country: Country code
+                - state: State or province code
+            Returns None if the location is not found.
 
-        Cache key format: "city,country,state" (normalized lowercase)
+        Raises:
+            Exception: Cache errors are caught and logged, but do not prevent
+                the API request from being made.
+
+        Note:
+            Cache key format: "city,country,state" (normalized: city lowercase,
+            country uppercase, state lowercase).
         """
         # Build cache key
-        cacheKeyParts = [city.lower().strip()]
+        cacheKeyParts: List[str] = [city.lower().strip()]
         if country:
             cacheKeyParts.append(country.upper().strip())
         if state:
             cacheKeyParts.append(state.lower().strip())
-        cacheKey = ",".join(cacheKeyParts)
+        cacheKey: str = ",".join(cacheKeyParts)
 
         # Check cache first
         try:
-            cachedData = await self.geocodingCache.get(cacheKey, self.geocodingTTL)
+            cachedData: Optional[GeocodingResult] = await self.geocodingCache.get(cacheKey, self.geocodingTTL)
             if cachedData:
                 logger.debug(f"Cache hit for geocoding: {cacheKey}")
                 return cachedData
@@ -122,23 +181,23 @@ class OpenWeatherMapClient:
             logger.warning(f"Cache error for geocoding {cacheKey}: {e}")
 
         # Build query string
-        queryParts = [city]
+        queryParts: List[str] = [city]
         if state:
             queryParts.append(state)
         if country:
             queryParts.append(country)
-        query = ",".join(queryParts)
+        query: str = ",".join(queryParts)
 
         # Make API request
-        params = {"q": query, "limit": limit, "appid": self.apiKey}
+        params: dict = {"q": query, "limit": limit, "appid": self.apiKey}
 
-        responseData = await self._makeRequest(self.GEOCODING_API, params)
+        responseData: Optional[dict] = await self._makeRequest(self.GEOCODING_API, params)
         if not responseData or not isinstance(responseData, list) or len(responseData) == 0:
             logger.warning(f"No geocoding results for: {query}")
             return None
 
         # Extract first result and convert to our format
-        apiResult = responseData[0]
+        apiResult: dict = responseData[0]
         result: GeocodingResult = {
             "name": apiResult.get("name", ""),
             "local_names": apiResult.get("local_names", {}),
@@ -158,31 +217,46 @@ class OpenWeatherMapClient:
         return result
 
     async def getWeather(self, lat: float, lon: float, exclude: Optional[List[str]] = None) -> Optional[WeatherData]:
-        """
-        Get weather data by coordinates
+        """Get weather data by geographic coordinates.
 
-        Uses: https://api.openweathermap.org/data/3.0/onecall
+        Retrieves current weather conditions and daily forecasts from the
+        OpenWeatherMap One Call API. Results are cached to reduce API calls.
+
+        API endpoint: https://api.openweathermap.org/data/3.0/onecall
 
         Args:
-            lat: Latitude
-            lon: Longitude
-            exclude: Optional list of parts to exclude
-                    (e.g., ["minutely", "hourly", "alerts"])
-                    We'll default to excluding minutely, hourly, alerts
+            lat: Latitude coordinate in decimal degrees.
+            lon: Longitude coordinate in decimal degrees.
+            exclude: Optional list of data blocks to exclude from the response.
+                Valid values: "current", "minutely", "hourly", "daily", "alerts".
+                Defaults to ["minutely", "hourly", "alerts"] to reduce response size.
 
         Returns:
-            WeatherData with current and daily forecast, or None if error
+            WeatherData dictionary containing:
+                - lat: Latitude coordinate
+                - lon: Longitude coordinate
+                - timezone: Timezone name
+                - timezone_offset: UTC offset in seconds
+                - current: CurrentWeather dictionary with current conditions
+                - daily: List of DailyWeather dictionaries (up to 8 days)
+            Returns None if the API request fails or no data is available.
 
-        Cache key format: "lat,lon" (rounded to 4 decimal places)
+        Raises:
+            Exception: Cache errors are caught and logged, but do not prevent
+                the API request from being made.
+
+        Note:
+            Cache key format: "lat,lon" (coordinates rounded to 4 decimal places).
+            Weather data is returned in metric units (Celsius, m/s, etc.).
         """
         # Round coordinates to 4 decimal places for cache key
-        latRounded = round(lat, 4)
-        lonRounded = round(lon, 4)
-        cacheKey = f"{latRounded},{lonRounded}"
+        latRounded: float = round(lat, 4)
+        lonRounded: float = round(lon, 4)
+        cacheKey: str = f"{latRounded},{lonRounded}"
 
         # Check cache first
         try:
-            cachedData = await self.weatherCache.get(cacheKey, self.weatherTTL)
+            cachedData: Optional[WeatherData] = await self.weatherCache.get(cacheKey, self.weatherTTL)
             if cachedData:
                 logger.debug(f"Cache hit for weather: {cacheKey}")
                 return cachedData
@@ -194,7 +268,7 @@ class OpenWeatherMapClient:
             exclude = ["minutely", "hourly", "alerts"]
 
         # Make API request
-        params = {
+        params: dict = {
             "lat": lat,
             "lon": lon,
             "exclude": ",".join(exclude),
@@ -203,15 +277,15 @@ class OpenWeatherMapClient:
             "appid": self.apiKey,
         }
 
-        responseData = await self._makeRequest(self.WEATHER_API, params)
+        responseData: Optional[dict] = await self._makeRequest(self.WEATHER_API, params)
         if not responseData:
             logger.warning(f"No weather data for: {lat}, {lon}")
             return None
 
         # Extract and convert to our format
-        currentData = responseData.get("current", {})
-        weather_list = currentData.get("weather", [])
-        weather_info = weather_list[0] if weather_list else {}
+        currentData: dict = responseData.get("current", {})
+        weather_list: List[dict] = currentData.get("weather", [])
+        weather_info: dict = weather_list[0] if weather_list else {}
 
         currentWeather: CurrentWeather = {
             "dt": currentData.get("dt", 0),
@@ -234,11 +308,11 @@ class OpenWeatherMapClient:
         }
 
         # Process daily forecast
-        dailyForecasts = []
+        dailyForecasts: List[DailyWeather] = []
         for dailyItem in responseData.get("daily", [])[:8]:  # Max 8 days
-            dailyWeatherInfo = dailyItem.get("weather", [{}])[0]
-            tempData = dailyItem.get("temp", {})
-            feelsLikeData = dailyItem.get("feels_like", {})
+            dailyWeatherInfo: dict = dailyItem.get("weather", [{}])[0]
+            tempData: dict = dailyItem.get("temp", {})
+            feelsLikeData: dict = dailyItem.get("feels_like", {})
 
             dailyWeather: DailyWeather = {
                 "dt": dailyItem.get("dt", 0),
@@ -294,30 +368,38 @@ class OpenWeatherMapClient:
     async def getWeatherByCity(
         self, city: str, country: Optional[str] = None, state: Optional[str] = None
     ) -> Optional[CombinedWeatherResult]:
-        """
-        Combined operation: get coordinates then get weather
+        """Get weather data for a city by name.
 
-        This is a convenience method that calls getCoordinates()
-        followed by getWeather(). Both operations use their
-        respective caches.
+        This is a convenience method that combines geocoding and weather retrieval
+        into a single operation. It first calls getCoordinates() to resolve the
+        city name to coordinates, then calls getWeather() to retrieve the weather
+        data. Both operations use their respective caches.
 
         Args:
-            city: City name
-            country: Optional country code
-            state: Optional state code
+            city: City name (e.g., "Moscow", "London").
+            country: Optional ISO 3166 country code (e.g., "RU", "GB", "US").
+            state: Optional state or province code (primarily for US cities).
 
         Returns:
-            CombinedWeatherResult with location and weather data,
-            or None if geocoding fails
+            CombinedWeatherResult dictionary containing:
+                - location: GeocodingResult with city information and coordinates
+                - weather: WeatherData with current conditions and daily forecast
+            Returns None if geocoding fails (city not found) or weather retrieval fails.
+
+        Example:
+            >>> result = await client.getWeatherByCity("Moscow", "RU")
+            >>> if result:
+            ...     print(f"City: {result['location']['name']}")
+            ...     print(f"Temp: {result['weather']['current']['temp']}°C")
         """
         # Get coordinates first
-        location = await self.getCoordinates(city, country, state)
+        location: Optional[GeocodingResult] = await self.getCoordinates(city, country, state)
         if not location:
             logger.warning(f"Failed to get coordinates for: {city}, {country}")
             return None
 
         # Get weather for those coordinates
-        weather = await self.getWeather(location["lat"], location["lon"])
+        weather: Optional[WeatherData] = await self.getWeather(location["lat"], location["lon"])
         if not weather:
             logger.warning(f"Failed to get weather for: {location['lat']}, {location['lon']}")
             return None
@@ -330,17 +412,38 @@ class OpenWeatherMapClient:
         return result
 
     async def _makeRequest(self, url: str, params: dict) -> Optional[dict]:
-        """
-        Make HTTP request to OpenWeatherMap API
+        """Make HTTP request to OpenWeatherMap API.
 
-        Creates a new session for each request to support proper concurrent requests.
+        Creates a new HTTP session for each request to support proper concurrent
+        requests without connection reuse issues. Applies rate limiting before
+        making the request.
 
         Args:
-            url: API endpoint URL
-            params: Query parameters (api_key will be added automatically)
+            url: API endpoint URL (e.g., geocoding or weather API endpoint).
+            params: Query parameters dictionary. The API key is included in params
+                by the caller.
 
         Returns:
-            Parsed JSON response or None on error
+            Parsed JSON response as a dictionary, or None if the request fails.
+            Returns None for the following error conditions:
+                - HTTP 401: Invalid API key
+                - HTTP 404: Location not found
+                - HTTP 429: Rate limit exceeded
+                - Other HTTP errors
+                - Network timeout
+                - Network connection errors
+                - JSON parsing errors
+                - Unexpected exceptions
+
+        Raises:
+            httpx.TimeoutException: Request timeout (caught and logged).
+            httpx.RequestError: Network connection errors (caught and logged).
+            json.JSONDecodeError: JSON parsing errors (caught and logged).
+            Exception: Unexpected errors (caught and logged).
+
+        Note:
+            All exceptions are caught and logged, returning None instead of
+            propagating errors to allow graceful degradation.
         """
         try:
             logger.debug(f"Making request to {url} with params: {params}")
@@ -348,9 +451,9 @@ class OpenWeatherMapClient:
 
             # Create new session for each request
             async with httpx.AsyncClient(timeout=self.requestTimeout) as session:
-                response = await session.get(url, params=params)
+                response: httpx.Response = await session.get(url, params=params)
                 if response.status_code == 200:
-                    data = response.json()
+                    data: dict = response.json()
                     logger.debug(f"API request successful: {response.status_code}")
                     logger.debug(f"API response: {data}")
                     return data

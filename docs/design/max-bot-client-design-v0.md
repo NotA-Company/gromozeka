@@ -1,5 +1,17 @@
 # Max Bot Client Library Design v0
 
+**Status:** ✅ Implemented — see `lib/max_bot/` for current implementation
+
+**Current Implementation Note:** The implemented system uses `__slots__` in BaseMaxBotModel and other model classes for memory efficiency. All model classes include rich method implementations for serialization and type coercion.
+
+**Current Implementation:**
+- `lib/max_bot/models/base.py` — BaseMaxBotModel with `__slots__`
+- Active docs: `docs/llm/libraries.md` §5 lib/max_bot
+
+**Note:** This is a historical design document that guided implementation. For current patterns, see the source code.
+
+---
+
 ## Overview
 
 The `lib.max_bot` library provides a comprehensive, async Python client for the Max Messenger Bot API. This design document outlines the architecture, components, and implementation strategy for building a production-ready bot client library using `httpx` as the HTTP client and dataclasses for model definitions.

@@ -4,11 +4,12 @@
 provider = "openrouter"
 model_id = "anthropic/claude-haiku-4.5"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 200000
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "bot-owner"
 
 [models.models."openrouter/deepseek-chat-v3.1"]
@@ -16,11 +17,25 @@ tier = "bot-owner"
 provider = "openrouter"
 model_id = "deepseek/deepseek-chat-v3.1"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 163840
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
+tier = "paid"
+
+[models.models."openrouter/deepseek-v4-flash"]
+# https://openrouter.ai/deepseek/deepseek-v4-flash
+provider = "openrouter"
+model_id = "deepseek/deepseek-v4-flash"
+model_version = "latest"
+temperature = 0.3
+context = 1000000
+support_tools = true
+support_text = true
+support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3-235b-a22b"]
@@ -28,11 +43,12 @@ tier = "paid"
 provider = "openrouter"
 model_id = "qwen/qwen3-235b-a22b"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 131100
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen-turbo"]
@@ -40,11 +56,12 @@ tier = "paid"
 provider = "openrouter"
 model_id = "qwen/qwen-turbo"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 131100
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3.5-flash"]
@@ -52,11 +69,12 @@ tier = "paid"
 provider = "openrouter"
 model_id = "qwen/qwen3.5-flash-02-23"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3-vl-235b-a22b-instruct"]
@@ -64,11 +82,12 @@ tier = "paid"
 provider = "openrouter"
 model_id = "qwen/qwen3-vl-235b-a22b-instruct"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 262144
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 [models.models."openrouter/qwen3.6-plus"]
@@ -76,11 +95,12 @@ tier = "paid"
 provider = "openrouter"
 model_id = "qwen/qwen3.6-plus"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_structured_output = true
 tier = "paid"
 
 # Image generation Models
@@ -91,11 +111,12 @@ tier = "paid"
 provider = "openrouter"
 model_id = "google/gemini-2.5-flash-image"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 32768
 support_tools = true
 support_text = false  # Actualy it does support text, but we do not want to use it for text
 support_images = true
+support_structured_output = false  # not a structured-output candidate
 tier = "friend"
 
 [models.models."openrouter/gemini-3-pro-image-preview"]
@@ -103,9 +124,10 @@ tier = "friend"
 provider = "openrouter"
 model_id = "google/gemini-3-pro-image-preview"
 model_version = "latest"
-temparature = 0.3
+temperature = 0.3
 context = 32768
 support_tools = true
 support_text = false  # Actualy it does support text, but we do not want to use it for text
 support_images = true
+support_structured_output = false  # not a structured-output candidate
 tier = "friend"

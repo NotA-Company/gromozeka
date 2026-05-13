@@ -22,10 +22,10 @@ from internal.bot.common.handlers import HandlersManager
 from internal.bot.models import BotProvider, CommandPermission, EnsuredMessage, MessageSender
 from internal.bot.models.ensured_message import MessageRecipient
 from internal.config.manager import ConfigManager
-from internal.database.wrapper import DatabaseWrapper
-from internal.services.queue_service.service import QueueService
+from internal.database import Database
+from internal.models import MessageId
+from internal.services.queue_service import QueueService
 from lib import utils
-from lib.ai import LLMManager
 from lib.rate_limiter import RateLimiterManager
 
 logger = logging.getLogger(__name__)
@@ -64,25 +64,26 @@ class TelegramBotApplication:
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
         botToken: str,
-        database: DatabaseWrapper,
-        llmManager: LLMManager,
+        database: Database,
     ):
         """Initialize Telegram bot application.
 
         Args:
             configManager: Configuration manager instance
             botToken: Telegram bot token for authentication
-            database: Database wrapper for data persistence
+            database: Database object for data persistence
             llmManager: LLM manager for language model operations
         """
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
-        self.llmManager = llmManager
         self.application = None
-        self.handlerManager = HandlersManager(configManager, database, llmManager, BotProvider.TELEGRAM)
+        self.handlerManager = HandlersManager(
+            configManager=configManager, database=database, botProvider=BotProvider.TELEGRAM
+        )
         self.queueService = QueueService.getInstance()
         self._schedulerTask: Optional[asyncio.Task] = None
 
@@ -100,7 +101,7 @@ class TelegramBotApplication:
 
                     await self.handlerManager.handleNewChatMember(
                         targetChat=targetChat,
-                        messageId=messageId,
+                        messageId=MessageId(messageId),
                         newMember=MessageSender.fromTelegramUser(newMember),
                         updateObj=update,
                     )
@@ -113,7 +114,7 @@ class TelegramBotApplication:
 
                 return await self.handlerManager.handleLeftChatMember(
                     targetChat=targetChat,
-                    messageId=messageId,
+                    messageId=MessageId(messageId),
                     leftMember=leftMember,
                     updateObj=update,
                 )
@@ -241,7 +242,7 @@ class TelegramBotApplication:
         if self.application is None:
             raise RuntimeError("Application not initialized")
 
-        self.handlerManager.injectBot(application.bot)
+        await self.handlerManager.initialize(application.bot)
         self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # Configure Commands

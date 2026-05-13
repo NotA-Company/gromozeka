@@ -1,5 +1,5 @@
 """
-Gromozeka SPAM Handlers Module, dood!
+Gromozeka SPAM Handlers Module.
 
 This module provides comprehensive spam detection and management functionality for the Gromozeka bot.
 It implements multiple spam detection strategies including:
@@ -9,11 +9,10 @@ It implements multiple spam detection strategies including:
 - Manual spam reporting by admins and users
 
 The module integrates with the bot's database for persistent storage and learning,
-and provides commands for training, testing, and managing the spam filter, dood!
+and provides commands for training, testing, and managing the spam filter.
 """
 
 import asyncio
-import datetime
 import logging
 import time
 import zlib
@@ -39,17 +38,16 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.bayes_storage import DatabaseBayesStorage
 from internal.database.models import (
     ChatUserDict,
     MessageCategory,
     SpamReason,
 )
-from internal.database.wrapper import DatabaseWrapper
-from internal.models import MessageIdType
+from internal.models import MessageId
 from internal.services.cache import HCSpamWarningMessageInfo
 from internal.services.queue_service import DelayedTaskFunction
-from lib.ai import LLMManager
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -59,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 class SpamHandler(BaseBotHandler):
     """
-    Comprehensive spam detection and management handler, dood!
+    Comprehensive spam detection and management handler.
 
     This class provides multi-layered spam protection combining rule-based detection
     with machine learning (Naive Bayes) classification. It handles automatic spam
@@ -79,19 +77,17 @@ class SpamHandler(BaseBotHandler):
         - User unbanning with automatic ham learning
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """
-        Initialize spam handlers with database and LLM model, dood!
+        Initialize spam handlers with database and LLM model.
 
         Sets up the Naive Bayes spam filter with per-chat statistics and configurable
         parameters for spam detection and learning.
 
         Args:
             configManager (ConfigManager): Configuration manager for bot settings.
-            database (DatabaseWrapper): Database wrapper for persistent storage.
-            llmManager (LLMManager): LLM manager for AI-powered features.
+            database (Database): Database object for persistent storage.
+            botProvider (BotProvider): Bot platform provider (Telegram or Max).
 
         Note:
             The Bayes filter is initialized with:
@@ -102,7 +98,7 @@ class SpamHandler(BaseBotHandler):
             - Trigram tokenization enabled
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.spamButtonSalt = self.config.get("spam-button-salt", str(time.time()))
         # self.config = configManager.getBotConfig()
@@ -125,6 +121,19 @@ class SpamHandler(BaseBotHandler):
         logger.info("Initialized Bayes spam filter, dood!")
 
     def _makeSpamButtonSignature(self, message: EnsuredMessage, extra: Any = None) -> str:
+        """
+        Generate a cryptographic signature for spam button callbacks.
+
+        Creates a hash signature to prevent unauthorized spam marking by users
+        attempting to mark legitimate messages as spam.
+
+        Args:
+            message (EnsuredMessage): The message to create signature for.
+            extra (Any, optional): Additional data to include in signature. Defaults to None.
+
+        Returns:
+            str: Hexadecimal hash signature string.
+        """
         signatureStr = ":".join(
             [
                 str(v)
@@ -145,7 +154,13 @@ class SpamHandler(BaseBotHandler):
 
     def _rememberSpamWarningMessage(self, message: EnsuredMessage) -> None:
         """
-        Remember SpamWarning Message for future manipulations
+        Store spam warning message information in cache for future reference.
+
+        Saves metadata about spam warning messages to enable callback handling
+        when users click spam/not-spam buttons.
+
+        Args:
+            message (EnsuredMessage): The spam warning message to remember.
         """
         userId = message.sender.id
         username = message.sender.username
@@ -161,21 +176,32 @@ class SpamHandler(BaseBotHandler):
             },
         )
 
-    def _getSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> Optional[HCSpamWarningMessageInfo]:
+    def _getSpamWarningMessageInfo(self, chatId: int, messageId: MessageId) -> Optional[HCSpamWarningMessageInfo]:
         """
-        Get SpamWarning Message Info from cache
+        Retrieve spam warning message information from cache.
+
+        Args:
+            chatId (int): Chat ID where the warning message was sent.
+            messageId (MessageId): Message ID of the warning message.
+
+        Returns:
+            Optional[HCSpamWarningMessageInfo]: Cached message info if found, None otherwise.
         """
         return self.cache.getSpamWarningMessageInfo(chatId=chatId, messageId=messageId)
 
-    def _deleteSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> None:
+    def _deleteSpamWarningMessageInfo(self, chatId: int, messageId: MessageId) -> None:
         """
-        Delete SpamWarning Message Info from cache
+        Remove spam warning message information from cache.
+
+        Args:
+            chatId (int): Chat ID where the warning message was sent.
+            messageId (MessageId): Message ID of the warning message.
         """
         self.cache.removeSpamWarningMessageInfo(chatId=chatId, messageId=messageId)
 
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
         """
-        Perform comprehensive spam check on a message, dood!
+        Perform comprehensive spam check on a message.
 
         This method implements multi-layered spam detection combining:
         1. Automatic forward detection (not spam)
@@ -222,9 +248,9 @@ class SpamHandler(BaseBotHandler):
             # TODO: Message without text, think about checking for spam
             return False
 
-        chatSettings = self.getChatSettings(chatId)
+        chatSettings = await self.getChatSettings(chatId)
 
-        userInfo: Optional[ChatUserDict] = self.db.getChatUser(chatId=chatId, userId=sender.id)
+        userInfo: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(chatId=chatId, userId=sender.id)
         if not userInfo:
             # self.db.updateChatUser(chatId=chatId, userId=sender.id, username=sender.username, fullName=sender.name)
             logger.debug(f"userInfo for {ensuredMessage} is null, assume it's first user message")
@@ -234,8 +260,8 @@ class SpamHandler(BaseBotHandler):
                 "username": sender.username,
                 "full_name": sender.name,
                 "messages_count": 1,
-                "created_at": datetime.datetime.now(),
-                "updated_at": datetime.datetime.now(),
+                "created_at": utils.now(),
+                "updated_at": utils.now(),
                 "timezone": "",
                 "metadata": "",
             }
@@ -274,11 +300,11 @@ class SpamHandler(BaseBotHandler):
             spamScore = 100.0
 
         # Check if for last 10 messages there are more same messages than different ones:
-        userMessages = self.db.getChatMessagesByUser(chatId=chatId, userId=sender.id, limit=10)
+        userMessages = await self.db.chatMessages.getChatMessagesByUser(chatId=chatId, userId=sender.id, limit=10)
         spamMessagesCount = 0
         nonSpamMessagesCount = 0
         for msg in userMessages:
-            if msg["message_text"] == ensuredMessage.messageText and msg["message_id"] != ensuredMessage.messageId:
+            if (msg["message_text"] == ensuredMessage.messageText) and (msg["message_id"] != ensuredMessage.messageId):
                 spamMessagesCount = spamMessagesCount + 1
             else:
                 nonSpamMessagesCount = nonSpamMessagesCount + 1
@@ -292,7 +318,7 @@ class SpamHandler(BaseBotHandler):
             spamScore = max(spamScore, _spamScore)
 
         # If we had the same spam messages, then it's also spam
-        sameSpamMessages = self.db.getSpamMessagesByText(ensuredMessage.messageText)
+        sameSpamMessages = await self.db.spam.getSpamMessagesByText(ensuredMessage.messageText)
         if len(sameSpamMessages) > 0:
             logger.info(f"SPAM: Found {len(sameSpamMessages)} spam messages, so deciding, that it is SPAM")
             spamScore = max(spamScore, 100)
@@ -312,7 +338,7 @@ class SpamHandler(BaseBotHandler):
                         mentionStr = entity.userName
                         if mentionStr is None:
                             mentionStr = entity.extractEntityText(messageText)
-                        chatUser = self.db.getChatUserByUsername(
+                        chatUser = await self.db.chatUsers.getChatUserByUsername(
                             chatId=ensuredMessage.recipient.id, username=mentionStr
                         )
                         if chatUser is None:
@@ -327,8 +353,8 @@ class SpamHandler(BaseBotHandler):
                                 )
         # End of entities parsing
 
-        warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_TRESHOLD].toFloat()
-        banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_TRESHOLD].toFloat()
+        warnTreshold = chatSettings[ChatSettingsKey.SPAM_WARN_THRESHOLD].toFloat()
+        banTreshold = chatSettings[ChatSettingsKey.SPAM_BAN_THRESHOLD].toFloat()
 
         # Add Bayes filter classification, if message wasn't been marked as spam already (for performance purposes)
         if spamScore < banTreshold and chatSettings[ChatSettingsKey.BAYES_ENABLED].toBool():
@@ -435,9 +461,9 @@ class SpamHandler(BaseBotHandler):
 
     async def markAsSpam(
         self, ensuredMessage: EnsuredMessage, reason: SpamReason, score: Optional[float] = None, confidence: float = 1.0
-    ):
+    ) -> None:
         """
-        Mark message as spam, ban user, delete message, and update spam database, dood!
+        Mark message as spam, ban user, delete message, and update spam database.
 
         Executes comprehensive spam handling workflow:
         1. Validates target is not an admin (abort if admin)
@@ -454,6 +480,7 @@ class SpamHandler(BaseBotHandler):
             ensuredMessage (EnsuredMessage): The spam message to handle with sender/recipient info.
             reason (SpamReason): Classification source (AUTO, ADMIN, or USER).
             score (Optional[float]): Spam confidence score (0-100+). Stored in database. Defaults to None.
+            confidence (float): Classification confidence (0.0-1.0). Defaults to 1.0.
 
         Note:
             - Admins cannot be marked as spam (displays alarm message)
@@ -464,7 +491,7 @@ class SpamHandler(BaseBotHandler):
             - Number of messages to delete capped by AUTO_SPAM_MAX_MESSAGES (max 32)
             - All deleted messages also learned as spam and saved to spam database
         """
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
         logger.debug(
             f"Handling spam message: #{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
@@ -488,7 +515,7 @@ class SpamHandler(BaseBotHandler):
         canMarkOldUsers = chatSettings[ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS].toBool()
         if reason != SpamReason.ADMIN or not canMarkOldUsers:
             # Check if we are trying to ban old chat member and it is not from Admin
-            userInfo = self.db.getChatUser(chatId=chatId, userId=userId)
+            userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
             maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
             if maxSpamMessages != 0 and userInfo and userInfo["messages_count"] > maxSpamMessages:
                 logger.warning(f"Tried to mark old user {ensuredMessage.sender} as SPAM")
@@ -517,7 +544,7 @@ class SpamHandler(BaseBotHandler):
                 logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
 
         if ensuredMessage.messageText:
-            self.db.addSpamMessage(
+            await self.db.spam.addSpamMessage(
                 chatId=chatId,
                 userId=userId,
                 messageId=ensuredMessage.messageId,
@@ -535,7 +562,7 @@ class SpamHandler(BaseBotHandler):
             raise ValueError("Bot is not initialized")
         await self._bot.banUserInChat(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
 
-        self.setUserMetadata(
+        await self.setUserMetadata(
             chatId=chatId,
             userId=userId,
             metadata={
@@ -549,13 +576,13 @@ class SpamHandler(BaseBotHandler):
             maxMessagesToDelete = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
             # Cap max messages to delete by some saint number
             maxMessagesToDelete = min(max(maxMessagesToDelete, 1), 32)
-            userMessages = self.db.getChatMessagesByUser(
+            userMessages = await self.db.chatMessages.getChatMessagesByUser(
                 chatId=chatId,
                 userId=userId,
                 limit=maxMessagesToDelete,
             )
             logger.debug(f"Trying to delete more user messages: {userMessages}")
-            messageIds: List[MessageIdType] = []
+            messageIds: List[MessageId] = []
             for msg in userMessages:
                 if msg["message_id"] != ensuredMessage.messageId:
                     messageIds.append(msg["message_id"])
@@ -571,7 +598,7 @@ class SpamHandler(BaseBotHandler):
                             logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
                     # And add message to spam-base
                     if msg["message_text"]:
-                        self.db.addSpamMessage(
+                        await self.db.spam.addSpamMessage(
                             chatId=msg["chat_id"],
                             userId=msg["user_id"],
                             messageId=msg["message_id"],
@@ -582,7 +609,7 @@ class SpamHandler(BaseBotHandler):
                         )
                 # Update message category to USER_SPAM
                 # TODO: We can do bulk upgrade, but i don't care, actually
-                self.db.updateChatMessageCategory(
+                await self.db.chatMessages.updateChatMessageCategory(
                     chatId=msg["chat_id"],
                     messageId=msg["message_id"],
                     messageCategory=MessageCategory.USER_SPAM,
@@ -598,13 +625,13 @@ class SpamHandler(BaseBotHandler):
 
     async def markAsHam(self, message: EnsuredMessage) -> bool:
         """
-        Mark message as ham (not spam) for Bayes filter learning, dood!
+        Mark message as ham (not spam) for Bayes filter learning.
 
         Teaches the Bayes filter that this message is legitimate (ham), improving
         future spam detection accuracy.
 
         Args:
-            message (Message): The legitimate message to learn from.
+            message (EnsuredMessage): The legitimate message to learn from.
 
         Returns:
             bool: True if learning succeeded, False otherwise.
@@ -626,7 +653,7 @@ class SpamHandler(BaseBotHandler):
 
     async def getBayesFilterStats(self, chatId: Optional[int] = None) -> Dict[str, Any]:
         """
-        Get Bayes filter statistics for debugging and monitoring, dood!
+        Get Bayes filter statistics for debugging and monitoring.
 
         Retrieves comprehensive statistics about the Bayes filter's training state
         and performance for a specific chat or globally.
@@ -664,7 +691,7 @@ class SpamHandler(BaseBotHandler):
 
     async def resetBayesFilter(self, chat_id: Optional[int] = None) -> bool:
         """
-        Reset Bayes filter statistics and training data, dood!
+        Reset Bayes filter statistics and training data.
 
         Clears all learned spam/ham data for a specific chat or globally.
         Use with caution as this removes all training progress!
@@ -690,7 +717,7 @@ class SpamHandler(BaseBotHandler):
 
     async def trainBayesFromHistory(self, chatId: int, limit: int = 1000) -> Dict[str, int]:
         """
-        Train Bayes filter from existing spam messages and chat history, dood!
+        Train Bayes filter from existing spam messages and chat history.
 
         Performs initial or supplemental training by learning from:
         1. Previously identified spam messages in the database
@@ -720,7 +747,7 @@ class SpamHandler(BaseBotHandler):
 
         try:
             # Learn from existing spam messages
-            spam_messages = self.db.getSpamMessages(limit=limit)  # Get all spam messages
+            spam_messages = await self.db.spam.getSpamMessages(limit=limit)  # Get all spam messages
             spamUsersIds: Set[int] = {-1}
             for spamMsg in spam_messages:
                 if spamMsg["chat_id"] == chatId and spamMsg["text"]:
@@ -732,7 +759,7 @@ class SpamHandler(BaseBotHandler):
                         stats["failed"] += 1
 
             # Learn from regular user messages as ham
-            hamMessages = self.db.getChatMessagesSince(
+            hamMessages = await self.db.chatMessages.getChatMessagesSince(
                 chatId=chatId, limit=limit, messageCategory=[MessageCategory.USER]
             )
             for hamMsg in hamMessages:
@@ -760,15 +787,32 @@ class SpamHandler(BaseBotHandler):
 
     async def trainBayesFromSpamDB(self, chatId: int, limit: int = 1000) -> Dict[str, int]:
         """
-        Train Bayes filter from existing spam messages
+        Train Bayes filter from existing spam messages in database.
 
-        TODO: Write docstring
+        Extracts spam messages from the spam database and uses them to train
+        the Bayes filter for a specific chat. This is useful for initial
+        training or retraining after filter reset.
+
+        Args:
+            chatId (int): Chat ID to train filter for.
+            limit (int): Maximum number of spam messages to process. Defaults to 1000.
+
+        Returns:
+            Dict[str, int]: Training statistics containing:
+                - spam_learned: Number of spam messages successfully learned
+                - ham_learned: Always 0 (this method only trains on spam)
+                - failed: Number of messages that failed to process
+
+        Note:
+            - Only processes spam messages from the database
+            - All messages are learned as spam for the specified chat
+            - Messages without text are skipped
         """
         stats = {"spam_learned": 0, "ham_learned": 0, "failed": 0}
 
         try:
             # Learn from existing spam messages
-            spam_messages = self.db.getSpamMessages(limit=limit)  # Get all spam messages
+            spam_messages = await self.db.spam.getSpamMessages(limit=limit)  # Get all spam messages
             logger.debug(f"Got {len(spam_messages)} spam messages")
             for spamMsg in spam_messages:
                 if spamMsg["text"]:
@@ -794,7 +838,7 @@ class SpamHandler(BaseBotHandler):
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
-        Main message handler for automatic spam detection in groups, dood!
+        Main message handler for automatic spam detection in groups.
 
         Performs spam checking in group and supergroup chats when enabled.
         Private messages and channels are skipped.
@@ -815,7 +859,7 @@ class SpamHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         try:
-            chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+            chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
             if chatSettings[ChatSettingsKey.DETECT_SPAM].toBool():
                 if await self.checkSpam(ensuredMessage):
@@ -840,7 +884,29 @@ class SpamHandler(BaseBotHandler):
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
-        Handle inline keyboard button callbacks for possible-spam messages, dood!
+        Handle inline keyboard button callbacks for possible-spam messages.
+
+        Processes user clicks on "Yes, it's Spam" and "No, it's NOT Spam" buttons
+        that appear on messages flagged as possible spam. Validates the callback
+        signature, checks permissions, and executes the appropriate action.
+
+        Args:
+            ensuredMessage (EnsuredMessage): The callback query message (bot's warning message).
+            data (utils.PayloadDict): Callback data containing spam action and signature.
+            user (MessageSender): User who clicked the button.
+            updateObj (UpdateObjectType): Platform-specific update object.
+
+        Returns:
+            HandlerResultStatus: Handler execution status:
+                - SKIPPED: Not a spam-related callback
+                - FINAL: Callback was processed successfully
+                - FATAL: Invalid callback or error occurred
+
+        Note:
+            - Validates button signature to prevent unauthorized spam marking
+            - Requires admin permission or ALLOW_USER_SPAM_COMMAND enabled
+            - Updates message to show who confirmed the spam/ham classification
+            - Deletes the warning message after 60 seconds
         """
 
         spamAction = data.get(ButtonDataKey.SpamAction, None)
@@ -890,7 +956,7 @@ class SpamHandler(BaseBotHandler):
 
         isAdmin = await self.isAdmin(user=user, chat=chat)
 
-        chatSettings = self.getChatSettings(chatId=chat.id)
+        chatSettings = await self.getChatSettings(chatId=chat.id)
         userCanMarkSpam = chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
 
         if not isAdmin and not userCanMarkSpam:
@@ -916,7 +982,7 @@ class SpamHandler(BaseBotHandler):
             if messageText:
                 await self.markAsHam(eRepliedMessage)
 
-                self.db.addHamMessage(
+                await self.db.spam.addHamMessage(
                     chatId=chat.id,
                     userId=hamUserId,
                     messageId=eRepliedMessage.messageId,
@@ -926,9 +992,9 @@ class SpamHandler(BaseBotHandler):
                     confidence=1.0,
                 )
 
-            hamUserDB: Optional[ChatUserDict] = self.db.getChatUser(chatId=chat.id, userId=hamUserId)
+            hamUserDB: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(chatId=chat.id, userId=hamUserId)
             if hamUserDB is not None:
-                self.setUserMetadata(
+                await self.setUserMetadata(
                     chatId=hamUserDB["chat_id"],
                     userId=hamUserDB["user_id"],
                     metadata={
@@ -979,13 +1045,25 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Display Bayesian filter statistics for all group chats, dood!
+        Display Bayesian filter statistics for all group chats.
 
         This command shows statistics about the Bayesian spam filter for each
         group chat, including the number of spam and ham messages processed,
         filter accuracy, and other relevant metrics.
+
+        Args:
+            ensuredMessage (EnsuredMessage): The command message.
+            command (str): Command name that triggered this handler.
+            args (str): Command arguments (unused).
+            UpdateObj (UpdateObjectType): Platform-specific update object.
+            typingManager (Optional[TypingManager]): Optional typing indicator manager.
+
+        Note:
+            - Only available to bot owners
+            - Sends separate message for each group chat
+            - Includes 0.5 second delay between messages to avoid rate limits
         """
-        for chatInfo in self.db.getAllGroupChats():
+        for chatInfo in await self.db.chatUsers.getAllGroupChats():
             stats = await self.getBayesFilterStats(chatId=chatInfo["chat_id"])
             chatTitle = self.getChatTitle(chatInfo)
 
@@ -1014,14 +1092,17 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /spam command to manually mark messages as spam, dood!
+        Handle /spam command to manually mark messages as spam.
 
         Allows admins (and optionally regular users) to report spam messages
         by replying to them with the /spam command.
 
         Args:
-            update (Update): Telegram update object containing the command.
-            context (ContextTypes.DEFAULT_TYPE): Bot context for the command.
+            ensuredMessage (EnsuredMessage): The command message.
+            command (str): Command name that triggered this handler.
+            args (str): Command arguments (unused).
+            UpdateObj (UpdateObjectType): Platform-specific update object.
+            typingManager (Optional[TypingManager]): Optional typing indicator manager.
 
         Command Format:
             /spam (as reply to spam message)
@@ -1078,15 +1159,18 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /pretrain_bayes [<chatId>] command for initial filter training, dood!
+        Handle /pretrain_bayes [<chatId>] command for initial filter training.
 
         Trains the Bayes spam filter using up to 1000 historical messages from
         the specified chat. This is useful for setting up spam detection in
         existing chats with message history.
 
         Args:
-            update (Update): Telegram update object containing the command.
-            context (ContextTypes.DEFAULT_TYPE): Bot context with optional chatId argument.
+            ensuredMessage (EnsuredMessage): The command message.
+            command (str): Command name that triggered this handler.
+            args (str): Command arguments containing optional chatId.
+            UpdateObj (UpdateObjectType): Platform-specific update object.
+            typingManager (Optional[TypingManager]): Optional typing indicator manager.
 
         Command Format:
             /pretrain_bayes [<chatId>]
@@ -1156,20 +1240,36 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /pretrain_bayes_spam command to train Bayes filter from spam database, dood!
+        Handle /pretrain_bayes_spam command to train Bayes filter from spam database.
 
         Extracts chatId and max message count from args, validates admin permissions,
         trains the Bayes filter on spam messages from database, and reports statistics.
 
         Args:
-            ensuredMessage: Message object with sender and recipient info
-            command: Command string that triggered this handler
-            args: Arguments string: "[<chatId>] [<N>]" where N is max messages to learn
-            UpdateObj: Platform-specific update object
-            typingManager: Optional typing indicator manager
+            ensuredMessage (EnsuredMessage): The command message.
+            command (str): Command name that triggered this handler.
+            args (str): Command arguments: "[<chatId>] [<N>]" where N is max messages to learn.
+            UpdateObj (UpdateObjectType): Platform-specific update object.
+            typingManager (Optional[TypingManager]): Optional typing indicator manager.
+
+        Command Format:
+            /pretrain_bayes_spam [<chatId>] [<N>]
+
+        Arguments:
+            chatId (optional): Target chat ID. Defaults to current chat.
+            N (optional): Maximum number of spam messages to learn. Defaults to 1000.
 
         Returns:
-            None: Sends training statistics as bot response
+            Sends a message with training statistics including:
+            - Number of spam messages learned
+            - Total vocabulary size
+            - Spam/ham ratios
+
+        Note:
+            - Requires admin permissions in target chat
+            - Only trains on spam messages from the database
+            - Can be run multiple times to improve accuracy
+            - Only available in private chats with the bot
         """
 
         argList = args.split()
@@ -1226,15 +1326,18 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /learn_spam and /learn_ham commands for manual filter training, dood!
+        Handle /learn_spam and /learn_ham commands for manual filter training.
 
         Allows admins to manually teach the Bayes filter by marking specific
         messages as spam or ham (not spam). Useful for correcting filter mistakes
         or training on edge cases.
 
         Args:
-            update (Update): Telegram update object containing the command.
-            context (ContextTypes.DEFAULT_TYPE): Bot context with optional chatId argument.
+            ensuredMessage (EnsuredMessage): The command message.
+            command (str): Command name that triggered this handler.
+            args (str): Command arguments containing optional chatId.
+            UpdateObj (UpdateObjectType): Platform-specific update object.
+            typingManager (Optional[TypingManager]): Optional typing indicator manager.
 
         Command Format:
             /learn_spam [<chatId>] (as reply or quote)
@@ -1297,10 +1400,10 @@ class SpamHandler(BaseBotHandler):
 
         if isLearnSpam:
             await self.bayesFilter.learnSpam(messageText=repliedText, chatId=targetChatId)
-            self.db.addSpamMessage(
+            await self.db.spam.addSpamMessage(
                 chatId=targetChatId,
                 userId=0,
-                messageId=0,
+                messageId=MessageId(0),
                 messageText=repliedText,
                 spamReason=SpamReason.ADMIN,
                 score=100,
@@ -1313,10 +1416,10 @@ class SpamHandler(BaseBotHandler):
             )
         else:
             await self.bayesFilter.learnHam(messageText=repliedText, chatId=targetChatId)
-            self.db.addHamMessage(
+            await self.db.spam.addHamMessage(
                 chatId=targetChatId,
                 userId=0,
-                messageId=0,
+                messageId=MessageId(0),
                 messageText=repliedText,
                 spamReason=SpamReason.ADMIN,
                 score=100,
@@ -1346,15 +1449,18 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /get_spam_score command to analyze messages for spam, dood!
+        Handle /get_spam_score command to analyze messages for spam.
 
         Analyzes a message using the Bayes filter and returns detailed spam
         classification results without taking any action. Useful for testing
         and debugging spam detection.
 
         Args:
-            update (Update): Telegram update object containing the command.
-            context (ContextTypes.DEFAULT_TYPE): Bot context with optional chatId argument.
+            ensuredMessage (EnsuredMessage): The command message.
+            command (str): Command name that triggered this handler.
+            args (str): Command arguments containing optional chatId.
+            UpdateObj (UpdateObjectType): Platform-specific update object.
+            typingManager (Optional[TypingManager]): Optional typing indicator manager.
 
         Command Format:
             /get_spam_score [<chatId>] (as reply or quote)
@@ -1433,7 +1539,7 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /unban command to unban users and correct false positives, dood!
+        Handle /unban command to unban users and correct false positives.
 
         Unbans a user from the chat and performs cleanup actions:
         1. Unbans user from Telegram chat
@@ -1443,8 +1549,11 @@ class SpamHandler(BaseBotHandler):
         5. Optionally retrains Bayes filter with corrected data
 
         Args:
-            update (Update): Telegram update object containing the command.
-            context (ContextTypes.DEFAULT_TYPE): Bot context with optional username argument.
+            ensuredMessage (EnsuredMessage): The command message.
+            command (str): Command name that triggered this handler.
+            args (str): Command arguments containing optional username.
+            UpdateObj (UpdateObjectType): Platform-specific update object.
+            typingManager (Optional[TypingManager]): Optional typing indicator manager.
 
         Command Format:
             /unban [@username] (or as reply to user's message)
@@ -1465,6 +1574,7 @@ class SpamHandler(BaseBotHandler):
             - Automatically retrains filter with corrected classifications
             - User will not be checked for spam in future (until metadata is cleared)
             - Useful for correcting false positives and improving filter accuracy
+            - Max platform does not support unban action
         """
         # message = ensuredMessage.getBaseMessage()
         # if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
@@ -1481,12 +1591,15 @@ class SpamHandler(BaseBotHandler):
             username = args.split(maxsplit=1)[0]
             if not username.startswith("@"):
                 username = "@" + username
-            user = self.db.getChatUserByUsername(ensuredMessage.recipient.id, username)
+            user = await self.db.chatUsers.getChatUserByUsername(ensuredMessage.recipient.id, username)
 
         if user is None and ensuredMessage.replyId is not None:
             repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
             if repliedMessage is not None:
-                user = self.db.getChatUser(chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id)
+                user = await self.db.chatUsers.getChatUser(
+                    chatId=ensuredMessage.recipient.id,
+                    userId=repliedMessage.sender.id,
+                )
 
         if user is None:
             await self.sendMessage(
@@ -1508,10 +1621,10 @@ class SpamHandler(BaseBotHandler):
             )
 
         # Get user messages, remembered as spam, delete them from spam base and add them to ham base
-        userMessages = self.db.getSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
-        self.db.deleteSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
+        userMessages = await self.db.spam.getSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
+        await self.db.spam.deleteSpamMessagesByUserId(chatId=user["chat_id"], userId=user["user_id"])
         for userMsg in userMessages:
-            self.db.addHamMessage(
+            await self.db.spam.addHamMessage(
                 chatId=userMsg["chat_id"],
                 userId=userMsg["user_id"],
                 messageId=userMsg["message_id"],
@@ -1522,7 +1635,7 @@ class SpamHandler(BaseBotHandler):
             )
 
         # Set user metadata[notSpammer] = True to skip spam-check for this user in this chat
-        self.setUserMetadata(
+        await self.setUserMetadata(
             chatId=user["chat_id"],
             userId=user["user_id"],
             metadata={
@@ -1559,22 +1672,33 @@ class SpamHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handles the mark_for_delete/unmark_for_delete command to flag users for automatic message
-        deletion, dood.
+        Handle mark_for_delete/unmark_for_delete command to flag users for automatic message deletion.
 
         When an admin replies to a user's message with this command, it toggles the dropMessages flag
         in that user's metadata. Messages from users marked for deletion will be automatically dropped.
-        The command message itself is deleted to reduce chat clutter, dood.
+        The command message itself is deleted to reduce chat clutter.
 
         Args:
-            ensuredMessage: The command message with sender and recipient information, dood.
-            command: The command name (e.g., 'mark_for_delete' or 'unmark_for_delete').
-            args: Additional command arguments (unused in this handler).
-            UpdateObj: The platform-specific update object containing the raw message data.
-            typingManager: Optional typing indicator manager (unused in this handler).
+            ensuredMessage (EnsuredMessage): The command message with sender and recipient information.
+            command (str): The command name ('mark_for_delete' or 'unmark_for_delete').
+            args (str): Additional command arguments (unused in this handler).
+            UpdateObj (UpdateObjectType): Platform-specific update object containing raw message data.
+            typingManager (Optional[TypingManager]): Optional typing indicator manager (unused).
 
-        Returns:
-            None
+        Command Format:
+            /mark_for_delete (as reply to user's message)
+            /unmark_for_delete (as reply to user's message)
+
+        Behavior:
+            - Must be used as reply to a message
+            - Requires admin permissions
+            - Toggles dropMessages flag in user metadata
+            - Command message is automatically deleted
+
+        Note:
+            - Messages from users with dropMessages=True are automatically deleted
+            - Useful for handling persistent spammers who bypass other filters
+            - Hidden command (not visible in help)
         """
 
         repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
@@ -1590,11 +1714,13 @@ class SpamHandler(BaseBotHandler):
         )
 
         if repliedMessage is not None:
-            user = self.db.getChatUser(chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id)
+            user = await self.db.chatUsers.getChatUser(
+                chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id
+            )
             if user is None:
                 logger.error(f"User {repliedMessage.sender} not found in chat {ensuredMessage.recipient}")
             else:
-                self.setUserMetadata(
+                await self.setUserMetadata(
                     chatId=user["chat_id"],
                     userId=user["user_id"],
                     metadata={"dropMessages": isMark},

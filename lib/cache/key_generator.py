@@ -1,8 +1,7 @@
-"""
-Built-in key generator implementations for lib.cache, dood!
+"""Built-in key generator implementations for lib.cache.
 
 This module provides three standard key generator implementations that cover
-the most common use cases for cache key generation, dood!
+the most common use cases for cache key generation.
 
 Available Generators:
     - StringKeyGenerator: Pass-through for string keys
@@ -19,12 +18,11 @@ from .types import K, KeyGenerator
 
 
 class StringKeyGenerator(KeyGenerator[str]):
-    """
-    Pass-through key generator for string keys, dood!
+    """Pass-through key generator for string keys.
 
     This generator simply returns the input string as-is, making it ideal
     for cases where you already have well-formatted string keys and don't
-    need any transformation, dood!
+    need any transformation.
 
     Type: KeyGenerator[str]
 
@@ -39,21 +37,20 @@ class StringKeyGenerator(KeyGenerator[str]):
 
     Note:
         This generator validates that the input is actually a string.
-        If you pass a non-string value, it will raise a TypeError, dood!
+        If you pass a non-string value, it will raise a TypeError.
     """
 
     def generateKey(self, obj: str) -> str:
-        """
-        Generate cache key from string input, dood!
+        """Generate cache key from string input.
 
         Args:
-            obj: String to use as cache key
+            obj: String to use as cache key.
 
         Returns:
-            str: The same string passed as input
+            str: The same string passed as input.
 
         Raises:
-            TypeError: If obj is not a string
+            TypeError: If obj is not a string.
 
         Example:
             >>> generator = StringKeyGenerator()
@@ -61,18 +58,17 @@ class StringKeyGenerator(KeyGenerator[str]):
             >>> print(key)  # "test:key"
         """
         if not isinstance(obj, str):
-            raise TypeError(f"StringKeyGenerator expects string input, got {type(obj).__name__}, dood!")
+            raise TypeError(f"StringKeyGenerator expects string input, got {type(obj).__name__}")
 
         return obj
 
 
 class HashKeyGenerator(KeyGenerator[Any]):
-    """
-    SHA512 hash key generator for complex objects, dood!
+    """SHA512 hash key generator for complex objects.
 
     This generator converts any object to a string using repr() and then
     creates a SHA512 hash. It's perfect for complex objects, dictionaries,
-    or any data structure that can be represented as a string, dood!
+    or any data structure that can be represented as a string.
 
     Type: KeyGenerator[Any]
 
@@ -93,18 +89,17 @@ class HashKeyGenerator(KeyGenerator[Any]):
     Note:
         The hash is deterministic - the same object will always produce
         the same hash. However, objects with the same logical content but
-        different internal representations might produce different hashes, dood!
+        different internal representations might produce different hashes.
     """
 
     def generateKey(self, obj: Any) -> str:
-        """
-        Generate SHA512 hash from any object, dood!
+        """Generate SHA512 hash from any object.
 
         Args:
-            obj: Any object to convert to cache key
+            obj: Any object to convert to cache key.
 
         Returns:
-            str: 128-character SHA512 hexadecimal hash
+            str: 128-character SHA512 hexadecimal hash.
 
         Example:
             >>> generator = HashKeyGenerator()
@@ -124,12 +119,11 @@ class HashKeyGenerator(KeyGenerator[Any]):
 
 
 class JsonKeyGenerator(KeyGenerator[K]):
-    """
-    JSON serialization (+ optional SHA512 hash) key generator, dood!
+    """JSON serialization (+ optional SHA512 hash) key generator.
 
-    This generator serializes objects to JSON with optionaly sorted keys and then
+    This generator serializes objects to JSON with optionally sorted keys and then
     creates a SHA512 hash if enabled. It's ideal for structured data like dictionaries
-    and lists where you want consistent hashing regardless of key ordering, dood!
+    and lists where you want consistent hashing regardless of key ordering.
 
     Type: KeyGenerator[Any]
 
@@ -149,22 +143,21 @@ class JsonKeyGenerator(KeyGenerator[K]):
         Objects that cannot be JSON serialized will be converted to strings
         using the default=str parameter. This ensures the generator never
         fails, but may result in different hashes for logically equivalent
-        objects that can't be properly serialized, dood!
+        objects that can't be properly serialized.
     """
 
     __slots__ = ("sort_keys", "hash")
 
     def __init__(self, *, sort_keys: bool = True, hash: bool = True):
-        """
-        Initialize JsonKeyGenerator with configuration options, dood!
+        """Initialize JsonKeyGenerator with configuration options.
 
         Args:
             sort_keys: Whether to sort JSON keys for consistent serialization.
                       Defaults to True for deterministic hashing regardless of
-                      dictionary key order, dood!
+                      dictionary key order.
             hash: Whether to create SHA512 hash of the JSON string.
-                 If False, returns the JSON string directly. Defaults to True
-                 for consistent key length and security, dood!
+                  If False, returns the JSON string directly. Defaults to True
+                  for consistent key length and security.
 
         Example:
             >>> # Default behavior - sorted keys + hash
@@ -187,17 +180,14 @@ class JsonKeyGenerator(KeyGenerator[K]):
         self.hash = hash
 
     def generateKey(self, obj: K | Any) -> str:
-        """
-        Generate SHA512 hash from JSON-serialized object, dood!
+        """Generate SHA512 hash from JSON-serialized object.
 
         Args:
-            obj: K or Any object to convert to cache key
+            obj: K or Any object to convert to cache key.
 
         Returns:
-            str: 128-character SHA512 hexadecimal hash
-
-        Raises:
-            Never raises - all objects are handled gracefully
+            str: 128-character SHA512 hexadecimal hash if hash=True,
+                 otherwise the JSON string representation.
 
         Example:
             >>> generator = JsonKeyGenerator()

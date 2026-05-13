@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the design and implementation of a decorator-based system for automatically registering Telegram bot command handlers using instance-level handler collection, dood!
+This document describes the design and implementation of a decorator-based system for automatically registering Telegram bot command handlers using instance-level handler collection
 
 ## Changes from v0
 
@@ -82,7 +82,7 @@ def commandHandler(
     categories: Optional[Set[CommandCategory]] = None,
 ) -> Callable:
     """
-    Decorator to mark a method as a command handler, dood!
+    Decorator to mark a method as a command handler
     
     This decorator attaches metadata to the method without registering it globally.
     The class instance will discover and collect decorated methods during initialization.
@@ -130,7 +130,7 @@ A base class that automatically discovers decorated methods:
 ```python
 class CommandHandlerMixin:
     """
-    Mixin class that provides automatic command handler discovery, dood!
+    Mixin class that provides automatic command handler discovery
     
     Any class that inherits from this mixin will automatically discover
     all methods decorated with @commandHandler during initialization.
@@ -143,7 +143,7 @@ class CommandHandlerMixin:
     
     def _discoverCommandHandlers(self) -> None:
         """
-        Discover all decorated command handler methods in this instance, dood!
+        Discover all decorated command handler methods in this instance
         
         This method inspects all methods of the class and collects those
         that have been decorated with @commandHandler.
@@ -169,7 +169,7 @@ class CommandHandlerMixin:
     
     def getCommandHandlers(self) -> Sequence[CommandHandlerInfo]:
         """
-        Get all command handlers for this instance, dood!
+        Get all command handlers for this instance
         
         Returns:
             Sequence of CommandHandlerInfo objects
@@ -183,9 +183,9 @@ Update the [`BotHandlers`](internal/bot/handlers.py:88) class to use the mixin:
 
 ```python
 class BotHandlers(CommandHandlerMixin):
-    """Contains all bot command and message handlers, dood!"""
+    """Contains all bot command and message handlers"""
     
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         # Initialize the mixin (discovers handlers)
         super().__init__()
         
@@ -205,7 +205,7 @@ With this design, you can easily have multiple handler classes:
 
 ```python
 class AdminHandlers(CommandHandlerMixin):
-    """Admin-specific command handlers, dood!"""
+    """Admin-specific command handlers"""
     
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper):
         super().__init__()
@@ -224,7 +224,7 @@ class AdminHandlers(CommandHandlerMixin):
         pass
 
 class UserHandlers(CommandHandlerMixin):
-    """User-specific command handlers, dood!"""
+    """User-specific command handlers"""
     
     def __init__(self, configManager: ConfigManager, database: DatabaseWrapper):
         super().__init__()
@@ -258,7 +258,7 @@ allHandlers.extend(userHandlers.getCommandHandlers())
 
 ```python
 class BotHandlers(CommandHandlerMixin):
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         super().__init__()
         self.configManager = configManager
         self.database = database
@@ -350,7 +350,7 @@ async def test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE)
 **Before:**
 ```python
 class BotHandlers:
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         self.configManager = configManager
         self.database = database
         self.llmManager = llmManager
@@ -374,7 +374,7 @@ class BotHandlers:
 **After:**
 ```python
 class BotHandlers(CommandHandlerMixin):
-    def __init__(self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager):
+    def __init__(self, configManager: ConfigManager, database: Database, llmManager: LLMManager):
         super().__init__()  # Discovers handlers
         self.configManager = configManager
         self.database = database
@@ -405,7 +405,7 @@ def commandHandler(
     categories: Optional[Set[CommandCategory]] = None,
     enabled: bool = True,  # New parameter
 ) -> Callable:
-    """Decorator with conditional registration, dood!"""
+    """Decorator with conditional registration"""
     
     if categories is None:
         categories = {CommandCategory.DEFAULT}
@@ -433,7 +433,7 @@ def commandHandler(
     helpMessage: str,
     categories: Optional[Set[CommandCategory]] = None,
 ) -> Callable:
-    """Decorator with validation, dood!"""
+    """Decorator with validation"""
     
     if categories is None:
         categories = {CommandCategory.DEFAULT}
@@ -469,7 +469,7 @@ def commandHandler(
 ```python
 def getHandlerMetadata(method: Callable) -> Optional[Dict[str, Any]]:
     """
-    Get metadata for a decorated handler method, dood!
+    Get metadata for a decorated handler method
     
     Args:
         method: The method to check
@@ -489,7 +489,7 @@ You can override `_discoverCommandHandlers()` for custom behavior:
 ```python
 class CustomBotHandlers(CommandHandlerMixin):
     def _discoverCommandHandlers(self) -> None:
-        """Custom handler discovery with filtering, dood!"""
+        """Custom handler discovery with filtering"""
         super()._discoverCommandHandlers()
         
         # Filter handlers based on configuration
@@ -526,7 +526,7 @@ class CustomBotHandlers(CommandHandlerMixin):
 
 ```python
 def test_command_handler_decorator():
-    """Test that decorator attaches metadata correctly, dood!"""
+    """Test that decorator attaches metadata correctly"""
     
     @commandHandler(
         commands=("test",),
@@ -544,7 +544,7 @@ def test_command_handler_decorator():
     assert metadata['shortDescription'] == "Test command"
 
 def test_handler_discovery():
-    """Test that CommandHandlerMixin discovers handlers correctly, dood!"""
+    """Test that CommandHandlerMixin discovers handlers correctly"""
     
     class TestHandlers(CommandHandlerMixin):
         def __init__(self):
@@ -581,7 +581,7 @@ def test_handler_discovery():
 
 ```python
 def test_bot_handlers_integration():
-    """Test that BotHandlers correctly discovers handlers, dood!"""
+    """Test that BotHandlers correctly discovers handlers"""
     bot_handlers = BotHandlers(config_manager, database, llm_manager)
     handlers = bot_handlers.getCommandHandlers()
     
@@ -592,7 +592,7 @@ def test_bot_handlers_integration():
     # ... etc
 
 def test_multiple_handler_classes():
-    """Test that multiple handler classes work independently, dood!"""
+    """Test that multiple handler classes work independently"""
     admin_handlers = AdminHandlers(config_manager, database)
     user_handlers = UserHandlers(config_manager, database)
     
@@ -635,7 +635,7 @@ def test_multiple_handler_classes():
 
 ## Conclusion
 
-The instance-level decorator approach provides a cleaner, more maintainable, and more scalable way to register command handlers. It eliminates global state, supports multiple handler classes, and makes the codebase easier to understand and extend, dood!
+The instance-level decorator approach provides a cleaner, more maintainable, and more scalable way to register command handlers. It eliminates global state, supports multiple handler classes, and makes the codebase easier to understand and extend
 
 This design naturally supports the future goal of splitting handlers across multiple classes while maintaining clean separation of concerns and independent testability.
 

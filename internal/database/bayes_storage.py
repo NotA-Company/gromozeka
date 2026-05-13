@@ -1,48 +1,67 @@
 """
-Database implementation of Bayes storage interface, dood!
+Database implementation of Bayes storage interface.
 
 This module provides a concrete implementation of the BayesStorageInterface
-using the existing DatabaseWrapper from the Gromozeka project.
+using the existing Database from the Gromozeka project.
 """
 
 import logging
 from typing import Any, Dict, Iterable, List, Optional
 
-from internal.database.wrapper import DatabaseWrapper
 from lib.bayes_filter.models import BayesModelStats, ClassStats, TokenStats
 from lib.bayes_filter.storage_interface import BayesStorageInterface
+
+from . import utils as dbUtils
+from .database import Database
+from .providers import ParametrizedQuery
+from .providers.base import ExcludedValue
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseBayesStorage(BayesStorageInterface):
     """
-    Database implementation of Bayes storage interface
+    Database implementation of Bayes storage interface.
 
-    Uses the existing DatabaseWrapper to store and retrieve Bayes filter
+    Uses the existing Database to store and retrieve Bayes filter
     statistics in SQLite database tables.
+
+    Attributes:
+        db: Database instance for executing queries
+        dataSource: Optional data source identifier for multi-database support
     """
 
     __slots__ = ("db", "dataSource")
 
     def __init__(
         self,
-        db: DatabaseWrapper,
+        db: Database,
         *,
         dataSource: Optional[str] = None,
     ):
         """
-        Initialize database storage
+        Initialize database storage.
 
         Args:
-            db: DatabaseWrapper instance
+            db: Database instance for executing queries
+            dataSource: Optional data source identifier for multi-database support
         """
         self.db = db
         self.dataSource = dataSource
         logger.info("Initialized DatabaseBayesStorage, dood!")
 
     async def getTokenStats(self, tokens: Iterable[str], chatId: Optional[int] = None) -> Dict[str, TokenStats]:
-        """Get statistics for a specific tokens"""
+        """
+        Get statistics for specific tokens.
+
+        Args:
+            tokens: Iterable of token strings to retrieve statistics for
+            chatId: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            Dictionary mapping token strings to TokenStats objects containing
+            spamCount, hamCount, and totalCount for each token
+        """
         params: Dict[str, Any] = {"chatId": chatId}
         placeholders = []
         for i, token in enumerate(tokens):
@@ -52,48 +71,56 @@ class DatabaseBayesStorage(BayesStorageInterface):
 
         tokenPlaceholdersStr = ", ".join(placeholders)
         try:
-            with self.db.getCursor(dataSource=self.dataSource, readonly=True) as cursor:
-                cursor.execute(
-                    f"""
-                    SELECT token, spam_count, ham_count, total_count
-                    FROM bayes_tokens
-                    WHERE
-                        token IN ({tokenPlaceholdersStr})
-                        AND ((:chatId IS NULL AND chat_id IS NULL) OR chat_id = :chatId)
-                    """,
-                    params,
+            sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=True)
+            rows = await sqlProvider.executeFetchAll(
+                f"""
+                SELECT token, spam_count, ham_count, total_count
+                FROM bayes_tokens
+                WHERE
+                    token IN ({tokenPlaceholdersStr})
+                    AND ((:chatId IS NULL AND chat_id IS NULL) OR chat_id = :chatId)
+                """,
+                params,
+            )
+            ret: Dict[str, TokenStats] = {}
+            for row in rows:
+                rDict = dict(row)
+                ret[rDict["token"]] = TokenStats(
+                    token=row["token"],
+                    spamCount=row["spam_count"],
+                    hamCount=row["ham_count"],
+                    totalCount=row["total_count"],
                 )
-                ret: Dict[str, TokenStats] = {}
-                for row in cursor.fetchall():
-                    rDict = dict(row)
-                    ret[rDict["token"]] = TokenStats(
-                        token=row["token"],
-                        spamCount=row["spam_count"],
-                        hamCount=row["ham_count"],
-                        totalCount=row["total_count"],
-                    )
-                return ret
+            return ret
         except Exception as e:
             logger.error(f"Failed to get token stats for '{tokens}': {e}, dood!")
             return {}
 
     async def getClassStats(self, is_spam: bool, chat_id: Optional[int] = None) -> ClassStats:
-        """Get statistics for spam or ham class"""
+        """
+        Get statistics for spam or ham class.
+
+        Args:
+            is_spam: True for spam class statistics, False for ham class
+            chat_id: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            ClassStats object containing messageCount and tokenCount
+        """
         try:
-            with self.db.getCursor(dataSource=self.dataSource, readonly=True) as cursor:
-                cursor.execute(
-                    """
-                    SELECT message_count, token_count
-                    FROM bayes_classes
-                    WHERE is_spam = :is_spam
-                        AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
-                    """,
-                    {"is_spam": is_spam, "chat_id": chat_id},
-                )
-                row = cursor.fetchone()
-                if row:
-                    return ClassStats(message_count=row["message_count"], token_count=row["token_count"])
-                return ClassStats(message_count=0, token_count=0)
+            sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=True)
+            row = await sqlProvider.executeFetchOne(
+                """
+                SELECT message_count, token_count
+                FROM bayes_classes
+                WHERE is_spam = :is_spam
+                    AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
+                """,
+                {"is_spam": is_spam, "chat_id": chat_id},
+            )
+            if row:
+                return ClassStats(message_count=row["message_count"], token_count=row["token_count"])
+            return ClassStats(message_count=0, token_count=0)
         except Exception as e:
             logger.error(f"Failed to get class stats for is_spam={is_spam}: {e}, dood!")
             return ClassStats(message_count=0, token_count=0)
@@ -105,38 +132,41 @@ class DatabaseBayesStorage(BayesStorageInterface):
         increment: int = 1,
         chat_id: Optional[int] = None,
     ) -> bool:
-        """Update token statistics after learning"""
+        """
+        Update token statistics after learning.
+
+        Args:
+            token: Token string to update
+            is_spam: True if token appeared in spam message, False for ham
+            increment: Amount to increment counters by (default: 1)
+            chat_id: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
         try:
-            with self.db.getCursor(dataSource=self.dataSource, readonly=False) as cursor:
-                # Use INSERT OR REPLACE for SQLite compatibility
-                cursor.execute(
-                    """
-                    INSERT INTO bayes_tokens
-                        (token, chat_id, spam_count, ham_count, total_count, created_at, updated_at)
-                    VALUES (
-                        :token,
-                        :chat_id,
-                        :spam_inc,
-                        :ham_inc,
-                        :increment,
-                        CURRENT_TIMESTAMP,
-                        CURRENT_TIMESTAMP
-                    )
-                    ON CONFLICT(token, chat_id) DO UPDATE SET
-                        spam_count = spam_count + :spam_inc,
-                        ham_count = ham_count + :ham_inc,
-                        total_count = total_count + :increment,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    {
-                        "token": token,
-                        "chat_id": chat_id,
-                        "spam_inc": increment if is_spam else 0,
-                        "ham_inc": increment if not is_spam else 0,
-                        "increment": increment,
-                    },
-                )
-                return True
+            sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+            await sqlProvider.upsert(
+                table="bayes_tokens",
+                values={
+                    "token": token,
+                    "chat_id": chat_id,
+                    "spam_count": increment if is_spam else 0,
+                    "ham_count": increment if not is_spam else 0,
+                    "total_count": increment,
+                    "created_at": currentTimestamp,
+                    "updated_at": currentTimestamp,
+                },
+                conflictColumns=["token", "chat_id"],
+                updateExpressions={
+                    "spam_count": "spam_count + :spam_count",
+                    "ham_count": "ham_count + :ham_count",
+                    "total_count": "total_count + :total_count",
+                    "updated_at": ExcludedValue(),
+                },
+            )
+            return True
         except Exception as e:
             logger.error(f"Failed to update token stats for '{token}': {e}, dood!")
             return False
@@ -144,99 +174,135 @@ class DatabaseBayesStorage(BayesStorageInterface):
     async def updateClassStats(
         self, isSpam: bool, messageIncrement: int = 1, tokenIncrement: int = 0, chatId: Optional[int] = None
     ) -> bool:
-        """Update class statistics after learning"""
+        """
+        Update class statistics after learning.
+
+        Args:
+            isSpam: True for spam class, False for ham class
+            messageIncrement: Amount to increment message count by (default: 1)
+            tokenIncrement: Amount to increment token count by (default: 0)
+            chatId: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
         try:
-            with self.db.getCursor(dataSource=self.dataSource, readonly=False) as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO bayes_classes
-                        (chat_id, is_spam, message_count, token_count, created_at, updated_at)
-                    VALUES (
-                        :chat_id,
-                        :is_spam,
-                        :msg_inc,
-                        :tok_inc,
-                        CURRENT_TIMESTAMP,
-                        CURRENT_TIMESTAMP
-                    )
-                    ON CONFLICT(chat_id, is_spam) DO UPDATE SET
-                        message_count = message_count + :msg_inc,
-                        token_count = token_count + :tok_inc,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    {"chat_id": chatId, "is_spam": isSpam, "msg_inc": messageIncrement, "tok_inc": tokenIncrement},
-                )
-                return True
+            sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+            await sqlProvider.upsert(
+                table="bayes_classes",
+                values={
+                    "chat_id": chatId,
+                    "is_spam": isSpam,
+                    "message_count": messageIncrement,
+                    "token_count": tokenIncrement,
+                    "created_at": currentTimestamp,
+                    "updated_at": currentTimestamp,
+                },
+                conflictColumns=["chat_id", "is_spam"],
+                updateExpressions={
+                    "message_count": "message_count + :message_count",
+                    "token_count": "token_count + :token_count",
+                    "updated_at": ExcludedValue(),
+                },
+            )
+            return True
         except Exception as e:
             logger.error(f"Failed to update class stats for is_spam={isSpam}: {e}, dood!")
             return False
 
     async def getAllTokens(self, chatId: Optional[int] = None) -> List[str]:
-        """Get all known tokens (for vocabulary)"""
+        """
+        Get all known tokens for vocabulary.
+
+        Args:
+            chatId: Optional chat ID for chat-specific tokens, None for global
+
+        Returns:
+            List of all token strings in the vocabulary, sorted alphabetically
+        """
         try:
-            with self.db.getCursor(chatId=chatId, dataSource=self.dataSource, readonly=True) as cursor:
-                cursor.execute(
-                    """
-                    SELECT token FROM bayes_tokens
-                    WHERE ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
-                    ORDER BY token
-                    """,
-                    {"chat_id": chatId},
-                )
-                return [row["token"] for row in cursor.fetchall()]
+            sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
+            rows = await sqlProvider.executeFetchAll(
+                """
+                SELECT token FROM bayes_tokens
+                WHERE ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
+                ORDER BY token
+                """,
+                {"chat_id": chatId},
+            )
+            return [row["token"] for row in rows]
         except Exception as e:
             logger.error(f"Failed to get all tokens: {e}, dood!")
             return []
 
     async def getVocabularySize(self, chatId: Optional[int] = None) -> int:
-        """Get the size of the vocabulary (number of unique tokens)"""
+        """
+        Get the size of the vocabulary (number of unique tokens).
+
+        Args:
+            chatId: Optional chat ID for chat-specific vocabulary, None for global
+
+        Returns:
+            Number of unique tokens in the vocabulary
+        """
         try:
-            with self.db.getCursor(chatId=chatId, dataSource=self.dataSource, readonly=True) as cursor:
-                cursor.execute(
-                    """
-                    SELECT COUNT(*) as vocab_size FROM bayes_tokens
-                    WHERE ((:chatId IS NULL AND chat_id IS NULL) OR chat_id = :chatId)
-                    """,
-                    {"chatId": chatId},
-                )
-                row = cursor.fetchone()
-                return row["vocab_size"] if row else 0
+            sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
+            row = await sqlProvider.executeFetchOne(
+                """
+                SELECT COUNT(*) as vocab_size FROM bayes_tokens
+                WHERE ((:chatId IS NULL AND chat_id IS NULL) OR chat_id = :chatId)
+                """,
+                {"chatId": chatId},
+            )
+            return row["vocab_size"] if row else 0
         except Exception as e:
             logger.error(f"Failed to get vocabulary size: {e}, dood!")
             return 0
 
     async def getModelStats(self, chatId: Optional[int] = None) -> BayesModelStats:
-        """Get overall model statistics"""
+        """
+        Get overall model statistics.
+
+        Args:
+            chatId: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            BayesModelStats object containing totalSpamMessages, totalHamMessages,
+            totalTokens, vocabularySize, and chatId
+        """
         try:
-            with self.db.getCursor(chatId=chatId, dataSource=self.dataSource, readonly=True) as cursor:
-                # Get class statistics
-                cursor.execute(
-                    """
-                    SELECT
-                        SUM(CASE WHEN is_spam = 1 THEN message_count ELSE 0 END) as spam_messages,
-                        SUM(CASE WHEN is_spam = 0 THEN message_count ELSE 0 END) as ham_messages,
-                        SUM(token_count) as total_tokens
-                    FROM bayes_classes
-                    WHERE ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
-                    """,
-                    {"chat_id": chatId},
-                )
-                row = cursor.fetchone()
+            sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
+            # Get class statistics
+            row = await sqlProvider.executeFetchOne(
+                """
+                SELECT
+                    SUM(CASE WHEN is_spam = 1 THEN message_count ELSE 0 END) as spam_messages,
+                    SUM(CASE WHEN is_spam = 0 THEN message_count ELSE 0 END) as ham_messages,
+                    SUM(token_count) as total_tokens
+                FROM bayes_classes
+                WHERE ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
+                """,
+                {"chat_id": chatId},
+            )
 
-                spam_messages = row["spam_messages"] or 0
-                ham_messages = row["ham_messages"] or 0
-                total_tokens = row["total_tokens"] or 0
+            if row is None:
+                row = {}
 
-                # Get vocabulary size
-                vocab_size = await self.getVocabularySize(chatId)
+            spam_messages = row.get("spam_messages", 0)
+            ham_messages = row.get("ham_messages", 0)
+            total_tokens = row.get("total_tokens", 0)
 
-                return BayesModelStats(
-                    total_spam_messages=spam_messages,
-                    total_ham_messages=ham_messages,
-                    total_tokens=total_tokens,
-                    vocabulary_size=vocab_size,
-                    chat_id=chatId,
-                )
+            # Get vocabulary size
+            vocab_size = await self.getVocabularySize(chatId)
+
+            return BayesModelStats(
+                total_spam_messages=spam_messages,
+                total_ham_messages=ham_messages,
+                total_tokens=total_tokens,
+                vocabulary_size=vocab_size,
+                chat_id=chatId,
+            )
         except Exception as e:
             logger.error(f"Failed to get model stats: {e}, dood!")
             return BayesModelStats(
@@ -244,150 +310,196 @@ class DatabaseBayesStorage(BayesStorageInterface):
             )
 
     async def clearStats(self, chatId: Optional[int] = None) -> bool:
-        """Clear all statistics (reset learning)"""
+        """
+        Clear all statistics (reset learning).
+
+        Args:
+            chatId: Optional chat ID to clear statistics for, None for global
+
+        Returns:
+            True if clear succeeded, False otherwise
+        """
         try:
-            with self.db.getCursor(chatId=chatId, dataSource=self.dataSource, readonly=False) as cursor:
-                if chatId is None:
-                    # Clear all global stats (where chat_id IS NULL)
-                    cursor.execute("DELETE FROM bayes_tokens WHERE chat_id IS NULL")
-                    cursor.execute("DELETE FROM bayes_classes WHERE chat_id IS NULL")
-                    logger.info("Cleared global Bayes statistics, dood!")
-                else:
-                    # Clear specific chat
-                    cursor.execute("DELETE FROM bayes_tokens WHERE chat_id = ?", (chatId,))
-                    cursor.execute("DELETE FROM bayes_classes WHERE chat_id = ?", (chatId,))
-                    logger.info(f"Cleared Bayes statistics for chat {chatId}, dood!")
-                return True
+            sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=False)
+            if chatId is None:
+                # Clear all global stats (where chat_id IS NULL)
+                await sqlProvider.batchExecute(
+                    [
+                        ParametrizedQuery("DELETE FROM bayes_tokens WHERE chat_id IS NULL"),
+                        ParametrizedQuery("DELETE FROM bayes_classes WHERE chat_id IS NULL"),
+                    ]
+                )
+                logger.info("Cleared global Bayes statistics, dood!")
+            else:
+                # Clear specific chat
+                await sqlProvider.batchExecute(
+                    [
+                        ParametrizedQuery("DELETE FROM bayes_tokens WHERE chat_id = :chatId", {"chatId": chatId}),
+                        ParametrizedQuery("DELETE FROM bayes_classes WHERE chat_id = :chatId", {"chatId": chatId}),
+                    ]
+                )
+                logger.info(f"Cleared Bayes statistics for chat {chatId}, dood!")
+            return True
         except Exception as e:
             logger.error(f"Failed to clear stats: {e}, dood!")
             return False
 
     async def batchUpdateTokens(self, tokenUpdates: List[Dict[str, Any]], chatId: Optional[int] = None) -> bool:
-        """Update multiple tokens in a single batch operation for performance"""
+        """
+        Update multiple tokens in a single batch operation for performance.
+
+        Args:
+            tokenUpdates: List of dictionaries, each containing 'token', 'is_spam',
+                         and 'increment' keys
+            chatId: Optional chat ID for chat-specific statistics, None for global
+
+        Returns:
+            True if batch update succeeded, False otherwise
+        """
         if not tokenUpdates:
             return True
 
         try:
-            with self.db.getCursor(chatId=chatId, dataSource=self.dataSource, readonly=False) as cursor:
-                for update in tokenUpdates:
-                    token = update["token"]
-                    is_spam = update["is_spam"]
-                    increment = update["increment"]
+            sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=False)
+            # Generate timestamp once for all batch items
+            currentTimestamp = dbUtils.getCurrentTimestamp()
+            for update in tokenUpdates:
+                token = update["token"]
+                isSpam = update["is_spam"]
+                increment = update["increment"]
 
-                    # Use the same logic as update_token_stats but in batch
-                    cursor.execute(
-                        """
-                        INSERT INTO bayes_tokens
-                            (token, chat_id, spam_count, ham_count, total_count, created_at, updated_at)
-                        VALUES (
-                            :token,
-                            :chat_id,
-                            :spam_inc,
-                            :ham_inc,
-                            :increment,
-                            CURRENT_TIMESTAMP,
-                            CURRENT_TIMESTAMP
-                        )
-                        ON CONFLICT(token, chat_id) DO UPDATE SET
-                            spam_count = spam_count + :spam_inc,
-                            ham_count = ham_count + :ham_inc,
-                            total_count = total_count + :increment,
-                            updated_at = CURRENT_TIMESTAMP
-                        """,
-                        {
-                            "token": token,
-                            "chat_id": chatId,
-                            "spam_inc": increment if is_spam else 0,
-                            "ham_inc": increment if not is_spam else 0,
-                            "increment": increment,
-                        },
-                    )
+                # Use the same logic as update_token_stats but in batch
+                await sqlProvider.upsert(
+                    table="bayes_tokens",
+                    values={
+                        "token": token,
+                        "chat_id": chatId,
+                        "spam_count": increment if isSpam else 0,
+                        "ham_count": increment if not isSpam else 0,
+                        "total_count": increment,
+                        "created_at": currentTimestamp,
+                        "updated_at": currentTimestamp,
+                    },
+                    conflictColumns=["token", "chat_id"],
+                    updateExpressions={
+                        "spam_count": "spam_count + :spam_count",
+                        "ham_count": "ham_count + :ham_count",
+                        "total_count": "total_count + :total_count",
+                        "updated_at": ExcludedValue(),
+                    },
+                )
 
-                logger.debug(f"Batch updated {len(tokenUpdates)} tokens, dood!")
-                return True
+            logger.debug(f"Batch updated {len(tokenUpdates)} tokens, dood!")
+            return True
         except Exception as e:
             logger.error(f"Failed to batch update tokens: {e}, dood!")
             return False
 
     async def getTopSpamTokens(self, limit: int = 10, chatId: Optional[int] = None) -> List[TokenStats]:
-        """Get the top spam-indicating tokens"""
-        try:
-            with self.db.getCursor(chatId=chatId, dataSource=self.dataSource, readonly=True) as cursor:
-                cursor.execute(
-                    """
-                    SELECT token, spam_count, ham_count, total_count,
-                           CAST(spam_count AS REAL) / CAST(total_count AS REAL) as spam_ratio
-                    FROM bayes_tokens
-                    WHERE total_count >= 2
-                        AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
-                    ORDER BY spam_ratio DESC, spam_count DESC
-                    LIMIT :limit
-                    """,
-                    {"chat_id": chatId, "limit": limit},
-                )
+        """
+        Get the top spam-indicating tokens.
 
-                results = []
-                for row in cursor.fetchall():
-                    results.append(
-                        TokenStats(
-                            token=row["token"],
-                            spamCount=row["spam_count"],
-                            hamCount=row["ham_count"],
-                            totalCount=row["total_count"],
-                        )
+        Args:
+            limit: Maximum number of tokens to return (default: 10)
+            chatId: Optional chat ID for chat-specific tokens, None for global
+
+        Returns:
+            List of TokenStats objects for tokens with highest spam ratio,
+            ordered by spam ratio descending
+        """
+        try:
+            sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
+            rows = await sqlProvider.executeFetchAll(
+                """
+                SELECT token, spam_count, ham_count, total_count,
+                        CAST(spam_count AS REAL) / CAST(total_count AS REAL) as spam_ratio
+                FROM bayes_tokens
+                WHERE total_count >= 2
+                    AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
+                ORDER BY spam_ratio DESC, spam_count DESC
+                LIMIT :limit
+                """,
+                {"chat_id": chatId, "limit": limit},
+            )
+
+            results = []
+            for row in rows:
+                results.append(
+                    TokenStats(
+                        token=row["token"],
+                        spamCount=row["spam_count"],
+                        hamCount=row["ham_count"],
+                        totalCount=row["total_count"],
                     )
-                return results
+                )
+            return results
         except Exception as e:
             logger.error(f"Failed to get top spam tokens: {e}, dood!")
             return []
 
     async def getTopHamTokens(self, limit: int = 10, chatId: Optional[int] = None) -> List[TokenStats]:
-        """Get the top ham-indicating tokens"""
-        try:
-            with self.db.getCursor(chatId=chatId, dataSource=self.dataSource, readonly=True) as cursor:
-                cursor.execute(
-                    """
-                    SELECT token, spam_count, ham_count, total_count,
-                           CAST(ham_count AS REAL) / CAST(total_count AS REAL) as ham_ratio
-                    FROM bayes_tokens
-                    WHERE total_count >= 2
-                        AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
-                    ORDER BY ham_ratio DESC, ham_count DESC
-                    LIMIT :limit
-                    """,
-                    {"chat_id": chatId, "limit": limit},
-                )
+        """
+        Get the top ham-indicating tokens.
 
-                results = []
-                for row in cursor.fetchall():
-                    results.append(
-                        TokenStats(
-                            token=row["token"],
-                            spamCount=row["spam_count"],
-                            hamCount=row["ham_count"],
-                            totalCount=row["total_count"],
-                        )
+        Args:
+            limit: Maximum number of tokens to return (default: 10)
+            chatId: Optional chat ID for chat-specific tokens, None for global
+
+        Returns:
+            List of TokenStats objects for tokens with highest ham ratio,
+            ordered by ham ratio descending
+        """
+        try:
+            sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=True)
+            rows = await sqlProvider.executeFetchAll(
+                """
+                SELECT token, spam_count, ham_count, total_count,
+                        CAST(ham_count AS REAL) / CAST(total_count AS REAL) as ham_ratio
+                FROM bayes_tokens
+                WHERE total_count >= 2
+                    AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
+                ORDER BY ham_ratio DESC, ham_count DESC
+                LIMIT :limit
+                """,
+                {"chat_id": chatId, "limit": limit},
+            )
+
+            results = []
+            for row in rows:
+                results.append(
+                    TokenStats(
+                        token=row["token"],
+                        spamCount=row["spam_count"],
+                        hamCount=row["ham_count"],
+                        totalCount=row["total_count"],
                     )
-                return results
+                )
+            return results
         except Exception as e:
             logger.error(f"Failed to get top ham tokens: {e}, dood!")
             return []
 
-    async def cleanupRareTokens(self, minCount: int = 2, chatId: Optional[int] = None) -> int:
-        """Remove tokens that appear less than min_count times"""
+    async def cleanupRareTokens(self, minCount: int = 2, chatId: Optional[int] = None) -> None:
+        """
+        Remove tokens that appear less than min_count times.
+
+        Args:
+            minCount: Minimum total count threshold (default: 2)
+            chatId: Optional chat ID for chat-specific cleanup, None for global
+
+        Returns:
+            None
+        """
         try:
-            with self.db.getCursor(chatId=chatId, dataSource=self.dataSource, readonly=False) as cursor:
-                cursor.execute(
-                    """
-                    DELETE FROM bayes_tokens
-                    WHERE total_count < :min_count
-                        AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
-                    """,
-                    {"min_count": minCount, "chat_id": chatId},
-                )
-                removed_count = cursor.rowcount
-                logger.info(f"Removed {removed_count} rare tokens (min_count={minCount}), dood!")
-                return removed_count
+            sqlProvider = await self.db.manager.getProvider(chatId=chatId, dataSource=self.dataSource, readonly=False)
+            await sqlProvider.execute(
+                """
+                DELETE FROM bayes_tokens
+                WHERE total_count < :min_count
+                    AND ((:chat_id IS NULL AND chat_id IS NULL) OR chat_id = :chat_id)
+                """,
+                {"min_count": minCount, "chat_id": chatId},
+            )
+            logger.info(f"Removed rare tokens (min_count={minCount}), dood!")
         except Exception as e:
             logger.error(f"Failed to cleanup rare tokens: {e}, dood!")
-            return 0

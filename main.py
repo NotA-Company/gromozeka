@@ -11,15 +11,19 @@ import json
 import logging
 import os
 import sys
+from typing import Optional
 
 from internal.bot.max.application import MaxBotApplication
 from internal.bot.models.enums import BotProvider
 from internal.bot.telegram.application import TelegramBotApplication
 from internal.config.manager import ConfigManager
-from internal.database.manager import DatabaseManager
+from internal.database import Database
+from internal.database.stats_storage import DatabaseStatsStorage
+from internal.services.llm import LLMService
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
 from lib.rate_limiter import RateLimiterManager
+from lib.stats import StatsStorage
 
 # Configure basic logging first
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -40,10 +44,24 @@ class GromozekBot:
         initLogging(self.configManager.getLoggingConfig())
 
         # Initialize database
-        self.database_manager = DatabaseManager(self.configManager.getDatabaseConfig())
+        self.database = Database(self.configManager.getDatabaseConfig())  # pyright: ignore[reportArgumentType]
+
+        # Initialize stats storage for LLM usage tracking
+        llmStatsStorage: Optional[StatsStorage] = None
+        statsConfig = self.configManager.getStatsConfig()
+        if statsConfig.get("enabled", False):
+            llmStatsStorage = DatabaseStatsStorage(
+                db=self.database,
+                eventType="llm_request",
+                dataSource=statsConfig.get("llm-stats-data-source", self.database.manager.default),
+            )
 
         # Initialize LLM Manager
-        self.llmManager = LLMManager(self.configManager.getModelsConfig())
+        self.llmManager = LLMManager(
+            self.configManager.getModelsConfig(),
+            statsStorage=llmStatsStorage,
+        )
+        LLMService.getInstance().injectLLMManager(self.llmManager)
 
         # Initialize rate limiter manager
         self.rateLimiterManager = RateLimiterManager.getInstance()
@@ -58,22 +76,26 @@ class GromozekBot:
                 self.botApp = TelegramBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
-                    database=self.database_manager.getDatabase(),
-                    llmManager=self.llmManager,
+                    database=self.database,
                 )
             case BotProvider.MAX:
                 self.botApp = MaxBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
-                    database=self.database_manager.getDatabase(),
-                    llmManager=self.llmManager,
+                    database=self.database,
                 )
             case _:
                 raise ValueError(f"Unknown bot mode: {self.botMode}")
 
     def run(self):
         """Start the bot."""
-        self.botApp.run()
+        try:
+            self.botApp.run()
+        except Exception as e:
+            logger.exception(e)
+            raise
+        finally:
+            asyncio.run(self.database.manager.closeAll())
 
 
 def parse_arguments():

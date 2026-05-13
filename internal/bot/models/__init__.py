@@ -1,5 +1,19 @@
-"""
-Bot Models: Export all models
+"""Bot models module.
+
+This module exports all bot-related models, types, and enums used throughout
+the Gromozeka bot system. It serves as a central import point for bot
+components, providing access to:
+
+- Command handlers and their metadata
+- Chat settings and configuration types
+- Message handling models (EnsuredMessage, MessageSender, etc.)
+- Bot-specific enums (BotProvider, Button actions, etc.)
+- Media processing types
+- User metadata structures
+- Text formatting utilities
+
+All exported items are re-exported from their respective submodules to avoid
+circular dependencies and provide a clean import interface.
 """
 
 # Re-export MessageType from shared_enums to avoid circular dependency

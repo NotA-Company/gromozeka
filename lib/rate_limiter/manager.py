@@ -1,3 +1,28 @@
+"""Rate limiter manager for managing multiple rate limiter instances.
+
+This module provides a singleton manager class that allows managing multiple
+rate limiter backends and mapping queues to specific rate limiters. It follows
+the singleton pattern used in other services (CacheService, QueueService) to
+provide a global access point to rate limiting functionality.
+
+Key Features:
+    - Singleton pattern for global access
+    - Multiple rate limiter backends support
+    - Queue-to-limiter mapping
+    - Default limiter for unmapped queues
+    - Dynamic registration and configuration
+    - Thread-safe operations
+
+Main Components:
+    - RateLimiterManager: Singleton manager class for rate limiter instances
+
+Example:
+    >>> from lib.rate_limiter import RateLimiterManager
+    >>> manager = RateLimiterManager.getInstance()
+    >>> await manager.loadConfig(config)
+    >>> await manager.applyLimit("yandex_search")
+"""
+
 import logging
 from threading import RLock
 from typing import Any, Dict, List, Optional
@@ -78,13 +103,18 @@ class RateLimiterManager:
             return cls._instance
 
     def __init__(self):
-        """
-        Initialize the manager instance.
+        """Initialize the manager instance.
 
         Only runs once due to singleton pattern. Sets up:
         - Rate limiter registry (name -> instance)
         - Queue mappings (queue -> limiter name)
         - Default limiter name
+
+        Attributes:
+            _rateLimiters: Dictionary mapping rate limiter names to their instances.
+            _queueMappings: Dictionary mapping queue names to rate limiter names.
+            _defaultLimiter: Name of the default rate limiter for unmapped queues.
+            initialized: Flag indicating if the instance has been initialized.
         """
         if not hasattr(self, "initialized"):
             self._rateLimiters: Dict[str, RateLimiterInterface] = {}
@@ -104,11 +134,30 @@ class RateLimiterManager:
         return cls()
 
     async def loadConfig(self, config: RateLimiterManagerConfig) -> None:
-        """
-        Load configuration from a dictionary.
+        """Load configuration from a dictionary.
+
+        Creates and initializes rate limiters based on configuration, sets up
+        queue mappings, and configures the default rate limiter.
 
         Args:
-            config: Dictionary containing configuration data
+            config: Dictionary containing configuration data with the structure:
+                {
+                    "ratelimiters": {
+                        "limiter_name": {
+                            "type": "slidingwindow",
+                            "config": {
+                                "maxRequests": int,
+                                "windowSeconds": int
+                            }
+                        }
+                    },
+                    "queues": {
+                        "queue_name": "limiter_name"
+                    }
+                }
+
+        Raises:
+            ValueError: If an unknown rate limiter type is specified in config.
         """
 
         for limiterName, limiterConfig in config.get("ratelimiters", {}).items():
@@ -232,14 +281,15 @@ class RateLimiterManager:
         return self._rateLimiters[self._defaultLimiter]
 
     async def applyLimit(self, queue: str = "default", key: Optional[str] = None) -> None:
-        """
-        Apply rate limiting for the specified queue.
+        """Apply rate limiting for the specified queue.
 
         Routes the request to the appropriate rate limiter based on
         queue mappings. Uses default limiter if queue is not mapped.
 
         Args:
-            queue: Name of the queue to apply rate limiting to
+            queue: Name of the queue to apply rate limiting to. Defaults to "default".
+            key: Optional key for rate limiting. If None, uses the queue name as the key.
+                This allows multiple keys within the same queue to have separate limits.
 
         Raises:
             RuntimeError: If no rate limiters are registered
@@ -247,6 +297,7 @@ class RateLimiterManager:
         Example:
             >>> await manager.applyLimit("yandex_search")  # Uses mapped limiter
             >>> await manager.applyLimit()  # Uses default limiter
+            >>> await manager.applyLimit("api", "user_123")  # Custom key within queue
         """
         if key is None:
             key = queue
@@ -254,14 +305,18 @@ class RateLimiterManager:
         await limiter.applyLimit(key)
 
     def getStats(self, queue: str = "default", key: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Get rate limiting statistics for a queue.
+        """Get rate limiting statistics for a queue.
 
         Args:
-            queue: Name of the queue to get statistics for
+            queue: Name of the queue to get statistics for. Defaults to "default".
+            key: Optional key for statistics. If None, uses the queue name as the key.
 
         Returns:
-            Dictionary containing rate limit statistics
+            Dictionary containing rate limit statistics with keys:
+                - requestsInWindow: Number of requests in the current window
+                - maxRequests: Maximum allowed requests per window
+                - windowSeconds: Window size in seconds
+                - resetTime: Timestamp when the window resets
 
         Raises:
             RuntimeError: If no rate limiters are registered

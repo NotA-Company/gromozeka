@@ -60,12 +60,13 @@ def mockFallbackModel():
 
 
 @pytest.fixture
-def llmService():
+def llmService(mockLlmManager):
     """Create fresh LLM service instance, dood!"""
     # Reset singleton for testing
     LLMService._instance = None
     service = LLMService.getInstance()
     service.toolsHandlers.clear()
+    service.injectLLMManager(mockLlmManager)
     return service
 
 
@@ -124,7 +125,7 @@ class TestLlmServiceIntegration:
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
         """Test simple text generation without tools, dood!"""
-        mockModel.generateTextWithFallBack = AsyncMock(
+        mockModel.generateText = AsyncMock(
             return_value=ModelRunResult(
                 rawResult={"response": "Hello, world!"},
                 status=ModelResultStatus.FINAL,
@@ -139,16 +140,16 @@ class TestLlmServiceIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
         assert result.resultText == "Hello, world!"
         assert result.isToolsUsed is False
-        mockModel.generateTextWithFallBack.assert_called_once()
+        mockModel.generateText.assert_called_once()
 
     async def testToolCallExecution(self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
         """Test tool call execution workflow, dood!"""
@@ -192,7 +193,7 @@ class TestLlmServiceIntegration:
             toolCalls=[],
         )
 
-        mockModel.generateTextWithFallBack = AsyncMock(side_effect=[toolCallResult, finalResult])
+        mockModel.generateText = AsyncMock(side_effect=[toolCallResult, finalResult])
 
         messages = [ModelMessage(role="user", content="What's the weather in London?")]
 
@@ -200,16 +201,16 @@ class TestLlmServiceIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
         assert result.isToolsUsed is True
         assert "London" in result.resultText
-        assert mockModel.generateTextWithFallBack.call_count == 2
+        assert mockModel.generateText.call_count == 2
 
     async def testMultiTurnConversationWithTools(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
@@ -262,7 +263,7 @@ class TestLlmServiceIntegration:
             toolCalls=[],
         )
 
-        mockModel.generateTextWithFallBack = AsyncMock(side_effect=[toolCall1, toolCall2, finalResult])
+        mockModel.generateText = AsyncMock(side_effect=[toolCall1, toolCall2, finalResult])
 
         messages = [ModelMessage(role="user", content="Calculate 2+2 and then 4*5")]
 
@@ -270,15 +271,15 @@ class TestLlmServiceIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
         assert result.isToolsUsed is True
-        assert mockModel.generateTextWithFallBack.call_count == 3
+        assert mockModel.generateText.call_count == 3
 
     async def testCallbackInvocation(self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
         """Test callback invocation during tool calls, dood!"""
@@ -319,7 +320,7 @@ class TestLlmServiceIntegration:
             toolCalls=[],
         )
 
-        mockModel.generateTextWithFallBack = AsyncMock(side_effect=[toolCallResult, finalResult])
+        mockModel.generateText = AsyncMock(side_effect=[toolCallResult, finalResult])
 
         messages = [ModelMessage(role="user", content="Test")]
 
@@ -327,7 +328,6 @@ class TestLlmServiceIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
@@ -366,7 +366,7 @@ class TestLlmServiceIntegration:
             toolCalls=[LLMToolCall(id="call_1", name="error_tool", parameters={"arg": "test"})],
         )
 
-        mockModel.generateTextWithFallBack = AsyncMock(return_value=toolCallResult)
+        mockModel.generateText = AsyncMock(return_value=toolCallResult)
 
         messages = [ModelMessage(role="user", content="Test")]
 
@@ -375,10 +375,10 @@ class TestLlmServiceIntegration:
                 messages=messages,
                 chatId=None,
                 chatSettings=mockChatSettings,
-                llmManager=mockLlmManager,
                 modelKey=mockModel,
                 fallbackModelKey=mockFallbackModel,
                 useTools=True,
+                extraData={},
             )
 
 
@@ -529,7 +529,7 @@ class TestLlmHandlerIntegration:
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
         """Test LLM response generation workflow, dood!"""
-        mockModel.generateTextWithFallBack = AsyncMock(
+        mockModel.generateText = AsyncMock(
             return_value=ModelRunResult(
                 rawResult={},
                 status=ModelResultStatus.FINAL,
@@ -547,10 +547,10 @@ class TestLlmHandlerIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -592,7 +592,7 @@ class TestLlmHandlerIntegration:
             toolCalls=[],
         )
 
-        mockModel.generateTextWithFallBack = AsyncMock(side_effect=[toolCallResult, finalResult])
+        mockModel.generateText = AsyncMock(side_effect=[toolCallResult, finalResult])
 
         messages = [
             ModelMessage(role="system", content="You are helpful"),
@@ -603,10 +603,10 @@ class TestLlmHandlerIntegration:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -637,7 +637,7 @@ class TestCompleteLlmWorkflows:
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
         """Test simple text generation workflow, dood!"""
-        mockModel.generateTextWithFallBack = AsyncMock(
+        mockModel.generateText = AsyncMock(
             return_value=ModelRunResult(
                 rawResult={},
                 status=ModelResultStatus.FINAL,
@@ -652,10 +652,10 @@ class TestCompleteLlmWorkflows:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=False,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -691,7 +691,7 @@ class TestCompleteLlmWorkflows:
             toolCalls=[],
         )
 
-        mockModel.generateTextWithFallBack = AsyncMock(side_effect=[toolCallResult, finalResult])
+        mockModel.generateText = AsyncMock(side_effect=[toolCallResult, finalResult])
 
         messages = [ModelMessage(role="user", content="What time is it?")]
 
@@ -699,10 +699,10 @@ class TestCompleteLlmWorkflows:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
@@ -774,7 +774,7 @@ class TestCompleteLlmWorkflows:
             toolCalls=[],
         )
 
-        mockModel.generateTextWithFallBack = AsyncMock(side_effect=[toolCall1, toolCall2, finalResult])
+        mockModel.generateText = AsyncMock(side_effect=[toolCall1, toolCall2, finalResult])
 
         messages = [ModelMessage(role="user", content="Add 5 and 3, then multiply result by 2")]
 
@@ -782,22 +782,22 @@ class TestCompleteLlmWorkflows:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
         assert result.isToolsUsed is True
-        assert mockModel.generateTextWithFallBack.call_count == 3
+        assert mockModel.generateText.call_count == 3
 
     async def testErrorRecoveryWorkflow(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
         """Test error recovery workflow, dood!"""
         # Primary model fails
-        mockModel.generateTextWithFallBack = AsyncMock(side_effect=Exception("Primary model error"))
+        mockModel.generateText = AsyncMock(side_effect=Exception("Primary model error"))
 
         # Fallback model succeeds
         mockFallbackModel.generateText = AsyncMock(
@@ -817,10 +817,10 @@ class TestCompleteLlmWorkflows:
                 messages=messages,
                 chatId=None,
                 chatSettings=mockChatSettings,
-                llmManager=mockLlmManager,
                 modelKey=mockModel,
                 fallbackModelKey=mockFallbackModel,
                 useTools=False,
+                extraData={},
             )
 
     async def testConcurrentToolCalls(self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
@@ -870,7 +870,7 @@ class TestCompleteLlmWorkflows:
             toolCalls=[],
         )
 
-        mockModel.generateTextWithFallBack = AsyncMock(side_effect=[toolCallResult, finalResult])
+        mockModel.generateText = AsyncMock(side_effect=[toolCallResult, finalResult])
 
         messages = [ModelMessage(role="user", content="Run both tools")]
 
@@ -878,12 +878,12 @@ class TestCompleteLlmWorkflows:
             messages=messages,
             chatId=None,
             chatSettings=mockChatSettings,
-            llmManager=mockLlmManager,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
             useTools=True,
+            extraData={},
         )
 
         assert result.status == ModelResultStatus.FINAL
         assert result.isToolsUsed is True
-        assert mockModel.generateTextWithFallBack.call_count == 2
+        assert mockModel.generateText.call_count == 2

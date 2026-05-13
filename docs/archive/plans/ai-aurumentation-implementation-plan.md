@@ -424,7 +424,7 @@ echo "Files created in: tests/golden_data/ai_providers/basic_openai/"
 Create `tests/golden_data/ai_providers/test_basic_openai_provider.py`:
 
 ```python
-"""Golden data tests for BasicOpenAIProvider, dood!"""
+"""Golden data tests for BasicOpenAIProvider"""
 
 import pytest
 
@@ -435,7 +435,7 @@ from tests.golden_data.ai_providers.provider import AIGoldenDataProvider
 
 @pytest.mark.asyncio
 async def test_basic_text_generation():
-    """Test basic text generation using golden data, dood!"""
+    """Test basic text generation using golden data"""
     provider_data = AIGoldenDataProvider("basic_openai")
     
     async with provider_data.patchClient("basic_text_generation"):
@@ -469,7 +469,7 @@ async def test_basic_text_generation():
 
 @pytest.mark.asyncio
 async def test_multi_turn_conversation():
-    """Test multi-turn conversation using golden data, dood!"""
+    """Test multi-turn conversation using golden data"""
     provider_data = AIGoldenDataProvider("basic_openai")
     
     async with provider_data.patchClient("multi_turn_conversation"):
@@ -502,7 +502,7 @@ async def test_multi_turn_conversation():
 
 @pytest.mark.asyncio
 async def test_error_invalid_model():
-    """Test error handling for invalid model, dood!"""
+    """Test error handling for invalid model"""
     provider_data = AIGoldenDataProvider("basic_openai")
     
     async with provider_data.patchClient("error_invalid_model"):
@@ -665,7 +665,7 @@ echo "Files created in: tests/golden_data/ai_providers/yc_openai/"
 Create `tests/golden_data/ai_providers/test_yc_openai_provider.py`:
 
 ```python
-"""Golden data tests for YcOpenaiProvider, dood!"""
+"""Golden data tests for YcOpenaiProvider"""
 
 import pytest
 
@@ -676,7 +676,7 @@ from tests.golden_data.ai_providers.provider import AIGoldenDataProvider
 
 @pytest.mark.asyncio
 async def test_basic_text_generation():
-    """Test basic text generation using golden data, dood!"""
+    """Test basic text generation using golden data"""
     provider_data = AIGoldenDataProvider("yc_openai")
     
     async with provider_data.patchClient("basic_text_generation"):
@@ -706,7 +706,7 @@ async def test_basic_text_generation():
 
 @pytest.mark.asyncio
 async def test_folder_id_validation():
-    """Test that folder_id is properly included, dood!"""
+    """Test that folder_id is properly included"""
     provider_data = AIGoldenDataProvider("yc_openai")
     
     async with provider_data.patchClient("folder_id_validation"):
@@ -735,7 +735,7 @@ async def test_folder_id_validation():
 
 @pytest.mark.asyncio
 async def test_yc_model_format():
-    """Test gpt:// URL format, dood!"""
+    """Test gpt:// URL format"""
     provider_data = AIGoldenDataProvider("yc_openai")
     
     async with provider_data.patchClient("yc_model_format"):
@@ -895,7 +895,7 @@ echo "Files created in: tests/golden_data/ai_providers/openrouter/"
 Create `tests/golden_data/ai_providers/test_openrouter_provider.py`:
 
 ```python
-"""Golden data tests for OpenrouterProvider, dood!"""
+"""Golden data tests for OpenrouterProvider"""
 
 import pytest
 
@@ -906,7 +906,7 @@ from tests.golden_data.ai_providers.provider import AIGoldenDataProvider
 
 @pytest.mark.asyncio
 async def test_basic_text_generation():
-    """Test basic text generation using golden data, dood!"""
+    """Test basic text generation using golden data"""
     provider_data = AIGoldenDataProvider("openrouter")
     
     async with provider_data.patchClient("basic_text_generation"):
@@ -936,7 +936,7 @@ support_text": True
 
 @pytest.mark.asyncio
 async def test_custom_headers():
-    """Test that custom headers are included, dood!"""
+    """Test that custom headers are included"""
     provider_data = AIGoldenDataProvider("openrouter")
     
     async with provider_data.patchClient("custom_headers"):
@@ -964,7 +964,7 @@ async def test_custom_headers():
 
 @pytest.mark.asyncio
 async def test_different_model_provider():
-    """Test different model through OpenRouter, dood!"""
+    """Test different model through OpenRouter"""
     provider_data = AIGoldenDataProvider("openrouter")
     
     async with provider_data.patchClient("different_model_provider"):
@@ -1274,7 +1274,7 @@ Create `tests/golden_data/ai_providers/scenarios/yc_sdk_scenarios.json`:
 Create `tests/golden_data/ai_providers/test_yc_sdk_provider.py`:
 
 ```python
-"""Golden data tests for YcSdkProvider using SDK-level mocking, dood!"""
+"""Golden data tests for YcSdkProvider using SDK-level mocking"""
 
 import json
 from pathlib import Path
@@ -1336,7 +1336,7 @@ def createMockSdkResult(goldenData: dict):
 
 @pytest.mark.asyncio
 async def test_sdk_text_generation():
-    """Test text generation using SDK-level mocking, dood!"""
+    """Test text generation using SDK-level mocking"""
     goldenData = loadGoldenData("sdk_text_generation")
     mockResult = createMockSdkResult(goldenData)
     
@@ -1374,7 +1374,7 @@ async def test_sdk_text_generation():
 
 @pytest.mark.asyncio
 async def test_sdk_text_generation_multi_turn():
-    """Test multi-turn conversation using SDK-level mocking, dood!"""
+    """Test multi-turn conversation using SDK-level mocking"""
     goldenData = loadGoldenData("sdk_text_generation_multi_turn")
     mockResult = createMockSdkResult(goldenData)
     
@@ -1413,7 +1413,7 @@ async def test_sdk_text_generation_multi_turn():
 
 @pytest.mark.asyncio
 async def test_sdk_image_generation():
-    """Test image generation using SDK-level mocking, dood!"""
+    """Test image generation using SDK-level mocking"""
     goldenData = loadGoldenData("sdk_image_generation")
     
     # Create mock for image generation
@@ -2554,4 +2554,4 @@ find tests/golden_data/ai_providers/ -name "*.json" -exec python3 -m json.tool {
 
 **End of Implementation Plan**
 
-*This document should be reviewed and updated as implementation progresses. Feedback and improvements are welcome, dood!*
+*This document should be reviewed and updated as implementation progresses. Feedback and improvements are welcome*

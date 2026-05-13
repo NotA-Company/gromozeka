@@ -290,6 +290,10 @@ make test         # Run all tests (976+ tests)
 - `/configure` - Interactive chat configuration wizard
 - `/list_chats [all]` - List available chats
 
+### Divination (optional, off by default — set `[divination] enabled = true`)
+- `/taro <layout> <question>` (aliases: `/tarot`, `/таро`) - Tarot reading; layouts: `one_card`, `three_card`, `celtic_cross`, `relationship`, `yes_no`
+- `/runes <layout> <question>` (aliases: `/rune`, `/руны`) - Rune reading; layouts: `one_rune`, `three_runes`, `five_runes`, `nine_runes`
+
 ### User Data Management
 - `/get_my_data` - Display all stored user data
 - `/delete_my_data <key>` - Delete specific user data entry

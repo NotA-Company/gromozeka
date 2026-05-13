@@ -1,7 +1,7 @@
 
 # Database Schema Documentation
 
-This document provides comprehensive documentation for the Gromozeka bot's database schema, dood!
+This document provides comprehensive documentation for the Gromozeka bot's database schema
 
 ## Table of Contents
 
@@ -32,6 +32,9 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
   - [Dynamic Cache Tables](#dynamic-cache-tables)
 - [Task Management Tables](#task-management-tables)
   - [delayed_tasks](#delayed_tasks)
+- [Divination Tables](#divination-tables)
+  - [divinations](#divinations)
+  - [divination_layouts](#divination_layouts)
 - [System Tables](#system-tables)
   - [settings](#settings)
 - [Enums](#enums)
@@ -41,7 +44,7 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
 
 ## Overview
 
-The Gromozeka bot uses SQLite as its database backend with a custom wrapper layer ([`DatabaseWrapper`](../internal/database/wrapper.py:128)) that provides:
+The Gromozeka bot uses SQLite as its database backend with a custom database layer ([`Database`](../internal/database/database.py:1)) that provides:
 
 - **Multi-source database support**: Route different chats to different database files
 - **Thread-safe connection pooling**: Per-source thread-local connections
@@ -57,7 +60,7 @@ The database stores chat messages, user information, settings, media attachments
 
 ### Overview
 
-The database wrapper supports routing different chats to different SQLite database files. This enables:
+The database supports routing different chats to different SQLite database files. This enables:
 
 - **Data isolation**: Separate databases for different chat groups
 - **Performance optimization**: Distribute load across multiple files
@@ -70,27 +73,29 @@ Multi-source configuration is defined in the bot's config file:
 
 ```toml
 [database]
-default = "default"  # Default source name
+default = "default"  # Default provider name
 
-[database.sources.default]
-path = "data/bot.db"
-readonly = false
-pool-size = 5
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "data/bot.db"
+readOnly = false
 timeout = 30
+useWal = true
 
-[database.sources.archive]
-path = "data/archive.db"
-readonly = true
-pool-size = 3
+[database.providers.archive]
+provider = "sqlite3"
+
+[database.providers.archive.parameters]
+dbPath = "data/archive.db"
+readOnly = true
 timeout = 10
-
-[database.chatMapping]
--1001234567890 = "archive"  # Route specific chat to archive source
 ```
 
 ### Routing Logic
 
-The [`_getConnection()`](../internal/database/wrapper.py:223) method implements 3-tier routing:
+The database implements 3-tier routing through the repository pattern:
 
 1. **Tier 1 (Highest Priority)**: Explicit `dataSource` parameter
 2. **Tier 2 (Medium Priority)**: Chat ID mapping lookup
@@ -99,20 +104,20 @@ The [`_getConnection()`](../internal/database/wrapper.py:223) method implements 
 Example:
 ```python
 # Explicit source routing (Tier 1)
-db.getChatMessages(chatId=123, dataSource="archive")
+db.chatMessages.getChatMessages(chatId=123, dataSource="archive")
 
 # Chat mapping routing (Tier 2)
-db.getChatMessages(chatId=-1001234567890)  # Routes to "archive" via mapping
+db.chatMessages.getChatMessages(chatId=-1001234567890)  # Routes to "archive" via mapping
 
 # Default routing (Tier 3)
-db.getChatMessages(chatId=456)  # Routes to "default" source
+db.chatMessages.getChatMessages(chatId=456)  # Routes to "default" source
 ```
 
 ### Read-Only Sources
 
 Sources marked as `readonly = true` will:
 - Enable SQLite's `query_only` pragma
-- Reject write operations with [`ValueError`](../internal/database/wrapper.py:290)
+- Reject write operations with `ValueError`
 - Skip migration execution during initialization
 
 ---
@@ -142,9 +147,14 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 5 | [`migration_005_add_yandex_cache.py`](../internal/database/migrations/versions/migration_005_add_yandex_cache.py:1) | Adds Yandex Search cache table |
 | 6 | [`migration_006_new_cache_tables.py`](../internal/database/migrations/versions/migration_006_new_cache_tables.py:1) | Adds Geocode Maps cache tables |
 | 7 | [`migration_007_messages_metadata.py`](../internal/database/migrations/versions/migration_007_messages_metadata.py:1) | Adds `markup` and `metadata` columns to [`chat_messages`](#chat_messages) |
-| 8 | [`migration_008_add_media_group_support.py`](../internal/database/migrations/versions/migration_008_add_media_group_support.py:1) | Adds `media_group_id` column to [`chat_messages`](#chat_messages) and creates [`media_group`](#media_group) table |
+| 8 | [`migration_008_add_media_group_support.py`](../internal/database/migrations/versions/migration_008_add_media_group_support.py:1) | Adds `media_group_id` column to [`chat_messages`](#chat_messages) and creates [`media_groups`](#media_groups) table |
 | 9 | [`migration_009_remove_is_spammer_from_chat_users.py`](../internal/database/migrations/versions/migration_009_remove_is_spammer_from_chat_users.py:1) | Removes `is_spammer` column from [`chat_users`](#chat_users) |
 | 10 | [`migration_010_add_updated_by_to_chat_settings.py`](../internal/database/migrations/versions/migration_010_add_updated_by_to_chat_settings.py:1) | Adds `updated_by` column to [`chat_settings`](#chat_settings) |
+| 11 | [`migration_011_add_confidence_to_spam_messages.py`](../internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py:1) | Adds `confidence` column to [`spam_messages`](#spam_messages) and [`ham_messages`](#ham_messages) |
+| 12 | [`migration_012_unify_cache_tables.py`](../internal/database/migrations/versions/migration_012_unify_cache_tables.py:1) | Unifies all cache tables into single [`cache`](#cache) table |
+| 13 | [`migration_013_remove_timestamp_defaults.py`](../internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:1) | Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns |
+| 14 | [`migration_014_add_divinations_table.py`](../internal/database/migrations/versions/migration_014_add_divinations_table.py:1) | Creates [`divinations`](#divinations) table and `idx_divinations_user_created` index |
+| 15 | [`migration_015_add_divination_layouts_table.py`](../internal/database/migrations/versions/migration_015_add_divination_layouts_table.py:1) | Creates [`divination_layouts`](#divination_layouts) table and `idx_divination_layouts_system` index |
 
 ### Creating New Migrations
 
@@ -158,21 +168,22 @@ To create a new migration:
 Example:
 ```python
 from typing import Type
-import sqlite3
+
+from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 class Migration008AddNewColumn(BaseMigration):
     version = 8
     description = "Add new_column to some_table"
-    
-    def up(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute("""
+
+    async def up(self, sqlProvider: BaseSQLProvider) -> None:
+        await sqlProvider.execute("""
             ALTER TABLE some_table
             ADD COLUMN new_column TEXT
         """)
-    
-    def down(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute("""
+
+    async def down(self, sqlProvider: BaseSQLProvider) -> None:
+        await sqlProvider.execute("""
             ALTER TABLE some_table
             DROP COLUMN new_column
         """)
@@ -208,12 +219,12 @@ Stores all chat messages with detailed metadata.
 | `media_group_id` | TEXT | Yes | NULL | Media group identifier for grouped media messages |
 | `markup` | TEXT | No | "" | JSON-serialized keyboard markup |
 | `metadata` | TEXT | No | "" | JSON-serialized additional metadata |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 
 **Relationships**:
 - References [`chat_users`](#chat_users) via `(chat_id, user_id)`
 - References [`media_attachments`](#media_attachments) via `media_id`
-- References [`media_group`](#media_group) via `media_group_id`
+- References [`media_groups`](#media_groups) via `media_group_id`
 - Self-references via `reply_id` and `root_message_id`
 
 **TypedDict**: [`ChatMessageDict`](../internal/database/models.py:67)
@@ -221,7 +232,7 @@ Stores all chat messages with detailed metadata.
 **Example Query**:
 ```python
 # Get recent messages from a chat
-messages = db.getChatMessagesSince(
+messages = db.chatMessages.getChatMessagesSince(
     chatId=-1001234567890,
     sinceDateTime=datetime.now() - timedelta(hours=24),
     limit=100
@@ -245,8 +256,8 @@ Stores per-chat user information and statistics.
 | `timezone` | TEXT | Yes | NULL | User's timezone (future use) |
 | `messages_count` | INTEGER | No | 0 | Total messages sent by user in this chat |
 | `metadata` | TEXT | No | "" | JSON-serialized additional metadata |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | First seen timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last activity timestamp |
+| `created_at` | TIMESTAMP | No | - | First seen timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last activity timestamp (must be provided explicitly) |
 
 **Relationships**:
 - Referenced by [`chat_messages`](#chat_messages) via `(chat_id, user_id)`
@@ -257,7 +268,7 @@ Stores per-chat user information and statistics.
 **Example Query**:
 ```python
 # Get user info
-user = db.getChatUser(chatId=-1001234567890, userId=123456789)
+user = db.chatUsers.getChatUser(chatId=-1001234567890, userId=123456789)
 if user:
     print(f"{user['full_name']} (@{user['username']})")
     print(f"Messages: {user['messages_count']}")
@@ -278,17 +289,17 @@ Stores chat metadata and configuration.
 | `username` | TEXT | Yes | NULL | Chat @username (for public chats) |
 | `type` | TEXT | No | - | Chat type (private/group/supergroup/channel) |
 | `is_forum` | BOOLEAN | No | FALSE | Whether chat has forum topics enabled |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`ChatInfoDict`](../internal/database/models.py:118)
 
 **Example Query**:
 ```python
 # Get chat info
-chat = db.getChatInfo(chatId=-1001234567890)
+chat = db.chatInfo.getChatInfo(chatId=-1001234567890)
 if chat and chat['is_forum']:
-    topics = db.getChatTopics(chatId=chat['chat_id'])
+    topics = db.chatTopics.getChatTopics(chatId=chat['chat_id'])
 ```
 
 ---
@@ -306,8 +317,8 @@ Stores forum topic information for chats with topics enabled.
 | `icon_color` | INTEGER | Yes | NULL | Topic icon color |
 | `icon_custom_emoji_id` | TEXT | Yes | NULL | Custom emoji ID for topic icon |
 | `name` | TEXT | Yes | NULL | Topic name |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Relationships**:
 - References [`chat_info`](#chat_info) via `chat_id`
@@ -328,8 +339,8 @@ Stores per-chat configuration settings.
 | `key` | TEXT | No | - | Setting key (see [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41)) |
 | `value` | TEXT | Yes | NULL | Setting value (stored as string) |
 | `updated_by` | INTEGER | No | - | User ID who last updated the setting |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Available Settings**: See [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41) enum for all available settings including:
 - LLM model selection (`chat-model`, `summary-model`, etc.)
@@ -341,16 +352,82 @@ Stores per-chat configuration settings.
 **Example Query**:
 ```python
 # Get chat settings
-settings = db.getChatSettings(chatId=-1001234567890)
-chatModel = settings.get('chat-model', 'default-model')
+settings = db.chatSettings.getChatSettings(chatId=-1001234567890)
+# Returns Dict[str, tuple[str, int]] where tuple is (value, updated_by)
+chatModel = settings.get('chat-model', ('gpt-4', 0))[0]  # Index [0] for value
 
-# Set a setting
-db.setChatSetting(chatId=-1001234567890, key='parse-images', value='true')
+# Set a setting (updatedBy is REQUIRED)
+db.chatSettings.setChatSetting(
+    chatId=-1001234567890,
+    key='parse-images',
+    value='true',
+    updatedBy=userId  # Required keyword-only argument
+)
 ```
 
 ---
 
 ## Statistics Tables
+
+### stat_events
+
+Append-only event log for raw statistics events. Used by the statistics collection system to record events before aggregation.
+
+**Primary Key**: `event_id` (app-generated UUID)
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `event_id` | TEXT | No | - | App-generated UUID primary key |
+| `event_type` | TEXT | No | - | Type of statistics event (e.g., 'llm_request', 'message_received') |
+| `event_time` | TIMESTAMP | No | - | Timestamp when the event occurred |
+| `data` | TEXT | No | - | JSON-encoded event payload (metric key -> value) |
+| `labels` | TEXT | No | - | JSON-encoded dimension key-value pairs (e.g., consumer, model, provider) |
+| `processed` | INTEGER | No | 0 | Boolean flag (0=unprocessed, 1=processed) |
+| `processed_id` | TEXT | Yes | NULL | ID of the aggregate record that claimed this event |
+| `claimed_at` | TIMESTAMP | Yes | NULL | Timestamp when event was claimed for processing |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp |
+
+**Indexes:**
+- `idx_stat_events_unprocessed` on `(processed, processed_id, claimed_at)` — for fast lookup of unprocessed/orphaned events
+- `idx_stat_events_lookup` on `(event_type, event_time)` — for event lookup by type and time
+
+**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for `DatabaseStatsStorage` implementation.
+
+---
+
+### stat_aggregates
+
+Pre-computed period buckets for aggregated statistics metrics. Produced by aggregating raw events from `stat_events`.
+
+**Primary Key**: `(event_type, period_start, period_type, labels_hash, metric_key)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `event_type` | TEXT | No | - | Type of statistics event |
+| `period_start` | TEXT | No | - | Start of the aggregation period (ISO-8601 formatted string) |
+| `period_type` | TEXT | No | - | Period length ('hour', 'day', 'month', 'total') |
+| `labels_hash` | TEXT | No | - | MD5 hex digest from labels |
+| `labels` | TEXT | No | - | JSON-encoded dimension key-value pairs |
+| `metric_key` | TEXT | No | - | Name of the metric (e.g., 'request_count', 'input_tokens') |
+| `metric_value` | REAL | No | - | Numeric value of the metric (sum or count) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp |
+
+**Period types:**
+- `hour` — Hourly aggregation (period_start rounded to hour)
+- `day` — Daily aggregation (period_start rounded to day)
+- `month` — Monthly aggregation (period_start rounded to month)
+- `total` — All-time aggregation (period_start = epoch)
+
+**Labels include:**
+- `consumer` — Consumer identifier (chat ID or `"__global__"` for rollup)
+- `modelName` — LLM model name
+- `modelId` — LLM model ID
+- `provider` — LLM provider name
+- `generationType` — Type of generation ('text', 'structured', 'image')
+
+**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Automatically updated when `DatabaseStatsStorage.aggregate()` is called. See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for implementation details.
+
+---
 
 ### chat_stats
 
@@ -363,10 +440,10 @@ Aggregated daily statistics per chat.
 | `chat_id` | INTEGER | No | - | Telegram chat identifier |
 | `date` | TIMESTAMP | No | - | Date (time set to 00:00:00) |
 | `messages_count` | INTEGER | No | 0 | Total messages sent on this date |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**Note**: Automatically updated when messages are saved via [`saveChatMessage()`](../internal/database/wrapper.py:853).
+**Note**: Automatically updated when messages are saved via repository methods.
 
 ---
 
@@ -382,16 +459,16 @@ Aggregated daily statistics per user per chat.
 | `user_id` | INTEGER | No | - | Telegram user identifier |
 | `date` | TIMESTAMP | No | - | Date (time set to 00:00:00) |
 | `messages_count` | INTEGER | No | 0 | Messages sent by user on this date |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**Note**: Automatically updated when messages are saved via [`saveChatMessage()`](../internal/database/wrapper.py:853).
+**Note**: Automatically updated when messages are saved via repository methods.
 
 ---
 
 ## Media Tables
 
-### media_group
+### media_groups
 
 Stores media group relationships for messages with multiple media items sent together.
 
@@ -401,8 +478,8 @@ Stores media group relationships for messages with multiple media items sent tog
 |--------|------|----------|---------|-------------|
 | `media_group_id` | TEXT | No | - | Telegram media group identifier |
 | `media_id` | TEXT | No | - | Foreign key to [`media_attachments.file_unique_id`](#media_attachments) |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Relationships**:
 - References [`media_attachments`](#media_attachments) via `media_id`
@@ -430,8 +507,8 @@ Stores information about media attachments (images, documents, etc.).
 | `local_url` | TEXT | Yes | NULL | Local file path if downloaded |
 | `prompt` | TEXT | Yes | NULL | Prompt used for image generation |
 | `description` | TEXT | Yes | NULL | AI-generated description of media |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Relationships**:
 - Referenced by [`chat_messages`](#chat_messages) via `media_id`
@@ -454,17 +531,17 @@ Stores arbitrary key-value data about users collected during conversations.
 | `chat_id` | INTEGER | No | - | Telegram chat identifier |
 | `key` | TEXT | No | - | Data key |
 | `data` | TEXT | No | - | Data value |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Example**: Store user preferences, facts mentioned in conversation, etc.
 
 ```python
 # Store user data
-db.addUserData(userId=123, chatId=-1001234567890, key='favorite_color', data='blue')
+db.userData.addUserData(userId=123, chatId=-1001234567890, key='favorite_color', data='blue')
 
 # Retrieve user data
-userData = db.getUserData(userId=123, chatId=-1001234567890)
+userData = db.userData.getUserData(userId=123, chatId=-1001234567890)
 favoriteColor = userData.get('favorite_color')
 ```
 
@@ -486,8 +563,9 @@ Stores messages identified as spam for training and analysis.
 | `text` | TEXT | No | - | Message text content |
 | `reason` | TEXT | No | - | Reason for spam classification (see [`SpamReason`](#spamreason)) |
 | `score` | FLOAT | No | - | Spam confidence score (0-100) |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `confidence` | FLOAT | No | 1.0 | Detection confidence level (0-1) |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`SpamMessageDict`](../internal/database/models.py:165)
 
@@ -507,8 +585,9 @@ Stores legitimate (non-spam) messages for training spam filters.
 | `text` | TEXT | No | - | Message text content |
 | `reason` | TEXT | No | - | Reason for ham classification |
 | `score` | FLOAT | No | - | Confidence score |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `confidence` | FLOAT | No | 1.0 | Detection confidence level (0-1) |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 ---
 
@@ -525,8 +604,8 @@ Stores token statistics for Bayesian spam filtering.
 | `spam_count` | INTEGER | No | 0 | Occurrences in spam messages |
 | `ham_count` | INTEGER | No | 0 | Occurrences in ham messages |
 | `total_count` | INTEGER | No | 0 | Total occurrences |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Indexes**:
 - `bayes_tokens_chat_idx` on `chat_id`
@@ -546,8 +625,8 @@ Stores class statistics for Bayesian spam filtering.
 | `is_spam` | BOOLEAN | No | - | Whether this is spam class (TRUE) or ham class (FALSE) |
 | `message_count` | INTEGER | No | 0 | Number of messages in this class |
 | `token_count` | INTEGER | No | 0 | Total tokens in this class |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Indexes**:
 - `bayes_classes_chat_idx` on `chat_id`
@@ -571,15 +650,15 @@ Caches chat message summaries to avoid regenerating them.
 | `last_message_id` | TEXT | No | - | Last message ID in summarized range |
 | `prompt` | TEXT | No | - | Summarization prompt used |
 | `summary` | TEXT | No | - | Generated summary |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Indexes**:
 - `chat_summarization_cache_ctfl_index` on `(chat_id, topic_id, first_message_id, last_message_id, prompt)`
 
 **TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:176)
 
-**Cache Key Generation**: See [`_makeChatSummarizationCSID()`](../internal/database/wrapper.py:1996)
+**Cache Key Generation**: Implemented in the chatMessages repository
 
 ---
 
@@ -594,33 +673,39 @@ Generic key-value cache storage with namespace support.
 | `namespace` | TEXT | No | - | Cache namespace for organization |
 | `key` | TEXT | No | - | Cache key |
 | `value` | TEXT | No | - | Cached value (JSON-serialized) |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`CacheStorageDict`](../internal/database/models.py:199)
 
 ---
 
-### Dynamic Cache Tables
+### cache
 
-The system automatically creates cache tables for each [`CacheType`](#cachetype):
+Unified cache table for all cache types (replaces separate cache tables from migration_012).
 
-- `cache_weather` - Weather API responses
-- `cache_geocoding` - Geocoding API responses
-- `cache_yandex_search` - Yandex Search API responses
-- `cache_geocode_maps_search` - Geocode Maps search results
-- `cache_geocode_maps_reverse` - Geocode Maps reverse geocoding
-- `cache_geocode_maps_lookup` - Geocode Maps location lookups
-
-**Schema** (all cache tables):
+**Primary Key**: `(namespace, key)`
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| `key` | TEXT | No | - | Cache key (PRIMARY KEY) |
+| `namespace` | TEXT | No | - | Cache namespace (e.g., 'weather', 'geocoding', 'yandex_search') |
+| `key` | TEXT | No | - | Cache key |
 | `data` | TEXT | No | - | Cached data (JSON-serialized) |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
+
+**Indexes**:
+- `idx_cache_namespace_key` on `(namespace, key)`
+- `idx_cache_updated_at` on `updated_at` (for TTL cleanup)
 
 **TypedDict**: [`CacheDict`](../internal/database/models.py:190)
+
+**Available Namespaces**: See [`CacheType`](#cachetype) enum for all available cache namespaces including:
+- `WEATHER` - Weather API responses
+- `GEOCODING` - Geocoding API responses
+- `YANDEX_SEARCH` - Yandex Search API responses
+- `GM_SEARCH` - Geocode Maps search results
+- `GM_REVERSE` - Geocode Maps reverse geocoding
+- `GM_LOOKUP` - Geocode Maps location lookups
 
 ---
 
@@ -639,10 +724,105 @@ Stores tasks scheduled for delayed execution.
 | `function` | TEXT | No | - | Function name to execute |
 | `kwargs` | TEXT | No | - | JSON-serialized function arguments |
 | `is_done` | BOOLEAN | No | FALSE | Whether task has been executed |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:155)
+
+---
+
+## Divination Tables
+
+### divinations
+
+Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/bot/common/handlers/divination.py`](../internal/bot/common/handlers/divination.py:1)). One row per reading, keyed off the originating `/taro` / `/runes` user-command message — same composite-PK pattern as [`chat_messages`](#chat_messages)
+
+**Primary Key**: `(chat_id, message_id)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `chat_id` | INTEGER | No | - | Chat identifier where the reading was requested |
+| `message_id` | TEXT | No | - | ID of the user command message that triggered the reading |
+| `user_id` | INTEGER | No | - | User who requested the reading |
+| `system_id` | TEXT | No | - | Divination system (`tarot`, `runes`) |
+| `deck_id` | TEXT | No | - | Deck identifier (e.g. `rws`, `elder_futhark`) |
+| `layout_id` | TEXT | No | - | Layout identifier (e.g. `three_card`, `celtic_cross`, `three_runes`) |
+| `question` | TEXT | No | `''` | User's question (may be empty) |
+| `draws_json` | TEXT | No | - | JSON-serialized list of drawn symbols with positions and reversed flags |
+| `interpretation` | TEXT | No | `''` | LLM-generated interpretation of the reading |
+| `image_prompt` | TEXT | Yes | NULL | Image prompt sent to image generator (when `image-generation = true`) |
+| `invoked_via` | TEXT | No | - | Either `'command'` (slash command) or `'llm_tool'` |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+
+**Indexes**:
+- `idx_divinations_user_created` on `(chat_id, user_id, created_at)` — for "recent readings by user" queries
+
+**Note**: Uses the same composite-PK convention as [`chat_messages`](#chat_messages). This table has no foreign-key relationships to other tables; image media is resolved via the normal message-history pipeline. Created by `migration_014`; only populated when `[divination] enabled = true`. See [`docs/llm/configuration.md`](llm/configuration.md) for feature config.
+
+---
+
+### divination_layouts
+
+Caches layout definitions discovered via LLM for reuse in divination readings.
+
+**Primary Key**: `(system_id, layout_id)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `system_id` | TEXT | No | - | Divination system (`tarot`, `runes`) |
+| `layout_id` | TEXT | No | - | Machine-readable layout identifier |
+| `name_en` | TEXT | No | - | English name (source of truth) |
+| `name_ru` | TEXT | No | - | Russian display name |
+| `n_symbols` | INTEGER | No | - | Number of positions in the layout |
+| `positions` | TEXT | No | - | JSON-serialized array of position definitions |
+| `description` | TEXT | Yes | NULL | Layout description |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
+
+**Indexes**:
+- `idx_divination_layouts_system` on `system_id`
+
+**Negative Cache Pattern**: Failed layout discoveries are stored as negative cache entries:
+- `name_en` set to empty string (`''`)
+- `n_symbols` set to `0`
+- This prevents repeated failed discovery attempts for the same layout
+
+**Usage Examples**:
+```python
+from internal.database.repositories import DivinationLayoutsRepository
+
+# Get a layout from cache
+repo = DivinationLayoutsRepository(db.manager)
+layout = await repo.getLayout(systemId='tarot', layoutId='three_card')
+
+# Save a discovered layout
+await repo.saveLayout(
+    systemId='tarot',
+    layoutId='three_card',
+    nameEn='Three Card Spread',
+    nameRu='Расклад на три карты',
+    nSymbols=3,
+    positions=json.dumps([
+        {'name': 'Past', 'description': 'Past events'},
+        {'name': 'Present', 'description': 'Current situation'},
+        {'name': 'Future', 'description': 'Future outcome'}
+    ]),
+    description='Simple three-card spread for time-based readings'
+)
+
+# Negative cache pattern for failed discovery
+await repo.saveLayout(
+    systemId='tarot',
+    layoutId='unknown_layout',
+    nameEn='',  # Empty indicates negative cache
+    nameRu='',
+    nSymbols=0,  # Zero indicates negative cache
+    positions='[]',
+    description=None
+)
+```
+
+**Note**: Created by `migration_015`. This table caches layout definitions discovered through LLM and web search to avoid repeated API calls. Only populated when `[divination] enabled = true` and layout discovery is used.
 
 ---
 
@@ -658,8 +838,8 @@ Stores global system settings and migration version tracking.
 |--------|------|----------|---------|-------------|
 | `key` | TEXT | No | - | Setting key |
 | `value` | TEXT | Yes | NULL | Setting value |
-| `created_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | No | CURRENT_TIMESTAMP | Last update timestamp |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Special Keys**:
 - `db-migration-version` - Current migration version number
@@ -758,7 +938,54 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 These TypedDict models provide:
 - **Type safety**: IDE autocomplete and type checking
 - **Documentation**: Clear field names and types
-- **Validation**: Runtime validation via [`_validateDictIs*`](../internal/database/wrapper.py:411) methods
+- **Validation**: Runtime validation via repository methods
+
+---
+
+## Repository Pattern
+
+The database uses a repository pattern with 12 specialized repositories, each handling a specific domain:
+
+| Repository | File | Purpose |
+|---|---|---|
+| `cache` | [`cache.py`](../internal/database/repositories/cache.py) | Unified cache operations |
+| `chatInfo` | [`chat_info.py`](../internal/database/repositories/chat_info.py) | Chat metadata |
+| `chatMessages` | [`chat_messages.py`](../internal/database/repositories/chat_messages.py) | Chat message operations |
+| `chatSettings` | [`chat_settings.py`](../internal/database/repositories/chat_settings.py) | Per-chat configuration |
+| `chatSummarization` | [`chat_summarization.py`](../internal/database/repositories/chat_summarization.py) | Chat summarization |
+| `chatUsers` | [`chat_users.py`](../internal/database/repositories/chat_users.py) | User information and statistics |
+| `common` | [`common.py`](../internal/database/repositories/common.py) | Common database operations |
+| `delayedTasks` | [`delayed_tasks.py`](../internal/database/repositories/delayed_tasks.py) | Task scheduling |
+| `divinations` | [`divinations.py`](../internal/database/repositories/divinations.py) | Tarot/runes readings and layout discovery |
+| `mediaAttachments` | [`media_attachments.py`](../internal/database/repositories/media_attachments.py) | Media attachment management |
+| `spam` | [`spam.py`](../internal/database/repositories/spam.py) | Spam detection and ham classification |
+| `userData` | [`user_data.py`](../internal/database/repositories/user_data.py) | User key-value data |
+
+### Accessing Repositories
+
+All repositories are accessible through the main [`Database`](../internal/database/database.py:1) class:
+
+```python
+from internal.database import Database
+
+db = Database(config)
+
+# Access repositories
+messages = db.chatMessages.getChatMessages(chatId=-1001234567890)
+user = db.chatUsers.getChatUser(chatId=-1001234567890, userId=123456789)
+settings = db.chatSettings.getChatSettings(chatId=-1001234567890)
+```
+
+### Repository Methods
+
+Each repository provides methods for its domain. Common patterns include:
+
+- **Query methods**: `get*`, `find*`, `list*` - Retrieve data
+- **Create methods**: `add*`, `create*`, `save*` - Insert new records
+- **Update methods**: `update*`, `set*` - Modify existing records
+- **Delete methods**: `delete*`, `remove*` - Remove records
+
+See individual repository files for complete method documentation.
 
 ---
 

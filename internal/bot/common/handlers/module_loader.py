@@ -1,5 +1,5 @@
 """
-Custom handler module loader for Gromozeka bot, dood!
+Custom handler module loader for Gromozeka bot.
 
 This module provides dynamic loading of custom handler modules via TOML configuration.
 Custom handlers extend BaseBotHandler and are inserted into the handler chain after
@@ -15,8 +15,7 @@ from typing import Any, Dict, List, Tuple
 
 from internal.bot.models import BotProvider
 from internal.config.manager import ConfigManager
-from internal.database.wrapper import DatabaseWrapper
-from lib.ai import LLMManager
+from internal.database import Database
 
 from .base import BaseBotHandler
 from .manager import HandlerParallelism
@@ -30,16 +29,16 @@ HandlerTuple = Tuple[BaseBotHandler, HandlerParallelism]
 
 class CustomHandlerLoadError(Exception):
     """
-    Raised when a custom handler fails to load, dood!
+    Raised when a custom handler fails to load.
 
     Attributes:
         handlerId: The id of the handler that failed
         reason: Human-readable description of the failure
     """
 
-    def __init__(self, handlerId: str, reason: str):
+    def __init__(self, handlerId: str, reason: str) -> None:
         """
-        Initialize the custom handler load error, dood!
+        Initialize the custom handler load error.
 
         Args:
             handlerId: The id of the handler that failed
@@ -52,7 +51,7 @@ class CustomHandlerLoadError(Exception):
 
 class CustomHandlerLoader:
     """
-    Loader for custom bot handlers from configuration, dood!
+    Loader for custom bot handlers from configuration.
 
     This class reads handler definitions from the TOML config and dynamically loads
     them from either Python import paths or local module files. Each handler is
@@ -61,36 +60,33 @@ class CustomHandlerLoader:
     Attributes:
         configManager: Configuration manager instance
         database: Database wrapper for persistence
-        llmManager: LLM manager for AI features
         botProvider: Bot provider type
         modulesDir: Directory path for local handler modules
     """
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
-        llmManager: LLMManager,
+        database: Database,
         botProvider: BotProvider,
-    ):
+    ) -> None:
         """
-        Initialize the custom handler loader, dood!
+        Initialize the custom handler loader.
 
         Args:
             configManager: Configuration manager providing bot settings
             database: Database wrapper for data persistence
-            llmManager: LLM manager for AI model operations
             botProvider: Bot provider type (Telegram/Max)
         """
         self.configManager = configManager
         self.database = database
-        self.llmManager = llmManager
         self.botProvider = botProvider
         self.modulesDir: str = ""
 
     def loadAll(self) -> List[HandlerTuple]:
         """
-        Load all enabled custom handlers from config, sorted by order, dood!
+        Load all enabled custom handlers from config, sorted by order.
 
         Reads the custom-handlers section from config, validates and loads each
         enabled handler, then returns them sorted by the order field. Individual
@@ -158,7 +154,7 @@ class CustomHandlerLoader:
 
     def _loadSingle(self, handlerConfig: Dict[str, Any], idx: int) -> HandlerTuple:
         """
-        Load a single custom handler from its config entry, dood!
+        Load a single custom handler from its config entry.
 
         Args:
             handlerConfig: Dict with handler configuration from TOML
@@ -206,10 +202,9 @@ class CustomHandlerLoader:
         # Instantiate the handler
         try:
             handlerInstance = handlerClass(
-                self.configManager,
-                self.database,
-                self.llmManager,
-                self.botProvider,
+                configManager=self.configManager,
+                database=self.database,
+                botProvider=self.botProvider,
             )
         except Exception as e:
             raise CustomHandlerLoadError(handlerId, f"Instantiation failed: {e}")
@@ -232,7 +227,7 @@ class CustomHandlerLoader:
 
     def _importFromPath(self, importPath: str, handlerConfig: Dict[str, Any], handlerId: str) -> type:
         """
-        Import handler class from a fully qualified Python import path, dood!
+        Import handler class from a fully qualified Python import path.
 
         Args:
             importPath: Full dotted path like 'my_package.handlers.MyHandler'
@@ -267,7 +262,7 @@ class CustomHandlerLoader:
 
     def _importFromLocalModule(self, moduleFile: str, handlerConfig: Dict[str, Any], handlerId: str) -> type:
         """
-        Import handler class from a local module file, dood!
+        Import handler class from a local module file.
 
         Args:
             moduleFile: Module filename without .py extension
@@ -298,7 +293,7 @@ class CustomHandlerLoader:
 
     def _validateHandlerClass(self, handlerClass: type, handlerId: str) -> None:
         """
-        Validate that the loaded class is a proper BaseBotHandler subclass, dood!
+        Validate that the loaded class is a proper BaseBotHandler subclass.
 
         Args:
             handlerClass: The class to validate
@@ -320,9 +315,9 @@ class CustomHandlerLoader:
             sig = inspect.signature(handlerClass.__init__)
             params = list(sig.parameters.keys())
 
-            # Should have: self, configManager, database, llmManager, botProvider
-            if len(params) < 5:
-                expectedSig = "(self, configManager, database, llmManager, botProvider)"
+            # Should have: self, configManager, database, botProvider
+            if len(params) < 4:
+                expectedSig = "(self, *, configManager, database, botProvider)"
                 raise CustomHandlerLoadError(
                     handlerId,
                     f"Constructor signature mismatch - expected {expectedSig}, got {params}",

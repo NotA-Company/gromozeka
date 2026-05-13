@@ -125,6 +125,26 @@ class TypingManager:
         """
         return self.startTime + self.maxTimeout <= time.time()
 
+    def addTimeout(self, seconds: int) -> None:
+        """Extend the maximum typing timeout by the given number of seconds, dood.
+
+        Use this from handlers that perform long-running operations (image
+        generation, large media uploads, summarization passes) so the typing
+        indicator stays alive for the duration of the work. Negative values
+        are clamped to zero so callers cannot accidentally shrink the
+        timeout below its current value.
+
+        Args:
+            seconds: Number of seconds to add to ``maxTimeout``. Values
+                less than ``0`` are treated as ``0``.
+
+        Returns:
+            None.
+        """
+        if seconds <= 0:
+            return
+        self.maxTimeout = self.maxTimeout + seconds
+
     async def tick(self) -> int:
         """Advance the iteration counter for timing control.
 
@@ -163,7 +183,12 @@ class TypingManager:
         """
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[object],
+    ) -> None:
         """Exit the async context manager.
 
         Args:

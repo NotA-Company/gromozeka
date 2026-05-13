@@ -52,13 +52,19 @@ lint: venv
 format: venv
 	$(ISORT) .
 	$(BLACK) .
+	for dir in lib/ext_modules/*/; do \
+		if [ -d "$$dir" -a "$$(basename "$$dir")" != "__pycache__" ]; then \
+			$(ISORT) "$$dir"; \
+			$(BLACK) "$$dir"; \
+		fi; \
+	done
 
 # Run all tests
 test: venv
 	@echo "🧪 Running all Gromozeka tests, dood!"
 	@echo "=================================="
 	@echo ""
-	$(PYTEST) --durations=4 $(ARGS)
+	time timeout 5m $(PYTEST) --durations=4 $(ARGS)
 	@echo ""
 	@echo "✅ All tests completed, dood!"
 

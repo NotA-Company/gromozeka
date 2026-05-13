@@ -17,8 +17,17 @@ logger = logging.getLogger(__name__)
 
 
 class Callback(BaseMaxBotModel):
-    """
-    Объект, отправленный боту, когда пользователь нажимает кнопку
+    """Represents a callback query sent to the bot when a user presses a button.
+
+    This model encapsulates the data received from Max Messenger Bot API when a user
+    interacts with an inline keyboard button. It includes the timestamp, callback ID,
+    optional payload data, and user information.
+
+    Attributes:
+        timestamp: Unix timestamp when the user pressed the button.
+        callback_id: Current keyboard ID for the callback.
+        payload: Optional button token/payload data.
+        user: User who pressed the button.
     """
 
     __slots__ = ("timestamp", "callback_id", "payload", "user")
@@ -32,6 +41,15 @@ class Callback(BaseMaxBotModel):
         user: UserWithPhoto,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize a Callback instance.
+
+        Args:
+            timestamp: Unix timestamp when the user pressed the button.
+            callback_id: Current keyboard ID for the callback.
+            payload: Optional button token/payload data.
+            user: User who pressed the button.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.timestamp: int = timestamp
         """Unix-время, когда пользователь нажал кнопку"""
@@ -62,8 +80,14 @@ class Callback(BaseMaxBotModel):
 
 
 class CallbackAnswer(BaseMaxBotModel):
-    """
-    Отправьте этот объект, когда ваш бот хочет отреагировать на нажатие кнопки
+    """Represents a response to a callback query from the bot.
+
+    This model is used to send a response to a user's button press. The bot can either
+    update the current message with new content or send a one-time notification to the user.
+
+    Attributes:
+        message: Optional new message body to replace the current message.
+        notification: Optional one-time notification text to send to the user.
     """
 
     __slots__ = ("message", "notification")
@@ -75,6 +99,13 @@ class CallbackAnswer(BaseMaxBotModel):
         notification: Optional[str] = None,
         api_kwargs: Dict[str, Any] | None = None,
     ):
+        """Initialize a CallbackAnswer instance.
+
+        Args:
+            message: Optional new message body to replace the current message.
+            notification: Optional one-time notification text to send to the user.
+            api_kwargs: Additional API keyword arguments not covered by the model.
+        """
         super().__init__(api_kwargs=api_kwargs)
         self.message: Optional[NewMessageBody] = message
         """Заполните, если хотите изменить текущее сообщение"""

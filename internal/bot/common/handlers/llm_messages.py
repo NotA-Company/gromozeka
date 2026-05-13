@@ -1,10 +1,9 @@
-"""
-LLM message handlers for the Gromozeka Telegram bot, dood!
+"""LLM message handlers for the Gromozeka Telegram bot.
 
-This module contains handlers for processing messages that interact with Large Language Models (LLMs).
+This module provides handlers for processing messages that interact with Large Language Models (LLMs).
 It handles various message types including replies, mentions, private messages, and random responses
 in group chats. The handlers manage conversation context, message history, and integrate with
-image generation capabilities when needed, dood!
+image generation capabilities when needed.
 
 Key Features:
     - Reply handling with conversation thread tracking
@@ -14,19 +13,25 @@ Key Features:
     - Image generation from LLM descriptions
     - Tool usage support for LLM interactions
     - Fallback model support for reliability
+
+Example:
+    The handler is typically registered with the bot and processes incoming messages::
+
+        handler = LLMMessageHandler(configManager, database, botProvider)
+        await handler.newMessageHandler(ensuredMessage, updateObj)
 """
 
-import datetime
 import json
 import logging
 import random
 import re
 from collections import deque
 from collections.abc import Sequence
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import telegram
 
+import lib.utils as utils
 from internal.bot import constants
 from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
@@ -44,11 +49,10 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
-from internal.services.llm import LLMService
+from internal.services.llm import ExtraDataDict, LLMService
 from lib.ai import (
-    LLMManager,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -60,30 +64,26 @@ logger = logging.getLogger(__name__)
 
 
 class LLMMessageHandler(BaseBotHandler):
-    """
-    Handler for LLM-based message processing in Telegram bot, dood!
+    """Handler for LLM-based message processing in Telegram bot.
 
     This class manages all interactions between user messages and Large Language Models,
     including conversation threading, context management, and response generation.
     It supports multiple chat types (private, group, supergroup) and various response
-    triggers (replies, mentions, random responses), dood!
+    triggers (replies, mentions, random responses).
 
     Attributes:
-        llmService (LLMService): Singleton service for LLM operations
+        llmService (LLMService): Singleton service for LLM operations.
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
-    ):
-        """
-        Initialize the LLM message handler, dood!
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
+        """Initialize the LLM message handler.
 
         Args:
-            configManager (ConfigManager): Configuration manager for bot settings
-            database (DatabaseWrapper): Database wrapper for message storage and retrieval
-            llmManager (LLMManager): Manager for LLM model instances and operations
+            configManager (ConfigManager): Configuration manager for bot settings.
+            database (Database): Database object for message storage and retrieval.
+            botProvider (BotProvider): Bot platform provider (Telegram, Max, etc.).
         """
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 
@@ -104,28 +104,42 @@ class LLMMessageHandler(BaseBotHandler):
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,
     ) -> ModelRunResult:
-        """
-        Generate text response using LLM with fallback support, dood!
+        """Generate text response using LLM with fallback support.
 
         This method calls the LLM service to generate a text response based on the provided
         messages. It supports tool usage, fallback models, and can send intermediate messages
-        during generation. The method handles streaming responses and error recovery, dood!
+        during generation. The method handles streaming responses and error recovery.
 
         Args:
-            model (AbstractModel): Primary LLM model to use for generation
-            messages (List[ModelMessage]): List of messages forming the conversation context
-            fallbackModel (AbstractModel): Fallback model to use if primary fails
-            ensuredMessage (EnsuredMessage): The message being responded to
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            messages (Sequence[ModelMessage]): List of messages forming the conversation context.
+            ensuredMessage (EnsuredMessage): The message being responded to.
+            chatSettings (ChatSettingsDict): Chat-specific settings for LLM configuration.
+            typingManager (TypingManager): Manager for sending typing indicators.
             useTools (bool, optional): Whether to enable tool usage for the LLM. Defaults to False.
             sendIntermediateMessages (bool, optional): Whether to send streaming intermediate
                 responses. Defaults to True.
+            keepFirstN (int, optional): Number of first messages to keep in context. Defaults to 0.
+            keepLastN (int, optional): Number of last messages to keep in context. Defaults to 1.
+            maxTokensCoeff (float, optional): Coefficient for calculating max tokens. Defaults to 0.8.
 
         Returns:
-            ModelRunResult: Result containing generated text, status, and metadata
+            ModelRunResult: Result containing generated text, status, and metadata.
         """
 
-        async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
+        async def processIntermediateMessages(mRet: ModelRunResult, extraData: ExtraDataDict) -> None:
+            """Process intermediate LLM results and send them to the chat.
+
+            This callback function is called during streaming LLM responses to send
+            intermediate results back to the user. It applies prefixes for fallback
+            and tool usage, and sends typing indicators.
+
+            Args:
+                mRet (ModelRunResult): The intermediate LLM result containing generated text.
+                extraData (ExtraDataDict): Additional data including ensuredMessage and typingManager.
+
+            Returns:
+                None
+            """
             if mRet.resultText.strip() and sendIntermediateMessages:
                 try:
                     logger.debug(f"Sending intermediate message. LLM Result status is: {mRet.status}")
@@ -139,7 +153,7 @@ class LLMMessageHandler(BaseBotHandler):
                         addMessagePrefix=prefixStr,
                     )
                     # Add more timeout + ping typing manager
-                    typingManager.maxTimeout = typingManager.maxTimeout + 120
+                    typingManager.addTimeout(120)
                     await typingManager.sendTypingAction()
                 except Exception as e:
                     logger.error(f"Failed to send intermediate message: {e}")
@@ -149,7 +163,6 @@ class LLMMessageHandler(BaseBotHandler):
             messages,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
             modelKey=ChatSettingsKey.CHAT_MODEL,
             fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
             useTools=useTools,
@@ -176,13 +189,12 @@ class LLMMessageHandler(BaseBotHandler):
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,
     ) -> bool:
-        """
-        Send a chat message to the LLM and handle the response, dood!
+        """Send a chat message to the LLM and handle the response.
 
         This method orchestrates the complete flow of sending a message to the LLM,
         processing the response, handling image generation if requested, and sending
         the final response to the user. It manages chat settings, message formatting,
-        and error handling, dood!
+        and error handling.
 
         The method supports:
         - Multiple message formats (text, JSON)
@@ -192,13 +204,18 @@ class LLMMessageHandler(BaseBotHandler):
         - Error recovery and user notification
 
         Args:
-            ensuredMessage (EnsuredMessage): The message to respond to
-            messagesHistory (List[ModelMessage]): Complete conversation history including
-                system prompt and user messages
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
+            ensuredMessage (EnsuredMessage): The message to respond to.
+            messagesHistory (Sequence[ModelMessage]): Complete conversation history including
+                system prompt and user messages.
+            typingManager (TypingManager): Manager for sending typing indicators.
+            stopTypingOnSend (bool, optional): Whether to stop typing when sending message.
+                Defaults to True.
+            keepFirstN (int, optional): Number of first messages to keep in context. Defaults to 0.
+            keepLastN (int, optional): Number of last messages to keep in context. Defaults to 1.
+            maxTokensCoeff (float, optional): Coefficient for calculating max tokens. Defaults to 0.8.
 
         Returns:
-            bool: True if message was sent successfully, False otherwise
+            bool: True if message was sent successfully, False otherwise.
         """
         # For logging purposes
         messageHistoryStr = ""
@@ -206,7 +223,7 @@ class LLMMessageHandler(BaseBotHandler):
             messageHistoryStr += f"\t{repr(msg)}\n"
         logger.debug(f"LLM Request messages: List[\n{messageHistoryStr}]")
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
         mlRet: Optional[ModelRunResult] = None
 
@@ -288,7 +305,6 @@ class LLMMessageHandler(BaseBotHandler):
                 imagePrompt,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
             )
             logger.debug(
                 f"Generated image Data: {imgMLRet} for mcID: "
@@ -336,20 +352,19 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
-        """
-        Handle new messages and route them to appropriate handlers, dood!
+        """Handle new messages and route them to appropriate handlers.
 
         This method processes incoming messages from private chats and groups,
         checking for replies, mentions, and randomly responding to messages.
         For Telegram, it also handles automatic forwards from linked channels.
 
         Args:
-            ensuredMessage: The validated message object containing all message data
-            updateObj: The raw update object from the bot platform
+            ensuredMessage (EnsuredMessage): The validated message object containing all message data.
+            updateObj (UpdateObjectType): The raw update object from the bot platform.
 
         Returns:
             HandlerResultStatus: FINAL if message was handled, SKIPPED for unsupported
-                                chat types, NEXT to continue processing chain
+                chat types, NEXT to continue processing chain.
         """
 
         chat = ensuredMessage.recipient
@@ -395,13 +410,12 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> bool:
-        """
-        Handle messages that are replies to bot's previous messages, dood!
+        """Handle messages that are replies to bot's previous messages.
 
         This method processes replies to the bot's messages by reconstructing the
         conversation thread from the database. It retrieves all messages in the thread
         (using root_message_id) and sends them to the LLM to generate a contextually
-        appropriate response, dood!
+        appropriate response.
 
         The method:
         1. Verifies the reply is to a bot message
@@ -411,24 +425,23 @@ class LLMMessageHandler(BaseBotHandler):
         5. Waits for media processing if needed
 
         Args:
-            update (Update): Telegram update object
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
-            ensuredMessage (EnsuredMessage): The reply message to process
+            ensuredMessage (EnsuredMessage): The reply message to process.
+            updateObj (UpdateObjectType): The raw update object from the bot platform.
 
         Returns:
             bool: True if reply was handled successfully, False if not a reply to bot
-                or if reply handling is disabled in chat settings
+                or if reply handling is disabled in chat settings.
         """
         if not ensuredMessage.isReply or ensuredMessage.replyId is None:
             return False
 
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_REPLY].toBool():
             return False
 
         isReplyToMyMessage = False
-        eRepliedMEssage = ensuredMessage.getEnsuredRepliedToMessage()
-        if eRepliedMEssage is not None and eRepliedMEssage.sender.id == await self.getBotId():
+        eRepliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
+        if eRepliedMessage is not None and eRepliedMessage.sender.id == await self.getBotId():
             isReplyToMyMessage = True
 
         if not isReplyToMyMessage:
@@ -479,13 +492,12 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> bool:
-        """
-        Handle messages where the bot is mentioned by name or username, dood!
+        """Handle messages where the bot is mentioned by name or username.
 
         This method processes messages that mention the bot, either by display name
         or username. It includes special handling for "кто сегодня" (who today)
         queries that randomly select an active user, and general LLM responses
-        for other mentions, dood!
+        for other mentions.
 
         Special features:
         - "кто сегодня [role]" - Randomly selects an active user for a role
@@ -494,16 +506,15 @@ class LLMMessageHandler(BaseBotHandler):
         - Generates LLM response with appropriate context
 
         Args:
-            update (Update): Telegram update object
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
-            ensuredMessage (EnsuredMessage): The message containing the mention
+            ensuredMessage (EnsuredMessage): The message containing the mention.
+            updateObj (UpdateObjectType): The raw update object from the bot platform.
 
         Returns:
             bool: True if mention was handled successfully, False if bot was not mentioned
-                or if mention handling is disabled in chat settings
+                or if mention handling is disabled in chat settings.
         """
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return False
 
@@ -524,9 +535,9 @@ class LLMMessageHandler(BaseBotHandler):
                 if userTitle[-1] == "?":
                     userTitle = userTitle[:-1]
 
-                today = datetime.datetime.now(datetime.timezone.utc)
+                today = utils.now()
                 today = today.replace(hour=0, minute=0, second=0, microsecond=0)
-                users = self.db.getChatUsers(
+                users = await self.db.chatUsers.getChatUsers(
                     chatId=ensuredMessage.recipient.id,
                     limit=100,
                     seenSince=today,
@@ -566,7 +577,7 @@ class LLMMessageHandler(BaseBotHandler):
                 # TODO: Shoiuld we add whole discussion?
                 ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
                 if ensuredReply is not None:
-                    self._updateEMessageUserData(ensuredReply)
+                    await self._updateEMessageUserData(ensuredReply)
                     if ensuredReply.messageType == MessageType.TEXT:
                         reqMessages.append(
                             await ensuredReply.toModelMessage(
@@ -577,7 +588,7 @@ class LLMMessageHandler(BaseBotHandler):
                         )
                     else:
                         # Not text message, try to get it's content from DB
-                        storedReply = self.db.getChatMessageByMessageId(
+                        storedReply = await self.db.chatMessages.getChatMessageByMessageId(
                             chatId=ensuredReply.recipient.id,
                             messageId=ensuredReply.messageId,
                         )
@@ -587,8 +598,8 @@ class LLMMessageHandler(BaseBotHandler):
                                 f"MessageId: {ensuredReply.messageId})"
                             )
                         else:
-                            eStoredReply = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
-                            self._updateEMessageUserData(eStoredReply)
+                            eStoredReply = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
+                            await self._updateEMessageUserData(eStoredReply)
                             reqMessages.append(
                                 await eStoredReply.toModelMessage(
                                     self.db,
@@ -617,12 +628,11 @@ class LLMMessageHandler(BaseBotHandler):
         ensuredMessage: EnsuredMessage,
         updateObj: UpdateObjectType,
     ) -> bool:
-        """
-        Randomly respond to messages in group chats based on probability, dood!
+        """Randomly respond to messages in group chats based on probability.
 
         This method implements probabilistic responses in group chats, allowing the bot
         to occasionally participate in conversations without being explicitly mentioned.
-        The probability is configurable per chat, and admin messages can be excluded, dood!
+        The probability is configurable per chat, and admin messages can be excluded.
 
         The method:
         1. Checks if random responses are enabled (probability > 0)
@@ -636,17 +646,16 @@ class LLMMessageHandler(BaseBotHandler):
         - If not a reply: Gets last N messages for context
 
         Args:
-            update (Update): Telegram update object
-            context (ContextTypes.DEFAULT_TYPE): Telegram bot context
-            ensuredMessage (EnsuredMessage): The message that might trigger a response
+            ensuredMessage (EnsuredMessage): The message that might trigger a response.
+            updateObj (UpdateObjectType): The raw update object from the bot platform.
 
         Returns:
             bool: True if bot responded to the message, False if probability check failed,
                 random responses are disabled, or message is from admin (when configured
-                to skip admins)
+                to skip admins).
         """
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
             # logger.debug(
@@ -699,7 +708,7 @@ class LLMMessageHandler(BaseBotHandler):
                 # And we do not want to reverse db result as we do not want to process ALL retrieved
                 # messages if some message already has summarized context (i.e. metadata["randomContext"])
                 contextMessages = deque[ModelMessage]()
-                for storedMsg in self.db.getChatMessagesSince(
+                for storedMsg in await self.db.chatMessages.getChatMessagesSince(
                     chatId=chatId,
                     threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
                     limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
@@ -708,8 +717,8 @@ class LLMMessageHandler(BaseBotHandler):
                     if storedMsg["message_id"] == ensuredMessage.messageId:
                         # Skip current message from context
                         continue
-                    eMsg = EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
-                    self._updateEMessageUserData(eMsg)
+                    eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
+                    await self._updateEMessageUserData(eMsg)
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list
@@ -735,27 +744,24 @@ class LLMMessageHandler(BaseBotHandler):
                     # We need to use at least 3 here as 1 for `randomContext``
                     # + 1 for message, randomContext is attached to
                     # + 1 answer from bot
-                    contextMessages.appendleft(
-                        ModelMessage(
-                            role="system",
-                            content=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
-                        )
-                    )
-                    mlRet = await self.llmService.generateText(
+                    condensedMessages = await self.llmService.condenseContext(
                         contextMessages,
-                        chatId=ensuredMessage.recipient.id,
-                        chatSettings=chatSettings,
-                        llmManager=self.llmManager,
-                        modelKey=ChatSettingsKey.CHAT_MODEL,
-                        fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                        chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(),
+                        keepFirstN=0,
+                        keepLastN=0,
+                        condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
+                        condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
+                        condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+                        force=True,
                     )
-                    if mlRet.status != ModelResultStatus.FINAL:
-                        logger.error(f"Wrong LLM Reply Status: {mlRet.status} Error: {mlRet.error}")
+                    if not condensedMessages:
+                        logger.error("Messages condensing failed")
                     else:
                         # No need to add to context as it will be added later
                         # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
-                        ensuredMessage.metadata["randomContext"] = mlRet.resultText
-                        self.db.updateChatMessageMetadata(
+                        condensedText = "\n".join([message.content for message in condensedMessages])
+                        ensuredMessage.metadata["randomContext"] = condensedText
+                        await self.db.chatMessages.updateChatMessageMetadata(
                             chatId=ensuredMessage.recipient.id,
                             messageId=ensuredMessage.messageId,
                             metadata=ensuredMessage.metadata,
@@ -795,18 +801,39 @@ class LLMMessageHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """
-        Command to call llm with predefined prompt
-        Used for debugging llm responses (to fix toll calls for example)
+        """Command to call LLM with predefined prompt for testing.
+
+        This is an internal command used for debugging LLM responses, particularly
+        for testing tool calls and other LLM functionality. The command allows
+        developers to test specific prompts and verify LLM behavior.
+
+        Args:
+            ensuredMessage (EnsuredMessage): The message containing the command.
+            command (str): The command name (e.g., "test_llm").
+            args (str): Command arguments (currently unused).
+            UpdateObj (UpdateObjectType): The raw update object from the bot platform.
+            typingManager (Optional[TypingManager]): Manager for sending typing indicators.
         """
         request = [
             # Put "request" list from .../logs/llm-json-logging.log.* here to test LLM response
         ]
         mReq = ModelMessage.fromDictList(request)
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
-        async def processIntermediateMessages(mRet: ModelRunResult, extraData: Optional[Dict[str, Any]]) -> None:
+        async def processIntermediateMessages(mRet: ModelRunResult, extraData: ExtraDataDict) -> None:
+            """Process intermediate LLM results and send them for debugging.
+
+            This callback function is called during streaming LLM responses to send
+            intermediate results back to the user for debugging purposes.
+
+            Args:
+                mRet (ModelRunResult): The intermediate LLM result containing generated text.
+                extraData (ExtraDataDict): Additional data including ensuredMessage and typingManager.
+
+            Returns:
+                None
+            """
             try:
                 logger.debug(f"IM: {mRet}")
                 await self.sendMessage(
@@ -818,12 +845,10 @@ class LLMMessageHandler(BaseBotHandler):
             except Exception as e:
                 logger.error(f"Failed to send intermediate message: {e}")
 
-        # TODO: Make extraData typedDict (or dataclass?)
         mlRet = await self.llmService.generateTextViaLLM(
             mReq,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
             modelKey=ChatSettingsKey.CHAT_MODEL,
             fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
             useTools=True,

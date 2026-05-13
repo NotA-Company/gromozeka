@@ -1,8 +1,17 @@
 # Custom Handler Modules — Design Document
 
-> **Status:** Draft  
-> **Date:** 2026-03-29  
+> **Status:** Implemented  
+> **Date:** 2026-03-29 (design), 2026-05-08 (implementation)  
 > **Scope:** Dynamic loading of custom handler modules via TOML configuration
+
+---
+
+## Implementation Note
+
+This custom handler loading system has been fully implemented in:
+- [`internal/bot/common/handlers/module_loader.py`](internal/bot/common/handlers/module_loader.py) — `CustomHandlerLoader` class
+- [`internal/bot/common/handlers/example_custom_handler.py`](internal/bot/common/handlers/example_custom_handler.py) — Example template
+- [`configs/00-defaults/custom-handlers.toml`](../../configs/00-defaults/custom-handlers.toml) — Default configuration
 
 ---
 
@@ -33,7 +42,7 @@ enabled = true
 
 # Directory for local handler modules (relative to application root-dir)
 # Files in this directory are auto-discovered if they are listed below
-modules-dir = "custom_handlers"
+modules-dir = "modules"
 
 # Each handler is defined as [[custom-handlers.handlers]]
 [[custom-handlers.handlers]]
@@ -67,7 +76,7 @@ enabled = true
 ```toml
 [custom-handlers]
 enabled = true
-modules-dir = "custom_handlers"
+modules-dir = "modules"
 
 [[custom-handlers.handlers]]
 id = "greeting-handler"
@@ -98,7 +107,7 @@ A new defaults file is created at `configs/00-defaults/custom-handlers.toml`:
 ```toml
 [custom-handlers]
 enabled = false
-modules-dir = "custom_handlers"
+modules-dir = "modules"
 ```
 
 ---
@@ -114,13 +123,12 @@ A new module [`internal/bot/common/handlers/module_loader.py`](internal/bot/comm
 │         CustomHandlerLoader              │
 ├──────────────────────────────────────────┤
 │ - configManager: ConfigManager           │
-│ - database: DatabaseWrapper              │
-│ - llmManager: LLMManager                │
+│ - database: Database                     │
 │ - botProvider: BotProvider               │
 │ - modulesDir: str                        │
 ├──────────────────────────────────────────┤
 │ + loadAll: List[HandlerTuple]            │
-│ - _loadSingle: HandlerTuple             │
+│ - _loadSingle: HandlerTuple              │
 │ - _importFromPath: type                  │
 │ - _importFromLocalModule: type           │
 │ - _validateHandlerClass: None            │
@@ -175,7 +183,7 @@ def _loadSingle(self, handlerConfig: Dict[str, Any]) -> HandlerTuple:
    - **`import-path`**: Use `importlib.import_module()` on the module portion, then `getattr()` for the class
    - **`module`**: Use `importlib.import_module()` on the module name (requires `modules-dir` in `sys.path`), then `getattr()` for the `class` field
 3. Call `_validateHandlerClass()` to verify inheritance
-4. Instantiate with standard 4-arg constructor: `(configManager, database, llmManager, botProvider)`
+4. Instantiate with keyword-only constructor: `(configManager=configManager, database=database, botProvider=botProvider)`
 5. Resolve parallelism string to [`HandlerParallelism`](internal/bot/common/handlers/manager.py:64) enum
 6. Return `(handlerInstance, parallelism)`
 
@@ -187,9 +195,9 @@ Checks performed:
 |-------|---------------|
 | Class is a type (not instance) | `"{id}": expected a class, got {type}` |
 | Subclass of `BaseBotHandler` | `"{id}": {cls} does not extend BaseBotHandler` |
-| Constructor accepts 4 positional args | `"{id}": constructor signature mismatch` |
+| Constructor accepts keyword-only args `(configManager, database, botProvider)` | `"{id}": constructor signature mismatch` |
 
-Constructor signature validation uses `inspect.signature()` to verify the class accepts `(configManager, database, llmManager, botProvider)` — or at minimum 4 positional parameters after `self`.
+Constructor signature validation uses `inspect.signature()` to verify the class accepts `(self, *, configManager, database, botProvider)` — at minimum 4 parameters total (including `self`).
 
 ---
 
@@ -197,10 +205,10 @@ Constructor signature validation uses `inspect.signature()` to verify the class 
 
 ```
 storage/                    # application root-dir
-├── custom_handlers/        # modules-dir (configurable)
-│   ├── __init__.py         # optional, not required
-│   ├── greeting_handler.py # contains GreetingHandler class
-│   └── audit_handler.py    # contains AuditLogHandler class
+├── modules/                    # modules-dir (configurable)
+│   ├── __init__.py             # optional, not required
+│   ├── greeting_handler.py     # contains GreetingHandler class
+│   └── audit_handler.py        # contains AuditHandlerClass
 ├── bot_data.db
 └── ...
 ```
@@ -302,7 +310,6 @@ In [`manager.py`](internal/bot/common/handlers/manager.py:311), right before the
         customLoader = CustomHandlerLoader(
             configManager=configManager,
             database=database,
-            llmManager=llmManager,
             botProvider=botProvider,
         )
         customHandlers = customLoader.loadAll()
@@ -312,7 +319,7 @@ In [`manager.py`](internal/bot/common/handlers/manager.py:311), right before the
 
         self.handlers.append(
             # Should be last messageHandler as it can handle any message
-            (LLMMessageHandler(configManager, database, llmManager, botProvider), HandlerParallelism.SEQUENTIAL)
+            (LLMMessageHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.SEQUENTIAL)
         )
 ```
 
@@ -330,7 +337,7 @@ Add a new import to [`manager.py`](internal/bot/common/handlers/manager.py) — 
 
 ## 8. Example Custom Module
 
-File: `custom_handlers/greeting_handler.py`
+File: `modules/greeting_handler.py`
 
 ```python
 """
@@ -355,8 +362,7 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
-from lib.ai import LLMManager
+from internal.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -366,9 +372,9 @@ class GreetingHandler(BaseBotHandler):
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
-        llmManager: LLMManager,
+        database: Database,
         botProvider: BotProvider,
     ):
         """Initialize greeting handler.
@@ -376,13 +382,11 @@ class GreetingHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager instance.
             database: Database wrapper for persistence.
-            llmManager: LLM manager for AI features.
             botProvider: Bot provider type.
         """
         super().__init__(
             configManager=configManager,
             database=database,
-            llmManager=llmManager,
             botProvider=botProvider,
         )
         logger.info("GreetingHandler initialized!")
@@ -480,7 +484,7 @@ flowchart TD
     J --> K{Extends BaseBotHandler?}
     K -- No --> L[Log error, skip]
     L --> E
-    K -- Yes --> M[Instantiate with 4 standard args]
+    K -- Yes --> M[Instantiate with 3 standard args]
     M --> N{Constructor OK?}
     N -- No --> L
     N -- Yes --> O[Add to results list]

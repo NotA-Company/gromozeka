@@ -8,17 +8,18 @@ The tests follow the pattern established in the OpenWeatherMap
 golden data tests but are adapted for AI provider testing.
 """
 
-from typing import Any
+from typing import Any, Dict
 
 import pytest
 
-from lib.ai.models import ModelMessage
+from lib.ai.models import ModelMessage, ModelResultStatus, ModelStructuredResult
 
 # Import all AI provider classes
 from lib.ai.providers.openrouter_provider import OpenrouterProvider
 from lib.ai.providers.yc_openai_provider import YcOpenaiProvider
 from lib.aurumentation import baseGoldenDataProvider
 from lib.aurumentation.replayer import GoldenDataReplayer
+from lib.stats import NullStatsStorage
 
 from . import GOLDEN_DATA_PATH
 from .openai_patcher import OpenAIReplayerPatcher
@@ -66,6 +67,7 @@ async def test_yc_openai_basic(goldenDataProvider):
             temperature=0.7,
             contextSize=8192,
             extraConfig={},
+            statsStorage=NullStatsStorage(),
         )
 
         # Get model
@@ -115,23 +117,24 @@ async def test_openrouter_basic(goldenDataProvider):
 
         # Add the model that's used in the recorded data
         provider.addModel(
-            name="meta-llama/llama-3.2-1b-instruct",
-            modelId="meta-llama/llama-3.2-1b-instruct",
+            name="qwen/qwen-turbo",
+            modelId="qwen/qwen-turbo",
             modelVersion="latest",
             temperature=0.3,
-            contextSize=64000,
+            contextSize=131000,
             extraConfig={
                 "support_text": True,
                 "support_tools": True,
                 "support_images": False,
             },
+            statsStorage=NullStatsStorage(),
         )
 
         # Get model
-        model = provider.getModel("meta-llama/llama-3.2-1b-instruct")
+        model = provider.getModel("qwen/qwen-turbo")
 
         # Verify model was added successfully
-        assert model is not None, "Model 'meta-llama/llama-3.2-1b-instruct' should be available"
+        assert model is not None, "Model 'qwen/qwen-turbo' should be available"
 
         # Prepare messages
         messages = [ModelMessage(role="user", content="Hello, how are you?")]
@@ -143,3 +146,144 @@ async def test_openrouter_basic(goldenDataProvider):
         assert result is not None
         assert result.resultText is not None
         assert len(result.resultText) > 0
+
+
+# ============================================================================
+# Structured Output Tests
+# ============================================================================
+
+_STRUCTURED_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "nCards": {"type": "integer"},
+        "positions": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["nCards", "positions"],
+    "additionalProperties": False,
+}
+"""Toy JSON Schema shared by the structured-output golden scenarios.
+
+Matches the schema embedded in ``openrouter_scenarios.json`` and
+``yc_openai_scenarios.json`` so tests can assert required keys without
+duplicating the schema definition.
+"""
+
+
+@pytest.mark.asyncio
+async def test_openrouter_structured(goldenDataProvider: Any) -> None:
+    """Test structured-output generation with OpenrouterProvider using golden data.
+
+    Replays the ``OpenRouter Structured Toy`` scenario recorded by collect.py.
+    Verifies that the provider returns a ModelStructuredResult whose ``data``
+    dict contains the required keys from the toy schema.
+
+    Args:
+        goldenDataProvider: Session-scoped fixture providing loaded golden scenarios.
+    """
+    scenario = goldenDataProvider.getScenario("OpenRouter Structured Toy")
+
+    openAiPatcher = OpenAIReplayerPatcher()
+
+    async with GoldenDataReplayer(scenario, aenterCallback=openAiPatcher.patch, aexitCallback=openAiPatcher.unpatch):
+        provider = OpenrouterProvider(
+            {
+                "api_key": "fake-key-for-testing",
+            }
+        )
+
+        provider.addModel(
+            name="qwen/qwen-turbo",
+            modelId="qwen/qwen-turbo",
+            modelVersion="latest",
+            temperature=0.3,
+            contextSize=131000,
+            extraConfig={
+                "support_text": True,
+                "support_tools": True,
+                "support_images": False,
+                "support_structured_output": True,
+            },
+            statsStorage=NullStatsStorage(),
+        )
+
+        model = provider.getModel("qwen/qwen-turbo")
+        assert model is not None, "Model 'qwen/qwen-turbo' should be available"
+
+        messages = [
+            ModelMessage(role="system", content="Respond with a JSON object matching the provided schema, dood."),
+            ModelMessage(role="user", content="Give me a divination layout for a love question."),
+        ]
+
+        result = await model.generateStructured(
+            messages,
+            schema=_STRUCTURED_SCHEMA,
+            schemaName="divinationLayout",
+            strict=True,
+        )
+
+        assert result is not None
+        assert isinstance(result, ModelStructuredResult), "Result must be a ModelStructuredResult"
+        assert result.status == ModelResultStatus.FINAL, f"Expected FINAL status, got {result.status}"
+        assert result.data is not None and isinstance(result.data, dict), "result.data must be a non-None dict"
+        assert result.resultText is not None and len(result.resultText) > 0, "result.resultText must be non-empty"
+        for requiredKey in _STRUCTURED_SCHEMA["required"]:
+            assert requiredKey in result.data, f"Required key '{requiredKey}' missing from result.data"
+
+
+@pytest.mark.asyncio
+async def test_yc_openai_structured(goldenDataProvider: Any) -> None:
+    """Test structured-output generation with YcOpenaiProvider using golden data.
+
+    Replays the ``YCOpenAI Structured Toy`` scenario recorded by collect.py.
+    Verifies that the provider returns a ModelStructuredResult whose ``data``
+    dict contains the required keys from the toy schema.
+
+    Args:
+        goldenDataProvider: Session-scoped fixture providing loaded golden scenarios.
+    """
+    scenario = goldenDataProvider.getScenario("YCOpenAI Structured Toy")
+
+    openAiPatcher = OpenAIReplayerPatcher()
+
+    async with GoldenDataReplayer(scenario, aenterCallback=openAiPatcher.patch, aexitCallback=openAiPatcher.unpatch):
+        provider = YcOpenaiProvider(
+            {
+                "api_key": "fake-key-for-testing",
+                "folder_id": "fake-folder-id",
+            }
+        )
+
+        provider.addModel(
+            name="yandexgpt",
+            modelId="yandexgpt",
+            modelVersion="latest",
+            temperature=0.7,
+            contextSize=8192,
+            extraConfig={
+                "support_structured_output": True,
+            },
+            statsStorage=NullStatsStorage(),
+        )
+
+        model = provider.getModel("yandexgpt")
+        assert model is not None, "Model 'yandexgpt' should be available"
+
+        messages = [
+            ModelMessage(role="system", content="Respond with a JSON object matching the provided schema, dood."),
+            ModelMessage(role="user", content="Give me a divination layout for a love question."),
+        ]
+
+        result = await model.generateStructured(
+            messages,
+            schema=_STRUCTURED_SCHEMA,
+            schemaName="divinationLayout",
+            strict=True,
+        )
+
+        assert result is not None
+        assert isinstance(result, ModelStructuredResult), "Result must be a ModelStructuredResult"
+        assert result.status == ModelResultStatus.FINAL, f"Expected FINAL status, got {result.status}"
+        assert result.data is not None and isinstance(result.data, dict), "result.data must be a non-None dict"
+        assert result.resultText is not None and len(result.resultText) > 0, "result.resultText must be non-empty"
+        for requiredKey in _STRUCTURED_SCHEMA["required"]:
+            assert requiredKey in result.data, f"Required key '{requiredKey}' missing from result.data"

@@ -41,16 +41,15 @@ from internal.bot.models import (
 )
 from internal.bot.models.chat_settings import ChatSettingsKey
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
     CacheType,
     MessageCategory,
 )
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
-    LLMManager,
     LLMParameterType,
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
@@ -84,9 +83,7 @@ class YandexSearchHandler(BaseBotHandler):
         llmService (LLMService): Service for LLM tool registration and management
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """
         Initialize the Yandex Search handler with required services and configuration.
 
@@ -95,15 +92,15 @@ class YandexSearchHandler(BaseBotHandler):
         initializes default search parameters.
 
         Args:
-            configManager (ConfigManager): Configuration manager providing bot settings
-            database (DatabaseWrapper): Database wrapper for data persistence
-            llmManager (LLMManager): LLM manager for AI model operations
+            configManager: Configuration manager providing bot settings
+            database: Database object for data persistence
+            botProvider: Bot provider for messaging operations
 
         Raises:
             RuntimeError: If Yandex Search integration is not enabled in configuration
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         ysConfig = self.configManager.getYandexSearchConfig()
         if not ysConfig.get("enabled", False):
@@ -224,16 +221,22 @@ class YandexSearchHandler(BaseBotHandler):
     ) -> str:
         """Perform web search using Yandex Search API.
 
+        This method executes a web search query through the Yandex Search API and
+        returns formatted results. It can optionally fetch and parse the content of
+        found pages, apply content filtering, and limit the number of results.
+
         Args:
             extraData: Optional additional data for the operation
-            query: Search query string
+            query: Search query string to search for
             return_page_content: Whether to download and parse content of found pages
-            enable_content_filter: Whether to enable content filtering (default: False)
-            max_results: Maximum number of results to return (default: 5)
+            enable_content_filter: Whether to enable family-safe content filtering
+            max_results: Maximum number of results to return (clamped between 1 and 10)
             **kwargs: Additional keyword arguments
 
         Returns:
-            JSON string containing search results or page contents with status information
+            JSON string containing search results or page contents with status information.
+            Format includes 'done' flag, 'error' field if failed, and either 'pages' with
+            content or search result groups.
         """
 
         async def fetchUrlContent(urls: Sequence[Optional[str]]) -> Optional[Dict[str, str]]:
@@ -333,23 +336,28 @@ class YandexSearchHandler(BaseBotHandler):
         max_size: int = 10240,
         **kwargs,
     ) -> str:
-        """
-        LLM tool handler to fetch content from a URL, dood!
+        """LLM tool handler to fetch content from a URL.
 
         This tool is registered with the LLM service and can be called by AI models
-        to retrieve web content during conversations. Currently returns raw content
-        as a string.
+        to retrieve web content during conversations. It supports caching, HTML to
+        Markdown conversion, and content condensing for large pages.
 
         Args:
-            extraData: Optional extra data passed by the LLM service (unused)
+            extraData: Optional extra data passed by the LLM service, must contain
+                'ensuredMessage' key with EnsuredMessage instance
             url: The URL to fetch content from
-            parse_to_markdown: Whether to parse the content to Markdown (default: True)
-            max_size: Max size returned, will be condensed via LLM if page is bigger
-            **kwargs: Additional keyword arguments (unused)
+            parse_to_markdown: Whether to parse HTML content to Markdown format
+            max_size: Maximum size of returned content in bytes. If page content
+                exceeds this size, it will be condensed via LLM
+            **kwargs: Additional keyword arguments
 
         Returns:
-            str: The content from the URL as a string, or a JSON error object
-                 if the request fails
+            The content from the URL as a string, or a JSON error object if the
+            request fails. Content may be raw HTML, converted Markdown, or condensed
+            text depending on parameters and content size.
+
+        Raises:
+            RuntimeError: If extraData is None or does not contain 'ensuredMessage'
         """
         if extraData is None:
             raise RuntimeError("extraData should be provided")
@@ -388,27 +396,32 @@ class YandexSearchHandler(BaseBotHandler):
             if parse_to_markdown and "html" in contentType:
                 # TODO: think about caching it as well. Or not
                 # Parse to Markdown only if it's HTML
-                content = html_to_markdown.convert(
+                convertResult = html_to_markdown.convert(
                     content,
                     options=html_to_markdown.ConversionOptions(
                         extract_metadata=False,
                         strip_tags={"svg", "img"},
                     ),
                 )
+                if convertResult["content"] is not None:
+                    content = convertResult["content"]
+                else:
+                    logger.error(
+                        "No content returned after HTML-2-Markdown conversion, "
+                        f"fallback to raw HTML (result is: {repr(convertResult)})"
+                    )
+
+                if convertResult.get("warnings"):
+                    for convertWarning in convertResult["warnings"]:
+                        logger.warning(f"Warning during HTML-2-Markdown conversion: {convertWarning}")
 
             if len(content) >= max_size:
                 logger.debug(f"Content length is {len(content)} > {max_size}, condensing...")
-                chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+                chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
                 prompt = [
                     ModelMessage(
                         role="system",
-                        content="Сделай максимально подробный пересказ этого документа. "
-                        "Сохраняй язык оригинала (не переводи),"
-                        " ответ так же давай на языке документа (не этого запроса). "
-                        "Включи все идеи, аргументы и факты. "
-                        "Структура пересказа должна соответствовать структуре"
-                        " исходного текста (разделы, подразделы). "
-                        "Пересказывай исключительно на языке исходного текста.",
+                        content=chatSettings[ChatSettingsKey.DOCUMENT_CONDENSING_PROMPT].toStr(),
                     ),
                     ModelMessage(role="user", content=content),
                 ]
@@ -417,7 +430,6 @@ class YandexSearchHandler(BaseBotHandler):
                     prompt=prompt,
                     chatId=ensuredMessage.recipient.id,
                     chatSettings=chatSettings,
-                    llmManager=self.llmManager,
                     modelKey=ChatSettingsKey.CHAT_MODEL,
                     fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
                 )
@@ -433,6 +445,26 @@ class YandexSearchHandler(BaseBotHandler):
             return utils.jsonDumps({"done": False, "error": str(e)})
 
     async def _downloadUrl(self, url: str) -> Dict[str, Any]:
+        """Download content from a URL using HTTP client.
+
+        This method performs an HTTP GET request to fetch content from the specified
+        URL. It handles redirects, sets appropriate headers, and returns the response
+        content along with metadata.
+
+        Args:
+            url: The URL to download content from
+
+        Returns:
+            Dictionary containing download result with keys:
+                - 'done' (bool): True if download succeeded, False otherwise
+                - 'content' (str): The downloaded content if successful
+                - 'contentType' (str): The content type from response headers
+                - 'error' (str): Error message if download failed
+
+        Note:
+            Uses HTTP/2 with a 60-second timeout, follows up to 5 redirects,
+            and sets a user agent header to avoid blocking.
+        """
         try:
             async with httpx.AsyncClient(
                 http2=True,
@@ -537,13 +569,16 @@ class YandexSearchHandler(BaseBotHandler):
         """Handle /web_search command for direct user web searches.
 
         This method processes the /web_search command, allowing users to search
-        the web directly through the bot. It validates user permissions, parses
-        the search query from command arguments, performs the search via Yandex
-        Search API, and formats the results for Telegram display.
+        the web directly through the bot. It validates the search query from
+        command arguments, performs the search via Yandex Search API, applies
+        rate limiting, and formats the results for Telegram display.
 
         Args:
-            update (Update): Telegram update object containing the command message
-            context (ContextTypes.DEFAULT_TYPE): Telegram context with command arguments
+            ensuredMessage: Ensured message object containing message details
+            command: The command that triggered this handler
+            args: Command arguments containing the search query
+            UpdateObj: Telegram update object containing the command message
+            typingManager: Optional typing manager for showing typing status
 
         Returns:
             None: This method sends messages directly via Telegram API
@@ -559,7 +594,7 @@ class YandexSearchHandler(BaseBotHandler):
         searchQuery = args
 
         chatId = ensuredMessage.recipient.id
-        chatSettings = self.getChatSettings(chatId=chatId)
+        chatSettings = await self.getChatSettings(chatId=chatId)
         # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
         await self.llmService.rateLimit(chatId, chatSettings)
 

@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-This document describes a comprehensive "Golden Data" testing system for the Gromozeka bot project, dood! The system captures real API responses from external services (Yandex Search, OpenWeatherMap, LLM providers, etc.) and uses them as test fixtures, replacing heavy mocking with realistic data.
+This document describes a comprehensive "Golden Data" testing system for the Gromozeka bot project The system captures real API responses from external services (Yandex Search, OpenWeatherMap, LLM providers, etc.) and uses them as test fixtures, replacing heavy mocking with realistic data.
 
 **Key Benefits:**
 - ✅ Tests use real API response structures
@@ -1275,7 +1275,7 @@ def testParsingPerformance(goldenWeatherMinsk):
 
 ## Summary
 
-The Golden Data Testing System provides a robust, maintainable approach to testing external API integrations, dood! By capturing real API responses and using them as test fixtures, we can:
+The Golden Data Testing System provides a robust, maintainable approach to testing external API integrations By capturing real API responses and using them as test fixtures, we can:
 
 1. **Improve Test Quality:** Tests use real data structures and edge cases
 2. **Reduce Maintenance:** No need to update mocks when APIs change

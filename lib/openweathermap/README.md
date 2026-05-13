@@ -19,7 +19,7 @@ A comprehensive async client library for the OpenWeatherMap API with database-ba
 
 ```python
 from lib.openweathermap import OpenWeatherMapClient, DatabaseWeatherCache
-from internal.database.wrapper import DatabaseWrapper
+from internal.database import Database
 
 # Initialize database and cache
 db = DatabaseWrapper("gromozeka.db")

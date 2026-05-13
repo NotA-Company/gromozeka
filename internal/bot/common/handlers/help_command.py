@@ -1,9 +1,25 @@
-"""
-Help command handler for Gromozeka Telegram bot.
+"""Help command handler for Gromozeka Telegram bot.
 
 This module provides the HelpHandler class which generates and displays
 help information for all available bot commands. It collects command
 information from all handlers and presents it in a user-friendly format.
+
+The module also defines the CommandHandlerGetterInterface abstract base class
+that provides a contract for retrieving command handler information from a
+handlers manager.
+
+Example:
+    To use the help handler, create an instance with the required dependencies
+    and register it with the bot's command handler manager:
+
+    ```python
+    helpHandler = HelpHandler(
+        configManager=configManager,
+        database=database,
+        botProvider=BotProvider.TELEGRAM,
+        commandsGetter=handlersManager
+    )
+    ```
 """
 
 import logging
@@ -22,9 +38,8 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
-from lib.ai import LLMManager
 
 from .base import BaseBotHandler
 
@@ -35,18 +50,38 @@ class CommandHandlerGetterInterface(ABC):
     """Interface for getting command handlers from a manager.
 
     This abstract interface defines the contract for retrieving command
-    handler information from a handlers manager.
+    handler information from a handlers manager. Implementations of this
+    interface provide access to the bot's registered command handlers.
+
+    Example:
+        ```python
+        class HandlersManager(CommandHandlerGetterInterface):
+            def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
+                # Implementation to retrieve command handlers
+                return self._handlers
+        ```
     """
 
     @abstractmethod
     def getCommandHandlersDict(self, useCache: bool = True) -> Dict[str, CommandHandlerInfoV2]:
         """Get dictionary of command handlers.
 
+        Retrieves all registered command handlers, optionally using a cache
+        to improve performance. The returned dictionary maps command names
+        to their corresponding handler information.
+
         Args:
             useCache: If True, return cached commands; if False, rebuild cache
+                by scanning all registered handlers. Default is True.
 
         Returns:
-            Dictionary mapping command names to CommandHandlerInfo objects
+            Dictionary mapping command names to CommandHandlerInfoV2 objects.
+            Each key is a command name (e.g., "help", "start") and each value
+            contains metadata about the command handler including permissions,
+            descriptions, and handler references.
+
+        Raises:
+            NotImplementedError: This method must be implemented by subclasses.
         """
         raise NotImplementedError
 
@@ -56,28 +91,54 @@ class HelpHandler(BaseBotHandler):
 
     This class collects command information from all registered handlers
     and presents it in a structured help format. It handles permission
-    filtering and command categorization.
+    filtering and command categorization, showing different commands to
+    different users based on their permissions (e.g., bot owner, admin, regular user).
+
+    The help command is automatically registered with the decorator and responds
+    to the /help command in private chats.
+
+    Attributes:
+        commandsGetter: Interface instance used to retrieve command handler
+            information from the handlers manager. This allows the help handler
+            to dynamically discover all available commands without hardcoding them.
+
+    Example:
+        ```python
+        helpHandler = HelpHandler(
+            configManager=configManager,
+            database=database,
+            botProvider=BotProvider.TELEGRAM,
+            commandsGetter=handlersManager
+        )
+        # The help command is automatically registered via the decorator
+        ```
     """
 
     def __init__(
         self,
+        *,
         configManager: ConfigManager,
-        database: DatabaseWrapper,
-        llmManager: LLMManager,
+        database: Database,
         botProvider: BotProvider,
         commandsGetter: CommandHandlerGetterInterface,
     ):
         """Initialize help handler with required dependencies.
 
+        Sets up the help handler with all necessary dependencies for accessing
+        configuration, database, LLM services, and command handler information.
+
         Args:
-            configManager: Configuration manager instance
-            database: Database wrapper for data persistence
-            llmManager: LLM manager for AI model operations
-            botProvider: Bot provider type (TELEGRAM or MAX)
-            commandsGetter: Interface to get command handlers from manager
+            configManager: Configuration manager instance for accessing bot
+                configuration settings.
+            database: Database wrapper for data persistence and message storage.
+            botProvider: Bot provider type (TELEGRAM or MAX) indicating which
+                messaging platform the bot is running on.
+            commandsGetter: Interface to get command handlers from manager.
+                This is used to dynamically discover all available commands
+                for the help display.
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
         self.commandsGetter = commandsGetter
 
     @commandHandlerV2(
@@ -99,12 +160,45 @@ class HelpHandler(BaseBotHandler):
     ) -> None:
         """Handle the /help command to display available commands.
 
+        Generates and sends a formatted help message showing all available bot
+        commands. Commands are filtered based on the user's permissions:
+        - Regular users see commands available to them
+        - Bot owners see additional bot-owner-only commands
+
+        Commands are organized by their help order (FIRST, SECOND, etc.) and
+        displayed with their aliases and descriptions. The help message also
+        includes information about the bot's automatic features like image
+        analysis and conversation support.
+
         Args:
-            ensuredMessage: Message containing the help command
-            command: Command name (always "help")
-            args: Command arguments (unused for help)
-            UpdateObj: Original update object from the platform
-            typingManager: Optional typing manager (unused for help)
+            ensuredMessage: Message containing the help command. Contains
+                information about the sender, chat, and message content.
+            command: Command name (always "help" for this handler).
+            args: Command arguments (unused for help command, but part of
+                the handler signature).
+            UpdateObj: Original update object from the platform (Telegram or MAX).
+                Provides raw update data for advanced use cases.
+            typingManager: Optional typing manager for showing typing indicators
+                (unused for help command, but part of the handler signature).
+
+        Returns:
+            None
+
+        Raises:
+            Does not raise exceptions directly. Any errors during message sending
+            are handled by the base class's sendMessage method.
+
+        Example:
+            User sends: /help
+            Bot responds with:
+            ```
+            🤖 **Gromozeka Bot Help**
+
+            **Поддерживаемые команды:**
+            * `/start`: Начать работу с ботом.
+            * `/help`: Показать список доступных команд.
+            ...
+            ```
         """
         isBotOwner = self.isBotOwner(ensuredMessage.sender)
 

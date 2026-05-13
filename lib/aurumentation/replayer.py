@@ -16,6 +16,14 @@ from .types import GoldenDataScenarioDict
 PatchingReplayerCallback: TypeAlias = (
     Callable[["GoldenDataReplayer"], None] | Callable[["GoldenDataReplayer"], Awaitable[None]]
 )
+"""Callback type for replayer context manager lifecycle hooks.
+
+This type alias defines the signature for callbacks that can be invoked
+during the replayer's context manager lifecycle. Callbacks can be either
+synchronous or asynchronous functions that accept a GoldenDataReplayer instance.
+
+The callback is invoked with the replayer instance as its only argument.
+"""
 
 
 class GoldenDataReplayer:
@@ -25,6 +33,14 @@ class GoldenDataReplayer:
     with ReplayTransport, using recorded recordings from a scenario.
 
     Can be used as a context manager to patch httpx globally, similar to GoldenDataRecorder.
+
+    Attributes:
+        scenario: GoldenDataScenarioDict containing recorded recordings to replay.
+        transport: Optional ReplayTransport instance for replaying HTTP traffic.
+        usedRecordings: List of indices of recordings that have been used.
+        originalClientClass: Reference to the original httpx.AsyncClient class before patching.
+        aenterCallback: Optional callback to call in __aenter__.
+        aexitCallback: Optional callback to call in __aexit__.
     """
 
     def __init__(
@@ -32,13 +48,13 @@ class GoldenDataReplayer:
         scenario: GoldenDataScenarioDict,
         aenterCallback: Optional[PatchingReplayerCallback] = None,
         aexitCallback: Optional[PatchingReplayerCallback] = None,
-    ):
+    ) -> None:
         """Initialize the replayer with a scenario.
 
         Args:
-            scenario: GoldenDataScenarioDict containing recorded recordings to replay
-            aenterCallback: Optional callback to call in __aenter__
-            aexitCallback: Optional callback to call in __aexit__
+            scenario: GoldenDataScenarioDict containing recorded recordings to replay.
+            aenterCallback: Optional callback to call in __aenter__.
+            aexitCallback: Optional callback to call in __aexit__.
         """
         self.scenario = scenario
         self.transport: Optional[ReplayTransport] = None
@@ -51,7 +67,7 @@ class GoldenDataReplayer:
         """Enter the async context manager and patch httpx globally.
 
         Returns:
-            The replayer instance
+            The replayer instance.
         """
         # Create replay transport with scenario recordings
         self.transport = ReplayTransport(recordings=self.scenario["recordings"])
@@ -79,13 +95,21 @@ class GoldenDataReplayer:
 
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[object],
+    ) -> Optional[bool]:
         """Exit the async context manager and restore httpx.
 
         Args:
-            exc_type: Exception type if an exception occurred
-            exc_val: Exception value if an exception occurred
-            exc_tb: Exception traceback if an exception occurred
+            exc_type: Exception type if an exception occurred.
+            exc_val: Exception value if an exception occurred.
+            exc_tb: Exception traceback if an exception occurred.
+
+        Returns:
+            None to suppress exceptions, or True to suppress the exception.
         """
         # Call aexitCallback if provided
         if self.aexitCallback:
@@ -102,7 +126,7 @@ class GoldenDataReplayer:
         """Create an httpx client with ReplayTransport.
 
         Returns:
-            An httpx.AsyncClient configured with ReplayTransport
+            An httpx.AsyncClient configured with ReplayTransport.
         """
         # Create replay transport with scenario recordings
         self.transport = ReplayTransport(recordings=self.scenario["recordings"])
@@ -114,7 +138,7 @@ class GoldenDataReplayer:
         """Check if all recorded recordings were replayed.
 
         Returns:
-            True if all recorded recordings were used, False otherwise
+            True if all recorded recordings were used, False otherwise.
         """
         if not self.transport:
             return False

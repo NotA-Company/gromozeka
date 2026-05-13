@@ -1,4 +1,11 @@
-# Gromozeka Project Improvements Proposal
+# Gromozeka Project Improvements Proposal (EARLY PROPOSAL - HISTORICAL)
+
+> **Status:** ⚠️ EARLY PROPOSAL — NOT IMPLEMENTED AS DESCRIBED
+> **Historical Context:** This is an early proposal from before the repository pattern was implemented. Many of the improvements described have been implemented differently or not at all. For current improvement suggestions, see [`docs/suggestions/improvements.md`](../../suggestions/improvements.md). This document is kept for audit trail and historical context.
+
+---
+
+**WARNING:** This document describes an early architectural vision that may not match the current implementation. The database layer has been refactored from a monolithic `DatabaseWrapper` to a `Database` façade with domain repositories (see [`internal/database/`](../../../internal/database/)). Many architectural choices described here have evolved.
 
 **Date:** 2025-09-07  
 **Author:** Architect Mode  

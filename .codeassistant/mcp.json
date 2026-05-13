@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "sourcecraft": {
+      "type": "streamable-http",
+      "url": "https://api.sourcecraft.tech/mcp",
+      "disabled": true,
+      "headers": {},
+      "disabledTools": [],
+      "timeout": 60,
+      "alwaysAllow": []
+    },
+    "yandex-cloud-documentation": {
+      "type": "streamable-http",
+      "url": "https://docs.mcp.cloud.yandex.net/mcp",
+      "disabled": true
+    }
+  }
+}

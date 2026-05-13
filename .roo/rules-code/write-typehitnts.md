@@ -1,1 +1,0 @@
-* **ALWAYS** Write Type Hints for functions/method arguments, returned values, local variables if their type isn't obvious.

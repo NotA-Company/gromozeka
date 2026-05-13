@@ -93,8 +93,11 @@ class DevCommandsHandler(BaseBotHandler):
         for debugging message handling and testing bot availability.
 
         Args:
-            update: Telegram update object containing the message
-            context: Bot context with command arguments
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "echo")
+            args: Command arguments (the message text to echo)
+            UpdateObj: Telegram update object containing the message
+            typingManager: Optional typing manager for showing typing status
 
         Command Usage:
             /echo <message> - Echoes back the provided message
@@ -103,9 +106,9 @@ class DevCommandsHandler(BaseBotHandler):
             None
 
         Note:
-            - Requires message to be present in update
-            - Saves command to database with USER_COMMAND category
-            - Sends error if no message text is provided, dood!
+            - Sends error if no message text is provided
+            - Message is sent with BOT_COMMAND_REPLY category on success
+            - Error messages are sent with BOT_ERROR category, dood!
         """
 
         if args:
@@ -145,8 +148,11 @@ class DevCommandsHandler(BaseBotHandler):
         parameters.
 
         Args:
-            update: Telegram update object containing the message
-            context: Bot context (args not used for this command)
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "models")
+            args: Command arguments (not used for this command)
+            UpdateObj: Telegram update object containing the message
+            typingManager: Optional typing manager for showing typing status
 
         Command Usage:
             /models - Lists all available models with their details
@@ -172,8 +178,9 @@ class DevCommandsHandler(BaseBotHandler):
 
         replyText = "**Доступные модели:**\n\n"
 
-        for i, modelName in enumerate(self.llmManager.listModels()):
-            modelData = self.llmManager.getModelInfo(modelName)
+        llmManager = self.llmService.getLLMManager()
+        for i, modelName in enumerate(llmManager.listModels()):
+            modelData = llmManager.getModelInfo(modelName)
             if modelData is None:
                 modelData = {}
             modelKeyI18n = {
@@ -233,10 +240,11 @@ class DevCommandsHandler(BaseBotHandler):
         issues and understanding the current state of chat-specific settings.
 
         Args:
-            ensuredMessage: Ensured message object containing chat information
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "settings")
+            args: Command arguments (chatId and optional skip-default flag)
+            UpdateObj: Telegram update object containing the message
             typingManager: Optional typing manager for showing typing status
-            update: Telegram update object containing the message
-            context: Bot context with command arguments
 
         Command Usage:
             /settings - Display settings for current chat
@@ -270,7 +278,7 @@ class DevCommandsHandler(BaseBotHandler):
         if argList and argList[0].lower() in ["skip-default", "skip-defaults"]:
             skipDefault = True
 
-        chatInfo = self.getChatInfo(targetChatId)
+        chatInfo = await self.getChatInfo(targetChatId)
         if not chatInfo:
             await self.sendMessage(
                 ensuredMessage,
@@ -282,9 +290,9 @@ class DevCommandsHandler(BaseBotHandler):
         chatName = self.getChatTitle(chatInfo)
 
         resp = f"Настройки чата {chatName}:\n\n"
-        chatSettings = self.getChatSettings(targetChatId)
-        chatSettingsNoDef = self.getChatSettings(targetChatId, returnDefault=False)
-        defaultSettings = self.getChatSettings(
+        chatSettings = await self.getChatSettings(targetChatId)
+        chatSettingsNoDef = await self.getChatSettings(targetChatId, returnDefault=False)
+        defaultSettings = await self.getChatSettings(
             None,
             chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP,
             chatTier=self.getChatTier(chatSettings),
@@ -328,8 +336,11 @@ class DevCommandsHandler(BaseBotHandler):
         to the default value.
 
         Args:
-            update: Telegram update object containing the message
-            context: Bot context with command arguments
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "set" or "unset")
+            args: Command arguments (chatId, key, and optional value)
+            UpdateObj: Telegram update object containing the message
+            typingManager: Optional typing manager for showing typing status
 
         Command Usage:
             /set [<chatId>] <key> <value> - Sets the specified key to the given value
@@ -400,14 +411,14 @@ class DevCommandsHandler(BaseBotHandler):
         if isSet:
             value = " ".join(argList[1:]).strip()
 
-            self.setChatSetting(targetChatId, key, ChatSettingsValue(value), user=ensuredMessage.sender)
+            await self.setChatSetting(targetChatId, key, ChatSettingsValue(value), user=ensuredMessage.sender)
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{keyStr}` в чате #`{targetChatId}`:\n```\n{value}\n```",
                 messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             )
         else:
-            self.unsetChatSetting(targetChatId, key)
+            await self.unsetChatSetting(targetChatId, key)
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Готово, теперь `{keyStr}` в чате #`{targetChatId}` сброшено в значение по умолчанию",
@@ -431,7 +442,45 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Handle /test command to run various diagnostic test suites, dood!"""
+        """Handle /test command to run various diagnostic test suites, dood!
+
+        Provides access to various test suites for debugging and development purposes.
+        Each test suite performs specific diagnostic operations and returns results
+        to the chat.
+
+        Args:
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "test")
+            args: Command arguments (test suite name and optional parameters)
+            UpdateObj: Telegram update object containing the message
+            typingManager: Optional typing manager for showing typing status
+
+        Command Usage:
+            /test long [<iterations>] [<delay>] - Test long-running operations
+            /test delayedQueue - Display delayed actions queue state
+            /test backgroundTasks - Display background tasks state
+            /test cacheStats - Display cache statistics
+            /test dumpCache - Dump all cache contents
+            /test dumpEntities - Dump message entities (must reply to a message)
+            /test dumpNativeEntities - Dump native message entities (must reply to a message)
+
+        Returns:
+            None
+
+        Test Suites:
+            long: Sends multiple messages with configurable iterations and delay
+            delayedQueue: Shows the delayed actions queue and its size
+            backgroundTasks: Shows currently running background tasks
+            cacheStats: Displays cache statistics in JSON format
+            dumpCache: Dumps all cache namespaces and dirty keys
+            dumpEntities: Dumps formatted entities from a replied message
+            dumpNativeEntities: Dumps native entities from a replied message
+
+        Note:
+            - Restricted to bot owners only
+            - dumpEntities and dumpNativeEntities require replying to a message
+            - Some test suites may have delays between messages, dood!
+        """
 
         if not args:
             await self.sendMessage(
@@ -662,7 +711,30 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Clear cache"""
+        """Clear cache to force reload from database, dood!
+
+        Clears all temporary cache namespaces (CHAT_USERS and CHATS) to force
+        the bot to reload values from the database. This is useful after manual
+        database modifications or when troubleshooting cache-related issues.
+
+        Args:
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "clear_cache")
+            args: Command arguments (not used for this command)
+            UpdateObj: Telegram update object containing the message
+            typingManager: Optional typing manager for showing typing status
+
+        Command Usage:
+            /clear_cache - Clears temporary caches
+
+        Returns:
+            None
+
+        Note:
+            - Restricted to bot owners only
+            - Does not clear User and ChatPersistent namespaces
+            - Use /test dumpCache to verify cache state after clearing, dood!
+        """
         # Dump only temporary caches, do not touch User and ChatPersistent ones
         self.cache.clearNamespace(CacheNamespace.CHAT_USERS)
         self.cache.clearNamespace(CacheNamespace.CHATS)
@@ -690,7 +762,32 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Get list of admins of given chat"""
+        """Get list of admins of given chat, dood!
+
+        Retrieves and displays the list of administrators for a specified chat.
+        This command is useful for debugging permission issues and verifying
+        admin status.
+
+        Args:
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "get_admins")
+            args: Command arguments (optional chatId)
+            UpdateObj: Telegram update object containing the message
+            typingManager: Optional typing manager for showing typing status
+
+        Command Usage:
+            /get_admins - Get admins for current chat
+            /get_admins <chatId> - Get admins for specified chat
+
+        Returns:
+            None
+
+        Note:
+            - Restricted to bot owners only
+            - If chatId is not provided, uses current chat
+            - Admin list is cached and may be refreshed by this command
+            - Results are displayed in JSON format, dood!
+        """
         targetChatId: Optional[int] = None
         if args:
             argList = args.split()
@@ -730,7 +827,31 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Shutdown bot"""
+        """Shutdown the bot gracefully, dood!
+
+        Logs out from the bot platform and terminates the bot process.
+        This command is used for controlled shutdown during maintenance
+        or when the bot needs to be restarted.
+
+        Args:
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "shutdown")
+            args: Command arguments (not used for this command)
+            UpdateObj: Telegram update object containing the message
+            typingManager: Optional typing manager for showing typing status
+
+        Command Usage:
+            /shutdown - Shutdown the bot
+
+        Returns:
+            None
+
+        Note:
+            - Restricted to bot owners only
+            - Sends goodbye message before shutting down
+            - Logs out from Telegram if available
+            - Terminates the process with exit code 0, dood!
+        """
 
         await self.sendMessage(
             ensuredMessage,

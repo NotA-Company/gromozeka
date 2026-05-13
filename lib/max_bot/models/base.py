@@ -15,8 +15,16 @@ EXTRA_DEBUG = False
 
 
 class BaseMaxBotModel:
-    """
-    Base Class for all models from Max Messenger Bot API
+    """Base class for all models from Max Messenger Bot API.
+
+    Provides common functionality for all Max Bot API response models including
+    serialization, attribute introspection, and API kwargs handling. All models
+    use __slots__ for memory efficiency and support recursive dictionary conversion.
+
+    Attributes:
+        api_kwargs: Raw API response data containing all fields from the API
+            response, including any extra fields not explicitly defined as
+            class attributes.
     """
 
     __slots__ = ("api_kwargs",)
@@ -24,7 +32,7 @@ class BaseMaxBotModel:
     api_kwargs: Dict[str, Any]
     """Raw API response data"""
 
-    def __init__(self, *, api_kwargs: Optional[Dict[str, Any]] = None):
+    def __init__(self, *, api_kwargs: Optional[Dict[str, Any]] = None) -> None:
         if api_kwargs is None:
             api_kwargs = {}
         self.api_kwargs = api_kwargs

@@ -16,7 +16,6 @@ extend-exclude = '''
   | buck-out
   | build
   | dist
-  | migrations
 )/
 '''
 
@@ -28,6 +27,8 @@ exclude = [
     "**/.pytest_cache",
     ".git",
     "ext",
+    "**/node_modules",
+    "**/.*",
 ]
 venvPath = "."
 venv = "venv"
@@ -45,12 +46,11 @@ exclude = [
     "old",
     "build",
     "dist",
-    "migrations",
     "venv",
     "ext",
 ]
 per-file-ignores = [
-    "__init__.py:F401"
+    "__init__.py:F401",
 ]
 
 [tool.pytest.ini_options]
@@ -76,7 +76,7 @@ markers = [
 profile = "black"
 line_length = 120
 skip_gitignore = true
-extend_skip = ["venv", ".venv", "migrations", ".git"]
+extend_skip = ["venv", ".venv", ".git"]
 known_first_party = ["internal", "lib"]
 sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 multi_line_output = 3

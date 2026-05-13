@@ -157,7 +157,12 @@ class MaxBotClient:
         """
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[Any],
+    ) -> None:
         """Async context manager exit point.
 
         Args:
@@ -1289,7 +1294,17 @@ class MaxBotClient:
         timeout: int,
         errorHandler: Optional[Callable[[Exception], Union[None, Awaitable[None]]]],
     ) -> None:
-        """Internal polling loop that runs in background."""
+        """Internal polling loop that runs in background.
+
+        Continuously polls for updates and calls the handler for each update received.
+        Handles errors and retries automatically.
+
+        Args:
+            handler: Function to call for each update received
+            types: List of update types to receive (optional)
+            timeout: Timeout for each polling request in seconds
+            errorHandler: Function to call when an error occurs (optional)
+        """
         last_marker = None
 
         while self._isPolling:
@@ -1428,95 +1443,38 @@ class MaxBotClient:
 
     # Upload Methods
     async def getUploadUrl(self, uploadType: UploadType) -> UploadEndpoint:
-        """
-        Возвращает URL для последующей загрузки файла.
+        """Get URL for file upload.
 
-        Поддерживаются два типа загрузки:
-        - **Multipart upload** — более простой, но менее надежный способ.
-          В этом случае используется заголовок `Content-Type: multipart/form-data`.
-          Этот способ имеет ограничения:
-            - Максимальный размер файла: 4 ГБ
-            - Можно загружать только один файл за раз
-            - Невозможно перезапустить загрузку, если она была остановлена
+        Returns a URL endpoint for uploading files to Max Bot servers.
+        Supports two upload types:
+        - **Multipart upload**: Simpler but less reliable. Uses Content-Type: multipart/form-data.
+          Limitations: max 4GB file size, one file at a time, cannot resume interrupted uploads.
+        - **Resumable upload**: More reliable when Content-Type is not multipart/form-data.
+          Allows uploading files in parts and resuming from the last successful part on errors.
 
-        - **Resumable upload** — более надежный способ, если заголовок
-          `Content-Type` не равен `multipart/form-data`.
-          Этот способ позволяет загружать файл частями и возобновить загрузку
-          с последней успешно загруженной части в случае ошибок.
+        For video and audio uploads:
+        1. When getting upload URL for video/audio (POST /uploads with type=video or type=audio),
+           the response includes a token that must be used in messages (when forming body with attachments)
+           in POST /messages
+        2. After uploading video/audio (using the URL from step 1), the server returns retval
+        3. From this point, use the token to attach the media to bot messages
 
-        Пример использования cURL для загрузки файла:
+        This differs from type=image|file where token is returned in the upload response.
 
-        ```shell
-        curl -i -X POST \
-            -H "Content-Type: multipart/form-data" \
-           -F "data=@movie.pdf" "%UPLOAD_URL%"
-        ```
+        Args:
+            uploadType: Type of file to upload (image, file, video, audio)
 
-        Где %UPLOAD_URL% — это URL из результата метода в примере cURL запроса
+        Returns:
+            Upload endpoint with URL and optional token for video/audio uploads
 
-        **Для загрузки видео и аудио:**
-        1. Когда получаем ссылку на загрузку видео или аудио
-          (`POST /uploads` с `type` = `video` или `type` = `audio`),
-          вместе с `url` в ответе приходит `token`, который нужно
-          использовать в сообщении (когда формируете `body` с `attachments`)
-          в `POST /messages`
-        2. После загрузки видео или аудио (по `url` из шага выше) сервер возвращает `retval`
-        3. C этого момента можно использовать `token`, чтобы прикреплять вложение в сообщение бота
+        Raises:
+            AuthenticationError: If access token is invalid
+            NetworkError: If network request fails
 
-        Механика отличается от `type` = `image` | `file`, где `token` возвращается
-          в ответе на загрузку изображения или файла
-
-        ## Прикрепление медиа
-        Медиафайлы прикрепляются к сообщениям поэтапно:
-
-        1. Получите URL для загрузки медиафайлов
-        2. Загрузите бинарные данные соответствующего формата по полученному URL
-        3. После успешной загрузки получите JSON-объект в ответе. Используйте этот объект для создания вложения.
-          Структура вложения:
-            - `type`: тип медиа (например, `"video"`)
-            - `payload`: JSON-объект, который вы получили
-
-        Пример для видео:
-        1. Получите URL для загрузки
-        ```bash
-        curl -X POST 'https://platform-api.max.ru/uploads?type=video' \
-            -H 'Authorization: Bearer %access_token%'
-        ```
-
-        Ответ:
-        ```json
-        {
-            "url": "https://vu.mycdn.me/upload.do…"
-        }
-        ```
-
-        2. Загрузите видео по URL
-        ```bash
-        curl -i -X POST -H "Content-Type: multipart/form-data" \
-            -F \"data=@movie.mp4\" \"https://vu.mycdn.me/upload.do…"
-        ```
-
-        Ответ:
-        ```json
-        {
-            "token": "_3R..."
-        }
-        ```
-
-        3. Отправьте сообщение с вложением
-        ```json
-        {
-            "text": "Message with video",
-            "attachments": [
-            {
-                "type": "video",
-                "payload": {
-                    "token": "_3R..."
-                }
-            }
-            ]
-        }
-        ```
+        Example:
+            >>> async with MaxBotClient("token") as client:
+            ...     upload_info = await client.getUploadUrl(UploadType.IMAGE)
+            ...     print(f"Upload URL: {upload_info.url}")
         """
 
         response = await self.post(f"/uploads?type={uploadType.value}")

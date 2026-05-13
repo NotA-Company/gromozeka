@@ -15,7 +15,7 @@ Run with:
 
 import asyncio
 import base64
-from typing import Any, Dict
+from typing import Any, AsyncGenerator, Dict
 
 import pytest
 
@@ -92,9 +92,12 @@ class MockYandexSearchClient(YandexSearchClient):
     responses for testing purposes without making actual API calls. It simulates
     network delays and uses predefined XML responses to ensure consistent
     test results.
+
+    Attributes:
+        mockBase64Response (str): Base64-encoded mock XML response used for testing.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize the mock client with test credentials and settings.
 
         Sets default test credentials and disables rate limiting for integration
@@ -116,7 +119,7 @@ class MockYandexSearchClient(YandexSearchClient):
         super().__init__(**kwargs)
 
         # Prepare mock response
-        self.mockBase64Response = base64.b64encode(MOCK_XML_RESPONSE.encode("utf-8")).decode("utf-8")
+        self.mockBase64Response: str = base64.b64encode(MOCK_XML_RESPONSE.encode("utf-8")).decode("utf-8")
 
     async def _makeRequest(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Mock API request that returns predefined response.
@@ -143,8 +146,16 @@ class MockYandexSearchClient(YandexSearchClient):
 
 
 @pytest.fixture
-async def rateLimiterManager():
-    """Set up rate limiter manager for tests."""
+async def rateLimiterManager() -> AsyncGenerator[RateLimiterManager, None]:
+    """Set up rate limiter manager for tests.
+
+    Creates and configures a RateLimiterManager with a unique test rate limiter
+    bound to the yandex_search queue. The fixture ensures proper cleanup after
+    test execution.
+
+    Yields:
+        RateLimiterManager: Configured rate limiter manager with test limiter.
+    """
     manager = RateLimiterManager()
 
     # Register a test rate limiter with unique name
@@ -178,13 +189,16 @@ class TestEndToEndIntegration:
     """
 
     @pytest.mark.asyncio
-    async def testCompleteSearchWorkflow(self, rateLimiterManager):
+    async def testCompleteSearchWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test complete search workflow from query to parsed results.
 
         Verifies the entire search pipeline including request formatting,
         response parsing, and data structure validation. Ensures that
         the client correctly handles the complete workflow from initial
         query to final structured results.
+
+        Args:
+            rateLimiterManager (RateLimiterManager): Rate limiter manager fixture.
         """
         # Create client
         client = MockYandexSearchClient()
@@ -223,13 +237,16 @@ class TestEndToEndIntegration:
         assert "python" in [word.lower() for word in hlwords]
 
     @pytest.mark.asyncio
-    async def testSearchWithCachingWorkflow(self, rateLimiterManager):
+    async def testSearchWithCachingWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test search workflow with caching enabled.
 
         Verifies that the caching system integrates correctly with the
         search client, ensuring that repeated queries are served from
         cache while new queries hit the mock API. Tests cache statistics
         and proper cache key generation.
+
+        Args:
+            rateLimiterManager (RateLimiterManager): Rate limiter manager fixture.
         """
         # Create cache and client
         cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), defaultTtl=3600, maxSize=100)
@@ -250,13 +267,16 @@ class TestEndToEndIntegration:
         assert results3["requestId"] == results1["requestId"]  # Same mock response
 
     @pytest.mark.asyncio
-    async def testAdvancedSearchParameters(self, rateLimiterManager):
+    async def testAdvancedSearchParameters(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test advanced search with all parameters.
 
         Verifies that the client correctly handles all available search
         parameters including search type, family mode, sorting options,
         grouping settings, and localization. Ensures proper parameter
         formatting and transmission to the mock API.
+
+        Args:
+            rateLimiterManager (RateLimiterManager): Rate limiter manager fixture.
         """
         client = MockYandexSearchClient()
 
@@ -283,13 +303,16 @@ class TestEndToEndIntegration:
         assert results["requestId"] == "1234567890"
 
     @pytest.mark.asyncio
-    async def testCacheBypassWorkflow(self, rateLimiterManager):
+    async def testCacheBypassWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test cache bypass functionality.
 
         Verifies that the client can bypass cache on a per-request basis
         using the useCache parameter. Ensures that cache bypass works
         correctly while maintaining normal caching behavior for other
         requests.
+
+        Args:
+            rateLimiterManager (RateLimiterManager): Rate limiter manager fixture.
         """
         cache = cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), defaultTtl=3600)
         client = MockYandexSearchClient(cache=cache)
@@ -304,13 +327,16 @@ class TestEndToEndIntegration:
         assert results1["requestId"] == results2["requestId"]
 
     @pytest.mark.asyncio
-    async def testConcurrentSearchesWorkflow(self, rateLimiterManager):
+    async def testConcurrentSearchesWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test concurrent searches with caching.
 
         Verifies that the client handles multiple concurrent search
         requests correctly, including proper cache management for
         duplicate queries and thread-safe operations. Tests that
         concurrent execution maintains data integrity.
+
+        Args:
+            rateLimiterManager (RateLimiterManager): Rate limiter manager fixture.
         """
         cache = cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), defaultTtl=3600)
         client = MockYandexSearchClient(cache=cache)
@@ -327,13 +353,16 @@ class TestEndToEndIntegration:
         assert all(r and r["requestId"] == "1234567890" for r in results)
 
     @pytest.mark.asyncio
-    async def testRateLimitingWorkflow(self, rateLimiterManager):
+    async def testRateLimitingWorkflow(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test rate limiting in integration context.
 
         Verifies that the rate limiting mechanism works correctly in
         an integration scenario, ensuring that requests are properly
         delayed when the configured limit is exceeded. Tests both
         the timing behavior and rate limit statistics.
+
+        Args:
+            rateLimiterManager (RateLimiterManager): Rate limiter manager fixture.
         """
         # Create client (rate limiting is now handled globally)
         client = MockYandexSearchClient()
@@ -356,7 +385,7 @@ class TestEndToEndIntegration:
         assert totalTime < 1.0  # Should complete quickly without rate limiting delays
 
     @pytest.mark.asyncio
-    async def testErrorHandlingWorkflow(self):
+    async def testErrorHandlingWorkflow(self) -> None:
         """Test error handling in integration context.
 
         Verifies that the client handles errors gracefully in an
@@ -397,13 +426,16 @@ class TestCacheIntegration:
     """
 
     @pytest.mark.asyncio
-    async def testCacheKeyConsistency(self, rateLimiterManager):
+    async def testCacheKeyConsistency(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test that cache keys are generated consistently.
 
         Verifies that cache keys are generated consistently regardless
         of parameter order in the request, ensuring that identical
         searches with different parameter ordering produce the same
         cache key and hit the same cache entry.
+
+        Args:
+            rateLimiterManager (RateLimiterManager): Rate limiter manager fixture.
         """
         cache = DictCache(keyGenerator=SearchRequestKeyGenerator())
         client = MockYandexSearchClient(cache=cache)
@@ -417,13 +449,16 @@ class TestCacheIntegration:
         assert results1 and results2 and results1["requestId"] == results2["requestId"]
 
     @pytest.mark.asyncio
-    async def testCacheTtlExpiration(self, rateLimiterManager):
+    async def testCacheTtlExpiration(self, rateLimiterManager: RateLimiterManager) -> None:
         """Test cache TTL expiration.
 
         Verifies that cache entries properly expire after their TTL
         and that subsequent requests hit the API again. Tests the
         integration between TTL management and the search client's
         caching behavior.
+
+        Args:
+            rateLimiterManager (RateLimiterManager): Rate limiter manager fixture.
         """
         # Create cache with very short TTL
         cache = DictCache(keyGenerator=SearchRequestKeyGenerator(), defaultTtl=1)  # 1 second (int)

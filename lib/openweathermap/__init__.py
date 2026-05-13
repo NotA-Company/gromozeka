@@ -21,8 +21,8 @@ Example usage:
 
     # Or use database cache for persistence:
     # from internal.database.openweathermap_cache import DatabaseWeatherCache
-    # from internal.database.wrapper import DatabaseWrapper
-    # db = DatabaseWrapper("gromozeka.db")
+    # from internal.database import Database
+    # db = Database(...)
     # cache = DatabaseWeatherCache(db)
 """
 

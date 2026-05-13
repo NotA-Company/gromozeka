@@ -1,5 +1,5 @@
 """
-Telegram bot summarization handlers for Gromozeka, dood!
+Telegram bot summarization handlers for Gromozeka.
 
 This module provides handlers for chat message summarization functionality,
 including interactive wizards for selecting chats, topics, and time ranges,
@@ -35,7 +35,7 @@ from internal.database.models import (
     ChatMessageDict,
     MessageCategory,
 )
-from internal.models import MessageIdType
+from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum, UserActiveConfigurationDict
 from lib.ai import (
     ModelMessage,
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 class SummarizationHandler(BaseBotHandler):
     """
-    Handler for chat summarization functionality, dood!
+    Handler for chat summarization functionality.
 
     This handler provides comprehensive chat summarization features including:
     - Interactive wizard for selecting chats and topics
@@ -63,21 +63,20 @@ class SummarizationHandler(BaseBotHandler):
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
-        Handle incoming messages for active summarization sessions, dood!
+        Handle incoming messages for active summarization sessions.
 
         Processes user input when they're in an active summarization workflow,
         such as entering custom message counts or prompts.
 
         Args:
-            update: Telegram update object containing the message
-            context: Telegram context for the handler
-            ensuredMessage: Validated message object with user and chat info
+            ensuredMessage: Validated message object with user and chat info.
+            updateObj: Telegram update object containing the message.
 
         Returns:
             HandlerResultStatus indicating if the message was handled:
-            - FINAL: Message was processed as part of summarization workflow
-            - SKIPPED: Not a private chat or no active summarization session
-            - ERROR: Missing required data
+            - FINAL: Message was processed as part of summarization workflow.
+            - SKIPPED: Not a private chat or no active summarization session.
+            - ERROR: Missing required data.
         """
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             return HandlerResultStatus.SKIPPED
@@ -89,7 +88,7 @@ class SummarizationHandler(BaseBotHandler):
             return HandlerResultStatus.SKIPPED
 
         messageText = ensuredMessage.formatMessageText()
-        self.db.updateChatMessageCategory(
+        await self.db.chatMessages.updateChatMessageCategory(
             chatId=ensuredMessage.recipient.id,
             messageId=ensuredMessage.messageId,
             messageCategory=MessageCategory.USER_CONFIG_ANSWER,
@@ -111,7 +110,7 @@ class SummarizationHandler(BaseBotHandler):
                 logger.error(f"Wrong K in data {activeSummarization}")
         await self._handle_summarization(
             data=data,
-            messageId=activeSummarization["messageId"],
+            messageId=MessageId(activeSummarization["messageId"]),
             messageChatId=activeSummarization["messageChatId"],
             user=user,
         )
@@ -132,25 +131,26 @@ class SummarizationHandler(BaseBotHandler):
         typingManager: Optional[TypingManager] = None,
     ) -> None:
         """
-        Perform chat summarization and send results, dood!
+        Perform chat summarization and send results.
 
         Retrieves messages from the database, processes them in batches through
         an LLM, and sends the summarized results. Handles token limits by
         splitting large message sets into manageable batches.
 
         Args:
-            ensuredMessage: Message to reply to with the summary
-            chatId: ID of the chat to summarize
-            threadId: Optional topic/thread ID for topic-specific summaries
-            chatSettings: Chat configuration including model and prompt settings
-            sinceDT: Start datetime for message range (mutually exclusive with maxMessages)
-            tillDT: End datetime for message range (optional, used with sinceDT)
-            maxMessages: Maximum number of recent messages to summarize
-            summarizationPrompt: Custom prompt for the LLM (uses chat setting if None)
-            useCache: Whether to check for and store cached summaries
+            ensuredMessage: Message to reply to with the summary.
+            chatId: ID of the chat to summarize.
+            threadId: Optional topic/thread ID for topic-specific summaries.
+            chatSettings: Chat configuration including model and prompt settings.
+            sinceDT: Start datetime for message range (mutually exclusive with maxMessages).
+            tillDT: End datetime for message range (optional, used with sinceDT).
+            maxMessages: Maximum number of recent messages to summarize.
+            summarizationPrompt: Custom prompt for the LLM (uses chat setting if None).
+            useCache: Whether to check for and store cached summaries.
+            typingManager: Optional typing manager for showing typing status.
 
         Raises:
-            ValueError: If neither sinceDT nor maxMessages is provided
+            ValueError: If neither sinceDT nor maxMessages is provided.
 
         Note:
             Either sinceDT or maxMessages must be provided, but not both.
@@ -165,9 +165,9 @@ class SummarizationHandler(BaseBotHandler):
             # summarization is long process, let's set timeout to 10 minutes
             typingManager = await self.startTyping(ensuredMessage, maxTimeout=600)
         else:
-            typingManager.maxTimeout = typingManager.maxTimeout + 600
+            typingManager.addTimeout(600)
 
-        messages = self.db.getChatMessagesSince(
+        messages = await self.db.chatMessages.getChatMessagesSince(
             chatId=chatId,
             sinceDateTime=sinceDT if maxMessages is None else None,
             tillDateTime=tillDT if maxMessages is None else None,
@@ -187,7 +187,7 @@ class SummarizationHandler(BaseBotHandler):
             summarizationPrompt = chatSettings[ChatSettingsKey.SUMMARY_PROMPT].toStr()
 
         if useCache and len(messages) > 1:
-            cache = self.db.getChatSummarization(
+            cache = await self.db.chatSummarization.getChatSummarization(
                 chatId=chatId,
                 topicId=None,
                 firstMessageId=messages[-1]["message_id"],
@@ -217,7 +217,7 @@ class SummarizationHandler(BaseBotHandler):
             parsedMessages.append(
                 {
                     "role": "user",
-                    "content": await EnsuredMessage.fromDBChatMessage(msg, self.db).formatForLLM(
+                    "content": await (await EnsuredMessage.fromDBChatMessage(msg, self.db)).formatForLLM(
                         self.db, LLMMessageFormat.JSON, stripAtsign=True
                     ),
                 }
@@ -225,7 +225,7 @@ class SummarizationHandler(BaseBotHandler):
 
         reqMessages = [systemMessage] + parsedMessages
 
-        llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel(self.llmManager)
+        llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel()
         maxTokens = llmModel.contextSize
         tokensCount = llmModel.getEstimateTokensCount(reqMessages)
 
@@ -280,7 +280,6 @@ class SummarizationHandler(BaseBotHandler):
                         ModelMessage.fromDictList(reqMessages),
                         chatId=chatId,
                         chatSettings=chatSettings,
-                        llmManager=self.llmManager,
                         modelKey=llmModel,
                         fallbackKey=ChatSettingsKey.SUMMARY_FALLBACK_MODEL,
                     )
@@ -315,7 +314,7 @@ class SummarizationHandler(BaseBotHandler):
         resMessages = tmpResMessages
 
         if useCache and len(messages) > 1:
-            self.db.addChatSummarization(
+            await self.db.chatSummarization.addChatSummarization(
                 chatId=chatId,
                 topicId=threadId,
                 firstMessageId=messages[-1]["message_id"],
@@ -338,24 +337,24 @@ class SummarizationHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
-    ):
+    ) -> None:
         """
-        Handle the summarization process for messages, dood!
+        Handle the summarization process for messages.
 
         Processes the summarization request based on user action and generates
         a summary of the specified messages or chat history.
 
         Args:
-            data: Dictionary containing summarization parameters and options
-            messageId: ID of the message that triggered the summarization
-            user: User who requested the summarization
-            bot: Telegram bot instance for sending messages
+            data: Dictionary containing summarization parameters and options.
+            messageId: ID of the message that triggered the summarization.
+            messageChatId: ID of the chat where the message was sent.
+            user: User who requested the summarization.
         """
 
-        chatSettings = self.getChatSettings(messageChatId)
+        chatSettings = await self.getChatSettings(messageChatId)
         self.cache.clearUserState(userId=user.id, stateKey=UserActiveActionEnum.Summarization)
 
         exitButton = CallbackButton(
@@ -380,7 +379,7 @@ class SummarizationHandler(BaseBotHandler):
         if not isinstance(maxMessages, int):
             maxMessages = 0
 
-        userChats = self.getUserChats(user.id)
+        userChats = await self.getUserChats(user.id)
 
         chatId = data.get(ButtonDataKey.ChatId, None)
         # Choose chatID
@@ -444,7 +443,7 @@ class SummarizationHandler(BaseBotHandler):
             topicId = None
         # Choose TopicID if needed
         if isToticSummary and topicId is None:
-            topics = list(self.cache.getChatTopicsInfo(chatId=chatId).values())
+            topics = list((await self.cache.getChatTopicsInfo(chatId=chatId)).values())
             if not topics:
                 topics.append(
                     {
@@ -453,8 +452,8 @@ class SummarizationHandler(BaseBotHandler):
                         "name": "Default",
                         "icon_color": None,
                         "icon_custom_emoji_id": None,
-                        "created_at": datetime.datetime.now(),
-                        "updated_at": datetime.datetime.now(),
+                        "created_at": utils.now(),
+                        "updated_at": utils.now(),
                     }
                 )
 
@@ -500,7 +499,7 @@ class SummarizationHandler(BaseBotHandler):
         # TopicID Choosen or not needed
         topicTitle = ""
         if topicId is not None and isToticSummary:
-            topics = self.cache.getChatTopicsInfo(chatId=chatId)
+            topics = await self.cache.getChatTopicsInfo(chatId=chatId)
             if topicId in topics:
                 topicTitle = f", топик **{topics[int(topicId)]["name"]}**"
             else:
@@ -646,7 +645,7 @@ class SummarizationHandler(BaseBotHandler):
             text="Суммаризирую сообщения...",
         )
 
-        today = datetime.datetime.now(datetime.timezone.utc)
+        today = utils.now()
         today = today.replace(hour=0, minute=0, second=0, microsecond=0)
         sinceDT = today
         tillDT: Optional[datetime.datetime] = None
@@ -660,7 +659,7 @@ class SummarizationHandler(BaseBotHandler):
 
         # We need to Make Message object manually here
         #  as only messageId could be properly preserver across bot restarts
-        dbMessage = self.db.getChatMessageByMessageId(chatId=messageChatId, messageId=messageId)
+        dbMessage = await self.db.chatMessages.getChatMessageByMessageId(chatId=messageChatId, messageId=messageId)
         if dbMessage is None:
             logger.error(f"summarization: Message #{messageChatId}:{messageId} not found in Database")
             await self.editMessage(
@@ -673,12 +672,15 @@ class SummarizationHandler(BaseBotHandler):
         dbRepliedMessage: Optional[ChatMessageDict] = None
         ensuredMessage: Optional[EnsuredMessage] = None
         if dbMessage["reply_id"]:
-            dbRepliedMessage = self.db.getChatMessageByMessageId(chatId=messageChatId, messageId=dbMessage["reply_id"])
+            dbRepliedMessage = await self.db.chatMessages.getChatMessageByMessageId(
+                chatId=messageChatId,
+                messageId=dbMessage["reply_id"],
+            )
             if dbRepliedMessage is not None:
-                ensuredMessage = EnsuredMessage.fromDBChatMessage(dbRepliedMessage, self.db)
+                ensuredMessage = await EnsuredMessage.fromDBChatMessage(dbRepliedMessage, self.db)
 
         if ensuredMessage is None:
-            ensuredMessage = EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
+            ensuredMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
 
         await self._doSummarization(
             ensuredMessage=ensuredMessage,
@@ -719,31 +721,31 @@ class SummarizationHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /summary and /topic_summary commands, dood!
+        Handle /summary and /topic_summary commands.
 
         Provides chat summarization functionality with two modes:
-        - /summary: Summarizes entire chat or specified message range
-        - /topic_summary: Summarizes specific topic/thread in supergroups
+        - /summary: Summarizes entire chat or specified message range.
+        - /topic_summary: Summarizes specific topic/thread in supergroups.
 
         In private chats, launches an interactive wizard if no arguments provided.
         In group chats, directly summarizes based on provided arguments.
 
         Args:
-            update: Telegram update containing the command message
-            context: Telegram context with command arguments:
-                - args[0]: maxMessages (optional) - number of messages to summarize
-                - args[1]: chatId (optional, private only) - target chat ID
-                - args[2]: topicId (optional, private only) - target topic ID
+            ensuredMessage: Validated message object with user and chat info.
+            command: Command name (e.g., "summary" or "topic_summary").
+            args: Command arguments string containing optional maxMessages.
+            UpdateObj: Telegram update object containing the command message.
+            typingManager: Optional typing manager for showing typing status.
 
         Command Formats:
             Private chat:
-                /summary - Start wizard
+                /summary - Start wizard.
 
             Group/Supergroup:
-                /summary - Summarize today's messages
-                /summary <maxMessages> - Summarize last N messages
-                /topic_summary - Summarize current topic today
-                /topic_summary <maxMessages> - Summarize last N messages in topic
+                /summary - Summarize today's messages.
+                /summary <maxMessages> - Summarize last N messages.
+                /topic_summary - Summarize current topic today.
+                /topic_summary <maxMessages> - Summarize last N messages in topic.
 
         Note:
             Bot owner can bypass this restriction in private chats.
@@ -787,14 +789,14 @@ class SummarizationHandler(BaseBotHandler):
             case ChatType.GROUP:
                 # Summary command print summary for whole chat.
                 # Topic-summary prints summary for current topic, we threat default topic as 0
-                today = datetime.datetime.now(datetime.timezone.utc)
+                today = utils.now()
                 today = today.replace(hour=0, minute=0, second=0, microsecond=0)
 
                 threadId: Optional[int] = None
                 if isTopicSummary:
                     threadId = ensuredMessage.threadId if ensuredMessage.threadId else 0
 
-                chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
+                chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
                 return await self._doSummarization(
                     ensuredMessage=ensuredMessage,
                     chatId=ensuredMessage.recipient.id,
@@ -816,22 +818,22 @@ class SummarizationHandler(BaseBotHandler):
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
-        TODO
-        Handle button callbacks for summarization wizard, dood!
+        Handle button callbacks for summarization wizard.
 
         Processes inline keyboard button presses during the summarization
         wizard workflow, delegating to _handle_summarization for state management.
 
         Args:
-            update: Telegram update containing the callback query
-            context: Telegram context for the handler
-            data: Parsed callback data dictionary containing wizard state
+            ensuredMessage: Validated message object with user and chat info.
+            data: Parsed callback data dictionary containing wizard state.
+            user: User who pressed the button.
+            updateObj: Telegram update object containing the callback query.
 
         Returns:
             HandlerResultStatus indicating handling result:
-            - FINAL: Button was for summarization and was processed
-            - SKIPPED: Button was not for summarization
-            - FATAL: Missing required data in callback
+            - FINAL: Button was for summarization and was processed.
+            - SKIPPED: Button was not for summarization.
+            - FATAL: Missing required data in callback.
 
         Note:
             Checks for ButtonDataKey.SummarizationAction in data to determine

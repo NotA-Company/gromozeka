@@ -1,0 +1,106 @@
+{
+  "metadata": {
+    "name": "YCOpenAI Structured Toy",
+    "description": "Structured-output golden — UNRECORDED. Run collect.py to record.",
+    "module": "tests.lib_ai.model_wrappers",
+    "class": "YcOpenaiModelWrapper",
+    "method": "generateStructured",
+    "init_kwargs": {
+      "providerConfig": {
+        "api_key": "${YC_API_KEY}",
+        "folder_id": "${YC_FOLDER_ID}"
+      },
+      "modelArgs": {
+        "model_id": "yandexgpt",
+        "model_version": "latest",
+        "temperature": 0.7,
+        "context_size": 8192,
+        "support_structured_output": true
+      }
+    },
+    "kwargs": {
+      "messages": [
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "system",
+            "content": "Respond with a JSON object matching the provided schema, dood."
+          }
+        },
+        {
+          "module": "lib.ai.models",
+          "class": "ModelMessage",
+          "init_kwargs": {
+            "role": "user",
+            "content": "Give me a divination layout for a love question."
+          }
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "nCards": {
+            "type": "integer"
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "nCards",
+          "positions"
+        ],
+        "additionalProperties": false
+      },
+      "schemaName": "divinationLayout",
+      "strict": true
+    },
+    "result_type": "ModelStructuredResult"
+  },
+  "recordings": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://llm.api.cloud.yandex.net/v1/chat/completions",
+        "headers": {
+          "host": "llm.api.cloud.yandex.net",
+          "accept-encoding": "gzip, deflate, br",
+          "connection": "keep-alive",
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "AsyncOpenAI/Python 2.33.0",
+          "x-stainless-lang": "python",
+          "x-stainless-package-version": "2.33.0",
+          "x-stainless-os": "MacOS",
+          "x-stainless-arch": "arm64",
+          "x-stainless-runtime": "CPython",
+          "x-stainless-runtime-version": "3.13.7",
+          "authorization": "***MASKED***",
+          "x-stainless-async": "async:asyncio",
+          "x-stainless-retry-count": "0",
+          "x-stainless-read-timeout": "600",
+          "content-length": "541"
+        },
+        "params": {},
+        "body": "{\"messages\":[{\"content\":\"Respond with a JSON object matching the provided schema, dood.\",\"role\":\"system\"},{\"content\":\"Give me a divination layout for a love question.\",\"role\":\"user\"}],\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"divinationLayout\",\"schema\":{\"type\":\"object\",\"properties\":{\"nCards\":{\"type\":\"integer\"},\"positions\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"nCards\",\"positions\"],\"additionalProperties\":false},\"strict\":true}},\"temperature\":0.7}"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "content-type": "application/json",
+          "x-client-request-id": "",
+          "x-request-id": "fa5945e7-7952-4130-854f-d56855b1c27a",
+          "date": "Wed, 06 May 2026 17:57:05 GMT",
+          "x-server-trace-id": "***MASKED***",
+          "server": "ycalb"
+        },
+        "content": "{\"id\":\"5c69b9cb-cf4d-487f-904b-10235027f4a8\",\"object\":\"chat.completion\",\"created\":1778090225,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"nCards\\\": 0, \\\"positions\\\": [\\\"Central card: main message\\\", \\\"Left card: influences from the past\\\", \\\"Right card: future prospects\\\", \\\"Bottom card: subconscious feelings\\\", \\\"Top card: external influences\\\"]}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":37,\"total_tokens\":86,\"completion_tokens\":49,\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n"
+      },
+      "timestamp": "2026-05-06T17:57:04.980523+00:00"
+    }
+  ]
+}

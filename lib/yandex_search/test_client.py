@@ -38,16 +38,16 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
     caching mechanisms, and rate limiting functionality.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Set up test fixtures.
 
         Initializes common test data including sample XML responses for both
         successful and error scenarios, along with authentication credentials
         used throughout the test cases.
         """
-        self.iamToken = "test-iam-token"
-        self.apiKey = "test-api-key"
-        self.folderId = "test-folder-id"
+        self.iamToken: str = "test-iam-token"
+        self.apiKey: str = "test-api-key"
+        self.folderId: str = "test-folder-id"
 
         # Sample successful response XML
         self.successXml = """<?xml version="1.0" encoding="utf-8"?>
@@ -82,7 +82,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
     </response>
 </yandexsearch>"""
 
-    def testClientInitializationWithIamToken(self):
+    def testClientInitializationWithIamToken(self) -> None:
         """Test client initialization with IAM token.
 
         Verifies that the client correctly stores IAM token credentials
@@ -95,7 +95,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(client.apiKey)
         self.assertEqual(client.folderId, self.folderId)
 
-    def testClientInitializationWithApiKey(self):
+    def testClientInitializationWithApiKey(self) -> None:
         """Test client initialization with API key.
 
         Verifies that the client correctly stores API key credentials
@@ -108,7 +108,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(client.iamToken)
         self.assertEqual(client.folderId, self.folderId)
 
-    def testClientInitializationWithoutCredentials(self):
+    def testClientInitializationWithoutCredentials(self) -> None:
         """Test client initialization fails without credentials.
 
         Verifies that the client raises a ValueError when neither IAM token
@@ -119,7 +119,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Either iamToken or apiKey must be provided", str(context.exception))
 
-    def testClientInitializationWithoutFolderId(self):
+    def testClientInitializationWithoutFolderId(self) -> None:
         """Test client initialization fails without folder ID.
 
         Verifies that the client raises a ValueError when folder ID is not
@@ -132,7 +132,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testSuccessfulSearch(self, mockManagerGetInstance, mockAsyncClient):
+    async def testSuccessfulSearch(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test successful search request.
 
         Verifies that the client correctly formats and sends search requests,
@@ -186,7 +186,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testErrorResponse(self, mockManagerGetInstance, mockAsyncClient):
+    async def testErrorResponse(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test error response handling.
 
         Verifies that the client correctly handles API error responses,
@@ -230,7 +230,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testHttpErrorHandling(self, mockManagerGetInstance, mockAsyncClient):
+    async def testHttpErrorHandling(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test HTTP error handling.
 
         Verifies that the client gracefully handles various HTTP error
@@ -267,7 +267,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testNetworkErrorHandling(self, mockManagerGetInstance, mockAsyncClient):
+    async def testNetworkErrorHandling(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test network error handling.
 
         Verifies that the client handles network-related errors such as
@@ -296,7 +296,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testInvalidJsonResponse(self, mockManagerGetInstance, mockAsyncClient):
+    async def testInvalidJsonResponse(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test handling of invalid JSON response.
 
         Verifies that the client handles cases where the API returns
@@ -324,7 +324,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testMissingResultField(self, mockManagerGetInstance, mockAsyncClient):
+    async def testMissingResultField(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test handling of response without result field.
 
         Verifies that the client handles cases where the API response
@@ -352,7 +352,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testAdvancedSearchParameters(self, mockManagerGetInstance, mockAsyncClient):
+    async def testAdvancedSearchParameters(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test search with advanced parameters.
 
         Verifies that the client correctly formats and sends requests
@@ -424,7 +424,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testSimpleSearchDefaults(self, mockManagerGetInstance, mockAsyncClient):
+    async def testSimpleSearchDefaults(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test simple search with default parameters.
 
         Verifies that the client uses appropriate default values when
@@ -484,7 +484,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testCachingFunctionality(self, mockManagerGetInstance, mockAsyncClient):
+    async def testCachingFunctionality(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test caching functionality.
 
         Verifies that the client properly caches search responses and
@@ -529,7 +529,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testCacheBypass(self, mockManagerGetInstance, mockAsyncClient):
+    async def testCacheBypass(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test cache bypass functionality.
 
         Verifies that the client can completely disable caching when
@@ -566,7 +566,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testPerRequestCacheBypass(self, mockManagerGetInstance, mockAsyncClient):
+    async def testPerRequestCacheBypass(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test per-request cache bypass.
 
         Verifies that the client can bypass cache on a per-request basis
@@ -608,7 +608,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
 
     @patch("httpx.AsyncClient")
     @patch("lib.rate_limiter.manager.RateLimiterManager.getInstance")
-    async def testRateLimiting(self, mockManagerGetInstance, mockAsyncClient):
+    async def testRateLimiting(self, mockManagerGetInstance: MagicMock, mockAsyncClient: MagicMock) -> None:
         """Test rate limiting functionality.
 
         Verifies that the client uses the global rate limiter manager
@@ -637,7 +637,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         # Verify that the rate limiter manager was called with the correct queue
         mockManager.applyLimit.assert_called_once_with("yandex-search")
 
-    def testCacheKeyGeneration(self):
+    def testCacheKeyGeneration(self) -> None:
         """Test cache key generation in cache.
 
         Verifies that the cache generates consistent and unique keys
@@ -704,7 +704,7 @@ class TestYandexSearchClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(key1), 128)
         self.assertTrue(all(c in "0123456789abcdef" for c in key1))
 
-    def testClientInitializationWithCache(self):
+    def testClientInitializationWithCache(self) -> None:
         """Test client initialization with cache.
 
         Verifies that the client correctly initializes with cache

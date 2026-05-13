@@ -22,16 +22,15 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
     CacheType,
     MessageCategory,
 )
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
-    LLMManager,
     LLMParameterType,
 )
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
@@ -54,9 +53,7 @@ class WeatherHandler(BaseBotHandler):
         llmService: LLM tool registration service
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """Initialize weather handler with dependencies.
 
         Sets up OpenWeatherMap client with caching and registers LLM tools.
@@ -64,13 +61,12 @@ class WeatherHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager for OpenWeatherMap settings
             database: Database wrapper for caching
-            llmManager: LLM manager for model interactions
 
         Raises:
             RuntimeError: If OpenWeatherMap integration is disabled
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         openWeatherMapConfig = self.configManager.getOpenWeatherMapConfig()
         if not openWeatherMapConfig.get("enabled", False):
@@ -330,7 +326,18 @@ class WeatherHandler(BaseBotHandler):
             return utils.jsonDumps({"done": False, "errorMessage": str(e)})
 
     async def _fixLocationDescription(self, data: SearchResult) -> SearchResult:
-        """Fix outdated country info"""
+        """Fix outdated country information in geocoding results.
+
+        Replaces outdated country names and codes with current values for
+        locations in specific geographic regions.
+
+        Args:
+            data: Geocoding search result from Geocode Maps API
+
+        Returns:
+            Modified geocoding result with updated country information.
+            Returns original data if location longitude is less than 30.5.
+        """
 
         def _fixCountry(value: Any) -> Any:
             replaceList = [
@@ -437,9 +444,10 @@ class WeatherHandler(BaseBotHandler):
 
         Args:
             ensuredMessage: Message wrapper for sending responses
-            typingManager: Typing indicator manager
-            update: Telegram update object
-            context: Telegram context with command arguments
+            command: Command name that triggered this handler
+            args: Command arguments (address string)
+            UpdateObj: Telegram update object containing message metadata
+            typingManager: Typing indicator manager for user feedback
 
         Returns:
             None. Sends weather info or error message to chat.
@@ -455,7 +463,7 @@ class WeatherHandler(BaseBotHandler):
             )
             return
         chatId = ensuredMessage.recipient.id
-        chatSettings = self.getChatSettings(chatId=chatId)
+        chatSettings = await self.getChatSettings(chatId=chatId)
         # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
         await self.llmService.rateLimit(chatId, chatSettings)
         try:
@@ -548,9 +556,10 @@ class WeatherHandler(BaseBotHandler):
 
         Args:
             ensuredMessage: Message wrapper for sending responses
-            typingManager: Typing indicator manager
-            update: Telegram update object
-            context: Telegram context with command arguments
+            command: Command name that triggered this handler
+            args: Command arguments (address string with optional 'short' flag)
+            UpdateObj: Telegram update object containing message metadata
+            typingManager: Typing indicator manager for user feedback
 
         Returns:
             None. Sends geocoding info or error message to chat.
@@ -581,7 +590,7 @@ class WeatherHandler(BaseBotHandler):
             return
 
         chatId = ensuredMessage.recipient.id
-        chatSettings = self.getChatSettings(chatId=chatId)
+        chatSettings = await self.getChatSettings(chatId=chatId)
         # NOTE: We use llm's ratelimiter here, probably need to move it to more common place
         await self.llmService.rateLimit(chatId, chatSettings)
         try:

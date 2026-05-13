@@ -244,9 +244,9 @@ def createMockDatabaseWrapper(
         settings = db.getChatSettings(123)
         assert settings["model"] == "gpt-4"
     """
-    from internal.database.wrapper import DatabaseWrapper
+    from internal.database import Database
 
-    mock = Mock(spec=DatabaseWrapper)
+    mock = Mock(spec=Database)
 
     # Store data
     mock._chat_settings = chatSettings or {}

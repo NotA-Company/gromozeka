@@ -1,5 +1,5 @@
 """
-Media handling module for Gromozeka Telegram bot, dood!
+Media handling module for Gromozeka Telegram bot.
 
 This module provides handlers for media-related operations including:
 - Image generation via AI models (/draw command)
@@ -36,12 +36,11 @@ from internal.bot.models import (
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.wrapper import DatabaseWrapper
 from internal.services.llm import LLMService
 from lib.ai import (
     LLMFunctionParameter,
-    LLMManager,
     LLMParameterType,
     ModelImageMessage,
     ModelMessage,
@@ -55,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 class MediaHandler(BaseBotHandler):
     """
-    Handler class for media-related bot operations, dood!
+    Handler class for media-related bot operations.
 
     This class manages all media-related functionality including:
     - AI-powered image generation with fallback support
@@ -74,11 +73,9 @@ class MediaHandler(BaseBotHandler):
                        chat settings, and database operations
     """
 
-    def __init__(
-        self, configManager: ConfigManager, database: DatabaseWrapper, llmManager: LLMManager, botProvider: BotProvider
-    ):
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
         """
-        Initialize the MediaHandler with required dependencies, dood!
+        Initialize the MediaHandler with required dependencies.
 
         Sets up the handler by initializing the base class and registering
         the image generation tool with the LLM service. This allows AI
@@ -87,14 +84,14 @@ class MediaHandler(BaseBotHandler):
         Args:
             configManager: Configuration manager for accessing bot settings
             database: Database wrapper for storing and retrieving messages
-            llmManager: LLM manager for accessing AI models
+            botProvider: Bot provider (Telegram or Max)
 
         Side Effects:
             - Registers 'generate_and_send_image' tool with LLMService
             - Initializes base handler functionality
         """
         # Initialize the mixin (discovers handlers)
-        super().__init__(configManager=configManager, database=database, llmManager=llmManager, botProvider=botProvider)
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
 
         self.llmService = LLMService.getInstance()
 
@@ -128,14 +125,14 @@ class MediaHandler(BaseBotHandler):
         self, extraData: Optional[Dict[str, Any]], image_prompt: str, image_description: Optional[str] = None, **kwargs
     ) -> str:
         """
-        LLM tool handler for generating and sending images, dood!
+        LLM tool handler for generating and sending images.
 
         This method is registered as an LLM tool and can be called by the AI assistant
         when users request image generation. It uses the configured image generation
         model with fallback support.
 
         Args:
-            extraData: Dictionary containing context data, must include 'ensuredMessage'
+            extraData: Dictionary containing context data, must include 'ensuredMessage' and 'typingManager'
             image_prompt: Detailed prompt describing the image to generate
             image_description: Optional caption/description for the generated image
             **kwargs: Additional keyword arguments (ignored)
@@ -144,8 +141,8 @@ class MediaHandler(BaseBotHandler):
             JSON string with generation result: {"done": bool, "errorMessage": str (optional)}
 
         Raises:
-            RuntimeError: If extraData is None, missing ensuredMessage, or ensuredMessage
-                         is not an EnsuredMessage instance
+            RuntimeError: If extraData is None, missing ensuredMessage/typingManager, or
+                         ensuredMessage/typingManager are not of correct type
         """
         if extraData is None:
             raise RuntimeError("extraData should be provided")
@@ -167,9 +164,9 @@ class MediaHandler(BaseBotHandler):
         # Show that we are sending photo + increase timeout as it could take long...
         originalAction = typingManager.action
         typingManager.action = TypingAction.UPLOAD_PHOTO
-        typingManager.maxTimeout = typingManager.maxTimeout + 300
+        typingManager.addTimeout(300)
         await typingManager.sendTypingAction()
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         logger.debug(
             f"Generating image: {image_prompt}. Image description: {image_description}, "
             f"mcID: {ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
@@ -179,7 +176,6 @@ class MediaHandler(BaseBotHandler):
             image_prompt,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
         )
         logger.debug(
             f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
@@ -223,7 +219,7 @@ class MediaHandler(BaseBotHandler):
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
         """
-        Handle "what's there?" (что там) messages to retrieve media content, dood!
+        Handle "what's there?" (что там) messages to retrieve media content.
 
         This handler responds to messages that mention the bot with "что там" phrase
         when replying to another message. It retrieves and returns the parsed content
@@ -233,9 +229,8 @@ class MediaHandler(BaseBotHandler):
         it returns the stored media content (e.g., image description, transcription).
 
         Args:
-            update: Telegram update object
-            context: Telegram context for the handler
             ensuredMessage: Wrapped message object with additional metadata
+            updateObj: Update object containing the message
 
         Returns:
             HandlerResultStatus indicating how the message was processed:
@@ -250,7 +245,7 @@ class MediaHandler(BaseBotHandler):
         if chatType not in [ChatType.PRIVATE, ChatType.GROUP]:
             return HandlerResultStatus.SKIPPED
 
-        chatSettings = self.getChatSettings(ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         if not chatSettings[ChatSettingsKey.ALLOW_MENTION].toBool():
             return HandlerResultStatus.SKIPPED
 
@@ -322,7 +317,7 @@ class MediaHandler(BaseBotHandler):
 
         async with await self.startTyping(ensuredMessage) as typingManager:
             # Not text message, try to get it's content from DB
-            storedReply = self.db.getChatMessageByMessageId(
+            storedReply = await self.db.chatMessages.getChatMessageByMessageId(
                 chatId=ensuredReply.recipient.id,
                 messageId=ensuredReply.messageId,
             )
@@ -330,7 +325,7 @@ class MediaHandler(BaseBotHandler):
                 logger.error(f"Failed to get parent message #{ensuredReply.recipient.id}:{ensuredReply.messageId}")
             else:
                 # logger.debug(f"storedReply: {storedReply}")
-                eStoredMsg = EnsuredMessage.fromDBChatMessage(storedReply, self.db)
+                eStoredMsg = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
                 # logger.debug(f"eStoredMsg: {eStoredMsg}")
                 await eStoredMsg.updateMediaContent(self.db)
                 # logger.debug(f"eStoredMsg V2: {eStoredMsg}")
@@ -382,7 +377,7 @@ class MediaHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /analyze <prompt> command to analyze media with AI, dood!
+        Handle /analyze <prompt> command to analyze media with AI.
 
         This command analyzes images or stickers from a replied message using the
         configured image parsing LLM model. The user provides a custom prompt
@@ -398,8 +393,11 @@ class MediaHandler(BaseBotHandler):
             Reply to an image with: /analyze What objects are in this image?
 
         Args:
-            update: Telegram update object containing the command message
-            context: Telegram context for the handler
+            ensuredMessage: Wrapped message object with additional metadata
+            command: Command name (e.g., "analyze")
+            args: Command arguments (the analysis prompt)
+            UpdateObj: Update object containing the command message
+            typingManager: Optional typing manager for showing typing status
 
         Returns:
             None. Sends analysis result or error message to the chat.
@@ -409,7 +407,7 @@ class MediaHandler(BaseBotHandler):
         """
         # Analyse media with given prompt. Should be reply to message with media.
 
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
         if not ensuredMessage.isReply:
             await self.sendMessage(
@@ -537,7 +535,6 @@ class MediaHandler(BaseBotHandler):
                 reqMessages,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
                 modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
                 fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
             )
@@ -580,7 +577,7 @@ class MediaHandler(BaseBotHandler):
         typingManager: Optional[TypingManager],
     ) -> None:
         """
-        Handle /draw [<prompt>] command to generate images with AI, dood!
+        Handle /draw [<prompt>] command to generate images with AI.
 
         This command generates images using the configured image generation LLM model
         with fallback support. The prompt can be provided in three ways:
@@ -602,8 +599,11 @@ class MediaHandler(BaseBotHandler):
             Reply with quote and send: /draw
 
         Args:
-            update: Telegram update object containing the command message
-            context: Telegram context for the handler
+            ensuredMessage: Wrapped message object with additional metadata
+            command: Command name (e.g., "draw")
+            args: Command arguments (optional image prompt)
+            UpdateObj: Update object containing the command message
+            typingManager: Optional typing manager for showing typing status
 
         Returns:
             None. Sends generated image or error message to the chat.
@@ -612,7 +612,7 @@ class MediaHandler(BaseBotHandler):
             Requires ALLOW_DRAW setting enabled or admin privileges.
         """
         # Draw picture with given prompt. If this is reply to message, use quote or full message as prompt
-        chatSettings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
+        chatSettings = await self.getChatSettings(chatId=ensuredMessage.recipient.id)
 
         prompt = ensuredMessage.messageText
 
@@ -642,14 +642,14 @@ class MediaHandler(BaseBotHandler):
                 ),
             ]
             for msg in reversed(
-                self.db.getChatMessagesByUser(
+                await self.db.chatMessages.getChatMessagesByUser(
                     ensuredMessage.recipient.id,
                     ensuredMessage.sender.id,
                     limit=10,
                 )
             ):
-                eMsg = EnsuredMessage.fromDBChatMessage(msg, self.db)
-                self._updateEMessageUserData(eMsg)
+                eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db)
+                await self._updateEMessageUserData(eMsg)
                 latestMessages.append(
                     await eMsg.toModelMessage(
                         self.db,
@@ -663,7 +663,6 @@ class MediaHandler(BaseBotHandler):
                 latestMessages,
                 chatId=ensuredMessage.recipient.id,
                 chatSettings=chatSettings,
-                llmManager=self.llmManager,
                 modelKey=ChatSettingsKey.CHAT_MODEL,
                 fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
             )
@@ -672,7 +671,7 @@ class MediaHandler(BaseBotHandler):
                 prompt = llmRet.resultText
             else:
                 # Fallback to something static
-                chatInfo = self.getChatInfo(ensuredMessage.recipient.id)
+                chatInfo = await self.getChatInfo(ensuredMessage.recipient.id)
                 chatTitle = chatInfo["title"] if chatInfo is not None else str(ensuredMessage.recipient)
                 prompt = f"Draw image of {ensuredMessage.sender} in chat `{chatTitle}`"
 
@@ -696,7 +695,6 @@ class MediaHandler(BaseBotHandler):
             prompt,
             chatId=ensuredMessage.recipient.id,
             chatSettings=chatSettings,
-            llmManager=self.llmManager,
         )
         logger.debug(
             f"Generated image Data: {mlRet} for mcID: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"

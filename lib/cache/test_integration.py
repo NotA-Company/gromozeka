@@ -1,9 +1,24 @@
-"""
-Integration tests for lib.cache library, dood!
+"""Integration tests for lib.cache library.
 
 This module contains comprehensive integration tests that verify the complete
 workflow of the cache library, including real-world usage scenarios,
 multiple cache implementations, and end-to-end functionality.
+
+Test Coverage:
+    - Public API imports and exports
+    - End-to-end usage scenarios with different cache types
+    - Real-world usage patterns (API caching, computed results, dataclasses)
+    - Cache replacement scenarios (switching between implementations)
+    - Performance characteristics (TTL, eviction, concurrency)
+    - Edge cases and error conditions
+
+Test Classes:
+    TestCachePublicAPI: Verifies that all public API components are importable.
+    TestCacheEndToEndUsage: Tests complete workflows with different cache types.
+    TestCacheRealWorldPatterns: Tests practical usage scenarios.
+    TestCacheReplacementScenarios: Tests switching between cache implementations.
+    TestCachePerformanceCharacteristics: Tests performance and behavior under load.
+    TestCacheEdgeCasesAndErrorConditions: Tests edge cases and error handling.
 """
 
 import asyncio
@@ -17,10 +32,21 @@ from .interface import CacheInterface
 
 
 class TestCachePublicAPI(unittest.IsolatedAsyncioTestCase):
-    """Test public API imports and exports, dood!"""
+    """Test public API imports and exports.
 
-    def test_all_exports_available(self):
-        """Test that all exports from __init__.py are importable, dood!"""
+    Verifies that all public API components from lib.cache are properly
+    importable and accessible through the __init__.py module.
+    """
+
+    def test_all_exports_available(self) -> None:
+        """Test that all exports from __init__.py are importable.
+
+        Verifies that all major cache components can be imported from the
+        lib.cache module and are not None.
+
+        Raises:
+            AssertionError: If any export is None or not importable.
+        """
         # Test that we can import all the main components
         from lib.cache import (
             CacheInterface,
@@ -41,8 +67,15 @@ class TestCachePublicAPI(unittest.IsolatedAsyncioTestCase):
         assert JsonKeyGenerator is not None
         assert KeyGenerator is not None
 
-    def test_import_from_module(self):
-        """Test that imports work as expected, dood!"""
+    def test_import_from_module(self) -> None:
+        """Test that imports work as expected.
+
+        Tests the import pattern from the documentation to ensure users can
+        import and instantiate cache components correctly.
+
+        Raises:
+            AssertionError: If imports fail or instances cannot be created.
+        """
         # Test the import pattern from the docstring
         from lib.cache import DictCache, StringKeyGenerator
 
@@ -51,8 +84,15 @@ class TestCachePublicAPI(unittest.IsolatedAsyncioTestCase):
         assert cache is not None
         assert isinstance(cache, CacheInterface)
 
-    def test_type_annotations_available(self):
-        """Test that type annotations are available, dood!"""
+    def test_type_annotations_available(self) -> None:
+        """Test that type annotations are available.
+
+        Verifies that type variables (K, V) and KeyGenerator are available
+        for type hinting purposes.
+
+        Raises:
+            AssertionError: If type annotations are not available.
+        """
         from lib.cache import K, KeyGenerator, V
 
         # Type variables should be available
@@ -62,10 +102,22 @@ class TestCachePublicAPI(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCacheEndToEndUsage(unittest.IsolatedAsyncioTestCase):
-    """Test end-to-end usage scenarios, dood!"""
+    """Test end-to-end usage scenarios.
 
-    async def test_string_keys_with_dict_cache(self):
-        """Test string keys with DictCache, dood!"""
+    Tests complete workflows using different cache implementations and
+    key generators to verify the cache library works correctly in
+    real-world scenarios.
+    """
+
+    async def test_string_keys_with_dict_cache(self) -> None:
+        """Test string keys with DictCache.
+
+        Tests storing and retrieving data using string keys with DictCache,
+        including cache statistics verification.
+
+        Raises:
+            AssertionError: If cache operations fail or return incorrect values.
+        """
         cache = DictCache[str, dict](keyGenerator=StringKeyGenerator(), defaultTtl=3600, maxSize=1000)
 
         # Store and retrieve user data
@@ -85,8 +137,15 @@ class TestCacheEndToEndUsage(unittest.IsolatedAsyncioTestCase):
         assert stats["maxSize"] == 1000
         assert stats["defaultTtl"] == 3600
 
-    async def test_complex_object_keys_with_hash_key_generator(self):
-        """Test complex object keys with HashKeyGenerator, dood!"""
+    async def test_complex_object_keys_with_hash_key_generator(self) -> None:
+        """Test complex object keys with HashKeyGenerator.
+
+        Tests using complex dictionary objects as cache keys with HashKeyGenerator,
+        which is useful for caching search queries and similar complex lookups.
+
+        Raises:
+            AssertionError: If cache operations fail with complex keys.
+        """
         cache = DictCache[Dict[str, Any], List[Dict[str, Any]]](
             keyGenerator=HashKeyGenerator(), defaultTtl=1800, maxSize=500
         )
@@ -114,8 +173,16 @@ class TestCacheEndToEndUsage(unittest.IsolatedAsyncioTestCase):
         assert retrieved_results == search_results
         assert len(retrieved_results) == 2
 
-    async def test_json_serializable_objects_with_json_key_generator(self):
-        """Test JSON-serializable objects with JsonKeyGenerator, dood!"""
+    async def test_json_serializable_objects_with_json_key_generator(self) -> None:
+        """Test JSON-serializable objects with JsonKeyGenerator.
+
+        Tests that equivalent JSON-serializable objects (with different key order)
+        produce the same cache entry, demonstrating JsonKeyGenerator's
+        normalization behavior.
+
+        Raises:
+            AssertionError: If equivalent keys don't map to the same cache entry.
+        """
         cache = DictCache[Dict[str, Any], str](keyGenerator=JsonKeyGenerator(), defaultTtl=3600)
 
         # Test that equivalent keys produce same cache entry
@@ -133,8 +200,16 @@ class TestCacheEndToEndUsage(unittest.IsolatedAsyncioTestCase):
         stats = cache.getStats()
         assert stats["entries"] == 1
 
-    async def test_switching_between_cache_implementations(self):
-        """Test switching between DictCache and NullCache, dood!"""
+    async def test_switching_between_cache_implementations(self) -> None:
+        """Test switching between DictCache and NullCache.
+
+        Tests that both cache implementations share the same interface and
+        can be used interchangeably, with DictCache providing real caching
+        and NullCache providing a no-op implementation for testing.
+
+        Raises:
+            AssertionError: If implementations don't share the same interface.
+        """
         # Start with DictCache
         real_cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
 
@@ -159,10 +234,22 @@ class TestCacheEndToEndUsage(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCacheRealWorldPatterns(unittest.IsolatedAsyncioTestCase):
-    """Test real-world usage patterns, dood!"""
+    """Test real-world usage patterns.
 
-    async def test_caching_api_responses(self):
-        """Test caching API responses (dict values), dood!"""
+    Tests practical usage scenarios that developers would encounter in
+    production applications, including API response caching, computed
+    result caching, and dataclass-based keys.
+    """
+
+    async def test_caching_api_responses(self) -> None:
+        """Test caching API responses (dict values).
+
+        Simulates caching API responses with nested dictionary structures,
+        demonstrating how to cache HTTP API responses to reduce load.
+
+        Raises:
+            AssertionError: If API response caching fails or returns incorrect data.
+        """
         cache = DictCache[str, Dict[str, Any]](
             keyGenerator=StringKeyGenerator(), defaultTtl=300, maxSize=100  # 5 minutes
         )
@@ -189,8 +276,16 @@ class TestCacheRealWorldPatterns(unittest.IsolatedAsyncioTestCase):
         assert cached_response == api_response
         assert cached_response["data"]["users"][0]["name"] == "Prinny"
 
-    async def test_caching_computed_results_with_ttl(self):
-        """Test caching computed results with TTL, dood!"""
+    async def test_caching_computed_results_with_ttl(self) -> None:
+        """Test caching computed results with TTL.
+
+        Tests caching expensive computation results with TTL expiration,
+        verifying that cached results are faster to retrieve and expire
+        correctly after the TTL period.
+
+        Raises:
+            AssertionError: If TTL expiration doesn't work correctly.
+        """
         cache = DictCache[str, int](
             keyGenerator=StringKeyGenerator(), defaultTtl=2, maxSize=50  # 2 seconds for testing
         )
@@ -226,8 +321,16 @@ class TestCacheRealWorldPatterns(unittest.IsolatedAsyncioTestCase):
         expired_result = await cache.get(cache_key)
         assert expired_result is None
 
-    async def test_using_cache_with_dataclasses_as_keys(self):
-        """Test using cache with dataclasses as keys, dood!"""
+    async def test_using_cache_with_dataclasses_as_keys(self) -> None:
+        """Test using cache with dataclasses as keys.
+
+        Tests using dataclass instances as cache keys with HashKeyGenerator,
+        which is useful for caching results of complex queries or operations
+        parameterized by structured data.
+
+        Raises:
+            AssertionError: If dataclass keys don't work correctly.
+        """
 
         @dataclass
         class SearchQuery:
@@ -257,12 +360,29 @@ class TestCacheRealWorldPatterns(unittest.IsolatedAsyncioTestCase):
         assert cached_results == results
         assert len(cached_results) == 3
 
-    async def test_thread_safe_concurrent_access_patterns(self):
-        """Test thread-safe concurrent access patterns, dood!"""
+    async def test_thread_safe_concurrent_access_patterns(self) -> None:
+        """Test thread-safe concurrent access patterns.
+
+        Tests that the cache handles concurrent access from multiple async
+        workers correctly without data corruption or race conditions.
+
+        Raises:
+            AssertionError: If concurrent operations cause data corruption.
+        """
         cache = DictCache[str, int](keyGenerator=StringKeyGenerator(), defaultTtl=3600, maxSize=1000)
 
-        async def worker(worker_id: int):
-            """Worker that performs cache operations, dood!"""
+        async def worker(worker_id: int) -> None:
+            """Worker that performs cache operations.
+
+            Performs a series of set and get operations with unique keys
+            to test concurrent access patterns.
+
+            Args:
+                worker_id: Unique identifier for this worker.
+
+            Raises:
+                AssertionError: If cache operations fail during concurrent access.
+            """
             for i in range(20):
                 key = f"worker_{worker_id}_item_{i}"
                 value = worker_id * 1000 + i
@@ -296,10 +416,22 @@ class TestCacheRealWorldPatterns(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCacheReplacementScenarios(unittest.IsolatedAsyncioTestCase):
-    """Test cache replacement scenarios, dood!"""
+    """Test cache replacement scenarios.
 
-    async def test_start_with_dict_cache_switch_to_null_cache(self):
-        """Test starting with DictCache, switching to NullCache for testing, dood!"""
+    Tests scenarios where cache implementations need to be swapped,
+    such as switching from production cache to null cache for testing,
+    ensuring the interface remains consistent.
+    """
+
+    async def test_start_with_dict_cache_switch_to_null_cache(self) -> None:
+        """Test starting with DictCache, switching to NullCache for testing.
+
+        Demonstrates how to switch from a real cache implementation to a
+        null cache for testing purposes while maintaining the same interface.
+
+        Raises:
+            AssertionError: If cache implementations don't share the same interface.
+        """
         # Production cache
         prod_cache = DictCache[str, Dict[str, Any]](keyGenerator=StringKeyGenerator(), defaultTtl=3600, maxSize=1000)
 
@@ -325,11 +457,34 @@ class TestCacheReplacementScenarios(unittest.IsolatedAsyncioTestCase):
         assert isinstance(prod_cache, CacheInterface)
         assert isinstance(test_cache, CacheInterface)
 
-    async def test_same_interface_works_with_both_implementations(self):
-        """Test that same interface works with both implementations, dood!"""
+    async def test_same_interface_works_with_both_implementations(self) -> None:
+        """Test that same interface works with both implementations.
+
+        Tests that a factory function can return either DictCache or NullCache
+        and the calling code works correctly with both implementations.
+
+        Args:
+            use_real_cache: Flag to choose between real and null cache.
+
+        Returns:
+            CacheInterface: Either DictCache or NullCache instance.
+
+        Raises:
+            AssertionError: If the interface doesn't work with both implementations.
+        """
 
         def create_cache(use_real_cache: bool) -> CacheInterface[str, str]:
-            """Factory function to create cache based on flag, dood!"""
+            """Factory function to create cache based on flag.
+
+            Creates either a real DictCache or a NullCache based on the
+            provided flag, demonstrating interface-based design.
+
+            Args:
+                use_real_cache: If True, returns DictCache; otherwise NullCache.
+
+            Returns:
+                CacheInterface[str, str]: Cache instance implementing the interface.
+            """
             if use_real_cache:
                 return DictCache[str, str](keyGenerator=StringKeyGenerator(), defaultTtl=3600)
             else:
@@ -352,11 +507,36 @@ class TestCacheReplacementScenarios(unittest.IsolatedAsyncioTestCase):
         assert isinstance(null_stats, dict)
         assert null_stats.get("enabled") is False
 
-    async def test_cache_behavior_transparency(self):
-        """Test that cache behavior is transparent to calling code, dood!"""
+    async def test_cache_behavior_transparency(self) -> None:
+        """Test that cache behavior is transparent to calling code.
+
+        Tests that calling code doesn't need to know which cache implementation
+        is being used, demonstrating the benefits of interface-based design.
+
+        Args:
+            data_id: Identifier for the data to process.
+            cache: Cache instance to use for caching results.
+
+        Returns:
+            Dict[str, Any]: Processed data with timestamp and result.
+
+        Raises:
+            AssertionError: If cache behavior isn't transparent to calling code.
+        """
 
         async def process_data_with_cache(data_id: str, cache: CacheInterface[str, Dict[str, Any]]) -> Dict[str, Any]:
-            """Process data using cache, dood!"""
+            """Process data using cache.
+
+            Attempts to retrieve processed data from cache first, and if not
+            found, processes the data and caches the result.
+
+            Args:
+                data_id: Identifier for the data to process.
+                cache: Cache instance to use for caching results.
+
+            Returns:
+                Dict[str, Any]: Processed data with timestamp and result.
+            """
             # Try to get from cache first
             cached_data = await cache.get(f"data:{data_id}")
             if cached_data:
@@ -398,10 +578,22 @@ class TestCacheReplacementScenarios(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCachePerformanceCharacteristics(unittest.IsolatedAsyncioTestCase):
-    """Test performance characteristics, dood!"""
+    """Test performance characteristics.
 
-    async def test_ttl_expiration_works_correctly(self):
-        """Test that TTL expiration works correctly, dood!"""
+    Tests the cache's performance characteristics including TTL expiration,
+    size-based eviction, concurrent operation safety, and performance with
+    different key generators.
+    """
+
+    async def test_ttl_expiration_works_correctly(self) -> None:
+        """Test that TTL expiration works correctly.
+
+        Verifies that cache entries expire after their TTL period and are
+        automatically removed from the cache.
+
+        Raises:
+            AssertionError: If TTL expiration doesn't work correctly.
+        """
         cache = DictCache[str, str](keyGenerator=StringKeyGenerator(), defaultTtl=1)  # 1 second
 
         # Store value
@@ -422,8 +614,15 @@ class TestCachePerformanceCharacteristics(unittest.IsolatedAsyncioTestCase):
         stats = cache.getStats()
         assert stats["entries"] == 0
 
-    async def test_size_limits_trigger_eviction(self):
-        """Test that size limits trigger eviction, dood!"""
+    async def test_size_limits_trigger_eviction(self) -> None:
+        """Test that size limits trigger eviction.
+
+        Tests that when the cache reaches its maximum size, the oldest entries
+        are evicted to make room for new entries (LRU eviction policy).
+
+        Raises:
+            AssertionError: If size-based eviction doesn't work correctly.
+        """
         cache = DictCache[str, str](keyGenerator=StringKeyGenerator(), maxSize=3)  # Very small cache
 
         # Fill cache to capacity
@@ -451,12 +650,29 @@ class TestCachePerformanceCharacteristics(unittest.IsolatedAsyncioTestCase):
         stats = cache.getStats()
         assert stats["entries"] == 3  # Still at max capacity
 
-    async def test_thread_safe_operations_dont_deadlock(self):
-        """Test that thread-safe operations don't deadlock, dood!"""
+    async def test_thread_safe_operations_dont_deadlock(self) -> None:
+        """Test that thread-safe operations don't deadlock.
+
+        Tests that intensive concurrent cache operations complete without
+        deadlocking and within a reasonable time frame.
+
+        Raises:
+            AssertionError: If operations deadlock or take too long.
+        """
         cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
 
-        async def intensive_worker(worker_id: int):
-            """Worker that does intensive cache operations, dood!"""
+        async def intensive_worker(worker_id: int) -> None:
+            """Worker that does intensive cache operations.
+
+            Performs a mix of set, get, and stats operations to test
+            concurrent access and deadlock prevention.
+
+            Args:
+                worker_id: Unique identifier for this worker.
+
+            Raises:
+                AssertionError: If cache operations fail during intensive testing.
+            """
             for i in range(50):
                 key = f"worker_{worker_id}_key_{i}"
                 value = f"worker_{worker_id}_value_{i}"
@@ -488,8 +704,16 @@ class TestCachePerformanceCharacteristics(unittest.IsolatedAsyncioTestCase):
         await cache.set("final_test", "final_value")
         assert await cache.get("final_test") == "final_value"
 
-    async def test_performance_with_different_key_generators(self):
-        """Test performance with different key generators, dood!"""
+    async def test_performance_with_different_key_generators(self) -> None:
+        """Test performance with different key generators.
+
+        Tests the performance characteristics of different key generators
+        (StringKeyGenerator, HashKeyGenerator, JsonKeyGenerator) to ensure
+        they all perform within acceptable limits.
+
+        Raises:
+            AssertionError: If any key generator is too slow.
+        """
         # Test with StringKeyGenerator
         string_cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
 
@@ -533,10 +757,22 @@ class TestCachePerformanceCharacteristics(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCacheEdgeCasesAndErrorConditions(unittest.IsolatedAsyncioTestCase):
-    """Test edge cases and error conditions, dood!"""
+    """Test edge cases and error conditions.
 
-    async def test_cache_with_none_values(self):
-        """Test cache with None values, dood!"""
+    Tests edge cases and unusual scenarios to ensure the cache handles
+    them correctly, including None values, large objects, special
+    characters, and rapid operations.
+    """
+
+    async def test_cache_with_none_values(self) -> None:
+        """Test cache with None values.
+
+        Tests that None can be stored as a value and is distinguishable
+        from a missing key (both return None but have different semantics).
+
+        Raises:
+            AssertionError: If None values aren't handled correctly.
+        """
         cache = DictCache[str, Any](keyGenerator=StringKeyGenerator())
 
         # Store None value
@@ -555,8 +791,15 @@ class TestCacheEdgeCasesAndErrorConditions(unittest.IsolatedAsyncioTestCase):
         missing_value = await cache.get("missing_key")
         assert missing_value is None
 
-    async def test_cache_with_large_objects(self):
-        """Test cache with large objects, dood!"""
+    async def test_cache_with_large_objects(self) -> None:
+        """Test cache with large objects.
+
+        Tests that the cache can handle large objects (e.g., lists with
+        thousands of elements) without issues.
+
+        Raises:
+            AssertionError: If large objects aren't handled correctly.
+        """
         cache = DictCache[str, List[int]](keyGenerator=StringKeyGenerator(), maxSize=10)
 
         # Large list
@@ -571,8 +814,15 @@ class TestCacheEdgeCasesAndErrorConditions(unittest.IsolatedAsyncioTestCase):
         assert retrieved == large_data
         assert len(retrieved) == 10000
 
-    async def test_cache_with_special_characters_in_keys(self):
-        """Test cache with special characters in keys, dood!"""
+    async def test_cache_with_special_characters_in_keys(self) -> None:
+        """Test cache with special characters in keys.
+
+        Tests that the cache handles keys with various special characters
+        including spaces, dashes, slashes, colons, and other punctuation.
+
+        Raises:
+            AssertionError: If special characters in keys cause issues.
+        """
         cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
 
         special_keys = [
@@ -609,8 +859,15 @@ class TestCacheEdgeCasesAndErrorConditions(unittest.IsolatedAsyncioTestCase):
             retrieved = await cache.get(key)
             assert retrieved == value
 
-    async def test_cache_rapid_operations(self):
-        """Test cache with rapid operations, dood!"""
+    async def test_cache_rapid_operations(self) -> None:
+        """Test cache with rapid operations.
+
+        Tests that the cache can handle rapid successive set/get operations
+        without errors or performance degradation.
+
+        Raises:
+            AssertionError: If rapid operations cause errors.
+        """
         cache = DictCache[str, int](keyGenerator=StringKeyGenerator())
 
         # Rapid set/get operations
@@ -623,8 +880,15 @@ class TestCacheEdgeCasesAndErrorConditions(unittest.IsolatedAsyncioTestCase):
         stats = cache.getStats()
         assert stats["entries"] == 1000
 
-    async def test_cache_mixed_ttl_operations(self):
-        """Test cache with mixed TTL operations, dood!"""
+    async def test_cache_mixed_ttl_operations(self) -> None:
+        """Test cache with mixed TTL operations.
+
+        Tests that TTL overrides work correctly, including immediate expiration
+        (ttl=0) and no expiration (ttl=-1), even when a default TTL is set.
+
+        Raises:
+            AssertionError: If TTL overrides don't work correctly.
+        """
         cache = DictCache[str, str](keyGenerator=StringKeyGenerator(), defaultTtl=10)  # 10 seconds default
 
         # Set some values

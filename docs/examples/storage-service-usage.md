@@ -38,17 +38,17 @@ storage.store("document-123.txt", documentData)
 # Retrieve data
 retrievedData = storage.get("document-123.txt")
 if retrievedData:
-    print(f"Retrieved {len(retrievedData)} bytes, dood!")
+    print(f"Retrieved {len(retrievedData)} bytes")
 else:
-    print("Document not found, dood!")
+    print("Document not found")
 
 # Check existence
 if storage.exists("document-123.txt"):
-    print("Document exists, dood!")
+    print("Document exists")
 
 # Delete document
 if storage.delete("document-123.txt"):
-    print("Document deleted successfully, dood!")
+    print("Document deleted successfully")
 ```
 
 ### List Objects
@@ -99,7 +99,7 @@ data = storage.get("report-2024.pdf")
 if data:
     with open("output.pdf", "wb") as f:
         f.write(data)
-    print("File retrieved and saved, dood!")
+    print("File retrieved and saved")
 ```
 
 ### Working with Images
@@ -172,7 +172,7 @@ storage.store("videos/tutorial-001.mp4", videoData)
 
 # List all videos
 videos = storage.list(prefix="videos/")
-print(f"Found {len(videos)} videos in storage, dood!")
+print(f"Found {len(videos)} videos in storage")
 
 # Retrieve specific video
 videoData = storage.get("videos/tutorial-001.mp4")
@@ -198,7 +198,7 @@ storage = StorageService.getInstance()
 
 try:
     storage.store("my-document.pdf", documentData)
-    print("Document stored successfully, dood!")
+    print("Document stored successfully")
     
 except StorageKeyError as e:
     print(f"Invalid key: {e}")
@@ -247,7 +247,7 @@ def storeWithRetry(
     for attempt in range(maxRetries):
         try:
             storage.store(key, data)
-            logger.info(f"Successfully stored {key}, dood!")
+            logger.info(f"Successfully stored {key}")
             return True
             
         except StorageKeyError as e:
@@ -338,7 +338,7 @@ class AttachmentHandler:
         
         try:
             self.storage.store(key, fileData)
-            logger.info(f"Stored attachment {key}, dood!")
+            logger.info(f"Stored attachment {key}")
             return key
         except StorageError as e:
             logger.error(f"Failed to store attachment: {e}")
@@ -642,7 +642,7 @@ def storeWithMetrics(storage: StorageService, key: str, data: bytes):
         storage.store(key, data)
         duration = time.time() - startTime
         logger.info(
-            f"Stored {key}: {len(data)} bytes in {duration:.2f}s, dood!"
+            f"Stored {key}: {len(data)} bytes in {duration:.2f}s"
         )
     except StorageError as e:
         duration = time.time() - startTime
@@ -659,4 +659,4 @@ def storeWithMetrics(storage: StorageService, key: str, data: bytes):
 
 ---
 
-**Note:** All examples use "dood!" suffix in log messages to maintain consistency with the project's Prinny-inspired style, dood!
+**Note:** Logging messages follow the project's style guidelines

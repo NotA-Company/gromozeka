@@ -336,3 +336,8 @@ def checkIfProperCommandName(command: str) -> bool:
     """Check if given string is proper command name for suggestion"""
 
     return re.match(r"^[a-z][a-z_0-9]*$", command) is not None
+
+
+def now() -> datetime.datetime:
+    """Get current date and time in UTC"""
+    return datetime.datetime.now(datetime.timezone.utc)

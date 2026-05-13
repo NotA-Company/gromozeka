@@ -22,37 +22,47 @@ class GoldenDataProvider:
 
     This class loads golden data scenarios from JSON files and provides
     methods to create httpx clients that replay recorded HTTP responses.
+
+    Attributes:
+        goldenDataDirs: List of directory paths containing golden data JSON files.
+        scenarios: Dictionary mapping scenario names to their loaded data.
+        replayers: Dictionary mapping scenario names to their replayer instances.
+        usedScenarios: Set of scenario names that have been accessed.
+        metaScenario: Combined scenario containing all recordings for scenarios
+            where specific scenario selection is not required.
     """
 
-    def __init__(self, goldenDataDirs: str | Sequence[str]):
+    def __init__(self, goldenDataDirs: str | Sequence[str]) -> None:
         """Initialize the GoldenDataProvider with a directory containing golden data files.
 
         Args:
-            goldenDataDirs: list of Paths to directories containing golden data JSON files
+            goldenDataDirs: Single path or list of paths to directories containing
+                golden data JSON files.
         """
         if not isinstance(goldenDataDirs, list):
             goldenDataDirs = [str(goldenDataDirs)]
         self.goldenDataDirs = [Path(v) for v in goldenDataDirs]
         self.scenarios: Dict[str, GoldenDataScenarioDict] = {}
         self.replayers: Dict[str | None, GoldenDataReplayer] = {}
-        self.usedScenarios: set = set()
+        self.usedScenarios: set[str] = set()
 
-        # Scenario with All known recordings (for those, who do not want to care about scenarios)
-        # Metadata will be filled with first scenario data (Because nobody care)
+        # Scenario containing all known recordings for scenarios where specific scenario selection is not required
+        # Metadata will be populated with data from the first scenario loaded
         self.metaScenario: Optional[GoldenDataScenarioDict] = None
 
     def loadScenario(self, filename: str, basePath: Path) -> "GoldenDataScenarioDict":
         """Load a specific scenario file.
 
         Args:
-            filename: Name of the JSON file to load (with or without .json extension)
+            filename: Name of the JSON file to load (must include .json extension).
+            basePath: Base directory path where the file is located.
 
         Returns:
-            Loaded GoldenDataScenarioDict object
+            Loaded GoldenDataScenarioDict object.
 
         Raises:
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If the file content is invalid
+            FileNotFoundError: If the file doesn't exist.
+            ValueError: If the file content is invalid or filename doesn't end with .json.
         """
         # Handle filename with or without .json extension
         if not filename.endswith(".json"):
@@ -77,10 +87,14 @@ class GoldenDataProvider:
         return scenario
 
     def loadAllScenarios(self) -> Dict[str, "GoldenDataScenarioDict"]:
-        """Load all scenarios from the golden data directory.
+        """Load all scenarios from the golden data directories.
+
+        This method clears any previously loaded scenarios and loads all JSON files
+        from the configured golden data directories. Files that fail to load are
+        skipped with a warning.
 
         Returns:
-            Dictionary mapping scenario names to GoldenDataScenarioDict objects
+            Dictionary mapping scenario names to GoldenDataScenarioDict objects.
         """
         self.scenarios.clear()
 
@@ -101,13 +115,15 @@ class GoldenDataProvider:
         """Get a loaded scenario by name.
 
         Args:
-            name: Name of the scenario to retrieve
+            name: Name of the scenario to retrieve. If None, returns the meta scenario
+                containing all recordings.
 
         Returns:
-            GoldenDataScenarioDict object
+            GoldenDataScenarioDict object.
 
         Raises:
-            KeyError: If scenario is not loaded
+            ValueError: If no scenarios are loaded and name is None.
+            KeyError: If scenario is not loaded.
         """
         if name is None:
             if self.metaScenario is None:
@@ -124,10 +140,11 @@ class GoldenDataProvider:
         """Create an httpx client that replays the specified scenario.
 
         Args:
-            scenarioName: Name of the scenario to replay
+            scenarioName: Name of the scenario to replay. If None, uses the meta
+                scenario containing all recordings.
 
         Returns:
-            httpx.AsyncClient configured to replay the scenario
+            httpx.AsyncClient configured to replay the scenario.
         """
         scenario = self.getScenario(scenarioName)
 
@@ -138,21 +155,41 @@ class GoldenDataProvider:
         replayer = self.replayers[scenarioName]
         return replayer.createClient()
 
-    def __enter__(self):
-        """Enter synchronous context manager."""
+    def __enter__(self) -> "GoldenDataProvider":
+        """Enter synchronous context manager.
+
+        Returns:
+            The GoldenDataProvider instance.
+        """
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit synchronous context manager."""
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit synchronous context manager.
+
+        Args:
+            exc_type: Exception type if an exception was raised.
+            exc_val: Exception value if an exception was raised.
+            exc_tb: Exception traceback if an exception was raised.
+        """
         # Clean up resources if needed
         pass
 
-    async def __aenter__(self):
-        """Enter async context manager."""
+    async def __aenter__(self) -> "GoldenDataProvider":
+        """Enter async context manager.
+
+        Returns:
+            The GoldenDataProvider instance.
+        """
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Exit async context manager."""
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit async context manager.
+
+        Args:
+            exc_type: Exception type if an exception was raised.
+            exc_val: Exception value if an exception was raised.
+            exc_tb: Exception traceback if an exception was raised.
+        """
         # Clean up resources if needed
         pass
 
