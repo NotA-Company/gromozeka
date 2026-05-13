@@ -42,7 +42,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.models.types import MessageIdType
+from internal.models.types import MessageIdClass
 from internal.services.cache.types import UserActiveActionEnum
 from lib.markdown import markdownToMarkdownV2
 
@@ -146,7 +146,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                 **activeConfigure["data"],
                 ButtonDataKey.Value: messageText,
             },
-            messageId=activeConfigure["messageId"],
+            messageId=MessageIdClass(activeConfigure["messageId"]),
             messageChatId=activeConfigure["messageChatId"],
             user=user,
         )
@@ -155,7 +155,7 @@ class ConfigureCommandHandler(BaseBotHandler):
     async def chatConfiguration_Init(
         self,
         data: utils.PayloadDict,
-        messageId: MessageIdType,
+        messageId: MessageIdClass,
         messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
@@ -236,7 +236,7 @@ class ConfigureCommandHandler(BaseBotHandler):
     async def chatConfiguration_ConfigureChat(
         self,
         data: utils.PayloadDict,
-        messageId: MessageIdType,
+        messageId: MessageIdClass,
         messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
@@ -389,7 +389,7 @@ class ConfigureCommandHandler(BaseBotHandler):
     async def chatConfiguration_ConfigureKey(
         self,
         data: utils.PayloadDict,
-        messageId: MessageIdType,
+        messageId: MessageIdClass,
         messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
@@ -477,7 +477,7 @@ class ConfigureCommandHandler(BaseBotHandler):
                     ButtonDataKey.ChatId: chatId,
                     ButtonDataKey.Key: keyId,
                 },
-                "messageId": messageId,
+                "messageId": messageId.asMessageId(),
                 "messageChatId": messageChatId,
             },
         )
@@ -617,7 +617,7 @@ class ConfigureCommandHandler(BaseBotHandler):
     async def chatConfiguration_SetValue(
         self,
         data: utils.PayloadDict,
-        messageId: MessageIdType,
+        messageId: MessageIdClass,
         messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
@@ -784,7 +784,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageIdClass,
         messageChatId: int,
         user: MessageSender,
     ) -> None:

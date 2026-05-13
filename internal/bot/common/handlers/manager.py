@@ -58,7 +58,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.models import MessageIdType
+from internal.models import MessageIdClass
 from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from internal.services.storage import StorageService
@@ -1056,7 +1056,7 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def handleNewChatMember(
         self,
         targetChat: MessageRecipient,
-        messageId: Optional[MessageIdType],
+        messageId: Optional[MessageIdClass],
         newMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> None:
@@ -1082,7 +1082,7 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def _handleNewChatMember(
         self,
         targetChat: MessageRecipient,
-        messageId: Optional[MessageIdType],
+        messageId: Optional[MessageIdClass],
         newMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> None:
@@ -1119,7 +1119,7 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def handleLeftChatMember(
         self,
         targetChat: MessageRecipient,
-        messageId: Optional[MessageIdType],
+        messageId: Optional[MessageIdClass],
         leftMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> None:
@@ -1145,7 +1145,7 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def _handleLeftChatMember(
         self,
         targetChat: MessageRecipient,
-        messageId: Optional[MessageIdType],
+        messageId: Optional[MessageIdClass],
         leftMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> None:

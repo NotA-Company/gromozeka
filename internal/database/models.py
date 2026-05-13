@@ -9,7 +9,7 @@ import datetime
 from enum import StrEnum
 from typing import Optional, TypedDict, Union
 
-from internal.models import MessageIdType
+from internal.models import MessageIdClass
 
 
 class MediaStatus(StrEnum):
@@ -114,17 +114,17 @@ class ChatMessageDict(TypedDict):
     # From chat_message table
     chat_id: int
     """Chat identifier."""
-    message_id: MessageIdType
+    message_id: MessageIdClass
     """Message identifier."""
     date: datetime.datetime
     """Message date/time."""
     user_id: int
     """User identifier."""
-    reply_id: Optional[MessageIdType]
+    reply_id: Optional[MessageIdClass]
     """Replied message identifier."""
     thread_id: int
     """Thread identifier."""
-    root_message_id: Optional[MessageIdType]
+    root_message_id: Optional[MessageIdClass]
     """Root message identifier in thread."""
     message_text: str
     """Message text content."""
@@ -273,7 +273,7 @@ class SpamMessageDict(TypedDict):
     """Chat identifier."""
     user_id: int
     """User identifier."""
-    message_id: int
+    message_id: MessageIdClass
     """Message identifier."""
     text: str
     """Message text."""
@@ -298,9 +298,9 @@ class ChatSummarizationCacheDict(TypedDict):
     """Chat identifier."""
     topic_id: Optional[int]
     """Topic identifier."""
-    first_message_id: int
+    first_message_id: MessageIdClass
     """First message identifier in range."""
-    last_message_id: int
+    last_message_id: MessageIdClass
     """Last message identifier in range."""
 
     prompt: str

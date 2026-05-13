@@ -714,7 +714,7 @@ class LLMMessageHandler(BaseBotHandler):
                     limit=constants.RANDOM_ANSWER_CONTEXT_LENGTH,
                     # messageCategory=[MessageCategory.USER, MessageCategory.BOT, MessageCategory.CHANNEL],
                 ):
-                    if storedMsg["message_id"] == str(ensuredMessage.messageId):
+                    if storedMsg["message_id"] == ensuredMessage.messageId:
                         # Skip current message from context
                         continue
                     eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)

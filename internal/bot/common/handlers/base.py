@@ -62,7 +62,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
-from internal.models import MessageIdType
+from internal.models import MessageIdClass
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
@@ -469,7 +469,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def editMessage(
         self,
-        messageId: MessageIdType,
+        messageId: MessageIdClass,
         chatId: int,
         *,
         text: Optional[str] = None,
@@ -627,7 +627,7 @@ class BaseBotHandler(CommandHandlerMixin):
     async def deleteMessagesById(
         self,
         chatId: int,
-        messageIds: List[MessageIdType],
+        messageIds: List[MessageIdClass],
         setMessageCategory: Optional[MessageCategory] = MessageCategory.DELETED,
     ) -> bool:
         """Delete multiple messages by their IDs in the specified chat.
@@ -757,9 +757,10 @@ class BaseBotHandler(CommandHandlerMixin):
                 condenseCacheMessages.append(cacheEntry)
                 lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"], datetime.timezone.utc)
                 skippedMessages = 0
+                tillMessageId = MessageIdClass(condensedMessage["tillMessageId"])
                 for dbMessage in dbMessageList:
                     skippedMessages += 1
-                    if dbMessage["message_id"] == condensedMessage["tillMessageId"] or dbMessage["date"] > lastDT:
+                    if dbMessage["message_id"] == tillMessageId or dbMessage["date"] > lastDT:
                         break
                 dbMessageList = dbMessageList[skippedMessages:]
 
@@ -830,7 +831,7 @@ class BaseBotHandler(CommandHandlerMixin):
             condenseCache.append(
                 {
                     "text": condensedRet[i].content,
-                    "tillMessageId": lastCondensedMessage["message_id"],
+                    "tillMessageId": lastCondensedMessage["message_id"].asMessageId(),
                     "tillTS": lastCondensedMessage["date"].timestamp(),
                 }
             )
@@ -1898,7 +1899,7 @@ class BaseBotHandler(CommandHandlerMixin):
     async def newChatMemberHandler(
         self,
         targetChat: MessageRecipient,
-        messageId: Optional[MessageIdType],
+        messageId: Optional[MessageIdClass],
         newMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
@@ -1923,7 +1924,7 @@ class BaseBotHandler(CommandHandlerMixin):
     async def leftChatMemberHandler(
         self,
         targetChat: MessageRecipient,
-        messageId: Optional[MessageIdType],
+        messageId: Optional[MessageIdClass],
         leftMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:

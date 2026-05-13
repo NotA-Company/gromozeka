@@ -15,11 +15,12 @@ Example:
 """
 
 from .shared_enums import MessageType
-from .types import MessageIdType
+from .types import MessageIdClass, MessageIdType
 
 __all__ = [
     # Shared enums
     "MessageType",
     # Types
     "MessageIdType",
+    "MessageIdClass",
 ]

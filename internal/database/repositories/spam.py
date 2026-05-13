@@ -31,7 +31,7 @@ Example:
 import logging
 from typing import List, Optional
 
-from internal.models import MessageIdType
+from internal.models import MessageIdClass
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
@@ -76,7 +76,7 @@ class SpamRepository(BaseRepository):
         self,
         chatId: int,
         userId: int,
-        messageId: MessageIdType,
+        messageId: MessageIdClass,
         messageText: str,
         spamReason: SpamReason,
         score: float,
@@ -103,7 +103,6 @@ class SpamRepository(BaseRepository):
         Note:
             Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
-        messageId = str(messageId)
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
             await sqlProvider.execute(
@@ -136,7 +135,7 @@ class SpamRepository(BaseRepository):
         self,
         chatId: int,
         userId: int,
-        messageId: MessageIdType,
+        messageId: MessageIdClass,
         messageText: str,
         spamReason: SpamReason,
         score: float,
@@ -163,7 +162,6 @@ class SpamRepository(BaseRepository):
         Note:
             Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
-        messageId = str(messageId)
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
             await sqlProvider.execute(

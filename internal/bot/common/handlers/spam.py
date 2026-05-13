@@ -45,7 +45,7 @@ from internal.database.models import (
     MessageCategory,
     SpamReason,
 )
-from internal.models import MessageIdType
+from internal.models import MessageIdClass
 from internal.services.cache import HCSpamWarningMessageInfo
 from internal.services.queue_service import DelayedTaskFunction
 from lib.bayes_filter import BayesConfig, NaiveBayesFilter, TokenizerConfig
@@ -167,37 +167,37 @@ class SpamHandler(BaseBotHandler):
 
         self.cache.addSpamWarningMessage(
             chatId=message.recipient.id,
-            messageId=message.messageId,
+            messageId=message.messageId.asMessageId(),
             data={
-                "parentMessageId": message.replyId,
+                "parentMessageId": message.replyId.asMessageId() if message.replyId else None,
                 "userId": userId,
                 "username": username,
                 "ts": message.date.timestamp(),
             },
         )
 
-    def _getSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> Optional[HCSpamWarningMessageInfo]:
+    def _getSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdClass) -> Optional[HCSpamWarningMessageInfo]:
         """
         Retrieve spam warning message information from cache.
 
         Args:
             chatId (int): Chat ID where the warning message was sent.
-            messageId (MessageIdType): Message ID of the warning message.
+            messageId (MessageIdClass): Message ID of the warning message.
 
         Returns:
             Optional[HCSpamWarningMessageInfo]: Cached message info if found, None otherwise.
         """
-        return self.cache.getSpamWarningMessageInfo(chatId=chatId, messageId=messageId)
+        return self.cache.getSpamWarningMessageInfo(chatId=chatId, messageId=messageId.asMessageId())
 
-    def _deleteSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> None:
+    def _deleteSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdClass) -> None:
         """
         Remove spam warning message information from cache.
 
         Args:
             chatId (int): Chat ID where the warning message was sent.
-            messageId (MessageIdType): Message ID of the warning message.
+            messageId (MessageIdClass): Message ID of the warning message.
         """
-        self.cache.removeSpamWarningMessageInfo(chatId=chatId, messageId=messageId)
+        self.cache.removeSpamWarningMessageInfo(chatId=chatId, messageId=messageId.asMessageId())
 
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
         """
@@ -304,9 +304,7 @@ class SpamHandler(BaseBotHandler):
         spamMessagesCount = 0
         nonSpamMessagesCount = 0
         for msg in userMessages:
-            if (msg["message_text"] == ensuredMessage.messageText) and (
-                str(msg["message_id"]) != str(ensuredMessage.messageId)
-            ):
+            if (msg["message_text"] == ensuredMessage.messageText) and (msg["message_id"] != ensuredMessage.messageId):
                 spamMessagesCount = spamMessagesCount + 1
             else:
                 nonSpamMessagesCount = nonSpamMessagesCount + 1
@@ -584,7 +582,7 @@ class SpamHandler(BaseBotHandler):
                 limit=maxMessagesToDelete,
             )
             logger.debug(f"Trying to delete more user messages: {userMessages}")
-            messageIds: List[MessageIdType] = []
+            messageIds: List[MessageIdClass] = []
             for msg in userMessages:
                 if msg["message_id"] != ensuredMessage.messageId:
                     messageIds.append(msg["message_id"])
@@ -1405,7 +1403,7 @@ class SpamHandler(BaseBotHandler):
             await self.db.spam.addSpamMessage(
                 chatId=targetChatId,
                 userId=0,
-                messageId=0,
+                messageId=MessageIdClass(0),
                 messageText=repliedText,
                 spamReason=SpamReason.ADMIN,
                 score=100,
@@ -1421,7 +1419,7 @@ class SpamHandler(BaseBotHandler):
             await self.db.spam.addHamMessage(
                 chatId=targetChatId,
                 userId=0,
-                messageId=0,
+                messageId=MessageIdClass(0),
                 messageText=repliedText,
                 spamReason=SpamReason.ADMIN,
                 score=100,

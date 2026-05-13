@@ -17,7 +17,7 @@ from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import BotProvider, EnsuredMessage, MessageRecipient, MessageSender
 from internal.bot.models.chat_settings import ChatSettingsKey
 from internal.database.models import MessageCategory
-from internal.models import MessageIdType
+from internal.models import MessageIdClass
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -87,7 +87,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
     async def newChatMemberHandler(
         self,
         targetChat: MessageRecipient,
-        messageId: Optional[MessageIdType],
+        messageId: Optional[MessageIdClass],
         newMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
@@ -135,7 +135,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
     async def leftChatMemberHandler(
         self,
         targetChat: MessageRecipient,
-        messageId: Optional[MessageIdType],
+        messageId: Optional[MessageIdClass],
         leftMember: MessageSender,
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
