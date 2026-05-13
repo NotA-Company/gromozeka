@@ -7,19 +7,14 @@ data structures that are needed by different parts of the application.
 The package includes:
 - Shared enums: Common enumeration types used across the application
 - Type definitions: Common type aliases for type hints
-
-Example:
-    >>> from internal.models import MessageType, MessageIdType
-    >>> msg_type = MessageType.TEXT
-    >>> msg_id: MessageIdType = 123
 """
 
 from .shared_enums import MessageType
-from .types import MessageIdType
+from .types import MessageId
 
 __all__ = [
     # Shared enums
     "MessageType",
     # Types
-    "MessageIdType",
+    "MessageId",
 ]

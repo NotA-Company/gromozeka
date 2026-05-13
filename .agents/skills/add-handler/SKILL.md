@@ -156,7 +156,7 @@ await self.sendMessage(
 )
 ```
 
-Also remember: `MessageIdType = Union[int, str]` (Telegram = int, Max = str). Never assume int.
+Also remember: message IDs are `MessageId` instances wrapping `int | str` (Telegram = int, Max = str). Never assume plain `int` — use `.asInt()` for Telegram API calls, `.asStr()` for Max/SQL.
 
 ## Step 6 — Register the handler
 
@@ -219,7 +219,7 @@ make test
 - [ ] camelCase for variables/functions/methods, PascalCase for the class, UPPER_CASE for constants.
 - [ ] `newMessageHandler` returns `SKIPPED` when the handler doesn't care, `NEXT` when it acts but others should continue, `FINAL` only when it owns the message.
 - [ ] Messages sent via `self.sendMessage(...)`, never via raw `tgBot` / `maxBot`.
-- [ ] No assumption that `messageId` is `int` — use `MessageIdType`.
+- [ ] No assumption that `messageId` is plain `int` — use `MessageId` class with `.asInt()`/`.asStr()` as needed.
 - [ ] Registered in `HandlersManager` at the right position; `LLMMessageHandler` remains last.
 - [ ] Config-gated handlers check their `enabled` flag via `configManager`.
 - [ ] Tests in `tests/bot/` using real `EnsuredMessage` instances and shared fixtures.

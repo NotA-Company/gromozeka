@@ -35,7 +35,7 @@ from internal.database.models import (
     ChatMessageDict,
     MessageCategory,
 )
-from internal.models import MessageIdType
+from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum, UserActiveConfigurationDict
 from lib.ai import (
     ModelMessage,
@@ -110,7 +110,7 @@ class SummarizationHandler(BaseBotHandler):
                 logger.error(f"Wrong K in data {activeSummarization}")
         await self._handle_summarization(
             data=data,
-            messageId=activeSummarization["messageId"],
+            messageId=MessageId(activeSummarization["messageId"]),
             messageChatId=activeSummarization["messageChatId"],
             user=user,
         )
@@ -337,7 +337,7 @@ class SummarizationHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:

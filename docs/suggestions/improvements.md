@@ -436,7 +436,7 @@ Migrate DB calls to use `aiosqlite` with an async context manager Wrap all datab
 import asyncio
 
 class DatabaseWrapper:
-    async def getChatMessageAsync(self, chatId: int, messageId: MessageIdType) -> Optional[ChatMessageDict]:
+    async def getChatMessageAsync(self, chatId: int, messageId: MessageId) -> Optional[ChatMessageDict]:
         """Async wrapper using thread pool"""
         return await asyncio.to_thread(self.getChatMessageByMessageId, chatId, messageId)
 ```
@@ -739,7 +739,7 @@ In [`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py) accumu
 ```python
 async def _streamResponse(self, ensuredMessage: EnsuredMessage, model: AbstractModel) -> str:
     """Stream LLM response with live message editing"""
-    sentMessage: Optional[MessageIdType] = None
+    sentMessage: Optional[MessageId] = None
     buffer: str = ""
     lastUpdate: float = 0.0
 

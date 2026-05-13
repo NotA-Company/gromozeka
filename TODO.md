@@ -13,6 +13,29 @@
 - [ ] `lib/ai/providers/basic_openai_provider.py` _generateImage need to use _executeChatCompletion (like _generateText and _generateStructured)
 - [ ] Proper comparison of MessageIDs (use separate class for it?)
 - [ ] Proxy support (SOCKS5?)
+- [ ]
+```
+2026-05-12 06:56:01,957 - ERROR - internal.database.providers.sqlite3:183 - Database operation failed: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
+2026-05-12 06:56:01,957 - ERROR - internal.database.providers.sqlite3:184 - UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
+Traceback (most recent call last):
+  File "/home/vgoshev/gromozeka/internal/database/providers/sqlite3.py", line 179, in cursor
+    yield cursor
+  File "/home/vgoshev/gromozeka/internal/database/providers/sqlite3.py", line 229, in _execute
+    await cursor.execute(query.query, utils.convertContainerElementsToSQLite(query.params))
+  File "/home/vgoshev/gromozeka/venv/lib/python3.12/site-packages/aiosqlite/cursor.py", line 40, in execute
+    await self._execute(self._cursor.execute, sql, parameters)
+  File "/home/vgoshev/gromozeka/venv/lib/python3.12/site-packages/aiosqlite/cursor.py", line 32, in _execute
+    return await self._conn._execute(fn, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vgoshev/gromozeka/venv/lib/python3.12/site-packages/aiosqlite/core.py", line 160, in _execute
+    return await future
+           ^^^^^^^^^^^^
+  File "/home/vgoshev/gromozeka/venv/lib/python3.12/site-packages/aiosqlite/core.py", line 63, in _connection_worker_thread
+    result = function()
+             ^^^^^^^^^^
+sqlite3.IntegrityError: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
+2026-05-12 06:56:01,962 - ERROR - internal.database.repositories.spam:132 - Failed to add spam message: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
+```
 - [ ] Fix:
 
 2025-12-27 15:26:52,074 - lib.ai.providers.basic_openai_provider:155 - ERROR - Error running OpenAI-compatible model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}

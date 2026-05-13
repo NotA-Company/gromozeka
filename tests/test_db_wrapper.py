@@ -290,7 +290,7 @@ class TestChatMessageOperations:
 
         message = await inMemoryDb.chatMessages.getChatMessageByMessageId(sampleChatId, 300)
         assert message is not None
-        assert int(message["message_id"]) == 300
+        assert message["message_id"].asInt() == 300
         assert message["message_text"] == "Find me"
         assert message["username"] == "testuser"
 
@@ -430,7 +430,7 @@ class TestChatMessageOperations:
 
         replies = await inMemoryDb.chatMessages.getChatMessagesByRootId(sampleChatId, rootId)
         assert len(replies) == 3
-        assert all(int(msg["root_message_id"]) == rootId for msg in replies)
+        assert all(msg["root_message_id"].asInt() == rootId for msg in replies)
 
     @pytest.mark.asyncio
     async def testGetChatMessagesByUser(self, inMemoryDb, sampleChatId):

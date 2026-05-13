@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Union
 
 import lib.utils as libUtils
+from internal.models import MessageId
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,16 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
     """
     if data is None:
         return None
+    elif isinstance(data, MessageId):
+        # Exclusive handling for MessageId isn't needed, actually,
+        # but this way we'll suppress warning message
+        return data.asStr()
+    elif isinstance(data, bool):
+        return int(data)
     elif isinstance(data, (str, int, float)):
         return data
     elif isinstance(data, (dict, list, tuple, Mapping, Sequence)):
         return libUtils.jsonDumps(data)
-    elif isinstance(data, bool):
-        return int(data)
     elif isinstance(data, datetime.datetime):
         return data.isoformat()
     else:

@@ -27,7 +27,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.models import MessageIdType
+from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum
 from internal.services.llm import LLMService
 from lib.ai import (
@@ -168,7 +168,7 @@ class UserDataHandler(BaseBotHandler):
                 **userDataConfig["data"],
                 ButtonDataKey.Value: ensuredMessage.formatMessageText(),
             },
-            messageId=userDataConfig["messageId"],
+            messageId=MessageId(userDataConfig["messageId"]),
             messageChatId=userDataConfig["messageChatId"],
             user=user,
         )
@@ -178,7 +178,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:
@@ -187,7 +187,7 @@ class UserDataHandler(BaseBotHandler):
 
         Args:
             data (utils.PayloadDict): Callback data from button press.
-            messageId (MessageIdType): Message ID to edit.
+            messageId (MessageId): Message ID to edit.
             messageChatId (int): Chat ID where the message is located.
             user (MessageSender): Telegram user.
         """
@@ -232,7 +232,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:
@@ -241,7 +241,7 @@ class UserDataHandler(BaseBotHandler):
 
         Args:
             data (utils.PayloadDict): Callback data with chat ID.
-            messageId (MessageIdType): Message ID to edit.
+            messageId (MessageId): Message ID to edit.
             messageChatId (int): Chat ID where the message is located.
             user (MessageSender): Telegram user.
         """
@@ -336,7 +336,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:
@@ -345,7 +345,7 @@ class UserDataHandler(BaseBotHandler):
 
         Args:
             data (utils.PayloadDict): Callback data with chat ID.
-            messageId (MessageIdType): Message ID to edit.
+            messageId (MessageId): Message ID to edit.
             messageChatId (int): Chat ID where the message is located.
             user (MessageSender): Telegram user.
         """
@@ -389,7 +389,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:
@@ -398,7 +398,7 @@ class UserDataHandler(BaseBotHandler):
 
         Args:
             data (utils.PayloadDict): Callback data with chat ID and key.
-            messageId (MessageIdType): Message ID to edit.
+            messageId (MessageId): Message ID to edit.
             messageChatId (int): Chat ID where the message is located.
             user (MessageSender): Telegram user.
         """
@@ -446,7 +446,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:
@@ -455,7 +455,7 @@ class UserDataHandler(BaseBotHandler):
 
         Args:
             data (utils.PayloadDict): Callback data with chat ID and optional key.
-            messageId (MessageIdType): Message ID to edit.
+            messageId (MessageId): Message ID to edit.
             messageChatId (int): Chat ID where the message is located.
             user (MessageSender): Telegram user.
         """
@@ -539,7 +539,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:
@@ -548,7 +548,7 @@ class UserDataHandler(BaseBotHandler):
 
         Args:
             data (utils.PayloadDict): Callback data with chat ID, optional key, and value.
-            messageId (MessageIdType): Message ID to edit.
+            messageId (MessageId): Message ID to edit.
             messageChatId (int): Chat ID where the message is located.
             user (MessageSender): Telegram user.
         """
@@ -609,7 +609,7 @@ class UserDataHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:
@@ -618,7 +618,7 @@ class UserDataHandler(BaseBotHandler):
 
         Args:
             data (utils.PayloadDict): Callback data with action and parameters.
-            messageId (MessageIdType): Message ID to edit.
+            messageId (MessageId): Message ID to edit.
             messageChatId (int): Chat ID where the message is located.
             user (MessageSender): Telegram user.
         """

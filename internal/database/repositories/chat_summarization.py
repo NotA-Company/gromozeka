@@ -10,7 +10,7 @@ import hashlib
 import logging
 from typing import Optional
 
-from internal.models import MessageIdType
+from internal.models import MessageId
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
@@ -49,8 +49,8 @@ class ChatSummarizationRepository(BaseRepository):
         self,
         chatId: int,
         topicId: Optional[int],
-        firstMessageId: MessageIdType,
-        lastMessageId: MessageIdType,
+        firstMessageId: MessageId,
+        lastMessageId: MessageId,
         prompt: str,
     ) -> str:
         """
@@ -73,8 +73,8 @@ class ChatSummarizationRepository(BaseRepository):
         self,
         chatId: int,
         topicId: Optional[int],
-        firstMessageId: MessageIdType,
-        lastMessageId: MessageIdType,
+        firstMessageId: MessageId,
+        lastMessageId: MessageId,
         prompt: str,
         summary: str,
     ) -> bool:
@@ -129,8 +129,8 @@ class ChatSummarizationRepository(BaseRepository):
         self,
         chatId: int,
         topicId: Optional[int],
-        firstMessageId: MessageIdType,
-        lastMessageId: MessageIdType,
+        firstMessageId: MessageId,
+        lastMessageId: MessageId,
         prompt: str,
         *,
         dataSource: Optional[str] = None,

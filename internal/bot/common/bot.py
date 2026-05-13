@@ -22,7 +22,7 @@ from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import BotProvider, ChatType, EnsuredMessage, MessageRecipient, MessageSender
 from internal.database.models import ChatInfoDict
-from internal.models import MessageIdType, MessageType
+from internal.models import MessageId, MessageType
 from internal.services.cache import CacheService
 from lib import utils
 from lib.markdown.parser import markdownToMarkdownV2
@@ -276,7 +276,7 @@ class TheBot:
 
     async def editMessage(
         self,
-        messageId: MessageIdType,
+        messageId: MessageId,
         chatId: int,
         *,
         text: Optional[str] = None,
@@ -301,7 +301,7 @@ class TheBot:
             if text is None:
                 ret = await self.tgBot.edit_message_reply_markup(
                     chat_id=chatId,
-                    message_id=int(messageId),
+                    message_id=messageId.asInt(),
                     reply_markup=self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None,
                 )
             else:
@@ -312,7 +312,7 @@ class TheBot:
                 ret = await self.tgBot.edit_message_text(
                     text=text,
                     chat_id=chatId,
-                    message_id=int(messageId),
+                    message_id=messageId.asInt(),
                     reply_markup=self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None,
                     **kwargs,
                 )
@@ -478,7 +478,7 @@ class TheBot:
                 attachmentList = list(attachmentList)
             attachmentList.append((photoData, MessageType.IMAGE, None))
 
-        replyToMessageId: Optional[MessageIdType] = None
+        replyToMessageId: Optional[MessageId] = None
         chatType: ChatType = ChatType.PRIVATE
         if replyToMessage is not None:
             chatId = replyToMessage.recipient.id
@@ -677,7 +677,7 @@ class TheBot:
         replyMessageList: List[telegram.Message] = []
         ensuredReplyList: List[EnsuredMessage] = []
 
-        replyToMessageId: Optional[MessageIdType] = None
+        replyToMessageId: Optional[MessageId] = None
         chatType: ChatType = ChatType.PRIVATE
         if replyToMessage is not None:
             chatId = replyToMessage.recipient.id
@@ -864,7 +864,7 @@ class TheBot:
                     await self.tgBot.send_message(
                         chat_id=chatId,
                         text=f"Error while sending message: {type(e).__name__}#{e}",
-                        reply_to_message_id=int(replyToMessageId) if replyToMessageId is not None else None,
+                        reply_to_message_id=replyToMessageId.asInt() if replyToMessageId is not None else None,
                         message_thread_id=threadId,
                     )
                 except Exception as error_e:
@@ -884,7 +884,7 @@ class TheBot:
         """
         return await self.deleteMessagesById(ensuredMessage.recipient.id, [ensuredMessage.messageId])
 
-    async def deleteMessagesById(self, chatId: int, messageIds: List[MessageIdType]) -> bool:
+    async def deleteMessagesById(self, chatId: int, messageIds: List[MessageId]) -> bool:
         """Delete multiple messages by their IDs in the specified chat.
 
         Args:
@@ -898,10 +898,10 @@ class TheBot:
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
             return await self.tgBot.delete_messages(
                 chat_id=chatId,
-                message_ids=[int(v) for v in messageIds],
+                message_ids=[v.asInt() for v in messageIds],
             )
         elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
-            return await self.maxBot.deleteMessages([str(messageId) for messageId in messageIds])
+            return await self.maxBot.deleteMessages([messageId.asStr() for messageId in messageIds])
 
         logger.error(f"Can not delete {messageIds} in platform {self.botProvider}")
         return False

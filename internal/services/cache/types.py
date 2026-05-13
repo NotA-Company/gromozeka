@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, Tuple, TypeAlias, TypedDict
 
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
-from internal.models import MessageIdType
+from internal.models import MessageId
 from lib import utils
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ class HCSpamWarningMessageInfo(TypedDict):
         ts: Unix timestamp when the warning was sent.
     """
 
-    parentMessageId: NotRequired[Optional[MessageIdType]]
+    parentMessageId: NotRequired[Optional[MessageId]]
     userId: int
     username: str
     ts: float
@@ -59,7 +59,7 @@ class HCChatPersistentCacheDict(TypedDict):
             warnings to avoid duplicates.
     """
 
-    spamWarningMessages: NotRequired[Dict[MessageIdType, HCSpamWarningMessageInfo]]
+    spamWarningMessages: NotRequired[Dict[MessageId, HCSpamWarningMessageInfo]]
 
 
 class HCChatAdminsDict(TypedDict):
@@ -182,7 +182,7 @@ class UserActiveConfigurationDict(TypedDict):
     """
 
     data: utils.PayloadDict
-    messageId: MessageIdType
+    messageId: MessageId
     messageChatId: int
 
 

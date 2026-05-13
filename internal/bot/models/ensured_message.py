@@ -27,12 +27,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, TypedDict
 import telegram
 import telegram.constants
 
+import internal.database.utils as dbUtils
 import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.database import Database
 from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
-from internal.models import MessageIdType, MessageType
+from internal.models import MessageId, MessageType
 from lib.ai.models import ModelMessage
 
 from .enums import LLMMessageFormat
@@ -59,7 +60,7 @@ class CondensingDict(TypedDict):
     """
 
     text: str
-    tillMessageId: MessageIdType
+    tillMessageId: MessageId
     tillTS: float
 
 
@@ -414,7 +415,7 @@ class EnsuredMessage:
         *,
         sender: MessageSender,
         recipient: MessageRecipient,
-        messageId: MessageIdType,
+        messageId: int | str | MessageId,
         date: datetime.datetime,
         messageText: str = "",
         messageType: MessageType = MessageType.UNKNOWN,
@@ -444,7 +445,7 @@ class EnsuredMessage:
         self.recipient: MessageRecipient = recipient
         """Message recipient"""
 
-        self.messageId: MessageIdType = messageId
+        self.messageId: MessageId = MessageId(messageId)
         """Message Id (int for Telegram, str for Max)"""
         self.date: datetime.datetime = date
         """Message date"""
@@ -456,7 +457,7 @@ class EnsuredMessage:
         """Prefix for message (usually in bot's answers)"""
 
         # If this is reply, then set replyId and replyText
-        self.replyId: Optional[MessageIdType] = None
+        self.replyId: Optional[MessageId] = None
         """Id of message this message is reply to (If Any)"""
         self.replyText: Optional[str] = None
         """Text of message this message is reply to (If Any)"""
@@ -580,7 +581,7 @@ class EnsuredMessage:
         if message.link and message.link.type == maxModels.MessageLinkType.REPLY:
             # If reply_to_message is message about creating topic, then it isn't reply
             repliedMessage = message.link.message
-            ensuredMessage.replyId = repliedMessage.mid
+            ensuredMessage.replyId = MessageId(repliedMessage.mid)
             ensuredMessage.isReply = True
             if repliedMessage.text:
                 ensuredMessage.replyText = repliedMessage.text  # TODO: Parse markup
@@ -796,7 +797,7 @@ class EnsuredMessage:
         if message.reply_to_message:
             # If reply_to_message is message about creating topic, then it isn't reply
             if message.reply_to_message.forum_topic_created is None:
-                ensuredMessage.replyId = message.reply_to_message.message_id
+                ensuredMessage.replyId = MessageId(message.reply_to_message.message_id)
                 ensuredMessage.isReply = True
                 if message.reply_to_message.text:
                     ensuredMessage.replyText = message.reply_to_message.text_markdown_v2
@@ -844,7 +845,7 @@ class EnsuredMessage:
 
         metadata: MetadataDict = {}
         if data["metadata"]:
-            metadata = json.loads(data["metadata"])
+            metadata = dbUtils.sqlToTypedDict(json.loads(data["metadata"]), MetadataDict)
 
         ensuredMessage = EnsuredMessage(
             sender=MessageSender(id=data["user_id"], name=data["full_name"], username=data["username"]),
@@ -1121,10 +1122,10 @@ class EnsuredMessage:
                         "login": userName,
                         "name": self.sender.name,
                         "date": self.date.isoformat(),
-                        "messageId": self.messageId,
+                        "messageId": self.messageId.asMessageId(),
                         "type": str(self.messageType),
                         "text": messageText,
-                        "replyId": self.replyId,
+                        "replyId": self.replyId.asMessageId() if self.replyId else None,
                         "quote": self.quoteText if self.isQuote else None,
                         "mediaDescription": mediaContent,
                         "userData": self.userData,
@@ -1428,7 +1429,7 @@ class EnsuredMessage:
             A Telegram Message object with the same data as this EnsuredMessage
         """
         return telegram.Message(
-            message_id=int(self.messageId),
+            message_id=self.messageId.asInt(),
             date=self.date,
             chat=telegram.Chat(
                 id=self.recipient.id,

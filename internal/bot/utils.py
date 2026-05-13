@@ -68,7 +68,7 @@ def telegramMessageFromDBMessage(
     )
     userObj.set_bot(bot)
     message = telegram.Message(
-        message_id=int(dbMessage["message_id"]),
+        message_id=dbMessage["message_id"].asInt(),
         date=dbMessage["date"],
         chat=chatObj,
         from_user=userObj,

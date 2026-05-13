@@ -308,9 +308,9 @@ class QueueService:
             )
             logger.info(f"Restored delayed task: {task}")
 
-        await self._startDelayedQueuProcessLoop()
+        await self._startDelayedQueueProcessLoop()
 
-    async def _startDelayedQueuProcessLoop(self) -> None:
+    async def _startDelayedQueueProcessLoop(self) -> None:
         """Main processing loop for the delayed tasks priority queue.
 
         This infinite loop:
@@ -352,7 +352,7 @@ class QueueService:
                     self.delayedActionsQueue.task_done()
                     await self.delayedActionsQueue.put(delayedTask)
                     tasksCount += 1  # As we've added task back
-                    maxSleepIterations = min(10, int(delayedTask.delayedUntil - time.time()))
+                    maxSleepIterations = min(60, int(delayedTask.delayedUntil - time.time()))
                     iteration = 0
                     # In case of queueLen change - stop sleeping
                     while iteration < maxSleepIterations and tasksCount == self.delayedActionsQueue.qsize():

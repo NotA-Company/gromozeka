@@ -26,7 +26,7 @@ from internal.bot.models.enums import ButtonTopicManagementAction
 from internal.database.models import (
     MessageCategory,
 )
-from internal.models import MessageIdType
+from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -72,7 +72,7 @@ class TopicManagerHandler(BaseBotHandler):
         data[ButtonDataKey.Value] = ensuredMessage.formatMessageText()
         await self._handle_topic_management(
             data=data,
-            messageId=topicManagement["messageId"],
+            messageId=MessageId(topicManagement["messageId"]),
             messageChatId=topicManagement["messageChatId"],
             user=user,
         )
@@ -81,7 +81,7 @@ class TopicManagerHandler(BaseBotHandler):
     async def topicManagenet_Init(
         self,
         data: utils.PayloadDict,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
@@ -153,7 +153,7 @@ class TopicManagerHandler(BaseBotHandler):
     async def topicManagenet_ChatSelected(
         self,
         data: utils.PayloadDict,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
@@ -247,7 +247,7 @@ class TopicManagerHandler(BaseBotHandler):
     async def topicManagenet_TopicSelected(
         self,
         data: utils.PayloadDict,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
         chatId: Optional[int],
@@ -385,7 +385,7 @@ class TopicManagerHandler(BaseBotHandler):
         self,
         data: utils.PayloadDict,
         *,
-        messageId: MessageIdType,
+        messageId: MessageId,
         messageChatId: int,
         user: MessageSender,
     ) -> None:

@@ -475,7 +475,7 @@ class TestRepositoryUpsert:
                 nameEn="Original Name",
                 nameRu="Исходное имя",
                 nSymbols=1,
-                positions=[{"name": "Pos1"}],
+                positions=["Pos1"],
                 description="Original",
             )
             is True
@@ -492,7 +492,7 @@ class TestRepositoryUpsert:
                 nameEn="Updated Name",
                 nameRu="Обновленное имя",
                 nSymbols=2,
-                positions=[{"name": "Pos1"}, {"name": "Pos2"}],
+                positions=["Pos1", "Pos2"],
                 description="Updated",
             )
             is True

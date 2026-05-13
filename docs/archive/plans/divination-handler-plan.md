@@ -712,7 +712,7 @@ already manage the bytes; the divinations row just holds the FK.
 ```sql
 CREATE TABLE divinations (
     chat_id         INTEGER NOT NULL,                   -- Originating message's chat_id
-    message_id      TEXT    NOT NULL,                   -- Originating message's message_id (MessageIdType, str-typed for cross-platform)
+    message_id      TEXT    NOT NULL,                   -- Originating message's message_id (MessageId, stored as str for cross-platform compatibility)
     user_id         INTEGER NOT NULL,                   -- User who requested the reading
     system_id       TEXT    NOT NULL,                   -- 'tarot' | 'runes'
     deck_id         TEXT    NOT NULL,                   -- 'rws' | 'elder_futhark'
