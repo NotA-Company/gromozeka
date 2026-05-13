@@ -308,9 +308,9 @@ class QueueService:
             )
             logger.info(f"Restored delayed task: {task}")
 
-        await self._startDelayedQueuProcessLoop()
+        await self._startDelayedQueueProcessLoop()
 
-    async def _startDelayedQueuProcessLoop(self) -> None:
+    async def _startDelayedQueueProcessLoop(self) -> None:
         """Main processing loop for the delayed tasks priority queue.
 
         This infinite loop:
