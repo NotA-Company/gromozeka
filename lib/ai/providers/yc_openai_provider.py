@@ -237,13 +237,9 @@ class YcOpenaiProvider(BasicOpenAIProvider):
 
         Returns:
             The base URL string for Yandex Cloud's OpenAI-compatible API:
-            "https://llm.api.cloud.yandex.net/v1"
-
-        Example:
-            >>> provider._getBaseUrl()
-            'https://llm.api.cloud.yandex.net/v1'
+            "https://ai.api.cloud.yandex.net/v1"
         """
-        return "https://llm.api.cloud.yandex.net/v1"
+        return "https://ai.api.cloud.yandex.net/v1"
 
     def _createModelInstance(
         self,
