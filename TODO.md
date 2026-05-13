@@ -10,7 +10,7 @@
 - [ ] Add test\dev decorator support
 - [x] Log used tokens count
 - [x] `dbUtils.sqlToTypedDict(_event, StatsEventDict)` will it work for optional fields?
-- [ ] `lib/ai/providers/basic_openai_provider.py` _generateImage need to use _executeChatCompletion (like _generateText and _generateStructured)
+- [x] `lib/ai/providers/basic_openai_provider.py` _generateImage need to use _executeChatCompletion (like _generateText and _generateStructured)
 - [x] Proper comparison of MessageIDs (use separate class for it?)
 - [ ] Proxy support (SOCKS5?)
 - [ ]
