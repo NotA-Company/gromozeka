@@ -77,6 +77,7 @@ description: >-
 mode: all
 model: standard
 temperature: 0.1
+steps: 30
 color: "#FF2D55"
 permission:
   bash: deny

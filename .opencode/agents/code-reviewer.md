@@ -75,8 +75,9 @@ description: >-
 
   </example>
 mode: all
-model: standard
+model: smartest
 temperature: 0.1
+steps: 60
 color: "#34C759"
 permission:
   bash:

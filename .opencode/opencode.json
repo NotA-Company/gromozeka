@@ -20,9 +20,6 @@
     "summary": {
       "model": "cheap"
     }
-  },
+  }
 
-  "plugin": [
-    "opencode-model-alias"
-  ]
 }

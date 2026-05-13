@@ -70,6 +70,7 @@ description: >-
   </example>
 mode: all
 model: smartest
+steps: 50
 color: "#FFD700"
 permission:
   bash: deny
