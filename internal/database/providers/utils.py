@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Union
 
 import lib.utils as libUtils
-from internal.models import MessageIdClass
+from internal.models import MessageId
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,10 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
     """
     if data is None:
         return None
+    elif isinstance(data, MessageId):
+        # Exclusive handling for MessageId isn't needed, actually,
+        # but this way we'll suppress warning message
+        return data.asStr()
     elif isinstance(data, bool):
         return int(data)
     elif isinstance(data, (str, int, float)):
@@ -48,10 +52,6 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
         return libUtils.jsonDumps(data)
     elif isinstance(data, datetime.datetime):
         return data.isoformat()
-    elif isinstance(data, MessageIdClass):
-        # Exclusive handling for MessageIdClass isn't needed, actually,
-        # but this way we'll suppress warning message
-        return data.asStr()
     else:
         logger.warning(f"Unsupported type {type(data)} for proper SQL conversion, using str()")
         return str(data)

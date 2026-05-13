@@ -22,7 +22,7 @@ from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import BotProvider, ChatType, EnsuredMessage, MessageRecipient, MessageSender
 from internal.database.models import ChatInfoDict
-from internal.models import MessageIdClass, MessageType
+from internal.models import MessageId, MessageType
 from internal.services.cache import CacheService
 from lib import utils
 from lib.markdown.parser import markdownToMarkdownV2
@@ -276,7 +276,7 @@ class TheBot:
 
     async def editMessage(
         self,
-        messageId: MessageIdClass,
+        messageId: MessageId,
         chatId: int,
         *,
         text: Optional[str] = None,
@@ -478,7 +478,7 @@ class TheBot:
                 attachmentList = list(attachmentList)
             attachmentList.append((photoData, MessageType.IMAGE, None))
 
-        replyToMessageId: Optional[MessageIdClass] = None
+        replyToMessageId: Optional[MessageId] = None
         chatType: ChatType = ChatType.PRIVATE
         if replyToMessage is not None:
             chatId = replyToMessage.recipient.id
@@ -677,7 +677,7 @@ class TheBot:
         replyMessageList: List[telegram.Message] = []
         ensuredReplyList: List[EnsuredMessage] = []
 
-        replyToMessageId: Optional[MessageIdClass] = None
+        replyToMessageId: Optional[MessageId] = None
         chatType: ChatType = ChatType.PRIVATE
         if replyToMessage is not None:
             chatId = replyToMessage.recipient.id
@@ -884,7 +884,7 @@ class TheBot:
         """
         return await self.deleteMessagesById(ensuredMessage.recipient.id, [ensuredMessage.messageId])
 
-    async def deleteMessagesById(self, chatId: int, messageIds: List[MessageIdClass]) -> bool:
+    async def deleteMessagesById(self, chatId: int, messageIds: List[MessageId]) -> bool:
         """Delete multiple messages by their IDs in the specified chat.
 
         Args:

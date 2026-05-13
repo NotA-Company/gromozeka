@@ -64,7 +64,7 @@ class TestLRUCache(unittest.TestCase):
         Creates a new LRUCache instance with a maximum size of 3 to test
         eviction behavior.
         """
-        self.cache = LRUCache[str, int](maxSize=3)
+        self.cache = LRUCache[str, int](maxSize=3, keyType=str, valueType=int)
 
     def testBasicGetSet(self) -> None:
         """Test basic get and set operations.
@@ -702,7 +702,7 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
             {
                 "namespace": "users",
                 "key": "123",
-                "value": json.dumps({"activeConfigureId": {"step": 1}}),
+                "value": json.dumps({"activeConfigure": {"data": {}, "messageId": 1, "messageChatId": 456}}),
             },
             {
                 "namespace": "chats",
@@ -808,7 +808,7 @@ class TestThreadSafety(unittest.IsolatedAsyncioTestCase):
         """
         import threading
 
-        lruCache = LRUCache[int, int](maxSize=100)
+        lruCache = LRUCache[int, int](maxSize=100, keyType=int, valueType=int)
         errors = []
 
         def worker(startVal: int) -> None:

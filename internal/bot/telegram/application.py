@@ -23,7 +23,7 @@ from internal.bot.models import BotProvider, CommandPermission, EnsuredMessage, 
 from internal.bot.models.ensured_message import MessageRecipient
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.models import MessageIdClass
+from internal.models import MessageId
 from internal.services.queue_service import QueueService
 from lib import utils
 from lib.rate_limiter import RateLimiterManager
@@ -101,7 +101,7 @@ class TelegramBotApplication:
 
                     await self.handlerManager.handleNewChatMember(
                         targetChat=targetChat,
-                        messageId=MessageIdClass(messageId),
+                        messageId=MessageId(messageId),
                         newMember=MessageSender.fromTelegramUser(newMember),
                         updateObj=update,
                     )
@@ -114,7 +114,7 @@ class TelegramBotApplication:
 
                 return await self.handlerManager.handleLeftChatMember(
                     targetChat=targetChat,
-                    messageId=MessageIdClass(messageId),
+                    messageId=MessageId(messageId),
                     leftMember=leftMember,
                     updateObj=update,
                 )

@@ -28,10 +28,11 @@ import logging
 import time
 from collections import OrderedDict
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Type
 
+import internal.database.utils as dbUtils
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict
-from internal.models import MessageIdType
+from internal.models import MessageId
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib import utils
@@ -89,7 +90,13 @@ class LRUCache[K, V](OrderedDict[K, V]):
     lock: RLock
     """Reentrant lock for thread-safe operations."""
 
-    def __init__(self, maxSize: int = 1000) -> None:
+    keyType: Type[K]
+    """Type of keys in the cache."""
+
+    valueType: Type[V]
+    """Type of values in the cache."""
+
+    def __init__(self, maxSize: int = 1000, *, keyType: Type[K], valueType: Type[V]) -> None:
         """Initialize LRU cache with maximum size and thread safety.
 
         Args:
@@ -98,6 +105,8 @@ class LRUCache[K, V](OrderedDict[K, V]):
         super().__init__()
         self.maxSize = maxSize
         self.lock = RLock()
+        self.keyType = keyType
+        self.valueType = valueType
 
     def get(self, key: K, default: V) -> V:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Get value from cache, moving it to end (most recently used).
@@ -120,7 +129,7 @@ class LRUCache[K, V](OrderedDict[K, V]):
             self.move_to_end(key)
             return self[key]
 
-    def set(self, key: K, value: V) -> None:
+    def set(self, key: K, value: V, *, ensureTypes: bool = False) -> None:
         """Set value in cache, evicting oldest if over capacity.
 
         Stores the key-value pair in the cache. If the key already exists,
@@ -131,8 +140,21 @@ class LRUCache[K, V](OrderedDict[K, V]):
         Args:
             key: The key to store in the cache
             value: The value to associate with the key
+            ensureTypes: Whether to ensure the types of the key and value match the cache's types
         """
         with self.lock:
+            if ensureTypes:
+                # Ensure key and value are of the correct type
+                # and try to convert if not.
+                ok, _key = dbUtils.sqlToCustomType(key, self.keyType)
+                if not ok or _key is None:
+                    raise TypeError(f"Key {key!r} is not of type {K.__name__}")
+                key = _key
+                ok, _value = dbUtils.sqlToCustomType(value, self.valueType)
+                if not ok or _value is None:
+                    raise TypeError(f"Value {value!r} is not of type {V.__name__}")
+                value = _value
+
             if key in self:
                 # Update and move to end
                 self.move_to_end(key)
@@ -243,10 +265,20 @@ class CacheService:
                 | LRUCache[int, HCUserCacheDict]
                 | LRUCache[int, HCChatPersistentCacheDict],
             ] = {
-                CacheNamespace.CHATS: LRUCache[int | str, HCChatCacheDict](self.maxCacheSize),
-                CacheNamespace.CHAT_PERSISTENT: LRUCache[int, HCChatPersistentCacheDict](self.maxCacheSize),
-                CacheNamespace.CHAT_USERS: LRUCache[str, HCChatUserCacheDict](self.maxCacheSize),
-                CacheNamespace.USERS: LRUCache[int, HCUserCacheDict](self.maxCacheSize),
+                CacheNamespace.CHATS: LRUCache[int | str, HCChatCacheDict](
+                    self.maxCacheSize,
+                    keyType=int | str,  # pyright: ignore[reportArgumentType]
+                    valueType=HCChatCacheDict,
+                ),
+                CacheNamespace.CHAT_PERSISTENT: LRUCache[int, HCChatPersistentCacheDict](
+                    self.maxCacheSize, keyType=int, valueType=HCChatPersistentCacheDict
+                ),
+                CacheNamespace.CHAT_USERS: LRUCache[str, HCChatUserCacheDict](
+                    self.maxCacheSize, keyType=str, valueType=HCChatUserCacheDict
+                ),
+                CacheNamespace.USERS: LRUCache[int, HCUserCacheDict](
+                    self.maxCacheSize, keyType=int, valueType=HCUserCacheDict
+                ),
             }
             """Dictionary mapping cache namespaces to their LRU cache instances."""
 
@@ -1045,7 +1077,7 @@ class CacheService:
 
     # ## ChatPersistent spamWarningMessages
 
-    def getSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> Optional[HCSpamWarningMessageInfo]:
+    def getSpamWarningMessageInfo(self, chatId: int, messageId: MessageId) -> Optional[HCSpamWarningMessageInfo]:
         """Get spam warning message info from persistent cache.
 
         Args:
@@ -1059,7 +1091,7 @@ class CacheService:
         messages = chatPCache.get("spamWarningMessages", {})
         return messages.get(messageId, None)
 
-    def addSpamWarningMessage(self, chatId: int, messageId: MessageIdType, data: HCSpamWarningMessageInfo) -> None:
+    def addSpamWarningMessage(self, chatId: int, messageId: MessageId, data: HCSpamWarningMessageInfo) -> None:
         """Add spam warning message info to persistent cache.
 
         Args:
@@ -1077,7 +1109,7 @@ class CacheService:
         self.dirtyKeys[CacheNamespace.CHAT_PERSISTENT].add(chatId)
         logger.debug(f"Updated spamWarningMessage {messageId} for {chatId}, dood!")
 
-    def removeSpamWarningMessageInfo(self, chatId: int, messageId: MessageIdType) -> None:
+    def removeSpamWarningMessageInfo(self, chatId: int, messageId: MessageId) -> None:
         """Remove spam warning message info from persistent cache.
 
         Args:
@@ -1237,7 +1269,7 @@ class CacheService:
                 if namespace in (CacheNamespace.CHATS, CacheNamespace.USERS):
                     key = int(key)
 
-                cache.set(key, value)  # pyright: ignore[reportArgumentType]
+                cache.set(key, value, ensureTypes=True)  # pyright: ignore[reportArgumentType]
                 loadedCount += 1
 
             logger.info(f"Loaded {loadedCount} and ignored {ignoredCount} cache entries from database, dood!")

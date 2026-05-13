@@ -12,26 +12,8 @@ from typing import Self
 
 logger = logging.getLogger(__name__)
 
-MessageIdType = int | str
-"""Type alias for message identifiers across different messaging platforms.
 
-This type represents the identifier of a message, which can be either an integer
-or a string depending on the messaging platform:
-    - Telegram: Uses integer message IDs
-    - Max Messenger: Uses string message IDs
-
-Using this type alias allows the codebase to handle both platforms uniformly
-while maintaining type safety.
-
-Examples:
-    >>> telegram_message_id: MessageIdType = 12345
-    >>> max_message_id: MessageIdType = "msg_abc123"
-    >>> def process_message(message_id: MessageIdType) -> None:
-    ...     print(f"Processing message {message_id}")
-"""
-
-
-class MessageIdClass:
+class MessageId:
     """Class for message identifiers across different messaging platforms.
 
     This class wraps a message identifier which can be either an integer
@@ -41,7 +23,7 @@ class MessageIdClass:
 
     Using this class allows the codebase to handle both platforms uniformly
     while maintaining type safety. Supports copying, string/int conversion,
-    and equality comparison with other MessageIdClass instances, ints, and strs.
+    and equality comparison with other MessageId instances, ints, and strs.
 
     Attributes:
         messageId: The raw message identifier value (int or str).
@@ -49,17 +31,17 @@ class MessageIdClass:
 
     __slots__ = ("messageId",)
 
-    def __init__(self, messageId: MessageIdType | Self) -> None:
-        """Initialize a MessageIdClass instance.
+    def __init__(self, messageId: int | str | Self) -> None:
+        """Initialize a MessageId instance.
 
         Args:
             messageId: A message ID value (int or str), or another
-                MessageIdClass instance to copy from.
+                MessageId instance to copy from.
 
         Raises:
-            ValueError: If messageId is not an int, str, or MessageIdClass.
+            ValueError: If messageId is not an int, str, or MessageId.
         """
-        self.messageId: MessageIdType
+        self.messageId: int | str
         if isinstance(messageId, self.__class__):
             self.messageId = messageId.messageId
         elif isinstance(messageId, (str, int)) and not isinstance(messageId, bool):
@@ -68,10 +50,10 @@ class MessageIdClass:
             raise ValueError(f"Invalid message ID type: {type(messageId).__name__}")
 
     def copy(self) -> Self:
-        """Return a new MessageIdClass with the same underlying value.
+        """Return a new MessageId with the same underlying value.
 
         Returns:
-            A new MessageIdClass instance that is a shallow copy of this one.
+            A new MessageId instance that is a shallow copy of this one.
         """
         return self.__class__(self)
 
@@ -105,7 +87,7 @@ class MessageIdClass:
         except ValueError:
             raise ValueError("Message ID is not an integer")
 
-    def asMessageId(self) -> MessageIdType:
+    def asMessageId(self) -> int | str:
         """Return the message ID as an int if possible, otherwise as a string.
 
         Useful for serialising to JSON where an int representation takes less
@@ -132,7 +114,7 @@ class MessageIdClass:
         """Return an unambiguous string representation of the instance.
 
         Returns:
-            A string in the form ``MessageIdClass(messageId=<value>)``.
+            A string in the form ``MessageId(messageId=<value>)``.
         """
         return f"{self.__class__.__name__}(messageId={self.messageId})"
 
@@ -140,7 +122,7 @@ class MessageIdClass:
         """Compare this message ID with another value for equality.
 
         Supports comparison with:
-            - Another MessageIdClass instance (compares string representations).
+            - Another MessageId instance (compares string representations).
             - A bool (always False)
             - An int (tries to represent the message ID as an int if possible, or str in other cases).
             - A str (compares string representations).
@@ -152,29 +134,29 @@ class MessageIdClass:
         Returns:
             True if the values are equal, False otherwise.
         """
-        if isinstance(value, MessageIdClass):
+        if isinstance(value, MessageId):
             return self.asStr() == value.asStr()
         elif isinstance(value, bool):
-            # Bool is subtype of int, so we better to handle it separately
+            # Bool is subtype of int, so we'd better to handle it separately
             return False
         elif isinstance(value, int):
             return self.asMessageId() == value
         elif isinstance(value, str):
             return self.asStr() == value
         else:
-            logger.warning(f"Unsupported type for MessageIdClass equality comparison: {type(value).__name__}")
+            logger.warning(f"Unsupported type for MessageId equality comparison: {type(value).__name__}")
             return self.asStr() == str(value)
 
     def __hash__(self) -> int:
         """Return a hash value for this instance.
 
-        Uses the string representation so that MessageIdClass instances
+        Uses the string representation so that MessageId instances
         are usable as dict keys and in sets, and are consistent with
-        ``__eq__`` when comparing two MessageIdClass instances.
+        ``__eq__`` when comparing two MessageId instances.
 
-        Note: ``MessageIdClass(5) == 5`` is True, but
-        ``hash(MessageIdClass(5)) != hash(5)``.  Do not mix
-        MessageIdClass instances with plain ints or strs in the same
+        Note: ``MessageId(5) == 5`` is True, but
+        ``hash(MessageId(5)) != hash(5)``.  Do not mix
+        MessageId instances with plain ints or strs in the same
         set or dict keys — cross-type equality is a convenience for
         comparisons only, not for hash-based lookups.
 

@@ -7,10 +7,10 @@ messages with their associated metadata.
 
 import datetime
 import logging
-from collections.abc import Sequence
-from typing import Any, Dict, List, Optional
+from collections.abc import Mapping, Sequence
+from typing import Any, List, Optional
 
-from internal.models import MessageIdClass, MessageType
+from internal.models import MessageId, MessageType
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
@@ -47,17 +47,17 @@ class ChatMessagesRepository(BaseRepository):
         date: datetime.datetime,
         chatId: int,
         userId: int,
-        messageId: MessageIdClass,
-        replyId: Optional[MessageIdClass] = None,
+        messageId: MessageId,
+        replyId: Optional[MessageId] = None,
         threadId: Optional[int] = None,
         messageText: str = "",
         messageType: MessageType = MessageType.TEXT,
         messageCategory: MessageCategory = MessageCategory.UNSPECIFIED,
-        rootMessageId: Optional[MessageIdClass] = None,
+        rootMessageId: Optional[MessageId] = None,
         quoteText: Optional[str] = None,
         mediaId: Optional[str] = None,
-        markup: str = "",
-        metadata: str | Dict[str, Any] = "",
+        markup: Optional[Sequence[Mapping[str, Any]]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
         mediaGroupId: Optional[str] = None,
     ) -> bool:
         """Save a chat message with detailed information.
@@ -70,13 +70,13 @@ class ChatMessagesRepository(BaseRepository):
             date (datetime.datetime): Message timestamp
             chatId (int): Chat identifier (used for source routing)
             userId (int): User identifier
-            messageId (MessageIdClass): Message identifier
-            replyId (Optional[MessageIdClass]): Optional reply message ID
+            messageId (MessageId): Message identifier
+            replyId (Optional[MessageId]): Optional reply message ID
             threadId (Optional[int]): Optional thread ID (defaults to DEFAULT_THREAD_ID)
             messageText (str): Message text content
             messageType (MessageType): Type of message (e.g., TEXT, PHOTO, VIDEO)
             messageCategory (MessageCategory): Message category for classification
-            rootMessageId (Optional[MessageIdClass]): Optional root message ID for threads
+            rootMessageId (Optional[MessageId]): Optional root message ID for threads
             quoteText (Optional[str]): Optional quoted text
             mediaId (Optional[str]): Optional media attachment ID
             markup (str): Message markup (keyboard, inline buttons, etc.)
@@ -92,6 +92,10 @@ class ChatMessagesRepository(BaseRepository):
         Note:
             Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
+        if markup is None:
+            markup = []
+        if metadata is None:
+            metadata = {}
         if threadId is None:
             threadId = dbUtils.DEFAULT_THREAD_ID
         try:
@@ -268,7 +272,7 @@ class ChatMessagesRepository(BaseRepository):
             return []
 
     async def getChatMessageByMessageId(
-        self, chatId: int, messageId: MessageIdClass, *, dataSource: Optional[str] = None
+        self, chatId: int, messageId: MessageId, *, dataSource: Optional[str] = None
     ) -> Optional[ChatMessageDict]:
         """Get a specific chat message by message_id and chat_id.
 
@@ -276,7 +280,7 @@ class ChatMessagesRepository(BaseRepository):
 
         Args:
             chatId (int): Chat identifier
-            messageId (MessageIdClass): Message identifier
+            messageId (MessageId): Message identifier
             dataSource (Optional[str]): Optional data source name for explicit routing
 
         Returns:
@@ -308,7 +312,7 @@ class ChatMessagesRepository(BaseRepository):
     async def getChatMessagesByRootId(
         self,
         chatId: int,
-        rootMessageId: MessageIdClass,
+        rootMessageId: MessageId,
         threadId: Optional[int] = None,
         *,
         dataSource: Optional[str] = None,
@@ -320,7 +324,7 @@ class ChatMessagesRepository(BaseRepository):
 
         Args:
             chatId (int): Chat identifier
-            rootMessageId (MessageIdClass): Root message ID to find thread messages for
+            rootMessageId (MessageId): Root message ID to find thread messages for
             threadId (Optional[int]): Optional thread ID to filter by
             dataSource (Optional[str]): Optional data source identifier for multi-source database routing
 
@@ -459,7 +463,7 @@ class ChatMessagesRepository(BaseRepository):
     async def updateChatMessageCategory(
         self,
         chatId: int,
-        messageId: MessageIdClass,
+        messageId: MessageId,
         messageCategory: MessageCategory,
     ) -> bool:
         """Update the category of a chat message.
@@ -469,7 +473,7 @@ class ChatMessagesRepository(BaseRepository):
 
         Args:
             chatId (int): Chat identifier
-            messageId (MessageIdClass): Message identifier
+            messageId (MessageId): Message identifier
             messageCategory (MessageCategory): New message category to set
 
         Returns:
@@ -502,7 +506,7 @@ class ChatMessagesRepository(BaseRepository):
     async def updateChatMessageMetadata(
         self,
         chatId: int,
-        messageId: MessageIdClass,
+        messageId: MessageId,
         metadata: str | Any,
     ) -> bool:
         """Update the metadata of a chat message.
@@ -512,7 +516,7 @@ class ChatMessagesRepository(BaseRepository):
 
         Args:
             chatId (int): Chat identifier
-            messageId (MessageIdClass): Message identifier
+            messageId (MessageId): Message identifier
             metadata (str | Any): New metadata value (string or any serializable type)
 
         Returns:

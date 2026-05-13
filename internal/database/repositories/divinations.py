@@ -12,7 +12,7 @@ import re
 from collections.abc import Sequence
 from typing import Optional
 
-from internal.models import MessageIdClass
+from internal.models import MessageId
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
@@ -56,7 +56,7 @@ class DivinationsRepository(BaseRepository):
         self,
         *,
         chatId: int,
-        messageId: MessageIdClass,
+        messageId: MessageId,
         userId: int,
         systemId: str,
         deckId: str,

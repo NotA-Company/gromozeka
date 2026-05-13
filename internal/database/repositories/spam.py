@@ -31,7 +31,7 @@ Example:
 import logging
 from typing import List, Optional
 
-from internal.models import MessageIdClass
+from internal.models import MessageId
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
@@ -76,7 +76,7 @@ class SpamRepository(BaseRepository):
         self,
         chatId: int,
         userId: int,
-        messageId: MessageIdClass,
+        messageId: MessageId,
         messageText: str,
         spamReason: SpamReason,
         score: float,
@@ -135,7 +135,7 @@ class SpamRepository(BaseRepository):
         self,
         chatId: int,
         userId: int,
-        messageId: MessageIdClass,
+        messageId: MessageId,
         messageText: str,
         spamReason: SpamReason,
         score: float,
