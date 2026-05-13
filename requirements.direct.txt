@@ -1,19 +1,19 @@
 # Runtime
 aiosqlite==0.22.1
-boto3==1.43.2
+boto3==1.43.6
 html-to-markdown==3.1.0
 httpx[http2]==0.28.1
-openai==2.33.0
+openai==2.36.0
 python-dateutil==2.9.0.post0
 python-magic==0.4.27
 python-telegram-bot==22.7
 tomli==2.4.1
-yandex-ai-studio-sdk==0.20.1
+yandex-ai-studio-sdk==0.20.2
 
 sqlink @ git+https://git@git.sourcecraft.dev/notacompany/py-sqlink-client.git
 
 # Debug scripts
-PyYAML==6.0.2
+PyYAML==6.0.3
 
 # Formatters
 black==26.3.1
