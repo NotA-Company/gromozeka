@@ -201,11 +201,11 @@ class Database:
 
 ```python
 # Before
-def getChatMessageByMessageId(self, chatId: int, messageId: MessageIdType):
+def getChatMessageByMessageId(self, chatId: int, messageId: MessageId):
     ...
 
 # After
-def getChatMessageByMessageId(self, chatId: int, messageId: MessageIdType, 
+def getChatMessageByMessageId(self, chatId: int, messageId: MessageId,
                               dataSource: Optional[str] = None):
     """
     Get message by ID.

@@ -152,7 +152,7 @@ Answer technical questions about codebases by reading the actual source, tracing
 
 This repo has deliberate conventions that look unusual. **Recognize them as intentional, not bugs or sloppiness.** Read `AGENTS.md` for the full set; these are the ones that most often cause false-positive analysis:
 
-- **camelCase identifiers** (not snake_case), **no pydantic**, **`MessageIdType = Union[int, str]`** for multi-platform
+- **camelCase identifiers** (not snake_case), **no pydantic**, **`MessageId` class** (wraps `int|str`, provides `.asInt()`/`.asStr()`) for multi-platform message IDs
 - **SQL portability**: `BaseSQLProvider` with `:named` params; no `AUTOINCREMENT` / `DEFAULT CURRENT_TIMESTAMP`
 - **`getChatSettings()` returns `Dict[key, tuple[value, updatedBy]]`** — `[0]` indexing is correct
 - **Handler ordering**: `LLMMessageHandler` is intentionally last (catch-all); **chat type**: `chatId > 0` = private

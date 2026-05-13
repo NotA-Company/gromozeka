@@ -83,6 +83,7 @@ permission:
     "*": allow
     "explore": allow
     "general": allow
+    "scout": allow
     "code-analyst": allow
     "architect": allow
     "software-developer": allow

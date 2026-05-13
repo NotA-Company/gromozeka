@@ -202,7 +202,7 @@ class DatabaseWrapper:
         self._router = router or self._createDefaultRouter()
     
     @routeToSource
-    def getChatMessageByMessageId(self, chatId: int, messageId: MessageIdType):
+    def getChatMessageByMessageId(self, chatId: int, messageId: MessageId):
         # Method automatically routed to correct source
         # Implementation remains the same
         pass

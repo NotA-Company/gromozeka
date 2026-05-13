@@ -130,7 +130,7 @@ Before diving into clever theories, rule out the project's known traps. In rough
 
 1. **Singleton state leaking across tests.** `LLMService`, `CacheService`, `QueueService`, `StorageService`, `RateLimiterManager` are singletons with a `hasattr(self, 'initialized')` init guard. Tests that don't reset `_instance = None` (or don't use the autouse `resetLlmServiceSingleton` fixture) inherit state from earlier tests. Non-determinism and "works in isolation, fails in suite" are almost always this.
 2. **`asyncio_mode = "auto"`** — tests are `async def test_…` with **no decorator**. A stray `@pytest.mark.asyncio` or missing `async` is a silent source of weirdness.
-3. **`MessageIdType = Union[int, str]`** — Telegram message IDs are `int`, Max Messenger uses `str`. Code assuming `int` will `TypeError` only on Max, which may not be exercised locally.
+3. **`MessageId` class** (defined at `internal/models/types.py`) — wraps `int | str` because Telegram message IDs are `int` while Max Messenger uses `str`. Code assuming bare `int` will `TypeError` only on Max, which may not be exercised locally. Use the `MessageId` class instead of raw `int`/`str`; call `.asInt()` for Telegram API, `.asStr()` for Max/SQL.
 4. **`DEFAULT_THREAD_ID = 0`** (int, not `None`) — queries that use `None` instead of `0` return empty results silently.
 5. **`chatId > 0` means private chat, else group** — sign confusion produces "works for one user, broken for another".
 6. **`getChatSettings()` returns `Dict[key, tuple[value, updatedBy]]`** — callers that don't index `[0]` compare tuples to scalars and silently diverge.
@@ -272,7 +272,7 @@ Tailor length to the bug. Trivial bugs get a few lines; gnarly concurrency bugs 
 Before declaring a bug fixed:
 
 - [ ] Did I reproduce the failure before proposing a fix?
-- [ ] Did I rule out the known Gromozeka gotchas (singleton leakage, `MessageIdType`, `DEFAULT_THREAD_ID`, tuple-returning settings, handler ordering, SQL-portability) before building new theories?
+- [ ] Did I rule out the known Gromozeka gotchas (singleton leakage, `MessageId`, `DEFAULT_THREAD_ID`, tuple-returning settings, handler ordering, SQL-portability) before building new theories?
 - [ ] Did I identify the root cause, not just a trigger or symptom?
 - [ ] Is the fix the smallest diff that closes the root cause?
 - [ ] Did I resist refactoring adjacent code or "cleaning up while I'm here"?

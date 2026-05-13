@@ -217,7 +217,7 @@ make test
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` — TOML config loading |
 | [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern (297 lines) |
 | [`internal/database/migrations/`](../../internal/database/migrations/) | `MigrationManager`, `BaseMigration`, version files |
-| [`internal/models.py`](../../internal/models.py) | Shared type aliases (`MessageIdType`, `MessageType`) |
+| [`internal/models/`](../../internal/models/) | Shared types (`MessageId` class, `MessageType` enum) |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | `LLMService` singleton |
 | [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |

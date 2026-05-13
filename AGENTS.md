@@ -177,8 +177,10 @@ TOML, hierarchical, merged recursively. Loaded by
 
 ## Gotchas that bite (full list in [`docs/llm/tasks.md`](docs/llm/tasks.md) §3)
 
-- `MessageIdType = Union[int, str]` — Telegram = int, Max = str. Don't
-  assume int.
+- `MessageId` class (`internal/models/types.py`) wraps `int | str` — Telegram
+  = int, Max = str. Don't assume plain int; wrap with `MessageId(...)`, use
+  `.asInt()` for Telegram API calls, `.asStr()` for Max/SQL, `.asMessageId()`
+  for JSON serialization.
 - Chat type is inferred from sign: `chatId > 0` private, else group.
 - `DEFAULT_THREAD_ID = 0` (int), not `None`. DB queries expect 0.
 - `getChatSettings()` returns `Dict[key, tuple[value, updatedBy]]` — index

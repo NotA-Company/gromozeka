@@ -402,7 +402,7 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 
 | Gotcha | Description | Solution |
 |---|---|---|
-| `MessageIdType` is `Union[int, str]` | Telegram uses `int` IDs, Max uses `str` IDs | Always use `MessageIdType` type, cast when needed |
+| `MessageId` class wraps `int\|str` | Telegram uses `int` IDs, Max uses `str` IDs | Always use `MessageId` class; use `.asInt()` for Telegram, `.asStr()` for Max/SQL |
 | `chatId` sign determines chat type | Positive = private, negative = group | Use `ChatType.PRIVATE if chatId > 0 else ChatType.GROUP` |
 | `DEFAULT_THREAD_ID = 0` | Default thread uses ID 0 (not None) in DB | Never use `None` for thread ID in DB queries |
 | Config merge is recursive | Nested dicts are merged, not replaced | Be careful with deep config overrides |
@@ -681,7 +681,7 @@ from internal.bot.models import EnsuredMessage
 
 def test_ReadingHandler():
     mockMessage = EnsuredMessage(
-        messageId=123,  # Type: MessageIdType (int for Telegram)
+        messageId=MessageId(123),  # MessageId wrapping int (Telegram uses int)
         messageText="/taro",
         chatId=456,  # Type: int
         messageSender=MessageSender(id=789, isBot=False,

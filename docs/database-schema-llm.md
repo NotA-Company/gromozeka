@@ -587,13 +587,13 @@ db.chatMessages.saveChatMessage(
     date: datetime,
     chatId: int,
     userId: int,
-    messageId: MessageIdType,
-    replyId: Optional[MessageIdType] = None,
+    messageId: MessageId,
+    replyId: Optional[MessageId] = None,
     threadId: Optional[int] = None,
     messageText: str = "",
     messageType: MessageType = MessageType.TEXT,
     messageCategory: MessageCategory = MessageCategory.UNSPECIFIED,
-    rootMessageId: Optional[MessageIdType] = None,
+    rootMessageId: Optional[MessageId] = None,
     quoteText: Optional[str] = None,
     mediaId: Optional[str] = None,
     markup: str = "",
@@ -618,7 +618,7 @@ db.chatMessages.getChatMessagesSince(
 ```python
 db.chatMessages.getChatMessageByMessageId(
     chatId: int,
-    messageId: MessageIdType,
+    messageId: MessageId,
     dataSource: Optional[str] = None
 ) -> Optional[ChatMessageDict]
 ```
@@ -627,7 +627,7 @@ db.chatMessages.getChatMessageByMessageId(
 ```python
 db.chatMessages.getChatMessagesByRootId(
     chatId: int,
-    rootMessageId: MessageIdType,
+    rootMessageId: MessageId,
     threadId: Optional[int] = None,
     dataSource: Optional[str] = None
 ) -> List[ChatMessageDict]
@@ -647,7 +647,7 @@ db.chatMessages.getChatMessagesByUser(
 ```python
 db.chatMessages.updateChatMessageCategory(
     chatId: int,
-    messageId: MessageIdType,
+    messageId: MessageId,
     messageCategory: MessageCategory
 ) -> bool
 ```
@@ -870,7 +870,7 @@ db.userData.deleteUserData(
 db.spam.saveSpamMessage(
     chatId: int,
     userId: int,
-    messageId: MessageIdType,
+    messageId: MessageId,
     text: str,
     reason: SpamReason,
     score: float
@@ -882,7 +882,7 @@ db.spam.saveSpamMessage(
 db.spam.saveHamMessage(
     chatId: int,
     userId: int,
-    messageId: MessageIdType,
+    messageId: MessageId,
     text: str,
     reason: str,
     score: float
@@ -972,8 +972,8 @@ db.cache.setCacheStorage(
 db.chatSummarization.getChatSummarizationCache(
     chatId: int,
     topicId: Optional[int],
-    firstMessageId: MessageIdType,
-    lastMessageId: MessageIdType,
+    firstMessageId: MessageId,
+    lastMessageId: MessageId,
     prompt: str,
     dataSource: Optional[str] = None
 ) -> Optional[ChatSummarizationCacheDict]
@@ -984,8 +984,8 @@ db.chatSummarization.getChatSummarizationCache(
 db.chatSummarization.setChatSummarizationCache(
     chatId: int,
     topicId: Optional[int],
-    firstMessageId: MessageIdType,
-    lastMessageId: MessageIdType,
+    firstMessageId: MessageId,
+    lastMessageId: MessageId,
     prompt: str,
     summary: str
 ) -> bool

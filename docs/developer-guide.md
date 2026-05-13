@@ -239,7 +239,7 @@ gromozeka/
 │   │       └── service.py          # StorageService singleton
 │   │
 │   └── models/                     # Shared internal models
-│       └── ...                     # MessageIdType, MessageType, etc.
+│       └── ...                     # MessageId, MessageType, etc.
 │
 ├── lib/                            # Reusable library components
 │   ├── ai/                         # LLM abstraction layer
