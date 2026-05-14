@@ -159,9 +159,34 @@ Combining structured output with tool calls is not supported in v1.
 hinting at JSON output; the wrapper does not inject one.
 
 **Provider support:** implemented for OpenAI-compatible providers
-(`custom-openai`, `openrouter`, `yc-openai`). The `yc-sdk` provider
-overrides `_generateStructured` to raise `NotImplementedError` — see
-[`docs/plans/lib-ai-structured-output.md`](../plans/lib-ai-structured-output.md) §3.6.
+(`custom-openai`, `openrouter`, `yc-openai`) and the `yc-sdk` provider.
+The `yc-sdk` provider implements `_generateStructured` via `response_format`
+with JSON Schema (see [`lib/ai/providers/yc_sdk_provider.py`](../../lib/ai/providers/yc_sdk_provider.py)).
+
+**YC SDK tool calling:** the `yc-sdk` provider also supports tool/function
+calling via `_generateText(tools=[...])`. Tools are converted from
+`LLMAbstractTool` to SDK `FunctionTool` via `_convertTools()`, and
+`result.tool_calls` are extracted into `LLMToolCall` objects. When tool
+calls are present, `ModelResultStatus.TOOL_CALLS` is returned.
+
+**YC SDK per-request model creation:** each `_generate*` call creates a
+fresh SDK model via `_getModel(**configOverrides)` instead of reusing a
+shared model instance. This avoids the `.configure()` mutation problem
+where concurrent callers with different configurations would clobber each
+other.
+
+**YC SDK auth:** supports `auth_type` config values `"auto"` (default,
+env-var detection), `"api_key"`, `"iam_token"`, and `"yc_cli"`. See
+[`configuration.md`](configuration.md) for details.
+
+**YC SDK tokenization:** `getExactTokensCount()` uses the SDK's
+`model.tokenize()` for precise counts, falling back to the heuristic
+`getEstimateTokensCount()` if tokenize is unavailable.
+
+**YC SDK error handling:** all generation methods catch `AIStudioError`
+and route through `_handleSDKError()`, which maps `AioRpcError` details
+(e.g. content filter violations → `CONTENT_FILTER`) and logs `RunError`
+specifically.
 
 **Abstract/split pattern:** Similar to `generateText` / `_generateText`,
 the image generation methods follow the same pattern:
@@ -512,4 +537,4 @@ reading = drawSymbols(system, layout, question="What about my career?")
 ---
 
 *This guide is auto-maintained and should be updated whenever library APIs change*  
-*Last updated: 2026-05-10*
+*Last updated: 2026-05-14*

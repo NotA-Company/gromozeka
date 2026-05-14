@@ -1154,7 +1154,7 @@ The AI system provides a provider-agnostic interface for interacting with multip
 | `CustomOpenAIProvider` | `providers/custom_openai_provider.py` | OpenAI-compatible API provider |
 | `OpenrouterProvider` | `providers/openrouter_provider.py` | OpenRouter.ai provider |
 | `YcOpenaiProvider` | `providers/yc_openai_provider.py` | Yandex Cloud OpenAI-compatible |
-| `YcAIProvider` | `providers/yc_sdk_provider.py` | Yandex Cloud native SDK |
+| `YcAIProvider` | `providers/yc_sdk_provider.py` | Yandex Cloud native SDK (supports structured output, tool calling, multiple auth methods) |
 
 **Usage example:**
 

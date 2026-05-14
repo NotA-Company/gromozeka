@@ -952,17 +952,17 @@ simultaneously and verifies all produce correct results.
 
 ## 10. Acceptance Criteria
 
-- [ ] `_generateText` works with tools, converts tool calls to `LLMToolCall`
-- [ ] `_generateText` works without tools (backward compatible)
-- [ ] `_generateStructured` produces valid `ModelStructuredResult` with parsed JSON
-- [ ] `_generateStructured` returns `ERROR` status with `data=None` on JSON parse failure
-- [ ] `_generateImage` still works with per-request model creation
-- [ ] No shared mutable state -- each request gets its own model object
-- [ ] Auth supports `api_key` (primary) and `yc_cli` (fallback) in addition to `auto`
-- [ ] `getExactTokensCount()` returns accurate token counts via SDK tokenizer
-- [ ] `getEstimateTokensCount()` (existing heuristic) still works as fallback
-- [ ] All existing golden-data tests pass unchanged
-- [ ] New tests cover: tool calling, structured output, auth resolution, tokenization, error handling
-- [ ] `make format lint` passes
-- [ ] `make test` passes
-- [ ] `docs/other/yc-ai-sdk/gap-analysis.md` updated to reflect completed items
+- [x] `_generateText` works with tools, converts tool calls to `LLMToolCall`
+- [x] `_generateText` works without tools (backward compatible)
+- [x] `_generateStructured` produces valid `ModelStructuredResult` with parsed JSON
+- [x] `_generateStructured` returns `ERROR` status with `data=None` on JSON parse failure
+- [x] `_generateImage` still works with per-request model creation
+- [x] No shared mutable state -- each request gets its own model object
+- [x] Auth supports `api_key` (primary) and `yc_cli` (fallback) in addition to `auto`
+- [x] `getExactTokensCount()` returns accurate token counts via SDK tokenizer
+- [x] `getEstimateTokensCount()` (existing heuristic) still works as fallback
+- [x] All existing golden-data tests pass unchanged
+- [x] New tests cover: tool calling, structured output, auth resolution, tokenization, error handling
+- [x] `make format lint` passes
+- [x] `make test` passes
+- [x] `docs/other/yc-ai-sdk/gap-analysis.md` updated to reflect completed items
