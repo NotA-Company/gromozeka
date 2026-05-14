@@ -828,6 +828,22 @@ class AbstractLLMProvider(ABC):
         """
         return list(self.models.keys())
 
+    async def listRemoteModels(self) -> Dict[str, Dict[str, Any]]:
+        """List models available from the remote API.
+
+        Returns a dict mapping model IDs to their settings dicts.
+        The settings dict contains whatever data the remote API provides
+        (e.g., id, owned_by, context_length, pricing).
+
+        The default implementation returns an empty dict — providers
+        that support model discovery should override this.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Model ID → settings dict.
+            Empty dict if the provider does not support remote listing.
+        """
+        return {}
+
     def getModelInfo(self, name: str) -> Optional[Dict[str, Any]]:
         """Get information about a specific model.
 

@@ -47,6 +47,7 @@ Example:
 import logging
 from typing import Any, Dict
 
+import httpx
 from openai import AsyncOpenAI
 
 from lib.stats import StatsStorage
@@ -262,6 +263,42 @@ class OpenrouterProvider(BasicOpenAIProvider):
             ```
         """
         return "https://openrouter.ai/api/v1"
+
+    async def listRemoteModels(self) -> Dict[str, Dict[str, Any]]:
+        """List models available from OpenRouter's API.
+
+        Uses raw HTTP to capture OpenRouter-specific fields (context_length,
+        pricing) that the OpenAI SDK's Model type strips out.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Model ID → settings dict.
+        """
+        try:
+            try:
+                apiKey = self._getApiKey()
+            except ValueError:
+                apiKey = None
+            headers: Dict[str, str] = {}
+            if apiKey:
+                headers["Authorization"] = f"Bearer {apiKey}"
+
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(
+                    "https://openrouter.ai/api/v1/models",
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            result: Dict[str, Dict[str, Any]] = {}
+            for model in data.get("data", []):
+                modelId = model.get("id", "")
+                if modelId:
+                    result[modelId] = model
+            return result
+        except Exception as e:
+            logger.error(f"Failed to list remote models from OpenRouter: {e}")
+            return {}
 
     def _createModelInstance(
         self,

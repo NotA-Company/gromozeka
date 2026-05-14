@@ -740,6 +740,28 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         """
         raise NotImplementedError("Subclasses must implement _create_model_instance, dood!")
 
+    async def listRemoteModels(self) -> Dict[str, Dict[str, Any]]:
+        """List models available from the OpenAI-compatible API.
+
+        Uses the OpenAI SDK's models.list() endpoint.
+        Falls back to empty dict if the client is not initialized.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Model ID → settings dict.
+        """
+        if self._client is None:
+            logger.warning("Cannot list remote models: client not initialized")
+            return {}
+
+        try:
+            result: Dict[str, Dict[str, Any]] = {}
+            async for model in await self._client.models.list():
+                result[model.id] = model.model_dump()
+            return result
+        except Exception as e:
+            logger.error(f"Failed to list remote models: {e}")
+            return {}
+
     def addModel(
         self,
         name: str,
