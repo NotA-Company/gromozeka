@@ -3,21 +3,21 @@
 provider = "yc-openai"
 model_id = "yandexgpt"
 model_version = "rc"
-temperature = 0.5
+temperature = 0.3
 context = 32768
 support_tools = true
 support_text = true
 support_images = false
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 [models.models.yandexgpt-lite]
 provider = "yc-openai"
 model_id = "yandexgpt-lite"
 model_version="latest"
-temperature = 0.5
+temperature = 0.3
 context = 32768
-support_tools = false
+support_tools = true
 support_text = true
 support_images = false
 support_structured_output = true
@@ -27,13 +27,13 @@ tier = "paid"
 provider = "yc-openai"
 model_id = "aliceai-llm"
 model_version = "latest"
-temperature = 0.5
+temperature = 0.3
 context = 32768
 support_tools = true
 support_text = true
 support_images = false
 support_structured_output = true
-tier = "friend"
+tier = "paid"
 
 [models.models."yc/gpt-oss-120b"]
 provider = "yc-openai"
@@ -63,7 +63,7 @@ tier = "paid"
 provider = "yc-openai"
 model_id = "gpt-oss-20b"
 model_version="latest"
-temperature = 0.5
+temperature = 0.2
 context = 131072
 support_tools = true
 support_text = true
@@ -87,8 +87,20 @@ tier = "friend"
 provider = "yc-openai"
 model_id = "gemma-3-27b-it"
 model_version="latest"
-temperature = 0.5
+temperature = 0.4
 context = 131072
+support_tools = true
+support_text = true
+support_images = false
+support_structured_output = true
+tier = "friend"
+
+[models.models."yc/qwen3.6-35b-a3b"]
+provider = "yc-openai"
+model_id = "qwen3.6-35b-a3b"
+model_version="latest"
+temperature = 0.4
+context = 262144
 support_tools = true
 support_text = true
 support_images = false

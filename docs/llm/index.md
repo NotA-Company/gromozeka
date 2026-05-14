@@ -263,4 +263,4 @@ make test
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*  
-*Last updated: 2026-05-09*
+*Last updated: 2026-05-14*

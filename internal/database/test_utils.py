@@ -455,13 +455,16 @@ class TestSqlToCustomTypeOptionalUnion:
         assert value == "hello"
 
     # Union handling
-    def testUnionNumericStringToInt(self) -> None:
-        """Test numeric string to Union[int, str] converts to int (first matching member).
-
-        When Union[int, str] receives "123", int conversion succeeds first
-        because int is listed before str in the union. This produces 123, not "123".
-        """
+    def testUnionNumericStringToIntStr(self) -> None:
+        """Test numeric string to Union[int, str] keeps str (do not convert if match any type)."""
         success, value = sqlToCustomType("123", Union[int, str])  # pyright: ignore[reportArgumentType]
+        assert success is True
+        assert value == "123"
+        assert isinstance(value, str)
+
+    def testUnionNumerToIntStr(self) -> None:
+        """Test numeric string to Union[int, str] keeps int (do not convert if match any type)."""
+        success, value = sqlToCustomType(123, Union[int, str])  # pyright: ignore[reportArgumentType]
         assert success is True
         assert value == 123
         assert isinstance(value, int)
@@ -474,15 +477,11 @@ class TestSqlToCustomTypeOptionalUnion:
         assert isinstance(value, str)
 
     def testUnionIntToUnionStrInt(self) -> None:
-        """Test int value with Union[str, int] converts to str (first member in union).
-
-        Since str is listed first in Union[str, int], the value 42 is converted
-        to "42" rather than being kept as int.
-        """
+        """Test int value with Union[str, int] keep int"""
         success, value = sqlToCustomType(42, Union[str, int])  # pyright: ignore[reportArgumentType]
         assert success is True
-        assert value == "42"
-        assert isinstance(value, str)
+        assert value == 42
+        assert isinstance(value, int)
 
     def testUnionBytesTrueToBool(self) -> None:
         """Test bytes 'true' to Union[int, bool] matches bool."""
@@ -1028,22 +1027,15 @@ class TestSqlToCustomTypeAnyInContainers:
         assert isinstance(next(iter(value)), bytes)
 
     def testUnionIntAny(self) -> None:
-        """Test Union[int, Any] — Any is tried first and catches everything.
-
-        Since Any is listed after int in the union, int conversion is tried first
-        for compatible values. For strings that can be converted to int, int wins.
-        For bytes, bytes pass through via Any.
-        """
-        # String is not int, Any catches it as str
+        """Test Union[int, Any] — Any is catches everything."""
         success, value = sqlToCustomType("hello", Union[int, Any])  # pyright: ignore[reportArgumentType]
         assert success is True
         assert value == "hello"
 
-        # Numeric string: Union tries int first → converts to int
         success, value = sqlToCustomType(b"42", Union[int, Any])  # pyright: ignore[reportArgumentType]
         assert success is True
-        assert value == 42
-        assert isinstance(value, int)
+        assert value == b"42"
+        assert isinstance(value, bytes)
 
     def testUnionAnyStr(self) -> None:
         """Test Union[Any, str] — Any always succeeds first, bytes are not decoded."""
@@ -1185,8 +1177,8 @@ class TestSqlToCustomTypeMessageId:
         success, value = sqlToCustomType("test", Union[MessageId, str])  # pyright: ignore[reportArgumentType]
         assert success is True
         # MessageId is tried first since it's listed first in the union
-        assert isinstance(value, MessageId)
-        assert value.messageId == "test"
+        assert isinstance(value, str)
+        assert value == "test"
 
 
 class TestSqlToCustomTypeMetadataDict:

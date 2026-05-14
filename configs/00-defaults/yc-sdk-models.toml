@@ -4,9 +4,48 @@ provider = "yc-sdk"
 model_id = "yandex-art"
 model_version = "latest"
 #temperature = 0.3
-#context = 256000
+#context = 500
 support_tools = false
 support_text = false
 support_images = true
-support_structured_output = false  # yc-sdk: deferred — see docs/plans/lib-ai-structured-output.md §3.6
+support_structured_output = false
 tier = "paid"
+
+[models.models.yc-yandexgpt]
+enabled = false # Disabled by default. They are about 20 times slower than yc-openai ones
+provider = "yc-sdk"
+model_id = "yandexgpt-5.1"
+model_version = "latest"
+temperature = 0.5
+context = 32768
+support_tools = true
+support_text = true
+support_images = false
+support_structured_output = true
+tier = "paid"
+
+[models.models.yc-yandexgpt-lite]
+enabled = false # Disabled by default. They are about 20 times slower than yc-openai ones
+provider = "yc-sdk"
+model_id = "yandexgpt-lite"
+model_version="latest"
+temperature = 0.5
+context = 32768
+support_tools = true
+support_text = true
+support_images = false
+support_structured_output = true
+tier = "paid"
+
+[models.models.yc-aliceai-llm]
+enabled = false # Disabled by default. They are about 20 times slower than yc-openai ones
+provider = "yc-sdk"
+model_id = "aliceai-llm"
+model_version = "latest"
+temperature = 0.5
+context = 32768
+support_tools = true
+support_text = true
+support_images = false
+support_structured_output = true
+tier = "friend"
