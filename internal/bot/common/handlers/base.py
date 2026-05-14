@@ -1816,7 +1816,11 @@ class BaseBotHandler(CommandHandlerMixin):
                 ),
                 ModelImageMessage(
                     role="user",
-                    content=ensuredMessage.messageText,
+                    # content=ensuredMessage.messageText,
+                    # Openrouer LLMs does not support adding text to message with image.
+                    # In the same time looks like YC OpenAI LLMs doesn't care about this message at all
+                    # So let's delete it
+                    content="",
                     image=bytearray(mediaData),
                 ),
             ]
