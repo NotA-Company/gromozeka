@@ -144,7 +144,7 @@ class BasicOpenAIModel(AbstractModel):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
         openAiClient: openai.AsyncOpenAI,
     ) -> None:
         """Initialize a basic OpenAI model instance.
@@ -717,7 +717,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create a model instance.
 
@@ -771,7 +771,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add an OpenAI-compatible model to the provider.
 

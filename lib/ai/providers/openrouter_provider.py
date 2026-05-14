@@ -45,7 +45,7 @@ Example:
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import httpx
 from openai import AsyncOpenAI
@@ -119,7 +119,7 @@ class OpenrouterModel(BasicOpenAIModel):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
         openAiClient: AsyncOpenAI,
     ) -> None:
         """Initialize an OpenRouter model instance.
@@ -270,6 +270,11 @@ class OpenrouterProvider(BasicOpenAIProvider):
         Uses raw HTTP to capture OpenRouter-specific fields (context_length,
         pricing) that the OpenAI SDK's Model type strips out.
 
+        NOTE: I do not suppose this method to be called frequently (mostly from one-time script)
+          But if it will, need to think about persistent httpx client instead of spawning new one
+          each call.
+
+
         Returns:
             Dict[str, Dict[str, Any]]: Model ID → settings dict.
         """
@@ -309,7 +314,7 @@ class OpenrouterProvider(BasicOpenAIProvider):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create an OpenRouter model instance.
 

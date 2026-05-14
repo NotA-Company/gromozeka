@@ -82,7 +82,7 @@ class AbstractModel(ABC):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ):
         """Initialize model with provider and configuration.
 
@@ -100,7 +100,7 @@ class AbstractModel(ABC):
             ValueError: If temperature is not between 0.0 and 2.0.
             ValueError: If contextSize is negative.
         """
-        self._config = extraConfig
+        self._config: Dict[str, Any] = extraConfig or {}
 
         self.provider = provider
         self.modelId = modelId

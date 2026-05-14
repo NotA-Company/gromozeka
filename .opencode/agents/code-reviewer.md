@@ -84,6 +84,7 @@ permission:
     "*": deny
     "git blame*": allow
     "git branch": allow
+    "git branch -a": allow
     "git branch --show-current*": allow
     "git diff*": allow
     "git grep*": allow
@@ -102,6 +103,7 @@ permission:
     "head *": allow
     "wc": allow
     "wc *": allow
+    "echo *": allow
   edit: deny
   write: deny
   task: deny

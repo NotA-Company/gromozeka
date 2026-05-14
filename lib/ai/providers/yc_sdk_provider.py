@@ -82,7 +82,14 @@ from ..models import (
 logger = logging.getLogger(__name__)
 
 IMAGE_MIME_TYPE = "image/jpeg"
+"""Mime Type for generated images"""
+
 USE_PRECISE_TOKEN_COUNT = False
+"""If we need to use precise token counting or estimated one?"""
+
+ETHIC_DETAILS: List[str] = [
+    "it is not possible to generate an image from this request because it may violate the terms of use",
+]
 
 
 # Some strong voodoo magic
@@ -116,7 +123,11 @@ class _ModelMessageWToolCalls(TextMessageWithToolCallsProtocol):
         for tc in modelMessage.toolCalls:
             argsStruct = Struct()
             if tc.parameters:
-                argsStruct.update(tc.parameters)
+                try:
+                    argsStruct.update(tc.parameters)
+                except Exception as e:
+                    logger.error(f"Exception during building of ModelMessage with Tool Calls for YC SDK")
+                    logger.exception(e)
             protoFc = ProtoCompletionsFunctionCall(name=tc.name, arguments=argsStruct)
             protoTc = ProtoCompletionsToolCall(function_call=protoFc)
             protoToolCalls.append(protoTc)
@@ -165,7 +176,7 @@ class YcAIModel(AbstractModel):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
         ycSDK: AsyncAIStudio,
     ):
         """Initialize YC SDK model.
@@ -292,9 +303,7 @@ class YcAIModel(AbstractModel):
             )
         return result
 
-    def _convertMessages(
-        self, messages: Sequence[ModelMessage], omitRole: bool = False
-    ) -> List[CompletionsMessageType]:
+    def _convertMessages(self, messages: Sequence[ModelMessage]) -> List[CompletionsMessageType]:
         """Convert ModelMessage list to YC SDK format.
 
         Tool result messages (with toolCallId set) are converted to
@@ -320,23 +329,21 @@ class YcAIModel(AbstractModel):
         # Little trick to gather all tool call results into one message
         lastToolResult: Optional[Sequence[ToolResultDictType]] = None
         for m in messages:
+            # YC SDK awaits all tool calls to present in single message
+            #  (Unlike OpenAI, where each tool result is separate message)
             if not m.toolCallId and lastToolResult:
-                if omitRole:
-                    result.append(
-                        {
-                            "tool_results": lastToolResult,
-                        }
-                    )
-                else:
-                    result.append(
-                        {
-                            "role": "user",  # Most of YC SDK models does not support "tools" role, so use "user"
-                            "tool_results": lastToolResult,
-                        }
-                    )
+                result.append(
+                    {
+                        "role": "user",  # Most of YC SDK models do not support "tools" role, so use "user"
+                        "tool_results": lastToolResult,
+                    }
+                )
                 lastToolResult = None
 
             if m.toolCallId:
+                # If there are toolCallId, then this message is result of tool calling,
+                # So no m.toolCalls possible
+                assert not m.toolCalls, "ModelMessage has toolCallId AND toolCalls. Imposible scenario."
                 if lastToolResult is None:
                     lastToolResult = []
                 funcName = callIdToName.get(str(m.toolCallId), str(m.toolCallId))
@@ -350,25 +357,16 @@ class YcAIModel(AbstractModel):
 
                 result.append(_ModelMessageWToolCalls(m))
             else:
-                if omitRole:
-                    result.append({"text": m.content})
-                else:
-                    result.append({"role": m.role, "text": m.content})
+                result.append({"role": m.role, "text": m.content})
 
+        # Tools results are last messages in history, need to add to history
         if lastToolResult:
-            if omitRole:
-                result.append(
-                    {
-                        "tool_results": lastToolResult,
-                    }
-                )
-            else:
-                result.append(
-                    {
-                        "role": "user",  # Most of YC SDK models does not support "tools" role, so use "user"
-                        "tool_results": lastToolResult,
-                    }
-                )
+            result.append(
+                {
+                    "role": "user",  # Most of YC SDK models do not support "tools" role, so use "user"
+                    "tool_results": lastToolResult,
+                }
+            )
             lastToolResult = None
 
         return result
@@ -409,10 +407,7 @@ class YcAIModel(AbstractModel):
 
         if isinstance(error, AioRpcError) and hasattr(error, "details"):
             errorMsg = str(error.details())
-            ethicDetails = [
-                "it is not possible to generate an image from this request because it may violate the terms of use",
-            ]
-            if errorMsg in ethicDetails:
+            if errorMsg in ETHIC_DETAILS:
                 resultStatus = ModelResultStatus.CONTENT_FILTER
                 logger.warning(f"Content filter error: '{errorMsg}'")
 
@@ -477,9 +472,6 @@ class YcAIModel(AbstractModel):
                 for call in result.tool_calls:
                     if not isinstance(call.function, AsyncFunctionCall):
                         logger.error(f"Tool call function is not AsyncFunctionCall: {type(call.function).__name__}")
-                        continue
-                    if call.function is None:
-                        logger.error(f"Tool call function is None: {call!r}")
                         continue
                     toolCalls.append(
                         LLMToolCall(
@@ -726,6 +718,10 @@ class YcAIProvider(AbstractLLMProvider):
                 raise ValueError("folder_id is required for YC SDK provider")
 
             auth = self._resolveAuth()
+            for key in ["api-key", "iam-token"]:
+                if key in self.config:
+                    # After authentication, drop all secrets from config to ensure they won't be logged
+                    self.config[key] = "**REDACTED**"
             yc_profile = self.config.get("yc_profile")
 
             logger.debug(f"Initializing YC SDK provider with folder_id: {folder_id}")
@@ -747,41 +743,48 @@ class YcAIProvider(AbstractLLMProvider):
 
         Supported auth_type values:
             - "auto": Auto-detect from env vars (YC_API_KEY > YC_IAM_TOKEN > yc CLI)
-            - "api_key": Use API key from config.api_key or YC_API_KEY env var
-            - "iam_token": Use IAM token from config.iam_token or YC_IAM_TOKEN env var
-            - "yc_cli": Use yc CLI (YandexCloudCLIAuth)
+            - "api-key": Use API key from config.api_key or YC_API_KEY env var
+            - "iam-token": Use IAM token from config.iam_token or YC_IAM_TOKEN env var
+            - "yc-cli": Use yc CLI (YandexCloudCLIAuth)
 
         Returns:
             A BaseAuth instance.
 
         Raises:
-            ValueError: If auth_type is unknown or required credentials are missing.
+            ValueError: If auth-type is unknown or required credentials are missing.
         """
-        authType: str = self.config.get("auth_type", "auto")
+        authType: str = self.config.get("auth-type", "auto")
 
-        if authType == "api_key":
-            apiKey = self.config.get("api_key") or os.environ.get("YC_API_KEY")
+        apiKey = self.config.get("api-key") or os.environ.get("YC_API_KEY")
+        iamToken = self.config.get("iam-token") or os.environ.get("YC_IAM_TOKEN")
+
+        if authType == "api-key":
             if not apiKey:
-                raise ValueError("auth_type 'api_key' requires api_key in config or YC_API_KEY env var")
+                raise ValueError("auth_type 'api-key' requires api-key in config or YC_API_KEY env var")
+            logger.debug("YC AI SDK: Using APIKeyAuth()")
             return APIKeyAuth(apiKey)
 
-        if authType == "iam_token":
-            iamToken = self.config.get("iam_token") or os.environ.get("YC_IAM_TOKEN")
+        if authType == "iam-token":
             if not iamToken:
-                raise ValueError("auth_type 'iam_token' requires iam_token in config or YC_IAM_TOKEN env var")
+                raise ValueError("auth_type 'iam-token' requires iam-token in config or YC_IAM_TOKEN env var")
+            logger.debug("YC AI SDK: Using IAMTokenAuth()")
             return IAMTokenAuth(iamToken)
 
-        if authType == "yc_cli":
-            return YandexCloudCLIAuth()
+        if authType == "yc-cli":
+            logger.debug("YC AI SDK: Using YandexCloudCLIAuth()")
+            return YandexCloudCLIAuth(yc_profile=self.config.get("yc_profile"))
 
         if authType == "auto":
-            if os.environ.get("YC_API_KEY"):
-                return APIKeyAuth(os.environ["YC_API_KEY"])
-            if os.environ.get("YC_IAM_TOKEN"):
-                return IAMTokenAuth(os.environ["YC_IAM_TOKEN"])
-            return YandexCloudCLIAuth()
+            if apiKey:
+                logger.debug("YC AI SDK: Using APIKeyAuth()")
+                return APIKeyAuth(apiKey)
+            if iamToken:
+                logger.debug("YC AI SDK: Using IAMTokenAuth()")
+                return IAMTokenAuth(iamToken)
+            logger.debug("YC AI SDK: Using YandexCloudCLIAuth()")
+            return YandexCloudCLIAuth(yc_profile=self.config.get("yc_profile"))
 
-        raise ValueError(f"Unknown auth_type: {authType}")
+        raise ValueError(f"Unknown auth-type: {authType}")
 
     def addModel(
         self,
@@ -792,7 +795,7 @@ class YcAIProvider(AbstractLLMProvider):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add a YC SDK model to the provider.
 
