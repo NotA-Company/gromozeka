@@ -456,16 +456,14 @@ class TestSqlToCustomTypeOptionalUnion:
 
     # Union handling
     def testUnionNumericStringToIntStr(self) -> None:
-        """Test numeric string to Union[int, str] keeps str (do not convert if match any type).
-        """
+        """Test numeric string to Union[int, str] keeps str (do not convert if match any type)."""
         success, value = sqlToCustomType("123", Union[int, str])  # pyright: ignore[reportArgumentType]
         assert success is True
         assert value == "123"
         assert isinstance(value, str)
 
     def testUnionNumerToIntStr(self) -> None:
-        """Test numeric string to Union[int, str] keeps int (do not convert if match any type).
-        """
+        """Test numeric string to Union[int, str] keeps int (do not convert if match any type)."""
         success, value = sqlToCustomType(123, Union[int, str])  # pyright: ignore[reportArgumentType]
         assert success is True
         assert value == 123
@@ -479,8 +477,7 @@ class TestSqlToCustomTypeOptionalUnion:
         assert isinstance(value, str)
 
     def testUnionIntToUnionStrInt(self) -> None:
-        """Test int value with Union[str, int] keep int
-        """
+        """Test int value with Union[str, int] keep int"""
         success, value = sqlToCustomType(42, Union[str, int])  # pyright: ignore[reportArgumentType]
         assert success is True
         assert value == 42
@@ -1030,8 +1027,7 @@ class TestSqlToCustomTypeAnyInContainers:
         assert isinstance(next(iter(value)), bytes)
 
     def testUnionIntAny(self) -> None:
-        """Test Union[int, Any] — Any is catches everything.
-        """
+        """Test Union[int, Any] — Any is catches everything."""
         success, value = sqlToCustomType("hello", Union[int, Any])  # pyright: ignore[reportArgumentType]
         assert success is True
         assert value == "hello"
