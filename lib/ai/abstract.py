@@ -82,7 +82,7 @@ class AbstractModel(ABC):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ):
         """Initialize model with provider and configuration.
 
@@ -100,7 +100,7 @@ class AbstractModel(ABC):
             ValueError: If temperature is not between 0.0 and 2.0.
             ValueError: If contextSize is negative.
         """
-        self._config = extraConfig
+        self._config: Dict[str, Any] = extraConfig or {}
 
         self.provider = provider
         self.modelId = modelId
@@ -222,9 +222,7 @@ class AbstractModel(ABC):
             raise
 
         await self._recordAttemptStats(consumerId, ret, "text")
-
-        if self.enableJSONLog:
-            self.printJSONLog(messages, ret, consumerId=consumerId)
+        self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     @abstractmethod
@@ -312,9 +310,7 @@ class AbstractModel(ABC):
             raise
 
         await self._recordAttemptStats(consumerId, ret, "image")
-
-        if self.enableJSONLog:
-            self.printJSONLog(messages, ret, consumerId=consumerId)
+        self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     async def _generateStructured(
@@ -447,9 +443,7 @@ class AbstractModel(ABC):
             raise
 
         await self._recordAttemptStats(consumerId, ret, "structured")
-
-        if self.enableJSONLog:
-            self.printJSONLog(messages, ret, consumerId=consumerId)
+        self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     async def _runWithFallback(
@@ -660,6 +654,8 @@ class AbstractModel(ABC):
             The log file is opened in append mode, so multiple sessions can write
             to the same file. Each entry is written as a single line of JSON.
         """
+        if not self.enableJSONLog:
+            return
         if not result.resultText:
             # Do not log empty results
             return
@@ -827,6 +823,22 @@ class AbstractLLMProvider(ABC):
             ['gpt4', 'gpt35', 'claude3']
         """
         return list(self.models.keys())
+
+    async def listRemoteModels(self) -> Dict[str, Dict[str, Any]]:
+        """List models available from the remote API.
+
+        Returns a dict mapping model IDs to their settings dicts.
+        The settings dict contains whatever data the remote API provides
+        (e.g., id, owned_by, context_length, pricing).
+
+        The default implementation returns an empty dict — providers
+        that support model discovery should override this.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Model ID → settings dict.
+            Empty dict if the provider does not support remote listing.
+        """
+        return {}
 
     def getModelInfo(self, name: str) -> Optional[Dict[str, Any]]:
         """Get information about a specific model.

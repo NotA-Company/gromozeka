@@ -30,7 +30,7 @@ Classes:
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from openai import AsyncOpenAI
 
@@ -92,7 +92,7 @@ class YcOpenaiModel(BasicOpenAIModel):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
         openAiClient: AsyncOpenAI,
         folderId: str,
     ) -> None:
@@ -237,13 +237,9 @@ class YcOpenaiProvider(BasicOpenAIProvider):
 
         Returns:
             The base URL string for Yandex Cloud's OpenAI-compatible API:
-            "https://llm.api.cloud.yandex.net/v1"
-
-        Example:
-            >>> provider._getBaseUrl()
-            'https://llm.api.cloud.yandex.net/v1'
+            "https://ai.api.cloud.yandex.net/v1"
         """
-        return "https://llm.api.cloud.yandex.net/v1"
+        return "https://ai.api.cloud.yandex.net/v1"
 
     def _createModelInstance(
         self,
@@ -254,7 +250,7 @@ class YcOpenaiProvider(BasicOpenAIProvider):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create a Yandex Cloud OpenAI model instance.
 

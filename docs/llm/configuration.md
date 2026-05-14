@@ -141,8 +141,14 @@ enabled = true
 **Provider types:**
 - `yc-openai` — Yandex Cloud OpenAI-compatible API
 - `openrouter` — OpenRouter multi-model API
-- `yc-sdk` — Yandex Cloud native SDK
+- `yc-sdk` — Yandex Cloud native SDK (supports `auth_type`: `"auto"`, `"api_key"`, `"iam_token"`, `"yc_cli"`)
 - `custom-openai` — Custom OpenAI-compatible API
+
+**YC SDK auth configuration (`auth_type`):**
+- `"auto"` (default) — detects `YC_API_KEY` env var, then `YC_IAM_TOKEN`, then falls back to `yc` CLI
+- `"api_key"` — uses `api_key` from config or `YC_API_KEY` env var
+- `"iam_token"` — uses `iam_token` from config or `YC_IAM_TOKEN` env var
+- `"yc_cli"` — uses `yc` CLI (requires `yc_profile` for non-default profiles)
 
 ### `[ratelimiter]`
 

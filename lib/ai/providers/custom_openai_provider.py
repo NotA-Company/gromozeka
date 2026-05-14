@@ -40,7 +40,7 @@ Example:
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from lib.stats import StatsStorage
 
@@ -149,7 +149,7 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create a custom OpenAI model instance.
 

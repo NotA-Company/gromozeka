@@ -144,7 +144,7 @@ class BasicOpenAIModel(AbstractModel):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
         openAiClient: openai.AsyncOpenAI,
     ) -> None:
         """Initialize a basic OpenAI model instance.
@@ -350,6 +350,9 @@ class BasicOpenAIModel(AbstractModel):
                 rawResult=outcome.response,
                 status=outcome.status,
                 error=outcome.error,
+                inputTokens=outcome.inputTokens,
+                outputTokens=outcome.outputTokens,
+                totalTokens=outcome.totalTokens,
             )
 
         # --- text-specific tail: tool calls ---
@@ -458,6 +461,9 @@ class BasicOpenAIModel(AbstractModel):
                 rawResult=outcome.response,
                 status=outcome.status,
                 error=outcome.error,
+                inputTokens=outcome.inputTokens,
+                outputTokens=outcome.outputTokens,
+                totalTokens=outcome.totalTokens,
             )
 
         # --- structured-specific tail: JSON parse ---
@@ -496,9 +502,11 @@ class BasicOpenAIModel(AbstractModel):
     async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
         """Generate an image using the OpenAI-compatible model.
 
-        This method sends a chat completion request to the OpenAI API
-        with image generation enabled. The model should support image
-        generation capabilities.
+        Sends a chat completion request with image generation enabled via the
+        ``modalities`` parameter. Delegates the API call, response validation,
+        finish_reason mapping, and token extraction to
+        :meth:`_executeChatCompletion`, then extracts the generated image from
+        ``outcome.retMessage.images``.
 
         Args:
             messages: A sequence of ModelMessage objects representing the
@@ -507,114 +515,85 @@ class BasicOpenAIModel(AbstractModel):
 
         Returns:
             A ModelRunResult object containing:
-            - The generated image as binary data
-            - The MIME type of the generated image
+            - The generated image as binary data (``mediaData``)
+            - The MIME type of the generated image (``mediaMimeType``)
             - Completion status
             - Token usage statistics
             - Any text content generated alongside the image
             - The raw API response
 
         Raises:
+            RuntimeError: If the OpenAI client is not initialized.
             NotImplementedError: If image generation is not supported by the model.
-            ValueError: If the API response is invalid or malformed.
             Exception: For other API-related errors.
         """
 
         if not self._config.get("support_images", False):
             raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
 
-        try:
-            # Prepare base parameters
-            params: Dict[str, Any] = {
-                "model": self._getModelId(),
-                "messages": [message.toDict("content") for message in messages],
-                "temperature": self.temperature,
-                "modalities": ["image", "text"],
-            }
+        # --- build params (image-specific) ---
+        params: Dict[str, Any] = {
+            "model": self._getModelId(),
+            "messages": [message.toDict("content") for message in messages],
+            "temperature": self.temperature,
+        }
+        params.update(self._getExtraParams())
+        # Add modalities AFTER extra params so it is never clobbered
+        params["modalities"] = ["image", "text"]
 
-            # Add any extra parameters from subclasses
-            params.update(self._getExtraParams())
-
-            # Use OpenAI-compatible API
-            response: ChatCompletion = await self._client.chat.completions.create(**params)
-
-            if not isinstance(response, ChatCompletion):
-                raise ValueError(f"Invalid response from OpenAI-compatible model: {response}")
-
-            # for chunk in response:
-            #   if chunk.choices[0].delta.content is not None:
-            #       print(chunk.choices[0].delta.content, end="")
-
-            status = ModelResultStatus.UNSPECIFIED
-            match response.choices[0].finish_reason:
-                case "stop":
-                    status = ModelResultStatus.FINAL
-                case "length":
-                    status = ModelResultStatus.TRUNCATED_FINAL
-                case "tool_calls":
-                    status = ModelResultStatus.TOOL_CALLS
-                case "content_filter":
-                    status = ModelResultStatus.CONTENT_FILTER
-                case _:
-                    status = ModelResultStatus.UNKNOWN
-
-            # The generated image will be in the assistant message
-            retMessage = response.choices[0].message
-
-            inputTokens: Optional[int] = None
-            outputTokens: Optional[int] = None
-            totalTokens: Optional[int] = None
-
-            if response.usage:
-                inputTokens = response.usage.prompt_tokens
-                outputTokens = response.usage.completion_tokens
-                totalTokens = response.usage.total_tokens
-
-            if hasattr(retMessage, "images"):
-                images = getattr(retMessage, "images")
-                if len(images) > 1:
-                    logger.warning(
-                        f"Multiple ({len(images)}) images returned by model {self.modelId}: "
-                        + repr([f"{repr(image)[:64]}... ({len(repr(image))} bytes)" for image in images])
-                    )
-
-                for i, image in enumerate(images):
-                    imageDataURL = image["image_url"]["url"]  # Base64 data URL 'data:image/png;base64,...'
-                    # Format is usually: data:[<mediatype>][;base64],<data>
-                    header, encoded = imageDataURL.split(",", 1)
-                    mimeType = header.split(";")[0].split(":")[1]
-
-                    # Decode the base64 string to binary data
-                    imageBytes = base64.b64decode(encoded)
-
-                    # To not spam logs
-                    images[i]["image_url"]["url"] = f"{header},...({len(encoded)})"
-
-                    return ModelRunResult(
-                        response,
-                        status,
-                        mediaMimeType=mimeType,
-                        mediaData=imageBytes,
-                        inputTokens=inputTokens,
-                        outputTokens=outputTokens,
-                        totalTokens=totalTokens,
-                    )
-            else:
-                logger.error("No images field in model response")
-                status = ModelResultStatus.ERROR
-
+        # --- call + decode envelope (shared) ---
+        outcome = await self._executeChatCompletion(params)
+        if outcome.error is not None or outcome.retMessage is None:
             return ModelRunResult(
-                response,
-                status,
-                resultText=retMessage.content if retMessage.content is not None else "",
-                inputTokens=inputTokens,
-                outputTokens=outputTokens,
-                totalTokens=totalTokens,
+                rawResult=outcome.response,
+                status=outcome.status,
+                error=outcome.error,
+                inputTokens=outcome.inputTokens,
+                outputTokens=outcome.outputTokens,
+                totalTokens=outcome.totalTokens,
             )
 
-        except Exception as e:
-            logger.error(f"Error running OpenAI-compatible model {self.modelId}: {e}")
-            raise
+        # --- image-specific tail: extract images from retMessage ---
+        if hasattr(outcome.retMessage, "images"):
+            images = getattr(outcome.retMessage, "images")
+            if len(images) > 1:
+                logger.warning(
+                    f"Multiple ({len(images)}) images returned by model {self.modelId}: "
+                    + repr([f"{repr(image)[:64]}... ({len(repr(image))} bytes)" for image in images])
+                )
+
+            for i, image in enumerate(images):
+                imageDataURL: str = image["image_url"]["url"]  # data:image/png;base64,...
+                header, encoded = imageDataURL.split(",", 1)
+                mimeType: str = header.split(";")[0].split(":")[1]
+
+                # Decode the base64 string to binary data
+                imageBytes: bytes = base64.b64decode(encoded)
+
+                # Truncate the URL in-place to avoid spamming logs
+                images[i]["image_url"]["url"] = f"{header},...({len(encoded)})"
+
+                return ModelRunResult(
+                    rawResult=outcome.response,
+                    status=outcome.status,
+                    resultText=outcome.resText,
+                    mediaMimeType=mimeType,
+                    mediaData=imageBytes,
+                    inputTokens=outcome.inputTokens,
+                    outputTokens=outcome.outputTokens,
+                    totalTokens=outcome.totalTokens,
+                )
+
+        # No images field in response — fall back to text-only result
+        logger.error("No images field in model response")
+        return ModelRunResult(
+            rawResult=outcome.response,
+            status=ModelResultStatus.ERROR,
+            resultText=outcome.resText,
+            inputTokens=outcome.inputTokens,
+            outputTokens=outcome.outputTokens,
+            totalTokens=outcome.totalTokens,
+        )
 
 
 class BasicOpenAIProvider(AbstractLLMProvider):
@@ -738,7 +717,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create a model instance.
 
@@ -761,6 +740,28 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         """
         raise NotImplementedError("Subclasses must implement _create_model_instance, dood!")
 
+    async def listRemoteModels(self) -> Dict[str, Dict[str, Any]]:
+        """List models available from the OpenAI-compatible API.
+
+        Uses the OpenAI SDK's models.list() endpoint.
+        Falls back to empty dict if the client is not initialized.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Model ID → settings dict.
+        """
+        if self._client is None:
+            logger.warning("Cannot list remote models: client not initialized")
+            return {}
+
+        try:
+            result: Dict[str, Dict[str, Any]] = {}
+            async for model in await self._client.models.list():
+                result[model.id] = model.model_dump()
+            return result
+        except Exception as e:
+            logger.error(f"Failed to list remote models: {e}")
+            return {}
+
     def addModel(
         self,
         name: str,
@@ -770,7 +771,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
-        extraConfig: Dict[str, Any] = {},
+        extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add an OpenAI-compatible model to the provider.
 

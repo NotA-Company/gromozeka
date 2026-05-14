@@ -35,21 +35,21 @@
     {
       "request": {
         "method": "POST",
-        "url": "https://llm.api.cloud.yandex.net/v1/chat/completions",
+        "url": "https://ai.api.cloud.yandex.net/v1/chat/completions",
         "headers": {
-          "host": "llm.api.cloud.yandex.net",
+          "host": "ai.api.cloud.yandex.net",
           "accept-encoding": "gzip, deflate, br",
           "connection": "keep-alive",
+          "authorization": "***MASKED***",
           "accept": "application/json",
           "content-type": "application/json",
-          "user-agent": "AsyncOpenAI/Python 2.33.0",
+          "user-agent": "AsyncOpenAI/Python 2.36.0",
           "x-stainless-lang": "python",
-          "x-stainless-package-version": "2.33.0",
+          "x-stainless-package-version": "2.36.0",
           "x-stainless-os": "MacOS",
           "x-stainless-arch": "arm64",
           "x-stainless-runtime": "CPython",
-          "x-stainless-runtime-version": "3.13.7",
-          "authorization": "***MASKED***",
+          "x-stainless-runtime-version": "3.13.13",
           "x-stainless-async": "async:asyncio",
           "x-stainless-retry-count": "0",
           "x-stainless-read-timeout": "600",
@@ -63,14 +63,14 @@
         "headers": {
           "content-type": "application/json",
           "x-client-request-id": "",
-          "x-request-id": "d73770d9-fe1e-4004-92e7-d843a7d373a9",
-          "date": "Wed, 06 May 2026 17:57:04 GMT",
+          "x-request-id": "f6d5ab8f-a6b0-48da-a4c6-b8580d926a56",
+          "date": "Thu, 14 May 2026 00:18:51 GMT",
           "x-server-trace-id": "***MASKED***",
           "server": "ycalb"
         },
-        "content": "{\"id\":\"a8535fce-40bf-48f1-873a-78676328bf4c\",\"object\":\"chat.completion\",\"created\":1778090224,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How about you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n"
+        "content": "{\"id\":\"1b8480e8-77ac-4b13-b377-a0e6af28dcd9\",\"object\":\"chat.completion\",\"created\":1778717931,\"model\":\"gpt://***MASKED***/yandexgpt/latest\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello! I'm doing well, thank you. How about you?\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":16,\"total_tokens\":31,\"completion_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n"
       },
-      "timestamp": "2026-05-06T17:57:04.084681+00:00"
+      "timestamp": "2026-05-14T00:18:51.567604+00:00"
     }
   ]
 }

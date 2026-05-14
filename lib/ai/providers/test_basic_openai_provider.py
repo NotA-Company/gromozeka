@@ -1169,12 +1169,12 @@ async def testGenerateImageWithoutClient(testModel: BasicOpenAIModel, sampleMess
         sampleMessages: Sample messages for testing.
 
     Raises:
-        AttributeError: If OpenAI client is not initialized.
+        RuntimeError: If OpenAI client is not initialized.
     """
     testModel._config["support_images"] = True
     testModel._client = None  # type: ignore[assignment]
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(RuntimeError):
         await testModel.generateImage(sampleMessages)
 
 

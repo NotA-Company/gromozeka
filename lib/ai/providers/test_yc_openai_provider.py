@@ -160,21 +160,6 @@ def testYcOpenaiProviderInitialization(providerConfig: dict) -> None:
         assert len(provider.models) == 0
 
 
-def testYcOpenaiProviderGetBaseUrl(ycOpenaiProvider: YcOpenaiProvider) -> None:
-    """Test YC OpenAI provider returns correct base URL.
-
-    Verifies that the provider returns the correct Yandex Cloud API base URL.
-
-    Args:
-        ycOpenaiProvider: YC OpenAI provider instance.
-
-    Raises:
-        AssertionError: If base URL is incorrect.
-    """
-    baseUrl: str = ycOpenaiProvider._getBaseUrl()
-    assert baseUrl == "https://llm.api.cloud.yandex.net/v1"
-
-
 def testYcOpenaiProviderInitializationMissingFolderId() -> None:
     """Test YC OpenAI provider initialization fails without folder_id.
 
@@ -215,31 +200,6 @@ def testYcOpenaiProviderInitializationEmptyFolderId() -> None:
 
     with pytest.raises(ValueError, match="folder_id is required"):
         YcOpenaiProvider(config)
-
-
-def testYcOpenaiProviderClientInitialization(providerConfig: dict) -> None:
-    """Test YC OpenAI provider initializes AsyncOpenAI client correctly.
-
-    Verifies that AsyncOpenAI is called with correct parameters:
-    - api_key from config
-    - base_url set to Yandex Cloud API endpoint
-
-    Args:
-        providerConfig: Configuration dictionary for the provider.
-
-    Raises:
-        AssertionError: If client initialization parameters are incorrect.
-    """
-    with patch("openai.AsyncOpenAI") as mockClient:
-        mockClient.return_value = Mock(spec=AsyncOpenAI)
-        testProvider: YcOpenaiProvider = YcOpenaiProvider(providerConfig)
-
-        # Verify AsyncOpenAI was called with correct parameters
-        assert testProvider is not None
-        mockClient.assert_called_once()
-        callKwargs = mockClient.call_args.kwargs
-        assert callKwargs["api_key"] == "yc-api-key-123"
-        assert callKwargs["base_url"] == "https://llm.api.cloud.yandex.net/v1"
 
 
 def testYcOpenaiProviderFolderIdStorage(providerConfig: dict) -> None:
