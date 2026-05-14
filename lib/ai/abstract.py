@@ -222,9 +222,7 @@ class AbstractModel(ABC):
             raise
 
         await self._recordAttemptStats(consumerId, ret, "text")
-
-        if self.enableJSONLog:
-            self.printJSONLog(messages, ret, consumerId=consumerId)
+        self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     @abstractmethod
@@ -312,9 +310,7 @@ class AbstractModel(ABC):
             raise
 
         await self._recordAttemptStats(consumerId, ret, "image")
-
-        if self.enableJSONLog:
-            self.printJSONLog(messages, ret, consumerId=consumerId)
+        self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     async def _generateStructured(
@@ -447,9 +443,7 @@ class AbstractModel(ABC):
             raise
 
         await self._recordAttemptStats(consumerId, ret, "structured")
-
-        if self.enableJSONLog:
-            self.printJSONLog(messages, ret, consumerId=consumerId)
+        self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
     async def _runWithFallback(
@@ -660,6 +654,8 @@ class AbstractModel(ABC):
             The log file is opened in append mode, so multiple sessions can write
             to the same file. Each entry is written as a single line of JSON.
         """
+        if not self.enableJSONLog:
+            return
         if not result.resultText:
             # Do not log empty results
             return
