@@ -319,9 +319,8 @@ class YcAIModel(AbstractModel):
 
         # Little trick to gather all tool call results into one message
         lastToolResult: Optional[Sequence[ToolResultDictType]] = None
-        lastToolResultRole: Optional[str] = None
         for m in messages:
-            if not m.toolCallId and lastToolResult and lastToolResultRole:
+            if not m.toolCallId and lastToolResult:
                 if omitRole:
                     result.append(
                         {
@@ -331,11 +330,10 @@ class YcAIModel(AbstractModel):
                 else:
                     result.append(
                         {
-                            "role": lastToolResultRole,
+                            "role": "user",  # Most of YC SDK models does not support "tools" role, so use "user"
                             "tool_results": lastToolResult,
                         }
                     )
-                lastToolResultRole = None
                 lastToolResult = None
 
             if m.toolCallId:
@@ -343,7 +341,6 @@ class YcAIModel(AbstractModel):
                     lastToolResult = []
                 funcName = callIdToName.get(str(m.toolCallId), str(m.toolCallId))
                 lastToolResult.append({"name": funcName, "content": m.content})
-                lastToolResultRole = m.role
             elif m.toolCalls:
                 # NOTE: According to
                 # https://aistudio.yandex.ru/docs/ru/ai-studio/operations/generation/function-call.html
@@ -358,7 +355,7 @@ class YcAIModel(AbstractModel):
                 else:
                     result.append({"role": m.role, "text": m.content})
 
-        if lastToolResult and lastToolResultRole:
+        if lastToolResult:
             if omitRole:
                 result.append(
                     {
@@ -368,11 +365,10 @@ class YcAIModel(AbstractModel):
             else:
                 result.append(
                     {
-                        "role": lastToolResultRole,
+                        "role": "user",  # Most of YC SDK models does not support "tools" role, so use "user"
                         "tool_results": lastToolResult,
                     }
                 )
-            lastToolResultRole = None
             lastToolResult = None
 
         return result
