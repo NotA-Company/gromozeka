@@ -1,6 +1,6 @@
 # Runtime
 aiosqlite==0.22.1
-boto3==1.43.6
+boto3==1.43.8
 html-to-markdown==3.1.0
 httpx[http2]==0.28.1
 openai==2.36.0
