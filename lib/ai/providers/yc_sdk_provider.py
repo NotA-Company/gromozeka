@@ -126,7 +126,7 @@ class _ModelMessageWToolCalls(TextMessageWithToolCallsProtocol):
                 try:
                     argsStruct.update(tc.parameters)
                 except Exception as e:
-                    logger.error(f"Exception during building of ModelMessage with Tool Calls for YC SDK")
+                    logger.error("Exception during building of ModelMessage with Tool Calls for YC SDK")
                     logger.exception(e)
             protoFc = ProtoCompletionsFunctionCall(name=tc.name, arguments=argsStruct)
             protoTc = ProtoCompletionsToolCall(function_call=protoFc)
