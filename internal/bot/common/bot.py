@@ -511,7 +511,7 @@ class TheBot:
         replyKwargs.update(
             {
                 "chatId": chatId,
-                "replyTo": replyToMessageId,
+                "replyTo": replyToMessageId.asStr() if replyToMessageId is not None else None,
                 "format": maxModels.TextFormat.MARKDOWN if tryMarkdownV2 else None,
                 "notify": notify,
             }
@@ -615,7 +615,7 @@ class TheBot:
                     await self.maxBot.sendMessage(
                         text=f"Error while sending message: {type(e).__name__}#{e}",
                         chatId=chatId,
-                        replyTo=str(replyToMessageId) if replyToMessageId is not None else None,
+                        replyTo=replyToMessageId.asStr() if replyToMessageId is not None else None,
                     )
                 except Exception as error_e:
                     logger.error(f"Failed to send error message: {type(error_e).__name__}#{error_e}")
@@ -707,7 +707,7 @@ class TheBot:
         replyKwargs = sendMessageKWargs.copy()
         replyKwargs.update(
             {
-                "reply_to_message_id": replyToMessageId,
+                "reply_to_message_id": replyToMessageId.asInt() if replyToMessageId is not None else None,
                 "message_thread_id": threadId,
                 "chat_id": chatId,
             }
