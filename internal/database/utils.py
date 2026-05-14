@@ -128,10 +128,17 @@ def sqlToCustomType(data: object, expectedType: Type[_T]) -> Tuple[bool, Optiona
     # Unwrap Optional/Union types to get the inner type for conversion
     if expectedOrigin is Union or isinstance(expectedType, types.UnionType):
         # Try each union member type
+        # Before trying each type conversion - check if it already of one of needed type
+        for arg in expectedTypeArgs:
+            if _checkType(data, arg):
+                # Still need to process value in case of some generic type
+                ok, value = sqlToCustomType(data, arg)
+                if ok:
+                    return ok, value
         for arg in expectedTypeArgs:
             ok, value = sqlToCustomType(data, arg)
             if ok:
-                return ok, value  # pyright: ignore[reportReturnType]
+                return ok, value
         # If none of the union members worked, return failure
         return False, None
 
