@@ -1,5 +1,4 @@
 #!/bin/sh
-#set -x
 
 cd "$(dirname "$0")/.."
 . "scripts/_load_env.sh"
