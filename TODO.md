@@ -8,7 +8,13 @@
 - [ ] Do cache service refactoring
 - [ ] Add command for condensing context of given discussion
 - [ ] Add test\dev decorator support
+- [ ] LLM Timeout
+- [ ] Sandboxed python for LLM
+- [ ] Sandboxed Python for Gromozeka
+- [ ] Condensing of LLM response (limit + prompt)
 - [x] Log used tokens count
+- [ ] More statistics (messages, divinations, tools, spam)
+- [ ] Infrastucture for statistics
 - [x] `dbUtils.sqlToTypedDict(_event, StatsEventDict)` will it work for optional fields?
 - [x] `lib/ai/providers/basic_openai_provider.py` _generateImage need to use _executeChatCompletion (like _generateText and _generateStructured)
 - [x] Proper comparison of MessageIDs (use separate class for it?)
@@ -35,6 +41,11 @@ Traceback (most recent call last):
              ^^^^^^^^^^
 sqlite3.IntegrityError: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
 2026-05-12 06:56:01,962 - ERROR - internal.database.repositories.spam:132 - Failed to add spam message: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
+```
+- [ ] Tool Calls issue:
+```
+[web_search]
+{"query":"лучшие анекдоты","return_page_content":true,"max_results":5}
 ```
 - [ ] Fix:
 
