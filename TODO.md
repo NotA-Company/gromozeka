@@ -1,18 +1,43 @@
 # Our TODO list
 - [ ] Subagent
-- [ ] Better compaction (drop toools result, more settings, drop userdata, use subagent for compaction)
+- [ ] Better compaction (drop tools result, more settings, drop userdata, use subagent for compaction)
 - [ ] Topic-level configs
-- [ ] Function for last messages, last discussion messages, user messages)
+- [ ] Tool for last messages, last discussion messages, user messages
 - [ ] Support random-message sending function
 - [ ] Spam module refactoring
 - [ ] Do cache service refactoring
 - [ ] Add command for condensing context of given discussion
 - [ ] Add test\dev decorator support
-- [x] Log used tokens count
-- [x] `dbUtils.sqlToTypedDict(_event, StatsEventDict)` will it work for optional fields?
-- [x] `lib/ai/providers/basic_openai_provider.py` _generateImage need to use _executeChatCompletion (like _generateText and _generateStructured)
-- [x] Proper comparison of MessageIDs (use separate class for it?)
+- [ ] LLM Timeout
+- [ ] Sandboxed Python for LLM
+- [ ] Sandboxed Python for Gromozeka
+- [ ] Condensing of LLM response (limit + prompt)
+- [ ] More statistics (messages, divinations, tools, spam)
+- [ ] Infrastucture for statistics
+- [ ] On web search\get-url-content, allow bot to add compaction prompt
 - [ ] Proxy support (SOCKS5?)
+- [ ] think about https://download.geonames.org/export/dump/
+- [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
+- [ ] Add some decorator for LLM functions
+- [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
+- [ ] Meta wizard to guide through all commands
+# Vector search: 
+- [ ] Add support for embeddings + Vector search on chat's database
+- [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
+- [ ] Add support of periodic tasks (summarization for example)
+- [ ] Add cron for analyzing and remembering knowledge from messages
+- [ ] Think, how to add summarization of chat to context of random answers
+
+# Also:
+- [ ] Add coverage badge?
+- [ ] Think about channels support
+- [ ] Run LLM and other requests in separate threads
+- [ ] Random answer: summarisation instead of raw messages
+- [ ] Logging: try to not log same messages if possible
+- [ ] ConfigManager: Use TypedDict's
+- [ ] Add replied message to context more close to message (maybe in message metadata)
+
+# Bugs:
 - [ ]
 ```
 2026-05-12 06:56:01,957 - ERROR - internal.database.providers.sqlite3:183 - Database operation failed: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
@@ -46,26 +71,11 @@ Error running OpenAI-compatible model deepseek/deepseek-chat-v3.1: Error code: 4
 nput). Please reduce the length of either one, or use the "middle-out" transform to compress your prompt automatically.', 'code': 400, 'metadata': {'provider_name
 ': None}}}
 
-- [ ] think about https://download.geonames.org/export/dump/
-- [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
-- [ ] Add some decorator for LLM functions
-- [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
-- [ ] Meta wizard to guide through all commands
-# Vector search: 
-- [ ] Add support for embeddings + Vector search on chat's database
-- [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
-- [ ] Add support of periodic tasks (summarization for example)
-- [ ] Add cron for analyzing and remembering knowledge from messages
-- [ ] Think, how to add summarization of chat to context of random answers
-
-# Also:
-- [ ] Add coverage badge?
-- [ ] Think about channels support
-- [ ] Run LLM and other requests in separate threads
-- [ ] Random answer: summarisation instead of raw messages
-- [ ] Logging: try to not log same messages if possible
-- [ ] ConfigManager: Use TypedDict's
-- [ ] Add replied message to context more close to message (maybe in message metadata)
+# Done:
+- [x] Log used tokens count
+- [x] `dbUtils.sqlToTypedDict(_event, StatsEventDict)` will it work for optional fields?
+- [x] `lib/ai/providers/basic_openai_provider.py` _generateImage need to use _executeChatCompletion (like _generateText and _generateStructured)
+- [x] Proper comparison of MessageIDs (use separate class for it?)
 - [x] Fix found tool-calling bugs
 - [x] Add cache invalidation mechanism (drop old tasks and cache entries from DB)
 - [x] use `httpx` instead of `request` in [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py) + add redirection handling + headers 

@@ -223,7 +223,7 @@ gromozeka/
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
 │   │       ├── create_migration.py # Script to scaffold new migrations
-│   │       └── versions/           # Migration files (migration_001 to migration_013)
+│   │       └── versions/           # Migration files (migration_001 to migration_016)
 │   │
 │   ├── services/                   # Service layer (singletons)
 │   │   ├── cache/                  # Cache service
@@ -267,7 +267,7 @@ gromozeka/
 │   │   ├── constants.py            # API URLs, timeouts, etc.
 │   │   ├── exceptions.py           # MaxBotError hierarchy
 │   │   ├── utils.py                # Utility helpers
-│   │   └── models/                 # Pydantic models for Max API
+│   │   └── models/                 # Max API model classes (hand-rolled, no pydantic)
 │   ├── openweathermap/             # OpenWeatherMap API client
 │   │   ├── client.py               # OpenWeatherMapClient
 │   │   └── models.py               # WeatherData, GeocodingResult, etc.
@@ -299,7 +299,6 @@ gromozeka/
 │
 ├── docs/                           # Project documentation
 │   └── reports/                    # Development reports and ADRs
-└── memory-bank/                    # AI assistant context files
 ```
 
 ---

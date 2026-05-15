@@ -200,6 +200,16 @@ from lib.ai import ModelStructuredResult
 
 **IMPORTANT:** `LLMService` has an `initialized` guard (singleton init runs once). Never check `initialized` directly in new code
 
+### `internal/services/llm/utils.py`
+
+Shared LLM utility functions used by both bot handlers and CLI scripts.
+
+#### `reconstructMessages(requestData: List[Dict[str, Any]]) -> List[ModelMessage]`
+
+Reconstructs `ModelMessage` objects from serialized request data (dicts with `role`, `content`, optional `tool_calls` and `tool_call_id`). Used by:
+- `scripts/run_llm_debug_query.py` -- CLI debug replay
+- `DevCommandsHandler.llmReplayCommand` -- `/llm_replay` bot command
+
 ---
 
 ## 4. StorageService
@@ -330,4 +340,4 @@ class MyService:
 ---
 
 *This guide is auto-maintained and should be updated whenever service integration patterns change*  
-*Last updated: 2026-05-06*
+*Last updated: 2026-05-15*

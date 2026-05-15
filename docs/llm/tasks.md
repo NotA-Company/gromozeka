@@ -242,6 +242,34 @@ START
 
 ---
 
+### 1.7 "I need to debug or replay an LLM conversation"
+
+Two complementary tools exist for replaying LLM interactions outside the normal chat flow:
+
+**Bot command** (with tools): `/llm_replay <model_name>` in `DevCommandsHandler`
+- Attach a JSON log file and specify a model name
+- Replays through `LLMService.generateTextViaLLM()` with all registered tools active
+- Streams intermediate results and reports a summary
+- See [`handlers.md`](handlers.md) -- DevCommandsHandler section for details
+
+**CLI script** (without tools): `scripts/run_llm_debug_query.py`
+- Runs a replay from the command line with no bot/tool context
+- Shares the `reconstructMessages()` utility with the bot command (from `internal/services/llm/utils.py`)
+
+**Conversion script**: `scripts/convert_readable_to_llm_log.py`
+- Converts human-readable YAML LLM logs back to the JSON format expected by both replay tools
+
+**Typical workflow:**
+1. Export or capture an LLM log (JSON or readable YAML)
+2. If YAML: convert with `./venv/bin/python3 scripts/convert_readable_to_llm_log.py`
+3. Replay via `/llm_replay` (in-chat, with tools) or `run_llm_debug_query.py` (CLI, no tools)
+
+**Reference docs:**
+- [`handlers.md`](handlers.md) -- `/llm_replay` command documentation
+- [`services.md`](services.md) -- `internal/services/llm/utils.py` utility reference
+
+---
+
 ## 2. Anti-Patterns — NEVER Do These
 
 ### ❌ Direct singleton construction
@@ -838,4 +866,4 @@ Before deploying a new schema, you can test it locally:
 ---
 
 *This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered*
-*Last updated: 2026-05-10*
+*Last updated: 2026-05-15*

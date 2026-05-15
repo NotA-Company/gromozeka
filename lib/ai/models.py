@@ -39,6 +39,7 @@ import base64
 import json
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from enum import Enum, StrEnum
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -494,6 +495,9 @@ class ModelMessage:
             >>> print(message.role)
             assistant
         """
+        if not isinstance(d, (dict, Mapping)):
+            raise TypeError(f"expected Dict[str, Any], but got {type(d).__name__}")
+
         kwargs: Dict[str, Any] = dict[str, Any](
             role=d["role"],
         )

@@ -24,7 +24,7 @@
 tests/
 ├── conftest.py              # Global fixtures
 ├── utils.py                 # Test helper functions
-├── test_db_wrapper.py       # DatabaseWrapper tests
+├── test_db_wrapper.py       # Database tests
 ├── test_llm_service.py      # LLMService tests
 ├── test_queue_service.py    # QueueService tests
 ├── bot/                     # Bot handler tests
@@ -53,8 +53,8 @@ From [`tests/conftest.py`](../../tests/conftest.py):
 |---|---|---|---|
 | `eventLoop` | session | `asyncio.AbstractEventLoop` | Shared event loop |
 | `inMemoryDbPath` | function | `str` | `:memory:` SQLite path |
-| `mockDatabaseWrapper` | function | `Mock` | Mocked `DatabaseWrapper` |
-| `testDatabase` | function | `DatabaseWrapper` | Real in-memory DB |
+| `mockDatabaseWrapper` | function | `Mock` | Mocked `Database` |
+| `testDatabase` | function | `Database` | Real in-memory DB |
 | `mockBot` | function | `AsyncMock` | Mocked `ExtBot` |
 | `mockUpdate` | function | `Mock` | Mocked Telegram `Update` |
 | `mockMessage` | function | `Mock` | Mocked Telegram `Message` |
@@ -187,7 +187,7 @@ class TestSomeHandler:
 ## 5. Writing Database Tests
 
 ```python
-"""Tests for DatabaseWrapper operations"""
+"""Tests for Database operations"""
 
 import pytest
 
@@ -199,7 +199,7 @@ class TestMyDbOperation:
         """Should save and retrieve data correctly
 
         Args:
-            testDatabase: Real in-memory DatabaseWrapper fixture
+            testDatabase: Real in-memory Database fixture
         """
         # Save
         testDatabase.saveSomething(chatId=123, value="test")
@@ -213,7 +213,7 @@ class TestMyDbOperation:
         """Should return None when record not found
 
         Args:
-            testDatabase: Real in-memory DatabaseWrapper fixture
+            testDatabase: Real in-memory Database fixture
         """
         result = testDatabase.getSomething(chatId=999999)
         assert result is None

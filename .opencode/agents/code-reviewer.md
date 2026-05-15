@@ -97,10 +97,14 @@ permission:
     "git stash list*": allow
     "git status*": allow
     "git tag": allow
+    "ls": allow
+    "ls *": allow
     "grep *": allow
     "rg *": allow
     "tail *": allow
     "head *": allow
+    "sort": allow
+    "sort *": allow
     "wc": allow
     "wc *": allow
     "echo *": allow

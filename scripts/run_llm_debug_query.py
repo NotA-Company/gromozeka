@@ -257,62 +257,6 @@ def _loadJsonFile(path: Path) -> List[Dict[str, Any]]:
         raise ValueError(f"Expected JSON object or array, got {type(data).__name__}")
 
 
-def reconstructMessages(requestData: List[Dict[str, Any]]) -> List[ModelMessage]:
-    """Reconstruct ModelMessage objects from request data.
-
-    Args:
-        requestData: List of message dictionaries from the log file.
-            Each should have 'role' and 'content' fields. May also have
-            'tool_calls' or 'tool_call_id' for tool calling.
-
-    Returns:
-        List of reconstructed ModelMessage objects.
-
-    Raises:
-        ValueError: If a message is missing required fields.
-    """
-    messages: List[ModelMessage] = []
-
-    for msgDict in requestData:
-        if "role" not in msgDict:
-            raise ValueError("Message dict missing 'role' field")
-
-        # The log format has 'content' field with actual content
-        # ModelMessage.fromDict expects either 'content' or 'text'
-        # We already have 'content' in the log format, so use directly
-        kwargs: Dict[str, Any] = {
-            "role": msgDict["role"],
-            "content": msgDict.get("content", ""),
-        }
-
-        # Handle tool call ID if present
-        if "tool_call_id" in msgDict:
-            kwargs["toolCallId"] = msgDict["tool_call_id"]
-
-        # Handle tool calls if present
-        if "tool_calls" in msgDict and msgDict["tool_calls"]:
-            from lib.ai import LLMToolCall  # noqa: F401
-
-            toolCalls: List[LLMToolCall] = []
-            for toolCall in msgDict["tool_calls"]:
-                # Log format should match what ModelMessage.toDict() produces
-                # We need to parse it back
-                if toolCall.get("type") == "function":
-                    func = toolCall["function"]
-                    toolCalls.append(
-                        LLMToolCall(
-                            id=toolCall["id"],
-                            name=func["name"],
-                            parameters=json.loads(func["arguments"]),
-                        )
-                    )
-            kwargs["toolCalls"] = toolCalls
-
-        messages.append(ModelMessage(**kwargs))
-
-    return messages
-
-
 # ---------------------------------------------------------------------------
 # Main execution
 # ---------------------------------------------------------------------------
@@ -474,12 +418,12 @@ async def main() -> int:
     print()
 
     # Reconstruct messages
-    if "request" not in entry:
-        print("Error: Log entry missing 'request' field", file=sys.stderr)
+    if "request" not in entry or not isinstance(entry["request"], list):
+        print("Error: Log entry missing 'request' field or it is not list of objects", file=sys.stderr)
         return 1
 
     try:
-        messages = reconstructMessages(entry["request"])
+        messages = ModelMessage.fromDictList(entry["request"])
     except Exception as e:
         print(f"Error reconstructing messages: {_col(str(e), _ANSI_RED)}", file=sys.stderr)
         return 1

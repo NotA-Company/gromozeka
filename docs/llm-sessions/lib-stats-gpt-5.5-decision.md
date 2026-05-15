@@ -400,7 +400,7 @@ Note: file list is sampled.
 204:   - [`add-database-migration`](.agents/skills/add-database-migration/SKILL.md) — new migration scaffolding + SQL portability rules
 205:   - [`add-handler`](.agents/skills/add-handler/SKILL.md) — add a bot handler end-to-end, with the `LLMMessageHandler`-stays-last invariant
 206:   - [`add-chat-setting`](.agents/skills/add-chat-setting/SKILL.md) — wire a new `ChatSettingsKey` across all four required sites
-207: - [`README.md`](README.md), [`README_BOT.md`](README_BOT.md) — user docs
+207: - [`README.md`](README.md) — user docs
 
 (End of file - total 207 lines)
 </content>
