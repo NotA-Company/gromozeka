@@ -21,6 +21,7 @@ import datetime
 import json
 import logging
 import time
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type, TypeVar
@@ -639,8 +640,9 @@ class AbstractModel(ABC):
         """Write a request-response pair to the JSON log file.
 
         This method writes the conversation history (messages) and model response
-        to a JSON log file. Each entry contains the timestamp, status, request,
-        and response. Empty responses are not logged.
+        to a JSON log file. Each entry contains a UUID (for log-line grepping),
+        timestamp, status, request, response, and metadata. Empty responses are
+        not logged.
 
         Args:
             messages: List of message objects that were sent to the model.
@@ -668,6 +670,7 @@ class AbstractModel(ABC):
             filename = filename + "." + todayStr
 
         data = {
+            "uuid": str(uuid.uuid4()),  # Useful for grep purposes
             "date": now.isoformat(),
             "status": result.status,
             "request": [message.toDict("content") for message in messages],
