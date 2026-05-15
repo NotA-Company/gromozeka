@@ -211,4 +211,4 @@ process of reviewing and maintaining documentation.
   - [`add-database-migration`](.agents/skills/add-database-migration/SKILL.md) — new migration scaffolding + SQL portability rules
   - [`add-handler`](.agents/skills/add-handler/SKILL.md) — add a bot handler end-to-end, with the `LLMMessageHandler`-stays-last invariant
   - [`add-chat-setting`](.agents/skills/add-chat-setting/SKILL.md) — wire a new `ChatSettingsKey` across all four required sites
-- [`README.md`](README.md), [`README_BOT.md`](README_BOT.md) — user docs
+- [`README.md`](README.md) — user docs
