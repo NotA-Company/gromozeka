@@ -70,6 +70,25 @@ When `divination discovery-enabled = true`, unknown layouts trigger automatic di
 
 **Negative cache pattern:** Prevents repeated failed discovery attempts for the same non-existent layout. Stored as a special entry in `divination_layouts` with empty name and zero symbols.
 
+### DevCommandsHandler Commands
+
+Developer/debug commands available only to `BOT_OWNER` users.
+
+#### `/llm_replay <model_name>`
+
+- **Class:** `DevCommandsHandler` (`internal/bot/common/handlers/dev_commands.py`)
+- **Permission:** `BOT_OWNER`
+- **Description:** Replays an LLM conversation from an attached JSON log file through `LLMService.generateTextViaLLM` with all registered tools available. Useful for debugging prompts and LLM behavior with the same tool context as production.
+- **Usage:** Send `/llm_replay <model_name>` with a JSON document attachment (or as a reply to a JSON document message). The model name must be a known model in the LLM configuration (e.g., `gpt-4o`, `openrouter/claude-haiku-4.5`).
+- **Flow:**
+  1. Validates the model name argument
+  2. Downloads and parses the attached JSON file
+  3. Reconstructs `ModelMessage` objects from the log's `request` array via `internal.services.llm.utils.reconstructMessages()`
+  4. Calls `LLMService.generateTextViaLLM()` with the specified model, chat tool settings, and all registered tools
+  5. Streams intermediate results back to chat via callback
+  6. Reports final summary: model, status, token counts, tool calls, elapsed time
+- **Related scripts:** `scripts/run_llm_debug_query.py` (CLI-based replay without tools), `scripts/convert_readable_to_llm_log.py` (YAML-to-JSON conversion)
+
 ---
 
 ## 2. Handler Creation Checklist
@@ -410,4 +429,4 @@ Full chain:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant handler changes are made*  
-*Last updated: 2026-04-18*
+*Last updated: 2026-05-15*

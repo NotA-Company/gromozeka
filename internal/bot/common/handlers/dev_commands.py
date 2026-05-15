@@ -16,16 +16,18 @@ to regular users, dood!
 """
 
 import asyncio
+import json
 import logging
 import sys
 import time
 from typing import Optional
 
+import magic
 import telegram
 
 import lib.max_bot.models as maxModels
 import lib.utils as utils
-from internal.bot.common.models import UpdateObjectType
+from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
     BotProvider,
@@ -36,12 +38,15 @@ from internal.bot.models import (
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    MessageType,
     OutputFormat,
     commandHandlerV2,
 )
 from internal.bot.models.ensured_message import MessageRecipient
 from internal.database.models import MessageCategory
 from internal.services.cache import CacheNamespace
+from internal.services.llm.models import ExtraDataDict
+from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
 
 from .base import BaseBotHandler
 
@@ -808,6 +813,263 @@ class DevCommandsHandler(BaseBotHandler):
             ensuredMessage,
             messageText=f"```json\n{utils.jsonDumps(admins, indent=2)}\n```",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+        )
+
+    @commandHandlerV2(
+        commands=("llm_replay",),
+        shortDescription="[<Model>] - Replay LLM conversation from attached JSON file",
+        helpMessage=(
+            " `[<model_name>]` + JSON attachment: Повторить LLM-запрос из JSON-файла"
+            " с указанной моделью (для отладки)."
+        ),
+        visibility={CommandPermission.BOT_OWNER},
+        availableFor={CommandPermission.BOT_OWNER},
+        helpOrder=CommandHandlerOrder.TECHNICAL,
+        category=CommandCategory.PRIVATE,
+        typingAction=TypingAction.TYPING,
+    )
+    async def llmReplayCommand(
+        self,
+        ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        UpdateObj: UpdateObjectType,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """Replay an LLM conversation from an attached JSON file for debugging, dood!
+
+        Reads a JSON log entry from an attached document, reconstructs the
+        message list using :py:func:`reconstructMessages`, and runs it through
+        :py:meth:`LLMService.generateTextViaLLM` with the specified model and
+        all registered tools. Intermediate tool-call results are sent back to
+        the chat as they arrive, mirroring the :py:class:`LLMMessageHandler`
+        pattern.
+
+        Args:
+            ensuredMessage: Ensured message object containing chat and sender information
+            command: The command that was invoked (e.g., "llm_replay")
+            args: Command arguments — the model name to use
+            UpdateObj: Telegram update object containing the message
+            typingManager: Optional typing manager for showing typing status
+
+        Command Usage:
+            /llm_replay <model_name> (with JSON file attached or replying to one)
+
+        Returns:
+            None
+
+        Error Responses:
+            - Missing model argument: usage hint
+            - Unknown model name: list of available models
+            - No JSON attachment: request to attach a file
+            - Invalid JSON: parse error message
+            - Missing 'request' field: log entry error
+            - LLM API error: exception type and message
+            - Non-FINAL status: intermediate status report, dood!
+        """
+
+        # 0. Get chat settings
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        assert self._bot is not None, "self._bot is None, it shouldn't happen"
+
+        # 1. Validate model argument
+        modelName = args.strip()
+        if not modelName:
+            modelName = chatSettings[ChatSettingsKey.CHAT_MODEL].toStr()
+
+        # 2. Resolve model
+        model = self.llmService.getLLMManager().getModel(modelName)
+        if model is None:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"Model `{modelName}` not found.",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        # 3. Get JSON attachment — either on this message or on a replied-to message
+        sourceEnsured = ensuredMessage
+        if ensuredMessage.messageType != MessageType.DOCUMENT:
+            if ensuredMessage.isReply:
+                repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
+                if repliedMessage is not None:
+                    sourceEnsured = repliedMessage
+            if sourceEnsured.messageType != MessageType.DOCUMENT:
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText="Please attach a JSON file with the command",
+                    messageCategory=MessageCategory.BOT_ERROR,
+                    typingManager=typingManager,
+                )
+                return
+
+        # 4. Download and parse JSON
+        baseMessage = sourceEnsured.getBaseMessage()
+        jsonBytes: Optional[bytes] = None
+        if isinstance(baseMessage, telegram.Message):
+            if baseMessage.document is not None:
+                jsonBytes = await self._bot.downloadAttachment(mediaId="", fileId=baseMessage.document.file_id)
+        elif isinstance(baseMessage, maxModels.Message):
+            # Max: look for a file attachment
+            if baseMessage.body and baseMessage.body.attachments:
+                for attachment in baseMessage.body.attachments:
+                    if isinstance(attachment, maxModels.FileAttachment):
+                        jsonBytes = await self._bot.downloadAttachment(mediaId="", fileId=attachment.payload.url)
+                        break
+
+        if jsonBytes is None:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Please attach a JSON file with the command",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        # Validate the file looks like JSON
+        mimeType = magic.from_buffer(jsonBytes, mime=True)
+        logger.debug(f"Attachment mime type is: {mimeType}")
+        if not mimeType.startswith("application/json"):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Please attach a JSON file with the command",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        try:
+            data = json.loads(jsonBytes)
+        except json.JSONDecodeError as exc:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"Failed to parse JSON: `{exc}`",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        # Normalize to list of entries (single dict or list)
+        if isinstance(data, list) and data:
+            data = data[0]
+
+        if not isinstance(data, dict):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="JSON must be an object or array of objects",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        # 5. Validate and reconstruct messages
+        if "request" not in data or not isinstance(data["request"], list):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="request fiels is required and should be list of objects",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        try:
+            messages = ModelMessage.fromDictList(data["request"])
+        except (TypeError, ValueError, KeyError) as exc:
+            logger.error(exc)
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"Failed to reconstruct messages: `{exc}`",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        # 6. Call LLM
+        async def processIntermediateMessages(mRet: ModelRunResult, extraData: ExtraDataDict) -> None:
+            """Process intermediate LLM results and send them to the chat.
+
+            Args:
+                mRet: Intermediate LLM result containing generated text.
+                extraData: Additional data including ensuredMessage and typingManager.
+
+            Returns:
+                None
+            """
+            if mRet.resultText.strip():
+                try:
+                    prefixStr = ""
+                    if mRet.isFallback:
+                        prefixStr += chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=mRet.resultText,
+                        messageCategory=MessageCategory.BOT,
+                        addMessagePrefix=prefixStr,
+                    )
+                    tm = extraData.get("typingManager")
+                    if isinstance(tm, TypingManager):
+                        tm.addTimeout(120)
+                        await tm.sendTypingAction()
+                except Exception as exc:
+                    logger.error(f"Failed to send intermediate message: {exc}")
+
+        try:
+            mlRet = await self.llmService.generateTextViaLLM(
+                messages=messages,
+                chatId=ensuredMessage.recipient.id,
+                chatSettings=chatSettings,
+                modelKey=model,
+                fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
+                useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
+                callback=processIntermediateMessages,
+                extraData={
+                    "ensuredMessage": ensuredMessage,
+                    "typingManager": typingManager,
+                },
+            )
+        except Exception as exc:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"Error running query: `{type(exc).__name__}#{exc}`",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        # Check for non-FINAL status
+        if mlRet.status != ModelResultStatus.FINAL:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"LLM returned non-final status: {mlRet.status.name}",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        # 7. Report result summary
+        toolCount = len(mlRet.toolCalls) if mlRet.toolCalls else 0
+        toolNames = ", ".join(tc.name for tc in mlRet.toolCalls) if mlRet.toolCalls else "none"
+        elapsedStr = f"{mlRet.elapsedTime:.2f}s" if mlRet.elapsedTime is not None else "N/A"
+
+        await self.sendMessage(
+            ensuredMessage,
+            messageText=f"**LLM Replay Result**\n"
+            f"Model: {modelName}\n"
+            f"Status: {mlRet.status.name}\n"
+            f"Input tokens: {mlRet.inputTokens or 'N/A'}\n"
+            f"Output tokens: {mlRet.outputTokens or 'N/A'}\n"
+            f"Tool calls: {toolCount} ({toolNames})\n"
+            f"Elapsed: {elapsedStr}",
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            # typingManager=typingManager,
+        )
+
+        await self.sendMessage(
+            ensuredMessage,
+            messageText=mlRet.resultText.strip(),
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            typingManager=typingManager,
         )
 
     @commandHandlerV2(
