@@ -149,6 +149,55 @@ class LLMService:
         )
         logger.info(f"Tool {name} registered")
 
+    def _tryApplyToolCallMatch(
+        self,
+        mlRunResult: ModelRunResult,
+        *,
+        toolName: str,
+        parameters: Optional[Dict[Any, Any]],
+        toolCallId: Optional[str],
+        prefixStr: str,
+        suffixStr: str,
+    ) -> bool:
+        """Validate extracted tool-call fields and, if they pass, mutate *mlRunResult* in-place.
+
+        This is the shared tail of :meth:`_matchTextForJSONToolCall`,
+        :meth:`_matchTextForToolCallStart`, and
+        :meth:`_matchTextForToolCallSquareBracketsAndJson`.  The match is
+        accepted only when the tool call appears at the **beginning or end**
+        of the response (i.e. *prefixStr* or *suffixStr* is empty) **and**
+        *toolName* is registered in :attr:`toolsHandlers` and *parameters*
+        is a dict.
+
+        Args:
+            mlRunResult: The model run result to mutate on success.
+            toolName: The tool name extracted from the response.
+            parameters: The argument dict extracted from the response (may be
+                ``None`` or non-dict, which will cause the match to fail).
+            toolCallId: The call ID from the response, or ``None`` to
+                auto-generate one via ``uuid4``.
+            prefixStr: Non-tool-call text before the matched block.
+            suffixStr: Non-tool-call text after the matched block.
+
+        Returns:
+            True if the match was applied (``mlRunResult`` mutated to
+            ``TOOL_CALLS`` status); False otherwise.
+        """
+        if (
+            (not prefixStr or not suffixStr)
+            and toolName
+            and isinstance(parameters, dict)
+            and toolName in self.toolsHandlers
+        ):
+            logger.debug("It looks like tool call, converting...")
+            mlRunResult.status = ModelResultStatus.TOOL_CALLS
+            mlRunResult.resultText = (prefixStr + suffixStr).strip()
+            if toolCallId is None:
+                toolCallId = str(uuid.uuid4())
+            mlRunResult.toolCalls = [LLMToolCall(id=toolCallId, name=toolName, parameters=parameters)]
+            return True
+        return False
+
     def _matchTextForJSONToolCall(self, mlRunResult: ModelRunResult) -> bool:
         """Detect a tool call embedded in a JSON code block within the model response text.
 
@@ -174,35 +223,24 @@ class LLMService:
         match = re.match(r"^(.*?)```(?:json\s*)?\s*({.*})\s*```(.*)$", resultText, re.DOTALL | re.IGNORECASE)
         if match is not None:
             logger.debug(f"JSON found: {match.groups()}")
-            prefixStr = match.group(1)
-            suffixStr = match.group(3)
             try:
                 jsonStr = match.group(2)
                 jsonData, endPos = json.JSONDecoder().raw_decode(jsonStr)
-                suffixStr = jsonStr[endPos:] + suffixStr
+                suffixStr = jsonStr[endPos:] + match.group(3)
                 logger.debug(f"JSON result: {jsonData}")
                 parameters = None
                 if "arguments" in jsonData:
                     parameters = jsonData.get("arguments", None)
                 elif "parameters" in jsonData:
                     parameters = jsonData.get("parameters", None)
-                # Look for tool calling only in begin or end of message, so prefix or suffix should be empty
-                if (
-                    (not prefixStr or not suffixStr)
-                    and "name" in jsonData
-                    and isinstance(parameters, dict)
-                    and jsonData["name"] in self.toolsHandlers
-                ):
-                    # TODO: is "parameters"|"arguments" required?
-                    logger.debug("It looks like tool call, converting...")
-                    mlRunResult.status = ModelResultStatus.TOOL_CALLS
-                    mlRunResult.resultText = (prefixStr + suffixStr).strip()
-                    toolCallId = jsonData.get("callId", None)
-                    if toolCallId is None:
-                        toolCallId = str(uuid.uuid4())
-
-                    mlRunResult.toolCalls = [LLMToolCall(id=toolCallId, name=jsonData["name"], parameters=parameters)]
-                    return True
+                return self._tryApplyToolCallMatch(
+                    mlRunResult,
+                    toolName=jsonData.get("name", ""),
+                    parameters=parameters,
+                    toolCallId=jsonData.get("callId", None),
+                    prefixStr=match.group(1),
+                    suffixStr=suffixStr,
+                )
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to decode JSON: {e}")
         return False
@@ -232,27 +270,17 @@ class LLMService:
         if match is not None:
             try:
                 logger.debug(f"TOOL_CALL_START found: {match.groups()}")
-                prefixStr = match.group(1)
-                toolName = match.group(2)
                 toolArgsStr = match.group(3)
-                suffixStr = match.group(4)
                 toolArgs, endPos = json.JSONDecoder().raw_decode(toolArgsStr)
-                suffixStr = toolArgsStr[endPos:].strip() + suffixStr
-
-                # Look for tool calling only in begin or end of message, so prefix or suffix should be empty
-                if (
-                    (not prefixStr or not suffixStr)
-                    and toolName
-                    and isinstance(toolArgs, dict)
-                    and toolName in self.toolsHandlers
-                ):
-                    logger.debug("It looks like tool call, converting...")
-                    mlRunResult.status = ModelResultStatus.TOOL_CALLS
-                    mlRunResult.resultText = (prefixStr + suffixStr).strip()
-                    toolCallId = str(uuid.uuid4())
-
-                    mlRunResult.toolCalls = [LLMToolCall(id=toolCallId, name=toolName, parameters=toolArgs)]
-                    return True
+                suffixStr = toolArgsStr[endPos:].strip() + match.group(4)
+                return self._tryApplyToolCallMatch(
+                    mlRunResult,
+                    toolName=match.group(2),
+                    parameters=toolArgs,
+                    toolCallId=None,
+                    prefixStr=match.group(1),
+                    suffixStr=suffixStr,
+                )
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to decode JSON: {e}")
         return False
@@ -278,9 +306,6 @@ class LLMService:
             False otherwise.
         """
         resultText = mlRunResult.resultText.strip()
-        # Example:
-        # [web_search]
-        # {"query":"анекдот","return_page_content":true,"max_results":3}
         match = re.match(
             r"^(.*?)\s*\[(\S+?)\]\s*({.*})\s*(.*?)\s*$",
             resultText,
@@ -289,27 +314,17 @@ class LLMService:
         if match is not None:
             try:
                 logger.debug(f"[tool_name]+{{json}} found: {match.groups()}")
-                prefixStr = match.group(1)
-                toolName = match.group(2)
                 toolArgsStr = match.group(3)
-                suffixStr = match.group(4)
-
                 toolArgs, endPos = json.JSONDecoder().raw_decode(toolArgsStr)
-                suffixStr = toolArgsStr[endPos:].strip() + suffixStr
-                # Look for tool calling only in begin or end of message, so prefix or suffix should be empty
-                if (
-                    (not prefixStr or not suffixStr)
-                    and toolName
-                    and isinstance(toolArgs, dict)
-                    and toolName in self.toolsHandlers
-                ):
-                    logger.debug("It looks like tool call, converting...")
-                    mlRunResult.status = ModelResultStatus.TOOL_CALLS
-                    mlRunResult.resultText = (prefixStr + suffixStr).strip()
-                    toolCallId = str(uuid.uuid4())
-
-                    mlRunResult.toolCalls = [LLMToolCall(id=toolCallId, name=toolName, parameters=toolArgs)]
-                    return True
+                suffixStr = toolArgsStr[endPos:].strip() + match.group(4)
+                return self._tryApplyToolCallMatch(
+                    mlRunResult,
+                    toolName=match.group(2),
+                    parameters=toolArgs,
+                    toolCallId=None,
+                    prefixStr=match.group(1),
+                    suffixStr=suffixStr,
+                )
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to decode JSON: {e}")
         return False
