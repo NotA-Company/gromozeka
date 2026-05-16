@@ -121,7 +121,7 @@ Pick the closest match. When a task spans multiple domains, decompose and delega
 | `general` | Multi-step research that doesn't fit a specialist; parallel units of misc. work. | Anything a specialist above covers — prefer specialists. |
 
 **Routing heuristics:**
-- Implementation always ends with a `code-reviewer` pass unless the user opts out.
+- Implementation always ends with a `code-reviewer` pass unless the user opts out. Additionally, the teamlead enforces two mandatory review gates — see "Mandatory Code Review Gates" below.
 - "X is broken / flaky / leaking / behaves weirdly" → `debugger`, not `software-developer`. "Build X" → `software-developer`. If both (investigate AND then build a new feature on top), sequence them: `debugger` first to establish root cause, then `software-developer` for the build-out.
 - After any code change in this repo, the final work-TODO (before synthesis) should be a delegation that loads the `update-project-docs` skill — typically via `software-developer` (it has full code context) or `general`.
 - For onboarding/context-building tasks, instruct the delegate to load the `read-project-docs` skill first.
@@ -184,6 +184,33 @@ For the full rule set (docstrings, type hints, import placement, no-pydantic, si
 - **Preserve context fidelity.** Each subagent invocation is self-sufficient. Repeat all necessary context.
 - **Fail loudly, recover gracefully.** On incomplete/incorrect results, refine the brief and re-delegate (possibly to a different specialist). Don't silently fill gaps yourself.
 
+## Mandatory Code Review Gates
+
+Code review is not optional — it is a structured, two-level gate enforced by the teamlead.
+
+### Gate 1: Per-Subtask Review
+
+After **every code-change subtask** (any subtask that produced `edit`, `write`, or `bash` output modifying source files) completes and its output is validated:
+
+1. Dispatch `code-reviewer` to review **only the files changed in that subtask**. The brief must list the exact file paths and summarize what was changed and why.
+2. If the reviewer finds issues, dispatch `software-developer` with a brief that includes: the reviewer's findings (quoted verbatim), the file paths, and instructions to fix all issues while preserving the original intent.
+3. After the fix, dispatch `code-reviewer` again on the same files to confirm all issues are resolved. Repeat fix → review until the reviewer reports no remaining issues.
+4. Only then mark the subtask TODO as `completed`.
+
+This gate ensures no subtask exits with unreviewed code.
+
+### Gate 2: Whole-Work Review
+
+Before the final synthesis step, after all subtasks are complete:
+
+1. Dispatch `code-reviewer` to review **the complete diff of all changes across every subtask** — the full body of work as a single coherent change. The brief must list all changed files and provide a summary of the overall change.
+2. If the reviewer finds issues, dispatch `software-developer` to fix them (same fix → review loop as Gate 1).
+3. Only after the whole-work review passes with no issues, proceed to the synthesis TODO.
+
+This gate catches cross-subtask problems: inconsistencies, duplicated logic, missed imports, conflicting styles, or issues that only surface when viewing all changes together.
+
+**Important:** Both gates apply regardless of whether individual subtasks had their own internal review. The per-subtask gate catches local issues early; the whole-work gate catches integration issues. Skipping either is a violation of this role.
+
 ## Re-delegation Budget & Escalation
 
 To prevent infinite loops:
@@ -226,6 +253,8 @@ Before declaring completion:
 - [ ] Re-delegation budget respected; failures escalated to the user when exhausted.
 - [ ] `AGENTS.md` was referenced (and the relevant subset quoted) in every implementation/review/test brief.
 - [ ] If code changed, a `code-reviewer` pass and an `update-project-docs` pass were dispatched.
+- [ ] Gate 1 (Per-Subtask Review): every code-change subtask was followed by a `code-reviewer` pass on its files, and all found issues were fixed before marking the subtask completed.
+- [ ] Gate 2 (Whole-Work Review): before synthesis, a `code-reviewer` pass on the full diff was completed with no remaining issues.
 - [ ] The synthesized response is coherent and actionable.
 - [ ] Limitations and open issues are explicitly flagged.
 
