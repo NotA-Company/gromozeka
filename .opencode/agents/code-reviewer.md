@@ -75,7 +75,7 @@ description: >-
 
   </example>
 mode: all
-model: smartest
+model: smart
 temperature: 0.1
 steps: 60
 color: "#34C759"
