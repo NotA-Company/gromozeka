@@ -18,6 +18,7 @@
 8. [lib/geocode_maps — Geocoding](#8-libgeocode_maps--geocoding)
 9. [lib/stats — Statistics Collection](#9-libstats--statistics-collection)
 10. [lib/divination — Tarot & Runes Logic](#10-libdivination--tarot--runes-logic)
+11. [lib/sandbox — Sandboxed Code Execution](#11-libsandbox--sandboxed-code-execution)
 
 ---
 
@@ -526,6 +527,59 @@ reading = drawSymbols(system, layout, question="What about my career?")
 
 ---
 
+## 11. `lib/sandbox/` — Sandboxed Code Execution
+
+Safely execute untrusted Python code in Docker containers. Provides a
+singleton `SandboxManager` entry point that composes a backend (Docker),
+runtimes (Python), metadata store (filesystem), and lock registry.
+
+- **Coding patterns & constraints:** [`sandbox.md`](sandbox.md)
+- **Design:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md)
+- **Integration:** [`docs/plans/python-sandboxing-v1-integration.md`](../plans/python-sandboxing-v1-integration.md)
+
+Key modules:
+
+| Module | Purpose |
+|--------|---------|
+| [`manager.py`](../../lib/sandbox/manager.py) | `SandboxManager` singleton — sessions, runs, files, libraries, GC, health |
+| [`types.py`](../../lib/sandbox/types.py) | Public dataclasses (`RunResult`, `SessionInfo`, `ResourceLimits`, etc.) |
+| [`enums.py`](../../lib/sandbox/enums.py) | `RuntimeName`, `BackendName` |
+| [`config.py`](../../lib/sandbox/config.py) | Configuration dataclasses (`SandboxConfig`, `StorageConfig`, etc.) |
+| [`errors.py`](../../lib/sandbox/errors.py) | Exception hierarchy (`SandboxError` → `SessionError`, `RunError`, etc.) |
+| [`locks.py`](../../lib/sandbox/locks.py) | Per-session FIFO lock registry, global run semaphore, pool flock |
+| [`storage.py`](../../lib/sandbox/storage.py) | Workspace path resolution, atomic JSON writes, directory layout |
+| [`gc.py`](../../lib/sandbox/gc.py) | Garbage collector for expired sessions, orphan workspaces, run records |
+| [`backends/docker.py`](../../lib/sandbox/backends/docker.py) | Docker backend via `aiodocker` |
+| [`runtimes/python/runtime.py`](../../lib/sandbox/runtimes/python/runtime.py) | Python runtime with `timeout` wrapper and artifact detection |
+| [`metadata/filesystem.py`](../../lib/sandbox/metadata/filesystem.py) | Filesystem-backed metadata store (JSON) |
+
+**Import:**
+```python
+from lib.sandbox import SandboxManager
+from lib.sandbox.config import SandboxConfig, StorageConfig
+from lib.sandbox.types import RunResult, SessionInfo, ResourceLimits
+from lib.sandbox.enums import RuntimeName, BackendName
+```
+
+**Quick start:**
+```python
+from lib.sandbox import SandboxManager, SandboxConfig, StorageConfig
+
+config = SandboxConfig(storage=StorageConfig(rootDir="/var/lib/gromozeka/sandbox"))
+SandboxManager.injectConfig(config)
+manager = SandboxManager.getInstance()
+
+session = await manager.createSession("my-session")
+result = await manager.runCode(session.sessionId, "print(2 + 2)")
+print(result.exitCode)  # 0
+
+await manager.shutdown()
+```
+
+See [`sandbox.md`](sandbox.md) for the complete coding patterns, configuration rules, and anti-patterns.
+
+---
+
 ## See Also
 
 - [`index.md`](index.md) — Project overview, lib/ directory map
@@ -537,4 +591,4 @@ reading = drawSymbols(system, layout, question="What about my career?")
 ---
 
 *This guide is auto-maintained and should be updated whenever library APIs change*  
-*Last updated: 2026-05-14*
+*Last updated: 2026-05-17*

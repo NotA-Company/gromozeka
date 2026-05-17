@@ -8,7 +8,7 @@
 
 ## Navigation — Which Doc Should I Read?
 
-| If you need to... | Read this doc |
+ | If you need to... | Read this doc |
 |---|---|
 | Understand project overview, commands, mandatory rules | **This file** (`index.md`) |
 | Understand architecture, ADRs, design decisions | [`architecture.md`](architecture.md) |
@@ -16,6 +16,7 @@
 | Add/modify database tables, migrations, or queries | [`database.md`](database.md) |
 | Use Cache, Queue, LLM, Storage, or RateLimiter services | [`services.md`](services.md) |
 | Use lib/ai, lib/cache, lib/markdown, lib/max_bot, etc. | [`libraries.md`](libraries.md) |
+| Use or modify the sandbox library | [`sandbox.md`](sandbox.md) |
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
@@ -245,6 +246,7 @@ make test
 | [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`) |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
+| [`lib/sandbox/`](../../lib/sandbox/) | Sandboxed code execution (Docker + Python); `SandboxManager` singleton |
 | [`lib/logging_utils.py`](../../lib/logging_utils.py) | `initLogging()` helper |
 
 ---
@@ -256,11 +258,12 @@ make test
 - [`database.md`](database.md) — DB operations, migrations, schema, multi-source routing
 - [`services.md`](services.md) — CacheService, QueueService, LLMService, StorageService, RateLimiter
 - [`libraries.md`](libraries.md) — lib/ai, lib/cache, lib/markdown, lib/max_bot and more
+- [`sandbox.md`](sandbox.md) — Sandbox coding patterns, configuration, and anti-patterns
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
 
 ---
 
-*This guide is auto-maintained and should be updated whenever significant architectural changes are made*  
-*Last updated: 2026-05-14*
+*This guide is auto-maintained and should be updated whenever significant architectural changes are made*
+*Last updated: 2026-05-17*

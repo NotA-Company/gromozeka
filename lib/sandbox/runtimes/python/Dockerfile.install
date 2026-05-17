@@ -1,0 +1,23 @@
+FROM python:3.12-alpine
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Build toolchain so source-only packages compile on musl.
+# Keep this list trimmed — every addition increases image size.
+RUN apk add --no-cache \
+        build-base \
+        linux-headers \
+        gfortran \
+        openblas-dev \
+        openssl-dev \
+        libffi-dev \
+        cargo \
+ && python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+ && adduser -D -u 1000 sandbox \
+ && mkdir -p /sandbox/libs \
+ && chown -R sandbox:sandbox /sandbox
+
+USER sandbox
+WORKDIR /sandbox
+CMD ["python", "-m", "pip", "--version"]

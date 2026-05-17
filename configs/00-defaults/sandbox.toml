@@ -1,0 +1,78 @@
+[sandbox]
+
+[sandbox.storage]
+root-dir = "/var/lib/gromozeka/sandbox"
+dir-mode = "0700"
+file-mode = "0600"
+
+[sandbox.backend]
+name = "docker"
+
+[sandbox.backend.docker]
+base-url = "unix:///var/run/docker.sock"
+image-pull-policy = "if-not-present"
+
+[sandbox.defaults]
+runtime = "python"
+idle-ttl-minutes = 30
+hard-ttl-minutes = 120
+run-timeout-seconds = 30
+
+[sandbox.limits]
+memory-mb = 512
+memory-swap-mb = 512
+cpu-count = 1.0
+pids-limit = 64
+timeout-seconds = 30
+timeout-grace-seconds = 5
+
+[sandbox.security]
+user = "1000:1000"
+read-only-rootfs = true
+no-new-privileges = true
+drop-capabilities = ["ALL"]
+privileged = false
+env-allowlist = []
+
+[sandbox.concurrency]
+max-queued-runs-per-session = 4
+max-concurrent-runs-global = 8
+global-queue-wait-seconds = 60
+
+[sandbox.gc]
+enabled = true
+interval-seconds = 600
+orphan-container-retention-minutes = 10
+orphan-workspace-retention-minutes = 60
+run-retention-minutes = 1440
+
+[sandbox.runtimes.python]
+run-image-tag = "gromozeka-sandbox-python:run"
+install-image-tag = "gromozeka-sandbox-python:install"
+run-dockerfile = "lib/sandbox/runtimes/python/Dockerfile"
+install-dockerfile = "lib/sandbox/runtimes/python/Dockerfile.install"
+lib-mount-path = "/sandbox/libs"
+
+[sandbox.runtimes.python.env]
+PYTHONUNBUFFERED = "1"
+PYTHONDONTWRITEBYTECODE = "1"
+MPLBACKEND = "Agg"
+PYTHONPATH = "/sandbox/libs"
+
+[sandbox.runtimes.python.install-container]
+timeout-seconds = 600
+memory-mb = 1024
+pids-limit = 256
+
+# Used by scripts/sandbox-bootstrap.py — not by the library itself.
+[sandbox.bootstrap]
+starter_packages = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "scipy",
+    "sympy",
+    "scikit-learn",
+    "pillow",
+    "requests",
+]

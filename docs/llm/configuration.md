@@ -301,6 +301,119 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 
 ---
 
+### `[sandbox]`
+
+Sandboxed code execution configuration. Defaults live in [`configs/00-defaults/sandbox.toml`](../../configs/00-defaults/sandbox.toml).
+
+#### `[sandbox.storage]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `root_dir` | str | `"/var/lib/gromozeka/sandbox"` | Host-side root directory for sandbox workspaces and data |
+| `dir_mode` | str (octal) | `"0700"` | Octal permission mode for created directories |
+| `file_mode` | str (octal) | `"0600"` | Octal permission mode for created files |
+
+#### `[sandbox.backend]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `name` | str | `"docker"` | Execution backend (`"docker"` is the only backend currently) |
+
+#### `[sandbox.backend.docker]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `base_url` | str | `"unix:///var/run/docker.sock"` | Docker daemon socket URL or TCP address |
+| `image_pull_policy` | str | `"if-not-present"` | When to pull images: `"never"`, `"if-not-present"`, or `"always"` |
+
+#### `[sandbox.defaults]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `runtime` | str | `"python"` | Default runtime for new sessions |
+| `idle_ttl_minutes` | int | `30` | Minutes of inactivity before a session is eligible for GC |
+| `hard_ttl_minutes` | int | `120` | Absolute maximum session lifetime in minutes |
+| `run_timeout_seconds` | int | `30` | Default wall-clock timeout per code execution run |
+
+#### `[sandbox.limits]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `memory_mb` | int | `512` | Memory limit per container in megabytes |
+| `memory_swap_mb` | int | `512` | Swap memory limit in megabytes (same as `memory_mb` means no swap) |
+| `cpu_count` | float | `1.0` | CPU count limit per container |
+| `pids_limit` | int | `64` | Maximum number of PIDs inside the container |
+| `timeout_seconds` | int | `30` | Default run timeout in seconds |
+| `timeout_grace_seconds` | int | `5` | Grace period after timeout before killing the container |
+
+#### `[sandbox.security]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `user` | str | `"1000:1000"` | `uid:gid` for the container process |
+| `read_only_rootfs` | bool | `true` | Mount the container root filesystem as read-only |
+| `no_new_privileges` | bool | `true` | Prevent privilege escalation inside the container |
+| `drop_capabilities` | list[str] | `["ALL"]` | Linux capabilities to drop |
+| `privileged` | bool | `false` | Run the container in privileged mode (dangerous) |
+| `env_allowlist` | list[str] | `[]` | Environment variable names allowed through to the container |
+
+#### `[sandbox.concurrency]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `max_queued_runs_per_session` | int | `4` | Maximum queued runs per session before rejecting |
+| `max_concurrent_runs_global` | int | `8` | Maximum concurrent runs across all sessions |
+| `global_queue_wait_seconds` | int | `60` | Maximum seconds a run waits in the global queue |
+
+#### `[sandbox.gc]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `true` | Enable the GC loop |
+| `interval_seconds` | int | `60` | Seconds between GC sweeps |
+| `orphan_container_retention_minutes` | int | `10` | Minutes to retain orphaned containers |
+| `orphan_workspace_retention_minutes` | int | `60` | Minutes to retain orphaned workspace directories |
+| `run_retention_minutes` | int | `1440` | Minutes to retain completed run records |
+
+#### `[sandbox.runtimes.python]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `run_image_tag` | str | `"gromozeka-sandbox-python:run"` | Docker image tag for code execution |
+| `install_image_tag` | str | `"gromozeka-sandbox-python:install"` | Docker image tag for library installation |
+| `run_dockerfile` | str | `"lib/sandbox/runtimes/python/Dockerfile"` | Path to the Dockerfile for the run image |
+| `install_dockerfile` | str | `"lib/sandbox/runtimes/python/Dockerfile.install"` | Path to the Dockerfile for the install image |
+| `lib_mount_path` | str | `"/sandbox/libs"` | Container-side path where the library pool is mounted |
+
+#### `[sandbox.runtimes.python.env]`
+
+Default environment variables injected into Python containers. Keys are variable names, values are strings.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `PYTHONUNBUFFERED` | `"1"` | Disable Python output buffering |
+| `PYTHONDONTWRITEBYTECODE` | `"1"` | Don't write `.pyc` files |
+| `MPLBACKEND` | `"Agg"` | Matplotlib non-interactive backend |
+| `PYTHONPATH` | `"/sandbox/libs"` | Python module search path |
+
+#### `[sandbox.runtimes.python.install_container]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `timeout_seconds` | int | `600` | Wall-clock timeout for the install container |
+| `memory_mb` | int | `1024` | Memory limit for the install container in megabytes |
+| `pids_limit` | int | `256` | Maximum PIDs inside the install container |
+
+#### `[sandbox.bootstrap]`
+
+Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `starter_packages` | list[str] | `["numpy", "pandas", "matplotlib", ...]` | Packages pre-installed into the install image during bootstrap |
+
+---
+
 ## 3. ConfigManager Methods
 
 **File:** [`internal/config/manager.py:59`](../../internal/config/manager.py:59)
@@ -379,4 +492,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-05-09*
+*Last updated: 2026-05-17*

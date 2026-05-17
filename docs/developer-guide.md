@@ -18,7 +18,8 @@
 9. [Testing Guide](#9-testing-guide)
 10. [Code Quality](#10-code-quality)
 11. [Deployment](#11-deployment)
-12. [Common Development Tasks](#12-common-development-tasks)
+12. [Bootstrapping the Sandbox](#12-bootstrapping-the-sandbox)
+13. [Common Development Tasks](#13-common-development-tasks)
 
 ---
 
@@ -121,7 +122,8 @@ The project is organized in a strict layered architecture where each layer only 
 ┌────────▼──────────────────────────────────────────────────────┐
 │                       Libraries (lib/)                         │
 │  ai/  cache/  rate_limiter/  max_bot/  openweathermap/        │
-│  yandex_search/  geocode_maps/  bayes_filter/  markdown/       │
+│  yandex_search/  geocode_maps/  bayes_filter/  markdown/     │
+│  sandbox/  divination/  stats/                                │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -281,6 +283,25 @@ gromozeka/
 │   │   ├── inline_parser.py        # Inline-level parser
 │   │   ├── renderer.py             # HTMLRenderer, MarkdownV2Renderer
 │   │   └── ast_nodes.py            # AST node types
+│   ├── sandbox/                    # Sandboxed code execution (Docker)
+│   │   ├── manager.py              # SandboxManager singleton
+│   │   ├── config.py               # Configuration dataclasses
+│   │   ├── types.py                # Public dataclasses (RunResult, etc.)
+│   │   ├── enums.py                # RuntimeName, BackendName
+│   │   ├── errors.py               # Exception hierarchy
+│   │   ├── locks.py                # Per-session FIFO locks, global semaphore
+│   │   ├── storage.py              # Workspace path resolution, atomic writes
+│   │   ├── gc.py                   # Garbage collector for expired sessions
+│   │   ├── backends/               # Execution backends
+│   │   │   ├── base.py             # SandboxBackend ABC
+│   │   │   └── docker.py           # Docker backend
+│   │   ├── runtimes/               # Language runtimes
+│   │   │   ├── base.py             # Runtime ABC
+│   │   │   └── python/             # Python runtime
+│   │   │       └── runtime.py      # PythonRuntime
+│   │   └── metadata/               # Session/run metadata
+│   │       ├── base.py             # MetadataStore ABC
+│   │       └── filesystem.py      # Filesystem-backed store
 │   ├── logging_utils.py            # Logging helpers (initLogging)
 │   └── utils.py                    # Shared utility functions
 │
@@ -1458,6 +1479,49 @@ mdv2 = parser.toMarkdownV2("# Header\n\n**Bold** text")
 html = parser.toHTML("# Header\n\n**Bold** text")
 ```
 
+### 8.10 Sandboxed Code Execution (`lib/sandbox/`)
+
+Safely execute untrusted Python code in Docker containers. Provides a `SandboxManager` singleton that manages sessions, runs, files, libraries, and garbage collection.
+
+**Key classes:**
+
+| Class | File | Description |
+|---|---|---|
+| `SandboxManager` | `lib/sandbox/manager.py` | Singleton entry point — sessions, runs, files, libraries, GC, health |
+| `SandboxConfig` | `lib/sandbox/config.py` | Top-level configuration dataclass |
+| `StorageConfig` | `lib/sandbox/config.py` | Storage paths and permissions |
+| `BackendConfig` | `lib/sandbox/config.py` | Backend selection and settings |
+| `SecurityConfig` | `lib/sandbox/config.py` | Container security constraints |
+| `ConcurrencyConfig` | `lib/sandbox/config.py` | Global and per-session concurrency limits |
+| `GcConfig` | `lib/sandbox/config.py` | GC schedule and retention policies |
+| `PythonRuntimeConfig` | `lib/sandbox/config.py` | Python runtime configuration |
+| `RunResult` | `lib/sandbox/types.py` | Result of a code execution run |
+| `SessionInfo` | `lib/sandbox/types.py` | Session metadata |
+| `ResourceLimits` | `lib/sandbox/types.py` | Container resource limits |
+
+**Usage example:**
+
+```python
+from lib.sandbox import SandboxManager, SandboxConfig, StorageConfig
+
+config = SandboxConfig(storage=StorageConfig(rootDir="/var/lib/gromozeka/sandbox"))
+manager = SandboxManager.getInstance()
+await manager.initialize(config)
+
+# Create a session and run code
+session = await manager.createSession()
+result = await manager.runCode(session.sessionId, "print(2 + 2)")
+print(result.exitCode, result.stdout)  # 0, "4\n"
+
+# Install a library
+await manager.installLibrary(session.sessionId, "numpy")
+
+# Clean up
+await manager.shutdown()
+```
+
+**Configuration:** Defaults in [`configs/00-defaults/sandbox.toml`](configs/00-defaults/sandbox.toml). See [Section 12 - Bootstrapping the Sandbox](#12-bootstrapping-the-sandbox) for setup instructions.
+
 ---
 
 ## 9. Testing Guide
@@ -1989,9 +2053,50 @@ api-key = "${OPENROUTER_API_KEY}"
 
 ---
 
-## 12. Common Development Tasks
+## 12. Bootstrapping the Sandbox
 
-### 12.1 Adding a New Handler
+The sandbox library (`lib/sandbox/`) executes untrusted Python code inside Docker containers. Before using it, you need to set up the storage directory and build the Docker images.
+
+### Prerequisites
+
+- **Docker** must be installed and running on the host. The sandbox communicates with Docker via the daemon socket (default: `unix:///var/run/docker.sock`).
+
+### Storage Directory
+
+The sandbox stores session workspaces, metadata, and library pools under `[sandbox.storage].root_dir` (default: `/var/lib/gromozeka/sandbox`). Create this directory and ensure the bot process can write to it:
+
+```bash
+sudo mkdir -p /var/lib/gromozeka/sandbox
+sudo chown $USER /var/lib/gromozeka/sandbox
+```
+
+Alternatively, use the `--init-storage` flag on the bootstrap script to create the directory with the correct permissions automatically.
+
+### Building Docker Images
+
+The bootstrap script builds the run and install Docker images defined in `[sandbox.runtimes.python]`:
+
+```bash
+./venv/bin/python3 scripts/sandbox_bootstrap.py --init-storage
+```
+
+This script:
+
+1. Creates the storage directory (if `--init-storage` is passed) with the configured `dir_mode` and `file_mode`.
+2. Builds the **run image** (`gromozeka-sandbox-python:run`) from `lib/sandbox/runtimes/python/Dockerfile`.
+3. Builds the **install image** (`gromozeka-sandbox-python:install`) from `lib/sandbox/runtimes/python/Dockerfile.install`, which includes the `starter_packages` listed in `[sandbox.bootstrap]`.
+
+Images are also built on demand by `SandboxManager.prepareRuntime()` if they are not present and `image_pull_policy` is not `"never"`.
+
+### Configuration
+
+All sandbox settings live in [`configs/00-defaults/sandbox.toml`](configs/00-defaults/sandbox.toml). See [`docs/llm/configuration.md`](docs/llm/configuration.md) for the full `[sandbox.*]` reference.
+
+---
+
+## 13. Common Development Tasks
+
+### 13.1 Adding a New Handler
 
 1. **Create the handler file** See [Section 6 - Creating a New Handler](#how-to-create-a-new-handler) for the complete template.
 
@@ -2016,7 +2121,7 @@ make format lint
 make test
 ```
 
-### 12.2 Adding a New API Integration
+### 13.2 Adding a New API Integration
 
 Let's say you want to integrate the "CoolAPI" service
 
@@ -2145,7 +2250,7 @@ coolapi = "coolapi"
 
 **Step 7**: Write tests using the golden data fixture pattern
 
-### 12.3 Adding a New LLM Provider
+### 13.3 Adding a New LLM Provider
 
 **Step 1**: Create the provider file
 
@@ -2296,7 +2401,7 @@ support_tools = false
 tier = "free"
 ```
 
-### 12.4 Adding a Database Migration
+### 13.4 Adding a Database Migration
 
 > ⚠️ **Critical**: Always verify the current highest version before creating a migration
 
@@ -2358,7 +2463,7 @@ class Migration(BaseMigration):
 
 **Step 5**: Update any schema documentation in `docs/`
 
-### 12.5 Adding a New Chat Setting
+### 13.5 Adding a New Chat Setting
 
 Chat settings are key-value pairs stored per-chat and cached in [`CacheService`](internal/services/cache/service.py:88)
 
